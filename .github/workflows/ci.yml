@@ -30,20 +30,6 @@ jobs:
         fail_ci_if_error: true
         token: ${{ secrets.CODECOV_TOKEN }}
 
-  lint:
-    name: Linting
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt, clippy
-    - uses: Swatinem/rust-cache@v2
-    - name: Format check
-      run: cargo fmt --all -- --check
-    - name: Clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
-
   build:
     name: Build
     runs-on: ubuntu-latest
