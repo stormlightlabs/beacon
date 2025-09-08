@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+tree-sitter = "0.25.9"
+tree-sitter-python = "0.23"
+thiserror = "2.0.16"
+owo-colors = "4.2"
