@@ -2,7 +2,10 @@ use thiserror::Error;
 use tree_sitter::{Node, Parser, Tree};
 
 pub mod highlight;
+pub mod resolve;
+
 pub use highlight::PythonHighlighter;
+pub use resolve::{NameResolver, ScopeId, ScopeKind, Symbol, SymbolKind, SymbolTable};
 
 #[derive(Error, Debug)]
 pub enum ParseError {
@@ -422,6 +425,23 @@ impl PythonParser {
             None => Ok(None),
         }
     }
+
+    /// Perform name resolution on an AST and return a symbol table
+    pub fn resolve_names(&self, ast: &AstNode) -> Result<SymbolTable, resolve::ResolveError> {
+        let mut resolver = NameResolver::new();
+        resolver.resolve(ast)?;
+        Ok(resolver.symbol_table)
+    }
+
+    /// Parse and resolve names in one step
+    pub fn parse_and_resolve(&mut self, source: &str) -> Result<(AstNode, SymbolTable), ParseError> {
+        let parsed = self.parse(source)?;
+        let ast = self.to_ast(&parsed)?;
+        let symbol_table = self.resolve_names(&ast).map_err(|e| {
+            ParseError::TreeSitterError(format!("Name resolution failed: {}", e))
+        })?;
+        Ok((ast, symbol_table))
+    }
 }
 
 impl Default for PythonParser {
@@ -721,5 +741,77 @@ def hello():
             AstNode::Module { body } => assert!(body.len() >= 2),
             _ => panic!("Expected module"),
         }
+    }
+
+    #[test]
+    fn test_name_resolution_integration() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"
+def factorial(n):
+    if n <= 1:
+        return 1
+    return n * factorial(n - 1)
+
+result = factorial(5)
+"#;
+
+        let (ast, symbol_table) = parser.parse_and_resolve(source).unwrap();
+        
+        // Check AST structure
+        match ast {
+            AstNode::Module { body } => {
+                assert_eq!(body.len(), 2); // function def + assignment
+            }
+            _ => panic!("Expected module"),
+        }
+
+        // Check symbol table
+        let root_scope = symbol_table.root_scope;
+        
+        // Should have 'factorial' function and 'result' variable in module scope
+        let factorial_symbol = symbol_table.lookup_symbol("factorial", root_scope);
+        assert!(factorial_symbol.is_some());
+        assert_eq!(factorial_symbol.unwrap().kind, SymbolKind::Function);
+        
+        let result_symbol = symbol_table.lookup_symbol("result", root_scope);
+        assert!(result_symbol.is_some());
+        assert_eq!(result_symbol.unwrap().kind, SymbolKind::Variable);
+
+        // Check function scope has parameter
+        let func_scope_id = symbol_table.scopes.get(&root_scope).unwrap().children[0];
+        let param_symbol = symbol_table.lookup_symbol("n", func_scope_id);
+        assert!(param_symbol.is_some());
+        assert_eq!(param_symbol.unwrap().kind, SymbolKind::Parameter);
+    }
+
+    #[test]
+    fn test_nested_scope_resolution() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"
+global_var = "hello"
+
+class MyClass:
+    class_var = 42
+    
+    def method(self, param):
+        local_var = global_var + str(self.class_var)
+        return local_var
+"#;
+
+        let (_ast, symbol_table) = parser.parse_and_resolve(source).unwrap();
+        
+        let root_scope = symbol_table.root_scope;
+        
+        // Check global scope
+        assert!(symbol_table.lookup_symbol("global_var", root_scope).is_some());
+        assert!(symbol_table.lookup_symbol("MyClass", root_scope).is_some());
+        
+        // Check class scope exists
+        let root_children = &symbol_table.scopes.get(&root_scope).unwrap().children;
+        assert!(!root_children.is_empty());
+        
+        let class_scope = root_children[0];
+        assert!(symbol_table.lookup_symbol("class_var", class_scope).is_some());
+        assert!(symbol_table.lookup_symbol("method", class_scope).is_some());
     }
 }

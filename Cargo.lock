@@ -99,6 +99,7 @@ name = "beacon-parser"
 version = "0.1.0"
 dependencies = [
  "owo-colors",
+ "rustc-hash",
  "thiserror",
  "tree-sitter",
  "tree-sitter-python",

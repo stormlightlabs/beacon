@@ -94,8 +94,8 @@ impl Unifier {
 
     /// Unify two union types
     ///
-    ///     TODO: Subset relationships
-    ///     TODO: Find bijections
+    /// TODO: Subset relationships  
+    /// TODO: Find bijections
     fn unify_unions(types1: &[Type], types2: &[Type]) -> Result<Subst> {
         if types1.len() != types2.len() {
             return Err(TypeError::UnificationError(
@@ -348,7 +348,6 @@ mod tests {
 
         let subst = Unifier::unify(&record1, &record2).unwrap();
 
-        // Row variable should be bound to the extra fields
         if let Some(Type::Record(fields, _)) = subst.get(&row_var) {
             assert_eq!(fields.len(), 1);
             assert_eq!(fields[0].0, "y");
