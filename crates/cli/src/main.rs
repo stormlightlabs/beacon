@@ -178,7 +178,7 @@ mod tests {
     fn test_read_input_from_file() {
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "x = 42").unwrap();
-        
+
         let content = read_input(Some(temp_file.path().to_path_buf())).unwrap();
         assert_eq!(content.trim(), "x = 42");
     }
@@ -207,11 +207,47 @@ mod tests {
     #[test]
     fn test_check_command_with_errors() {
         // Test check command with syntax errors
-        // Note: This function will call process::exit(1) on errors, 
+        // Note: This function will call process::exit(1) on errors,
         // so we can't test the actual error path in unit tests easily.
         // We'll just test that it runs without panicking and returns Ok
         let source = "x = 42"; // Valid syntax
         let result = check_command(source);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_print_parse_errors() {
+        let mut parser = beacon_parser::PythonParser::new().unwrap();
+        let source = "def incomplete_func(";
+
+        let parsed = parser.parse(source).unwrap();
+        let root = parsed.tree.root_node();
+
+        // This function prints to stdout, so we can't easily capture output
+        // But we can test that it doesn't panic
+        print_parse_errors(root, source, 0);
+        // If we reach here, the function didn't panic
+        assert!(true);
+    }
+
+    #[test]
+    fn test_parse_command_with_tree() {
+        let source = "x = 42";
+        let result = parse_command(source, false, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_command_with_pretty() {
+        let source = "def hello(): pass";
+        let result = parse_command(source, true, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_command_with_both_flags() {
+        let source = "class Test: pass";
+        let result = parse_command(source, true, true);
         assert!(result.is_ok());
     }
 }

@@ -44,10 +44,18 @@ demo:
 test-parser:
     cargo test --package beacon-parser
 
-# Run CLI tests specifically  
+# Run CLI tests specifically
 test-cli:
     cargo test --package beacon-cli
 
 # Check coverage percentage
 coverage-check:
     cargo llvm-cov --all-features --workspace --summary-only
+
+# Generate coverage in JSON format
+coverage-json:
+    cargo llvm-cov --all-features --workspace --json --output-path coverage.json
+
+# Generate coverage in XML format
+coverage-xml:
+    cargo llvm-cov --all-features --workspace --cobertura --output-path coverage.xml

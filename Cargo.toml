@@ -3,9 +3,9 @@ resolver = "2"
 members = [ "crates/cli", "crates/constraints","crates/core", "crates/parser", "crates/server"]
 
 [workspace.dependencies]
-tree-sitter = "0.25.9"
+tree-sitter = "0.25"
+thiserror = "2.0"
 
-# Coverage configuration
 [profile.dev.package."*"]
 debug = true
 

@@ -290,7 +290,7 @@ struct Solver {
 
 Adding syntax highlighting to CLI output significantly improves readability of diagnostics, AST dumps, and type information. We will layer this functionality gradually, starting with minimal styling and moving toward **Tree-sitter–powered highlighting** of Python code in error snippets.
 
-### Stage 1 — Basic Styling with Colors (cheap, high payoff)
+### Basic Styling
 
 - Use a lightweight crate such as [`owo-colors`](https://docs.rs/owo-colors) to colorize diagnostics:
     - **Error labels**: bright red, bold.
@@ -313,7 +313,7 @@ Adding syntax highlighting to CLI output significantly improves readability of d
 
 - Centralize all style decisions for easy toggling (e.g. disable in CI with `NO_COLOR`).
 
-### Stage 2 — Pretty-Printing Types and Constraints
+### Pretty-Printing Types and Constraints
 
 - Implement custom `Display` for `Type`, `Constraint`, and `AST` structures.
 - Use **consistent color mapping**:
@@ -328,7 +328,7 @@ Adding syntax highlighting to CLI output significantly improves readability of d
   id   : ∀α. α -> α
   ```
 
-### Highlighting Python Source in Diagnostics
+### Highlighting Python in Diagnostics
 
 - Integrate [`tree-sitter-highlight`](https://crates.io/crates/tree-sitter-highlight).
 - Reuse the same **Tree-sitter Python grammar** already used for parsing.
@@ -368,35 +368,60 @@ Adding syntax highlighting to CLI output significantly improves readability of d
 ## Milestones
 
 1. **Parsing**
-   - Tree-sitter hooked up; CST→AST; name resolution; module graph; LSP “hello” (open/close, hover stub).
+   - ✓ Tree-sitter hooked up; CST→AST with comprehensive Python node support
+   - ✓ Syntax highlighting with configurable color schemes
+   - ✓ CLI interface (parse, highlight, check commands)
+   - Name resolution (scope builder: module → class → function → block)
+   - Module graph (imports, dependencies, module cache)
+   - LSP "hello" (open/close, hover stub)
+
 2. **Core Type System**
-   - Types, unifier, Algorithm W for expressions, let-generalization w/ value restriction.
-   - Literals, variables, functions, calls, tuples, lists, dicts.
-   - Diagnostics + basic hover/inlay.
-3. **Records & Attributes**
+   - ✓ Types, Kinds, TypeCtor enums with comprehensive trait implementations
+   - ✓ Substitution system with composition and recursive application
+   - ✓ Unification algorithm with occurs check, union types, record types
+   - ✓ Row-polymorphic records for object modeling
+   - Algorithm W constraint generation (needs name resolution)
+   - Let-generalization with value restriction
+   - Diagnostics + basic hover/inlay
+
+3. **Constraint Generation**
+   - Algorithm W implementation for expressions
+   - Variables, literals, functions, calls, tuples, lists, dicts
+   - Constraint IR and generation rules
+   - Integration with parser AST and type system
+
+4. **Records & Attributes**
    - Row-polymorphic records, `HasAttr`, attribute reads/writes, object construction via `__init__`.
    - Basic protocol entailment (manually authored builtins).
-4. **Typing Interop**
+
+5. **Typing Interop**
    - Parse and honor annotations (PEP 484/695 subset), `Optional`, `Union`, `TypeVar`, `Generic`.
    - Annotated mismatch reporting & code actions (insert annotation).
-5. **Collections & Iteration**
+
+6. **Collections & Iteration**
    - Iterator/Iterable protocols, comprehensions, `with`/context managers.
    - Inlay hints polish.
-6. **Classes & Overloads**
+
+7. **Classes & Overloads**
    - Overloads resolution, properties/staticmethod/classmethod, dataclasses.
    - `.pyi` stub ingestion; module types.
-7. **Async & Generators**
+
+8. **Async & Generators**
    - `async`, `await`, `yield`, return type derivation for coroutines/generators.
-8. **Pattern Matching**
+
+9. **Pattern Matching**
    - PEP 634 constraints; exhaustiveness diagnostics (basic).
-9. **Incrementality**
-   - Constraint slicing, SCC rebuilds, parallelism, on-disk caches.
-10. **Ergonomics**
+
+10. **Incrementality**
+    - Constraint slicing, SCC rebuilds, parallelism, on-disk caches.
+
+11. **Ergonomics**
     - Strict/balanced/loose modes; analysis of dynamic features; rich code actions.
-11. **Hardening**
+
+12. **Hardening**
     - Large-repo benchmarks; memory profiling; stability & crash-free guarantee.
 
-## 13) Testing Strategy
+## Testing Strategy
 
 - **Golden tests** for inference: input + expected principal types / diagnostics.
 - **Property tests**: unification idempotence, substitution correctness, principal type invariants.
@@ -404,7 +429,7 @@ Adding syntax highlighting to CLI output significantly improves readability of d
 - **Performance benches**: cold vs warm, single-file edits, large module graphs.
 - **Fuzzing**: random ASTs within Python grammar subset to stress unifier/solver.
 
-## 14) Example Walkthrough
+## Example
 
 ```python
 from typing import Protocol, TypeVar
@@ -447,6 +472,7 @@ z = id(xs)         # generalizes id: ∀α. α→α, instantiates at list[int]
 - [ ] `tree-sitter` parser + CST→AST with stable node IDs & ranges.
 - [ ] Type core + solver with tests (unifier, substitution, generalization).
 - [ ] Constraint generator covering core Python constructs.
+- [ ] Name resolution & symbol tables for variable binding tracking.
 - [ ] Row-polymorphic records & protocol entailment.
 - [ ] LSP server (using `lsp-types`): diagnostics, hovers, inlay hints, code actions.
 - [ ] Typing interop (PEP 484/695 subset) + stub ingestion.
