@@ -325,18 +325,18 @@ We will layer this functionality gradually, starting with minimal styling and mo
 ## Milestones
 
 1. **Parsing**
-   - Tree-sitter hooked up; CST->AST with comprehensive Python node support
-   - Syntax highlighting with configurable color schemes
-   - CLI interface (parse, highlight, check commands)
+   - ✓ Tree-sitter hooked up; CST->AST with comprehensive Python node support
+   - ✓ Syntax highlighting with configurable color schemes
+   - ✓ CLI interface (parse, highlight, check commands)
    - Name resolution (scope builder: module -> class -> function -> block)
    - Module graph (imports, dependencies, module cache)
    - LSP "hello" (open/close, hover stub)
 
 2. **Core Type System**
-   - Types, Kinds, TypeCtor enums with comprehensive trait implementations
-   - Substitution system with composition and recursive application
-   - Unification algorithm with occurs check, union types, record types
-   - Row-polymorphic records for object modeling
+   - ✓ Types, Kinds, TypeCtor enums with comprehensive trait implementations
+   - ✓ Substitution system with composition and recursive application
+   - ✓ Unification algorithm with occurs check, union types, record types
+   - ✓ Row-polymorphic records for object modeling
    - Algorithm W constraint generation (needs name resolution)
    - Let-generalization with value restriction
    - Diagnostics + basic hover/inlay
