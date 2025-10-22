@@ -6,36 +6,15 @@
 //! - Substitution and unification algorithms
 //! - Type schemes and generalization
 
-use thiserror::Error;
-
+pub mod errors;
 pub mod subst;
 pub mod types;
 pub mod unify;
 
+pub use errors::*;
 pub use subst::*;
 pub use types::*;
 pub use unify::*;
-
-/// Errors that can occur during type operations
-#[derive(Error, Debug, Clone, PartialEq)]
-pub enum TypeError {
-    #[error("Cannot unify types: {0} ~ {1}")]
-    UnificationError(String, String),
-
-    #[error("Occurs check failed: type variable {0} occurs in {1}")]
-    OccursCheckFailed(TypeVar, String),
-
-    #[error("Undefined type variable: {0}")]
-    UndefinedTypeVar(TypeVar),
-
-    #[error("Kind mismatch: expected {expected}, found {found}")]
-    KindMismatch { expected: String, found: String },
-
-    #[error("Infinite type: {0}")]
-    InfiniteType(String),
-}
-
-pub type Result<T> = std::result::Result<T, TypeError>;
 
 /// Type variable generator for creating fresh type variables
 #[derive(Debug, Clone)]

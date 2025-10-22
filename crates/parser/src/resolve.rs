@@ -1,4 +1,5 @@
 use crate::AstNode;
+use beacon_core::Result;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 
@@ -69,11 +70,7 @@ impl SymbolTable {
             },
         );
 
-        Self {
-            scopes,
-            root_scope: root_id,
-            next_scope_id: 1,
-        }
+        Self { scopes, root_scope: root_id, next_scope_id: 1 }
     }
 
     /// Create a new scope as a child of the given parent
@@ -81,13 +78,8 @@ impl SymbolTable {
         let new_id = ScopeId(self.next_scope_id);
         self.next_scope_id += 1;
 
-        let new_scope = Scope {
-            id: new_id,
-            kind,
-            parent: Some(parent),
-            symbols: FxHashMap::default(),
-            children: Vec::new(),
-        };
+        let new_scope =
+            Scope { id: new_id, kind, parent: Some(parent), symbols: FxHashMap::default(), children: Vec::new() };
 
         self.scopes.insert(new_id, new_scope);
 
@@ -151,18 +143,15 @@ impl NameResolver {
         let symbol_table = SymbolTable::new();
         let root_scope = symbol_table.root_scope;
 
-        Self {
-            symbol_table,
-            current_scope: root_scope,
-        }
+        Self { symbol_table, current_scope: root_scope }
     }
 
     /// Resolve names in an AST and build the symbol table
-    pub fn resolve(&mut self, ast: &AstNode) -> Result<(), ResolveError> {
+    pub fn resolve(&mut self, ast: &AstNode) -> Result<()> {
         self.visit_node(ast)
     }
 
-    fn visit_node(&mut self, node: &AstNode) -> Result<(), ResolveError> {
+    fn visit_node(&mut self, node: &AstNode) -> Result<()> {
         match node {
             AstNode::Module { body } => {
                 for stmt in body {
@@ -170,13 +159,7 @@ impl NameResolver {
                 }
             }
 
-            AstNode::FunctionDef {
-                name,
-                args,
-                body,
-                line,
-                col,
-            } => {
+            AstNode::FunctionDef { name, args, body, line, col } => {
                 let symbol = Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Function,
@@ -186,9 +169,7 @@ impl NameResolver {
                 };
                 self.symbol_table.add_symbol(self.current_scope, symbol);
 
-                let func_scope = self
-                    .symbol_table
-                    .create_scope(ScopeKind::Function, self.current_scope);
+                let func_scope = self.symbol_table.create_scope(ScopeKind::Function, self.current_scope);
                 let prev_scope = self.current_scope;
                 self.current_scope = func_scope;
 
@@ -209,12 +190,7 @@ impl NameResolver {
                 self.current_scope = prev_scope;
             }
 
-            AstNode::ClassDef {
-                name,
-                body,
-                line,
-                col,
-            } => {
+            AstNode::ClassDef { name, body, line, col } => {
                 let symbol = Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Class,
@@ -225,9 +201,7 @@ impl NameResolver {
                 self.symbol_table.add_symbol(self.current_scope, symbol);
 
                 // Create new class scope
-                let class_scope = self
-                    .symbol_table
-                    .create_scope(ScopeKind::Class, self.current_scope);
+                let class_scope = self.symbol_table.create_scope(ScopeKind::Class, self.current_scope);
                 let prev_scope = self.current_scope;
                 self.current_scope = class_scope;
 
@@ -240,12 +214,7 @@ impl NameResolver {
                 self.current_scope = prev_scope;
             }
 
-            AstNode::Assignment {
-                target,
-                value,
-                line,
-                col,
-            } => {
+            AstNode::Assignment { target, value, line, col } => {
                 // Visit the value expression first
                 self.visit_node(value)?;
 
@@ -295,14 +264,6 @@ impl NameResolver {
     pub fn current_scope(&self) -> ScopeId {
         self.current_scope
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ResolveError {
-    #[error("Symbol '{0}' not found")]
-    SymbolNotFound(String),
-    #[error("Scope error: {0}")]
-    ScopeError(String),
 }
 
 impl Default for SymbolTable {
@@ -355,24 +316,15 @@ mod tests {
         };
         table.add_symbol(table.root_scope, root_symbol);
 
-        let func_symbol = Symbol {
-            name: "local_var".to_string(),
-            kind: SymbolKind::Variable,
-            line: 2,
-            col: 1,
-            scope_id: func_scope,
-        };
+        let func_symbol =
+            Symbol { name: "local_var".to_string(), kind: SymbolKind::Variable, line: 2, col: 1, scope_id: func_scope };
         table.add_symbol(func_scope, func_symbol);
 
         assert!(table.lookup_symbol("local_var", func_scope).is_some());
         assert!(table.lookup_symbol("global_var", func_scope).is_some());
         assert!(table.lookup_symbol("nonexistent", func_scope).is_none());
 
-        assert!(
-            table
-                .lookup_symbol("global_var", table.root_scope)
-                .is_some()
-        );
+        assert!(table.lookup_symbol("global_var", table.root_scope).is_some());
         assert!(table.lookup_symbol("local_var", table.root_scope).is_none());
     }
 
@@ -382,11 +334,7 @@ mod tests {
 
         let ast = AstNode::Assignment {
             target: "x".to_string(),
-            value: Box::new(AstNode::Literal {
-                value: crate::LiteralValue::Integer(42),
-                line: 1,
-                col: 5,
-            }),
+            value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(42), line: 1, col: 5 }),
             line: 1,
             col: 1,
         };
@@ -407,11 +355,7 @@ mod tests {
             args: vec!["param1".to_string(), "param2".to_string()],
             body: vec![AstNode::Assignment {
                 target: "local_var".to_string(),
-                value: Box::new(AstNode::Identifier {
-                    name: "param1".to_string(),
-                    line: 2,
-                    col: 15,
-                }),
+                value: Box::new(AstNode::Identifier { name: "param1".to_string(), line: 2, col: 15 }),
                 line: 2,
                 col: 5,
             }],
@@ -438,9 +382,7 @@ mod tests {
         assert!(param_symbol.is_some());
         assert_eq!(param_symbol.unwrap().kind, SymbolKind::Parameter);
 
-        let local_symbol = resolver
-            .symbol_table
-            .lookup_symbol("local_var", func_scope_id);
+        let local_symbol = resolver.symbol_table.lookup_symbol("local_var", func_scope_id);
         assert!(local_symbol.is_some());
         assert_eq!(local_symbol.unwrap().kind, SymbolKind::Variable);
     }
@@ -453,11 +395,7 @@ mod tests {
             body: vec![
                 AstNode::Assignment {
                     target: "global_var".to_string(),
-                    value: Box::new(AstNode::Literal {
-                        value: crate::LiteralValue::Integer(1),
-                        line: 1,
-                        col: 15,
-                    }),
+                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 15 }),
                     line: 1,
                     col: 1,
                 },
@@ -466,11 +404,7 @@ mod tests {
                     args: vec!["param".to_string()],
                     body: vec![AstNode::Assignment {
                         target: "outer_var".to_string(),
-                        value: Box::new(AstNode::Literal {
-                            value: crate::LiteralValue::Integer(2),
-                            line: 3,
-                            col: 20,
-                        }),
+                        value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(2), line: 3, col: 20 }),
                         line: 3,
                         col: 9,
                     }],
@@ -501,12 +435,7 @@ mod tests {
                 .lookup_symbol("outer_var", func_scope_id)
                 .is_some()
         );
-        assert!(
-            resolver
-                .symbol_table
-                .lookup_symbol("param", func_scope_id)
-                .is_some()
-        );
+        assert!(resolver.symbol_table.lookup_symbol("param", func_scope_id).is_some());
 
         assert!(
             resolver

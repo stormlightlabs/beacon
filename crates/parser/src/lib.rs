@@ -1,4 +1,4 @@
-use thiserror::Error;
+use beacon_core::{ParseError, Result};
 use tree_sitter::{Node, Parser, Tree};
 
 pub mod highlight;
@@ -6,14 +6,6 @@ pub mod resolve;
 
 pub use highlight::PythonHighlighter;
 pub use resolve::{NameResolver, ScopeId, ScopeKind, Symbol, SymbolKind, SymbolTable};
-
-#[derive(Error, Debug)]
-pub enum ParseError {
-    #[error("Failed to parse Python code: {0}")]
-    TreeSitterError(String),
-    #[error("Invalid UTF-8 in source code")]
-    InvalidUtf8,
-}
 
 /// Python parser using tree-sitter
 pub struct PythonParser {
@@ -85,7 +77,7 @@ pub enum LiteralValue {
 
 impl PythonParser {
     /// Create a new Python parser
-    pub fn new() -> Result<Self, ParseError> {
+    pub fn new() -> Result<Self> {
         let language = tree_sitter_python::LANGUAGE;
         let mut parser = Parser::new();
         parser
@@ -96,20 +88,17 @@ impl PythonParser {
     }
 
     /// Parse Python source code into a tree
-    pub fn parse(&mut self, source: &str) -> Result<ParsedFile, ParseError> {
+    pub fn parse(&mut self, source: &str) -> Result<ParsedFile> {
         let tree = self
             .parser
             .parse(source, None)
             .ok_or_else(|| ParseError::TreeSitterError("Failed to parse source".to_string()))?;
 
-        Ok(ParsedFile {
-            tree,
-            source: source.to_string(),
-        })
+        Ok(ParsedFile { tree, source: source.to_string() })
     }
 
     /// Convert tree-sitter CST to our AST
-    pub fn to_ast(&self, parsed: &ParsedFile) -> Result<AstNode, ParseError> {
+    pub fn to_ast(&self, parsed: &ParsedFile) -> Result<AstNode> {
         let root_node = parsed.tree.root_node();
         self.node_to_ast(root_node, &parsed.source)
     }
@@ -138,7 +127,7 @@ impl PythonParser {
         result
     }
 
-    fn node_to_ast(&self, node: Node, source: &str) -> Result<AstNode, ParseError> {
+    fn node_to_ast(&self, node: Node, source: &str) -> Result<AstNode> {
         let start_position = node.start_position();
         let line = start_position.row + 1;
         let col = start_position.column + 1;
@@ -161,68 +150,37 @@ impl PythonParser {
                 let args = self.extract_function_args(&node, source)?;
                 let body = self.extract_function_body(&node, source)?;
 
-                Ok(AstNode::FunctionDef {
-                    name,
-                    args,
-                    body,
-                    line,
-                    col,
-                })
+                Ok(AstNode::FunctionDef { name, args, body, line, col })
             }
             "class_definition" => {
                 let name = self.extract_identifier(&node, source, "name")?;
                 let body = self.extract_class_body(&node, source)?;
 
-                Ok(AstNode::ClassDef {
-                    name,
-                    body,
-                    line,
-                    col,
-                })
+                Ok(AstNode::ClassDef { name, body, line, col })
             }
             "expression_statement" => {
                 if let Some(child) = node.named_child(0) {
                     self.node_to_ast(child, source)
                 } else {
-                    Ok(AstNode::Identifier {
-                        name: "<empty_expression>".to_string(),
-                        line,
-                        col,
-                    })
+                    Ok(AstNode::Identifier { name: "<empty_expression>".to_string(), line, col })
                 }
             }
             "assignment" => {
                 let target = self.extract_assignment_target(&node, source)?;
                 let value = self.extract_assignment_value(&node, source)?;
 
-                Ok(AstNode::Assignment {
-                    target,
-                    value: Box::new(value),
-                    line,
-                    col,
-                })
+                Ok(AstNode::Assignment { target, value: Box::new(value), line, col })
             }
             "call" => {
                 let function = self.extract_call_function(&node, source)?;
                 let args = self.extract_call_args(&node, source)?;
 
-                Ok(AstNode::Call {
-                    function,
-                    args,
-                    line,
-                    col,
-                })
+                Ok(AstNode::Call { function, args, line, col })
             }
             "identifier" => {
-                let name = node
-                    .utf8_text(source.as_bytes())
-                    .map_err(|_| ParseError::InvalidUtf8)?;
+                let name = node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
 
-                Ok(AstNode::Identifier {
-                    name: name.to_string(),
-                    line,
-                    col,
-                })
+                Ok(AstNode::Identifier { name: name.to_string(), line, col })
             }
             "string" | "integer" | "float" | "true" | "false" | "none" => {
                 let value = self.extract_literal_value(&node, source)?;
@@ -232,33 +190,16 @@ impl PythonParser {
             "return_statement" => {
                 let value = self.extract_return_value(&node, source)?;
 
-                Ok(AstNode::Return {
-                    value: value.map(Box::new),
-                    line,
-                    col,
-                })
+                Ok(AstNode::Return { value: value.map(Box::new), line, col })
             }
             _ => match node.utf8_text(source.as_bytes()) {
-                Ok(text) => Ok(AstNode::Identifier {
-                    name: text.to_string(),
-                    line,
-                    col,
-                }),
-                Err(_) => Ok(AstNode::Identifier {
-                    name: format!("<{}>]", node.kind()),
-                    line,
-                    col,
-                }),
+                Ok(text) => Ok(AstNode::Identifier { name: text.to_string(), line, col }),
+                Err(_) => Ok(AstNode::Identifier { name: format!("<{}>]", node.kind()), line, col }),
             },
         }
     }
 
-    fn extract_identifier(
-        &self,
-        node: &Node,
-        source: &str,
-        field: &str,
-    ) -> Result<String, ParseError> {
+    fn extract_identifier(&self, node: &Node, source: &str, field: &str) -> Result<String> {
         let name_node = node
             .child_by_field_name(field)
             .ok_or_else(|| ParseError::TreeSitterError(format!("Missing {} field", field)))?;
@@ -270,7 +211,7 @@ impl PythonParser {
         Ok(name.to_string())
     }
 
-    fn extract_function_args(&self, node: &Node, source: &str) -> Result<Vec<String>, ParseError> {
+    fn extract_function_args(&self, node: &Node, source: &str) -> Result<Vec<String>> {
         let params_node = node.child_by_field_name("parameters");
         let mut args = Vec::new();
 
@@ -289,7 +230,7 @@ impl PythonParser {
         Ok(args)
     }
 
-    fn extract_function_body(&self, node: &Node, source: &str) -> Result<Vec<AstNode>, ParseError> {
+    fn extract_function_body(&self, node: &Node, source: &str) -> Result<Vec<AstNode>> {
         let body_node = node
             .child_by_field_name("body")
             .ok_or_else(|| ParseError::TreeSitterError("Missing function body".to_string()))?;
@@ -306,7 +247,7 @@ impl PythonParser {
         Ok(body)
     }
 
-    fn extract_class_body(&self, node: &Node, source: &str) -> Result<Vec<AstNode>, ParseError> {
+    fn extract_class_body(&self, node: &Node, source: &str) -> Result<Vec<AstNode>> {
         let body_node = node
             .child_by_field_name("body")
             .ok_or_else(|| ParseError::TreeSitterError("Missing class body".to_string()))?;
@@ -323,7 +264,7 @@ impl PythonParser {
         Ok(body)
     }
 
-    fn extract_assignment_target(&self, node: &Node, source: &str) -> Result<String, ParseError> {
+    fn extract_assignment_target(&self, node: &Node, source: &str) -> Result<String> {
         let left_node = node
             .child_by_field_name("left")
             .ok_or_else(|| ParseError::TreeSitterError("Missing assignment target".to_string()))?;
@@ -335,7 +276,7 @@ impl PythonParser {
         Ok(target.to_string())
     }
 
-    fn extract_assignment_value(&self, node: &Node, source: &str) -> Result<AstNode, ParseError> {
+    fn extract_assignment_value(&self, node: &Node, source: &str) -> Result<AstNode> {
         let right_node = node
             .child_by_field_name("right")
             .ok_or_else(|| ParseError::TreeSitterError("Missing assignment value".to_string()))?;
@@ -343,7 +284,7 @@ impl PythonParser {
         self.node_to_ast(right_node, source)
     }
 
-    fn extract_call_function(&self, node: &Node, source: &str) -> Result<String, ParseError> {
+    fn extract_call_function(&self, node: &Node, source: &str) -> Result<String> {
         let function_node = node
             .child_by_field_name("function")
             .ok_or_else(|| ParseError::TreeSitterError("Missing call function".to_string()))?;
@@ -355,18 +296,14 @@ impl PythonParser {
         Ok(function.to_string())
     }
 
-    fn extract_call_args(&self, node: &Node, source: &str) -> Result<Vec<AstNode>, ParseError> {
+    fn extract_call_args(&self, node: &Node, source: &str) -> Result<Vec<AstNode>> {
         let args_node = node.child_by_field_name("arguments");
         let mut args = Vec::new();
 
         if let Some(arguments) = args_node {
             let mut cursor = arguments.walk();
             for child in arguments.children(&mut cursor) {
-                if !child.is_extra()
-                    && child.kind() != "("
-                    && child.kind() != ")"
-                    && child.kind() != ","
-                {
+                if !child.is_extra() && child.kind() != "(" && child.kind() != ")" && child.kind() != "," {
                     args.push(self.node_to_ast(child, source)?);
                 }
             }
@@ -375,10 +312,8 @@ impl PythonParser {
         Ok(args)
     }
 
-    fn extract_literal_value(&self, node: &Node, source: &str) -> Result<LiteralValue, ParseError> {
-        let text = node
-            .utf8_text(source.as_bytes())
-            .map_err(|_| ParseError::InvalidUtf8)?;
+    fn extract_literal_value(&self, node: &Node, source: &str) -> Result<LiteralValue> {
+        let text = node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
 
         match node.kind() {
             "string" => {
@@ -408,18 +343,11 @@ impl PythonParser {
             "true" => Ok(LiteralValue::Boolean(true)),
             "false" => Ok(LiteralValue::Boolean(false)),
             "none" => Ok(LiteralValue::None),
-            _ => Err(ParseError::TreeSitterError(format!(
-                "Unknown literal type: {}",
-                node.kind()
-            ))),
+            _ => Err(ParseError::TreeSitterError(format!("Unknown literal type: {}", node.kind())).into()),
         }
     }
 
-    fn extract_return_value(
-        &self,
-        node: &Node,
-        source: &str,
-    ) -> Result<Option<AstNode>, ParseError> {
+    fn extract_return_value(&self, node: &Node, source: &str) -> Result<Option<AstNode>> {
         match node.named_child(0) {
             Some(value_node) => Ok(Some(self.node_to_ast(value_node, source)?)),
             None => Ok(None),
@@ -427,17 +355,14 @@ impl PythonParser {
     }
 
     /// Perform name resolution on an AST and return a symbol table
-    pub fn resolve_names(&self, ast: &AstNode) -> Result<SymbolTable, resolve::ResolveError> {
+    pub fn resolve_names(&self, ast: &AstNode) -> Result<SymbolTable> {
         let mut resolver = NameResolver::new();
         resolver.resolve(ast)?;
         Ok(resolver.symbol_table)
     }
 
     /// Parse and resolve names in one step
-    pub fn parse_and_resolve(
-        &mut self,
-        source: &str,
-    ) -> Result<(AstNode, SymbolTable), ParseError> {
+    pub fn parse_and_resolve(&mut self, source: &str) -> Result<(AstNode, SymbolTable)> {
         let parsed = self.parse(source)?;
         let ast = self.to_ast(&parsed)?;
         let symbol_table = self
@@ -512,10 +437,7 @@ mod tests {
                     AstNode::Assignment { target, value, .. } => {
                         assert_eq!(target, "x");
                         match value.as_ref() {
-                            AstNode::Literal {
-                                value: LiteralValue::Integer(42),
-                                ..
-                            } => {}
+                            AstNode::Literal { value: LiteralValue::Integer(42), .. } => {}
                             _ => panic!("Expected integer literal 42"),
                         }
                     }
@@ -542,10 +464,7 @@ mod tests {
                         assert_eq!(function, "print");
                         assert_eq!(args.len(), 1);
                         match &args[0] {
-                            AstNode::Literal {
-                                value: LiteralValue::String(s),
-                                ..
-                            } => {
+                            AstNode::Literal { value: LiteralValue::String(s), .. } => {
                                 assert_eq!(s, "hello");
                             }
                             _ => panic!("Expected string literal"),
@@ -656,10 +575,7 @@ if __name__ == "__main__":
             AstNode::Module { body } => match &body[0] {
                 AstNode::FunctionDef { args, .. } => {
                     assert_eq!(args.len(), 3);
-                    assert_eq!(
-                        args,
-                        &vec!["a".to_string(), "b".to_string(), "c".to_string()]
-                    );
+                    assert_eq!(args, &vec!["a".to_string(), "b".to_string(), "c".to_string()]);
                 }
                 _ => panic!("Expected function definition"),
             },
@@ -806,11 +722,7 @@ class MyClass:
         let root_scope = symbol_table.root_scope;
 
         // Check global scope
-        assert!(
-            symbol_table
-                .lookup_symbol("global_var", root_scope)
-                .is_some()
-        );
+        assert!(symbol_table.lookup_symbol("global_var", root_scope).is_some());
         assert!(symbol_table.lookup_symbol("MyClass", root_scope).is_some());
 
         // Check class scope exists
@@ -818,11 +730,7 @@ class MyClass:
         assert!(!root_children.is_empty());
 
         let class_scope = root_children[0];
-        assert!(
-            symbol_table
-                .lookup_symbol("class_var", class_scope)
-                .is_some()
-        );
+        assert!(symbol_table.lookup_symbol("class_var", class_scope).is_some());
         assert!(symbol_table.lookup_symbol("method", class_scope).is_some());
     }
 }
