@@ -11,9 +11,7 @@ pub struct Subst {
 impl Subst {
     /// Create an empty substitution
     pub fn empty() -> Self {
-        Self {
-            map: FxHashMap::default(),
-        }
+        Self { map: FxHashMap::default() }
     }
 
     /// Create a single variable substitution
@@ -71,10 +69,8 @@ impl Subst {
             }
             Type::Union(types) => Type::Union(types.iter().map(|t| self.apply(t)).collect()),
             Type::Record(fields, row_var) => {
-                let new_fields: Vec<(String, Type)> = fields
-                    .iter()
-                    .map(|(name, ty)| (name.clone(), self.apply(ty)))
-                    .collect();
+                let new_fields: Vec<(String, Type)> =
+                    fields.iter().map(|(name, ty)| (name.clone(), self.apply(ty))).collect();
                 let new_row_var = row_var.as_ref().and_then(|rv| {
                     match self.map.get(rv) {
                         Some(Type::Var(new_rv)) => Some(new_rv.clone()),
@@ -91,12 +87,10 @@ impl Subst {
     pub fn compose(self, other: Subst) -> Subst {
         let mut result = FxHashMap::default();
 
-        // Apply other to all mappings in self, then add to result
         for (tv, ty) in self.map {
             result.insert(tv, other.apply(&ty));
         }
 
-        // Add mappings from other that are not in self
         for (tv, ty) in other.map {
             if !result.contains_key(&tv) {
                 result.insert(tv, ty);
@@ -136,11 +130,7 @@ impl fmt::Display for Subst {
         if self.map.is_empty() {
             write!(f, "[]")
         } else {
-            let mappings: Vec<String> = self
-                .map
-                .iter()
-                .map(|(tv, ty)| format!("{} ↦ {}", tv, ty))
-                .collect();
+            let mappings: Vec<String> = self.map.iter().map(|(tv, ty)| format!("{} ↦ {}", tv, ty)).collect();
             write!(f, "[{}]", mappings.join(", "))
         }
     }
@@ -275,14 +265,88 @@ mod tests {
         let mut subst = Subst::empty();
         subst.insert(tv.clone(), Type::int());
 
-        let record = Type::Record(
-            vec![("x".to_string(), Type::Var(tv))],
-            Some(row_var.clone()),
-        );
+        let record = Type::Record(vec![("x".to_string(), Type::Var(tv))], Some(row_var.clone()));
 
         let expected = Type::Record(vec![("x".to_string(), Type::int())], Some(row_var));
 
         assert_eq!(subst.apply(&record), expected);
+    }
+
+    #[test]
+    fn test_record_row_variable_replacement() {
+        let original_row = TypeVar::new(10);
+        let replacement_row = TypeVar::new(11);
+        let subst = Subst::singleton(original_row.clone(), Type::Var(replacement_row.clone()));
+
+        let record = Type::Record(vec![], Some(original_row));
+        let applied = subst.apply(&record);
+
+        assert_eq!(applied, Type::Record(vec![], Some(replacement_row)));
+    }
+
+    #[test]
+    fn test_record_row_variable_removed_when_non_var() {
+        let row_var = TypeVar::new(12);
+        let subst = Subst::singleton(row_var.clone(), Type::int());
+
+        let record = Type::Record(vec![], Some(row_var));
+        let applied = subst.apply(&record);
+
+        assert_eq!(applied, Type::Record(vec![], None));
+    }
+
+    #[test]
+    fn test_apply_to_self_normalises_chain() {
+        let tv1 = TypeVar::new(0);
+        let tv2 = TypeVar::new(1);
+
+        let mut subst = Subst::empty();
+        subst.insert(tv1.clone(), Type::Var(tv2.clone()));
+        subst.insert(tv2.clone(), Type::int());
+
+        let normalised = subst.apply_to_self();
+        assert_eq!(normalised.get(&tv1), Some(&Type::int()));
+        assert_eq!(normalised.get(&tv2), Some(&Type::int()));
+    }
+
+    #[test]
+    fn test_domain_and_range_helpers() {
+        let tv1 = TypeVar::new(3);
+        let tv2 = TypeVar::new(4);
+        let mut subst = Subst::empty();
+        subst.insert(tv1.clone(), Type::int());
+        subst.insert(tv2.clone(), Type::string());
+
+        let domain: Vec<TypeVar> = subst.domain().cloned().collect();
+        assert!(domain.contains(&tv1));
+        assert!(domain.contains(&tv2));
+
+        let mut range = subst.range().map(|ty| ty.to_string()).collect::<Vec<_>>();
+        range.sort();
+        assert_eq!(range, vec!["int".to_string(), "str".to_string()]);
+    }
+
+    #[test]
+    fn test_iter_and_contains_var_behaviour() {
+        let tv1 = TypeVar::new(5);
+        let tv2 = TypeVar::new(6);
+        let mut subst = Subst::empty();
+        assert!(subst.is_empty());
+
+        subst.insert(tv1.clone(), Type::int());
+        subst.insert(tv2.clone(), Type::string());
+        assert!(subst.contains_var(&tv1));
+        assert!(!subst.is_empty());
+
+        let collected: Vec<(TypeVar, Type)> = subst.iter().map(|(tv, ty)| (tv.clone(), ty.clone())).collect();
+        assert!(collected.contains(&(tv1, Type::int())));
+        assert!(collected.contains(&(tv2, Type::string())));
+    }
+
+    #[test]
+    fn test_default_is_empty_substitution() {
+        let subst = Subst::default();
+        assert!(subst.is_empty());
     }
 
     #[test]

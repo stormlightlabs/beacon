@@ -141,3 +141,72 @@ impl From<ConfigError> for BeaconError {
 }
 
 pub type Result<T> = std::result::Result<T, BeaconError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    #[test]
+    fn type_error_formats_are_human_readable() {
+        let err = TypeError::UnificationError("int".into(), "str".into());
+        assert_eq!(err.to_string(), "Cannot unify types: int ~ str");
+
+        let occurs = TypeError::OccursCheckFailed(TypeVar::new(42), "List['t42]".into());
+        assert!(
+            occurs
+                .to_string()
+                .contains("Occurs check failed: type variable 't42 occurs in List['t42]")
+        );
+
+        let infinite = TypeError::InfiniteType("τ = List[τ]".into());
+        assert_eq!(infinite.to_string(), "Infinite type: τ = List[τ]");
+    }
+
+    #[test]
+    fn analysis_error_variants_round_trip_into_beacon_error() {
+        let not_found = AnalysisError::DocumentNotFound(Url::parse("file:///tmp/test.py").expect("valid uri for test"));
+        let beacon: BeaconError = not_found.into();
+        matches!(beacon, BeaconError::AnalysisError(AnalysisError::DocumentNotFound(_)))
+            .then_some(())
+            .expect("conversion should preserve variant");
+
+        let inference = BeaconError::from(AnalysisError::InferenceFailed("boom".into()));
+        assert!(matches!(
+            inference,
+            BeaconError::AnalysisError(AnalysisError::InferenceFailed(message)) if message == "boom"
+        ));
+    }
+
+    #[test]
+    fn document_error_supports_io_conversion() {
+        let io_err = io::Error::new(io::ErrorKind::Other, "disk failure");
+        let doc_err: DocumentError = io_err.into();
+        let beacon_err: BeaconError = doc_err.into();
+        assert!(matches!(beacon_err, BeaconError::DocumentError(_)));
+        assert!(beacon_err.to_string().contains("disk failure"));
+    }
+
+    #[test]
+    fn config_error_variants_are_descriptive() {
+        let path_error = ConfigError::InvalidStubPath(PathBuf::from("/missing"));
+        assert!(path_error.to_string().contains("/missing"));
+
+        let decorator = ConfigError::InvalidDecoratorStub("bad syntax".into());
+        assert!(decorator.to_string().contains("bad syntax"));
+
+        let beacon = BeaconError::from(path_error);
+        assert!(matches!(beacon, BeaconError::ConfigError(_)));
+    }
+
+    #[test]
+    fn result_type_alias_handles_ok_and_err() {
+        fn fallible(ok: bool) -> Result<&'static str> {
+            if ok { Ok("success") } else { Err(TypeError::UndefinedTypeVar(TypeVar::new(0)).into()) }
+        }
+
+        assert_eq!(fallible(true).unwrap(), "success");
+        let err = fallible(false).unwrap_err();
+        assert!(matches!(err, BeaconError::TypeError(TypeError::UndefinedTypeVar(tv)) if tv.id == 0));
+    }
+}
