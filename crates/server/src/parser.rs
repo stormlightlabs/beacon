@@ -6,7 +6,7 @@
 //! - Parse tree caching
 //! - Error recovery and diagnostics
 
-use crate::utils::{position_to_byte_offset, tree_sitter_point_to_position};
+use crate::utils;
 use beacon_core::{Result, errors};
 use beacon_parser::{AstNode, ParsedFile, PythonParser, SymbolTable};
 use lsp_types::{Position, Range};
@@ -16,29 +16,22 @@ use tree_sitter::{InputEdit, Parser, Point, Tree};
 
 /// LSP-specific parser that manages incremental updates
 ///
-/// Maintains parse state for a single document and supports efficient
-/// reparsing when document content changes.
+/// Maintains parse state for a single document and supports efficient reparsing when document content changes.
 pub struct LspParser {
     parser: PythonParser,
     ts_parser: Parser,
 }
 
 /// Result of parsing a document including all derived artifacts
-///
-/// Contains the parse tree, AST, symbol table, and any errors encountered.
 pub struct ParseResult {
     /// The tree-sitter concrete syntax tree
     pub tree: Tree,
-
     /// Our typed AST representation
     pub ast: AstNode,
-
     /// Symbol table from name resolution
     pub symbol_table: SymbolTable,
-
     /// Document text as a Rope for efficient operations
     pub rope: Arc<Rope>,
-
     /// Parse errors (syntax errors from tree-sitter)
     pub errors: Vec<ParseError>,
 }
@@ -59,7 +52,6 @@ pub enum ErrorSeverity {
 }
 
 impl LspParser {
-    /// Create a new LSP parser instance
     pub fn new() -> Result<Self> {
         let parser = PythonParser::new()?;
 
@@ -74,8 +66,7 @@ impl LspParser {
 
     /// Parse a document from scratch
     ///
-    /// This performs a full parse of the document and generates the AST
-    /// and symbol table.
+    /// This performs a full parse of the document and generates the AST and symbol table.
     pub fn parse(&mut self, text: &str) -> Result<ParseResult> {
         let parsed = self.parser.parse(text)?;
         let ast = self.parser.to_ast(&parsed)?;
@@ -115,26 +106,18 @@ impl LspParser {
     }
 
     /// Convert LSP text edits to tree-sitter InputEdits
-    ///
-    /// TODO: Properly implement edit conversion with accurate position tracking
-    /// 1. Convert positions to tree-sitter Points
-    ///     TODO: Properly convert using rope
-    /// 2. Calculate new end point
-    ///     TODO: Accurately compute new end point based on inserted text
     fn convert_edits(&self, old_text: &str, _new_text: &str, edits: &[TextEdit]) -> Vec<InputEdit> {
         let mut input_edits = Vec::new();
 
         for edit in edits {
-            let start_byte = position_to_byte_offset(old_text, edit.range.start);
-            let old_end_byte = position_to_byte_offset(old_text, edit.range.end);
-
+            let start_byte = utils::position_to_byte_offset(old_text, edit.range.start);
+            let old_end_byte = utils::position_to_byte_offset(old_text, edit.range.end);
             let new_end_byte = start_byte + edit.new_text.len();
 
             let start_point =
                 Point { row: edit.range.start.line as usize, column: edit.range.start.character as usize };
 
             let old_end_point = Point { row: edit.range.end.line as usize, column: edit.range.end.character as usize };
-
             let new_end_point = self.calculate_new_end_point(start_point, &edit.new_text);
 
             input_edits.push(InputEdit {
@@ -151,8 +134,6 @@ impl LspParser {
     }
 
     /// Calculate the end position after inserting text
-    ///
-    /// TODO: Handle multi-line inserts accurately
     fn calculate_new_end_point(&self, start: Point, inserted_text: &str) -> Point {
         let newline_count = inserted_text.matches('\n').count();
 
@@ -180,17 +161,19 @@ impl LspParser {
     fn collect_errors_recursive(&self, node: tree_sitter::Node, text: &str, errors: &mut Vec<ParseError>) {
         if node.is_error() || node.is_missing() {
             let range = Range {
-                start: tree_sitter_point_to_position(text, node.start_position()),
-                end: tree_sitter_point_to_position(text, node.end_position()),
+                start: utils::tree_sitter_point_to_position(text, node.start_position()),
+                end: utils::tree_sitter_point_to_position(text, node.end_position()),
             };
 
-            let message = if node.is_missing() {
-                format!("Missing {}", node.kind())
-            } else {
-                format!("Syntax error: unexpected {}", node.kind())
-            };
-
-            errors.push(ParseError { message, range, severity: ErrorSeverity::Error });
+            errors.push(ParseError {
+                message: if node.is_missing() {
+                    format!("Missing {}", node.kind())
+                } else {
+                    format!("Syntax error: unexpected {}", node.kind())
+                },
+                range,
+                severity: ErrorSeverity::Error,
+            });
         }
 
         let mut cursor = node.walk();
@@ -201,15 +184,17 @@ impl LspParser {
 
     /// Find the AST node at a given position
     ///
-    /// TODO: Implement efficient position-to-node lookup using tree-sitter node_at_position
-    /// TODO: Convert position to byte offset, use tree.root_node().descendant_for_byte_range
-    pub fn node_at_position(&self, _tree: &Tree, _text: &str, _position: Position) -> Option<tree_sitter::Node> {
-        None
+    /// Returns the most specific (deepest) node at the given position.
+    pub fn node_at_position<'a>(
+        &self, tree: &'a Tree, text: &str, position: Position,
+    ) -> Option<tree_sitter::Node<'a>> {
+        let byte_offset = utils::position_to_byte_offset(text, position);
+        tree.root_node().descendant_for_byte_range(byte_offset, byte_offset)
     }
 
     /// Get the range of a tree-sitter node as an LSP range
     pub fn node_range(&self, node: tree_sitter::Node, text: &str) -> Range {
-        crate::utils::tree_sitter_range_to_lsp_range(text, node.range())
+        utils::tree_sitter_range_to_lsp_range(text, node.range())
     }
 }
 
@@ -221,7 +206,7 @@ impl Default for LspParser {
 
 /// Represents a text edit operation
 ///
-/// Similar to LSP TextEdit but designed for internal use.
+/// Similar to [`lsp_types::TextEdit`] but used internally
 #[derive(Debug, Clone)]
 pub struct TextEdit {
     pub range: Range,
@@ -248,9 +233,7 @@ mod tests {
     fn test_simple_parse() {
         let mut parser = LspParser::new().unwrap();
         let source = "def hello(name):\n    return f'Hello {name}'";
-
         let result = parser.parse(source).unwrap();
-
         assert!(!result.tree.root_node().has_error());
         assert!(result.errors.is_empty());
     }
@@ -259,10 +242,7 @@ mod tests {
     fn test_parse_with_errors() {
         let mut parser = LspParser::new().unwrap();
         let source = "def incomplete(";
-
         let result = parser.parse(source).unwrap();
-
-        // Tree-sitter should recover but report errors
         assert!(result.tree.root_node().child_count() > 0);
     }
 
@@ -278,8 +258,6 @@ result = greet("World")
 "#;
 
         let result = parser.parse(source).unwrap();
-
-        // Check symbol table has the function
         let root_scope = result.symbol_table.root_scope;
         let greet = result.symbol_table.lookup_symbol("greet", root_scope);
         assert!(greet.is_some());
@@ -291,7 +269,6 @@ result = greet("World")
     #[test]
     fn test_calculate_new_end_point() {
         let parser = LspParser::new().unwrap();
-
         let start = Point { row: 0, column: 5 };
         let end = parser.calculate_new_end_point(start, "hello");
         assert_eq!(end.row, 0);
@@ -300,5 +277,22 @@ result = greet("World")
         let end = parser.calculate_new_end_point(start, "hello\nworld");
         assert_eq!(end.row, 1);
         assert_eq!(end.column, 5);
+    }
+
+    #[test]
+    fn test_node_at_position() {
+        let mut parser = LspParser::new().unwrap();
+        let source = "def hello():\n    return 42";
+
+        let result = parser.parse(source).unwrap();
+        let pos = Position { line: 0, character: 4 };
+        let node = parser.node_at_position(&result.tree, source, pos);
+        assert!(node.is_some());
+
+        let pos = Position { line: 1, character: 11 };
+        let node = parser.node_at_position(&result.tree, source, pos);
+        assert!(node.is_some());
+        let node = node.unwrap();
+        assert_eq!(node.kind(), "integer");
     }
 }

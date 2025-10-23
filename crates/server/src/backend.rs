@@ -43,18 +43,15 @@ struct Features {
     inlay_hints: InlayHintsProvider,
     code_actions: CodeActionsProvider,
     semantic_tokens: SemanticTokensProvider,
+    document_symbols: DocumentSymbolsProvider,
 }
 
 impl Backend {
-    /// Create a new backend instance
     pub fn new(client: Client) -> Self {
         let config = Config::default();
         let documents = Arc::new(DocumentManager::new().expect("Failed to create document manager"));
-
         let analyzer = Arc::new(RwLock::new(Analyzer::new(config.clone(), (*documents).clone())));
-
         let workspace = Arc::new(RwLock::new(Workspace::new(None, config, (*documents).clone())));
-
         let features = Arc::new(Features {
             diagnostics: DiagnosticProvider::new((*documents).clone()),
             hover: HoverProvider::new((*documents).clone()),
@@ -64,6 +61,7 @@ impl Backend {
             inlay_hints: InlayHintsProvider::new((*documents).clone()),
             code_actions: CodeActionsProvider::new((*documents).clone()),
             semantic_tokens: SemanticTokensProvider::new((*documents).clone()),
+            document_symbols: DocumentSymbolsProvider::new((*documents).clone()),
         });
 
         Self { client, documents, analyzer, workspace, features }
@@ -120,6 +118,7 @@ impl LanguageServer for Backend {
                         work_done_progress_options: WorkDoneProgressOptions::default(),
                     },
                 )),
+                document_symbol_provider: Some(OneOf::Left(true)),
                 // TODO: Add more capabilities as features are implemented
                 ..Default::default()
             },
@@ -228,12 +227,15 @@ impl LanguageServer for Backend {
         Ok(self.features.semantic_tokens.semantic_tokens_range(params))
     }
 
+    async fn document_symbol(&self, params: DocumentSymbolParams) -> Result<Option<DocumentSymbolResponse>> {
+        Ok(self.features.document_symbols.document_symbols(params))
+    }
+
     // TODO: Implement additional LSP methods:
     // - formatting
     // - range_formatting
     // - on_type_formatting
     // - rename
-    // - document_symbol
     // - workspace_symbol
     // - execute_command
 }

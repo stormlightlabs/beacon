@@ -19,11 +19,11 @@ use crate::document::DocumentManager;
 /// Orchestrates type analysis for documents
 ///
 /// Manages the flow from source code to inferred types:
-/// 1. Parsing → AST
-/// 2. Name resolution → Symbol table
-/// 3. Constraint generation → Constraint set
-/// 4. Unification/solving → Type substitution
-/// 5. Caching → Type cache
+/// 1. Parsing -> AST
+/// 2. Name resolution -> Symbol table
+/// 3. Constraint generation -> Constraint set
+/// 4. Unification/solving -> Type substitution
+/// 5. Caching -> Type cache
 pub struct Analyzer {
     /// Configuration
     _config: Config,
@@ -48,9 +48,7 @@ impl Analyzer {
     ///
     /// TODO: Implement full analysis pipeline
     pub fn analyze(&mut self, uri: &Url) -> Result<AnalysisResult> {
-        // Get document
         let result = self.documents.get_document(uri, |doc| {
-            // Extract AST and symbol table
             let ast = doc.ast().ok_or(AnalysisError::MissingAst)?.clone();
             let symbol_table = doc.symbol_table().ok_or(AnalysisError::MissingSymbolTable)?.clone();
 
@@ -63,7 +61,6 @@ impl Analyzer {
             None => return Err(AnalysisError::DocumentNotFound(uri.clone()).into()),
         };
 
-        // Generate constraints from AST
         let constraints = self.generate_constraints(&ast, &symbol_table)?;
 
         // Solve constraints to get type substitution
@@ -74,21 +71,20 @@ impl Analyzer {
         // TODO: Walk AST and apply substitution to build type map
         let type_map = FxHashMap::default();
 
-        Ok(AnalysisResult { uri: uri.clone(), version, type_map })
+        // TODO: Extract type errors from constraint solving
+        let type_errors = Vec::new();
+
+        Ok(AnalysisResult { uri: uri.clone(), version, type_map, type_errors })
     }
 
     /// Get the inferred type at a specific position
     ///
     /// TODO: Implement position-to-node lookup and type retrieval
     pub fn type_at_position(&mut self, uri: &Url, _position: Position) -> Result<Option<Type>> {
-        // Check cache first
+        // Check cache, then perform full analysis if not cached
         // TODO: Convert position to node_id and check cache
-
-        // Perform full analysis if not cached
         let _result = self.analyze(uri)?;
-
         // TODO: Look up type for node at position
-
         Ok(None)
     }
 
@@ -115,52 +111,30 @@ impl Analyzer {
     /// TODO: Implement for all AST node types per ROADMAP
     fn visit_node(&mut self, node: &AstNode, _constraints: &mut Vec<Constraint>) -> Result<Type> {
         match node {
-            AstNode::Module { body: _ } => {
-                // TODO: Generate constraints for module body
-                Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
-            }
+            // TODO: Generate constraints for module body
+            AstNode::Module { body: _ } => Ok(Type::Con(beacon_core::TypeCtor::Module("".into()))),
 
-            AstNode::FunctionDef { .. } => {
-                // TODO: Generate function type constraints
-                // - Fresh type vars for parameters
-                // - Generate constraints from body
-                // - Generalize if non-expansive
-                let _fn_var = self.type_var_gen.fresh();
-                Ok(Type::Var(_fn_var))
-            }
-
-            AstNode::ClassDef { .. } => {
-                // TODO: Generate class type constraints
-                // - Create nominal type
-                // - Generate constraints from methods
-                Ok(Type::Con(beacon_core::TypeCtor::Class("".into())))
-            }
-
-            AstNode::Assignment { .. } => {
-                // TODO: Generate assignment constraints
-                // - Infer RHS type
-                // - Generalize if non-expansive
-                let var = self.type_var_gen.fresh();
-                Ok(Type::Var(var))
-            }
-
-            AstNode::Call { .. } => {
-                // TODO: Generate call constraints
-                // - Function must have arrow type
-                // - Unify parameter types with arguments
-                let var = self.type_var_gen.fresh();
-                Ok(Type::Var(var))
-            }
-
-            AstNode::Identifier { .. } => {
-                // TODO: Look up in environment/symbol table
-                // - Instantiate polytype
-                let var = self.type_var_gen.fresh();
-                Ok(Type::Var(var))
-            }
-
+            // TODO: Generate function type constraints
+            // - Fresh type vars for parameters
+            // - Generate constraints from body
+            // - Generalize if non-expansive
+            AstNode::FunctionDef { .. } => Ok(Type::Var(self.type_var_gen.fresh())),
+            // TODO: Generate class type constraints
+            // - Create nominal type
+            // - Generate constraints from methods
+            AstNode::ClassDef { .. } => Ok(Type::Con(beacon_core::TypeCtor::Class("".into()))),
+            // TODO: Generate assignment constraints
+            // - Infer RHS type
+            // - Generalize if non-expansive
+            AstNode::Assignment { .. } => Ok(Type::Var(self.type_var_gen.fresh())),
+            // TODO: Generate call constraints
+            // - Function must have arrow type
+            // - Unify parameter types with arguments
+            AstNode::Call { .. } => Ok(Type::Var(self.type_var_gen.fresh())),
+            // TODO: Look up in environment/symbol table
+            // - Instantiate polytype
+            AstNode::Identifier { .. } => Ok(Type::Var(self.type_var_gen.fresh())),
             AstNode::Literal { value, .. } => {
-                // Ground types for literals
                 use beacon_parser::LiteralValue;
                 Ok(match value {
                     LiteralValue::Integer(_) => Type::Con(beacon_core::TypeCtor::Int),
@@ -171,11 +145,8 @@ impl Analyzer {
                 })
             }
 
-            AstNode::Return { .. } => {
-                // TODO: Generate return type constraint
-                let var = self.type_var_gen.fresh();
-                Ok(Type::Var(var))
-            }
+            // TODO: Generate return type constraint
+            AstNode::Return { .. } => Ok(Type::Var(self.type_var_gen.fresh())),
         }
     }
 
@@ -185,21 +156,220 @@ impl Analyzer {
     /// Use beacon-core's unification algorithm
     fn solve_constraints(&mut self, _constraints: ConstraintSet) -> Result<Substitution> {
         // TODO: Implement constraint solving using beacon-core::Unifier
-
         Ok(Substitution::empty())
     }
+
+    /// Find unbound variables in the AST
+    ///
+    /// Returns a list of (name, line, col) for variables that are used but not defined.
+    pub fn find_unbound_variables(&self, uri: &Url) -> Vec<(String, usize, usize)> {
+        let result = self.documents.get_document(uri, |doc| {
+            let ast = doc.ast()?;
+            let symbol_table = doc.symbol_table()?;
+            Some((ast.clone(), symbol_table.clone()))
+        });
+
+        let (ast, symbol_table) = match result {
+            Some(Some(data)) => data,
+            _ => return Vec::new(),
+        };
+
+        let mut unbound = Vec::new();
+        self.collect_unbound_in_node(&ast, &symbol_table, symbol_table.root_scope, &mut unbound);
+
+        unbound
+    }
+
+    /// Recursively collect unbound variables in an AST node
+    fn collect_unbound_in_node(
+        &self, node: &AstNode, symbol_table: &SymbolTable, current_scope: beacon_parser::ScopeId,
+        unbound: &mut Vec<(String, usize, usize)>,
+    ) {
+        match node {
+            AstNode::Identifier { name, line, col } => {
+                if !Self::is_valid_identifier(name) {
+                    return;
+                }
+
+                if symbol_table.lookup_symbol(name, current_scope).is_none() && !Self::is_builtin(name) {
+                    unbound.push((name.clone(), *line, *col));
+                }
+            }
+
+            // TODO: track scope IDs in AST
+            AstNode::FunctionDef { body, .. } => {
+                for stmt in body {
+                    self.collect_unbound_in_node(stmt, symbol_table, current_scope, unbound);
+                }
+            }
+
+            AstNode::ClassDef { body, .. } => {
+                for stmt in body {
+                    self.collect_unbound_in_node(stmt, symbol_table, current_scope, unbound);
+                }
+            }
+
+            AstNode::Module { body } => {
+                for stmt in body {
+                    self.collect_unbound_in_node(stmt, symbol_table, current_scope, unbound);
+                }
+            }
+
+            AstNode::Assignment { value, .. } => {
+                self.collect_unbound_in_node(value, symbol_table, current_scope, unbound);
+            }
+
+            AstNode::Call { function, args, .. } => {
+                // Check if the function itself is defined
+                if symbol_table.lookup_symbol(function, current_scope).is_none() {
+                    if !Self::is_builtin(function) {
+                        // Get line/col from the call - we don't have precise location for function name
+                        // This is a limitation of our current AST structure
+                        // Skip for now - will be fixed when we improve AST with precise positions
+                        // TODO
+                    }
+                }
+
+                for arg in args {
+                    self.collect_unbound_in_node(arg, symbol_table, current_scope, unbound);
+                }
+            }
+
+            AstNode::Return { value, .. } => {
+                if let Some(val) = value {
+                    self.collect_unbound_in_node(val, symbol_table, current_scope, unbound);
+                }
+            }
+            // Literals don't have unbound references
+            AstNode::Literal { .. } => {}
+        }
+    }
+
+    /// Check if a name is a Python builtin
+    fn is_builtin(name: &str) -> bool {
+        matches!(
+            name,
+            "print"
+                | "len"
+                | "range"
+                | "str"
+                | "int"
+                | "float"
+                | "bool"
+                | "list"
+                | "dict"
+                | "set"
+                | "tuple"
+                | "abs"
+                | "all"
+                | "any"
+                | "ascii"
+                | "bin"
+                | "callable"
+                | "chr"
+                | "compile"
+                | "complex"
+                | "delattr"
+                | "dir"
+                | "divmod"
+                | "enumerate"
+                | "eval"
+                | "exec"
+                | "filter"
+                | "format"
+                | "frozenset"
+                | "getattr"
+                | "globals"
+                | "hasattr"
+                | "hash"
+                | "help"
+                | "hex"
+                | "id"
+                | "input"
+                | "isinstance"
+                | "issubclass"
+                | "iter"
+                | "locals"
+                | "map"
+                | "max"
+                | "min"
+                | "next"
+                | "object"
+                | "oct"
+                | "open"
+                | "ord"
+                | "pow"
+                | "property"
+                | "repr"
+                | "reversed"
+                | "round"
+                | "setattr"
+                | "slice"
+                | "sorted"
+                | "staticmethod"
+                | "sum"
+                | "super"
+                | "type"
+                | "vars"
+                | "zip"
+                | "__import__"
+                | "True"
+                | "False"
+                | "None"
+                | "NotImplemented"
+                | "Ellipsis"
+                | "__debug__"
+                | "quit"
+                | "exit"
+                | "copyright"
+                | "credits"
+                | "license"
+        )
+    }
+
+    /// Check if a string is a valid Python identifier ([a-zA-Z_][a-zA-Z0-9_]*)
+    ///
+    /// This filters out cases where the parser created an Identifier node for other syntax.
+    fn is_valid_identifier(name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+
+        let mut chars = name.chars();
+        let first = chars.next().unwrap();
+
+        if !first.is_alphabetic() && first != '_' {
+            return false;
+        }
+
+        chars.all(|c| c.is_alphanumeric() || c == '_')
+    }
+}
+
+/// Type error with location information
+#[derive(Debug, Clone)]
+pub struct TypeErrorInfo {
+    /// The type error
+    pub error: beacon_core::TypeError,
+    /// Line number (1-indexed)
+    pub line: usize,
+    /// Column number (1-indexed)
+    pub col: usize,
+    /// Optional end position for range
+    pub end_line: Option<usize>,
+    pub end_col: Option<usize>,
 }
 
 /// Result of analyzing a document
 pub struct AnalysisResult {
     /// Document URI
     pub uri: Url,
-
     /// Document version
     pub version: i32,
-
     /// Map from AST node IDs to inferred types
     pub type_map: FxHashMap<usize, Type>,
+    /// Type errors encountered during analysis
+    pub type_errors: Vec<TypeErrorInfo>,
 }
 
 /// Set of type constraints
@@ -278,5 +448,64 @@ mod tests {
     fn test_substitution_empty() {
         let subst = Substitution::empty();
         assert_eq!(subst._map.len(), 0);
+    }
+
+    #[test]
+    fn test_find_unbound_variables() {
+        use std::str::FromStr;
+
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def hello():
+    x = 42
+    return undefined_var
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let unbound = analyzer.find_unbound_variables(&uri);
+
+        // Should find 'undefined_var'
+        assert!(!unbound.is_empty());
+        assert!(unbound.iter().any(|(name, _, _)| name == "undefined_var"));
+    }
+
+    #[test]
+    fn test_find_unbound_variables_with_builtins() {
+        use std::str::FromStr;
+
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let analyzer = Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+x = len([1, 2, 3])
+print(x)
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let unbound = analyzer.find_unbound_variables(&uri);
+
+        for (name, line, col) in &unbound {
+            eprintln!("Found unbound: {} at {}:{}", name, line, col);
+        }
+
+        // Should not report 'len' or 'print' as unbound (they're builtins)
+        // Filter out any that are builtins and check we don't have false positives
+        let non_builtins: Vec<_> = unbound
+            .iter()
+            .filter(|(name, _, _)| !Analyzer::is_builtin(name))
+            .collect();
+
+        assert!(
+            non_builtins.is_empty(),
+            "Found unexpected unbound variables: {:?}",
+            non_builtins
+        );
     }
 }

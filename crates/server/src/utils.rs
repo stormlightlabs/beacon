@@ -1,8 +1,7 @@
 //! Utility functions for LSP operations
 //!
-//! This module provides essential conversion utilities for working with LSP positions,
-//! ranges, and URIs. The LSP protocol uses UTF-16 character offsets while Rust strings
-//! are UTF-8, requiring careful conversion.
+//! This module provides essential conversion utilities for working with LSP positions, ranges, and URIs.
+//! The LSP uses UTF-16 character offsets while Rust strings are UTF-8, requiring careful conversion through [`ropey`].
 
 use lsp_types::{Position, Range};
 use ropey::Rope;
@@ -11,11 +10,9 @@ use url::Url;
 
 /// Convert a byte offset in UTF-8 text to an LSP Position (line, UTF-16 character offset)
 ///
-/// The LSP protocol requires positions to be expressed as (line, character) where:
+/// The LSP spec requires positions to be expressed as (line, character) where:
 /// - line is zero-indexed
 /// - character is the UTF-16 code unit offset from the start of the line
-///
-/// TODO: Implement using Ropey for efficient line indexing
 pub fn byte_offset_to_position(text: &str, offset: usize) -> Position {
     let rope = Rope::from_str(text);
     let line_idx = rope.byte_to_line(offset.min(rope.len_bytes()));
@@ -30,8 +27,6 @@ pub fn byte_offset_to_position(text: &str, offset: usize) -> Position {
 }
 
 /// Convert an LSP Position to a byte offset in UTF-8 text
-///
-/// TODO: Implement using Ropey for efficient position lookup
 pub fn position_to_byte_offset(text: &str, position: Position) -> usize {
     let rope = Rope::from_str(text);
     let line_idx = position.line as usize;
@@ -43,8 +38,6 @@ pub fn position_to_byte_offset(text: &str, position: Position) -> usize {
     let line_start = rope.line_to_byte(line_idx);
     let line = rope.line(line_idx);
     let line_str = line.to_string();
-
-    // Convert UTF-16 character offset to UTF-8 byte offset within line
     let utf8_offset = utf16_to_utf8_offset(&line_str, position.character as usize);
 
     line_start + utf8_offset
@@ -61,7 +54,7 @@ pub fn utf8_to_utf16_offset(text: &str, byte_offset: usize) -> usize {
 
 /// Convert UTF-16 code unit offset to UTF-8 byte offset within a string
 ///
-/// The inverse of `utf8_to_utf16_offset`.
+/// The inverse of [`utf8_to_utf16_offset`].
 pub fn utf16_to_utf8_offset(text: &str, utf16_offset: usize) -> usize {
     let mut utf16_count = 0;
 
@@ -91,17 +84,23 @@ pub fn byte_offsets_to_range(text: &str, start: usize, end: usize) -> Range {
 ///
 /// Tree-sitter uses (row, column) where column is a byte offset.
 /// LSP uses (line, character) where character is a UTF-16 offset.
-///
-/// TODO: Implement proper conversion accounting for UTF-16
-pub fn tree_sitter_point_to_position(_text: &str, point: tree_sitter::Point) -> Position {
-    // For now, assuming ASCII-compatible text (1 byte = 1 UTF-16 code unit)
-    // TODO: Properly convert column byte offset to UTF-16 offset
-    Position { line: point.row as u32, character: point.column as u32 }
+pub fn tree_sitter_point_to_position(text: &str, point: tree_sitter::Point) -> Position {
+    let rope = Rope::from_str(text);
+    let line_idx = point.row.min(rope.len_lines().saturating_sub(1));
+
+    if line_idx >= rope.len_lines() {
+        return Position { line: line_idx as u32, character: 0 };
+    }
+
+    let line = rope.line(line_idx);
+    let line_str = line.to_string();
+
+    let utf16_offset = utf8_to_utf16_offset(&line_str, point.column);
+
+    Position { line: point.row as u32, character: utf16_offset as u32 }
 }
 
 /// Convert tree-sitter Range to LSP Range
-///
-/// TODO: Properly handle UTF-16 conversion for column offsets
 pub fn tree_sitter_range_to_lsp_range(text: &str, range: tree_sitter::Range) -> Range {
     Range {
         start: tree_sitter_point_to_position(text, range.start_point),
@@ -178,13 +177,10 @@ mod tests {
     #[test]
     fn test_position_conversions() {
         let text = "line1\nline2\nline3";
-
-        // Start of second line (offset 6)
         let pos = byte_offset_to_position(text, 6);
         assert_eq!(pos.line, 1);
         assert_eq!(pos.character, 0);
 
-        // Convert back
         let offset = position_to_byte_offset(text, pos);
         assert_eq!(offset, 6);
     }
@@ -202,7 +198,6 @@ mod tests {
     fn test_range_conversions() {
         let text = "hello\nworld";
         let range = Range { start: Position { line: 0, character: 0 }, end: Position { line: 0, character: 5 } };
-
         let (start, end) = range_to_byte_offsets(text, range);
         assert_eq!(start, 0);
         assert_eq!(end, 5);
