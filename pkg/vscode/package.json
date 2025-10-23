@@ -1,0 +1,44 @@
+{
+  "name": "beacon-lsp",
+  "description": "Beacon Language Server - Hindley-Milner type inference for Python",
+  "author": "Stormlight",
+  "license": "MIT",
+  "version": "0.1.0",
+  "repository": { "type": "git", "url": "https://github.com/stormlightlabs/beacon" },
+  "publisher": "stormlight",
+  "categories": ["Programming Languages", "Linters"],
+  "keywords": ["python", "type-inference", "lsp"],
+  "engines": { "vscode": "^1.100.0" },
+  "activationEvents": ["onLanguage:python"],
+  "main": "./client/out/extension",
+  "contributes": {
+    "configuration": {
+      "type": "object",
+      "title": "Beacon LSP Configuration",
+      "properties": {
+        "beacon.trace.server": {
+          "scope": "window",
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the Beacon language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "pnpm compile",
+    "compile": "cd client && tsc -b",
+    "watch": "cd client && tsc -b -w",
+    "lint": "eslint"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.38.0",
+    "@stylistic/eslint-plugin": "^2.9.0",
+    "@types/node": "^22",
+    "dprint": "^0.50.2",
+    "eslint": "^9.38.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.2"
+  }
+}

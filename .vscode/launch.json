@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "extensionHost",
+      "request": "launch",
+      "name": "Launch Beacon Extension",
+      "runtimeExecutable": "${execPath}",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/pkg/vscode",
+        "${workspaceFolder}/samples"
+      ],
+      "outFiles": ["${workspaceFolder}/pkg/vscode/client/out/**/*.js"],
+      "autoAttachChildProcesses": true,
+      "preLaunchTask": "build extension"
+    },
+    {
+      "type": "extensionHost",
+      "request": "launch",
+      "name": "Launch Extension (watch mode)",
+      "runtimeExecutable": "${execPath}",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}/pkg/vscode",
+        "${workspaceFolder}/samples"
+      ],
+      "outFiles": ["${workspaceFolder}/pkg/vscode/client/out/**/*.js"],
+      "autoAttachChildProcesses": true,
+      "preLaunchTask": "pnpm: watch"
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "cargo build (debug)",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["build", "--package", "beacon-lsp"],
+      "group": "build",
+      "presentation": {
+        "panel": "shared",
+        "reveal": "silent"
+      },
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "cargo build (release)",
+      "type": "shell",
+      "command": "cargo",
+      "args": ["build", "--package", "beacon-lsp", "--release"],
+      "group": "build",
+      "presentation": {
+        "panel": "shared",
+        "reveal": "silent"
+      },
+      "problemMatcher": ["$rustc"]
+    },
+    {
+      "label": "pnpm: compile",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["--filter", "beacon-lsp", "compile"],
+      "group": "build",
+      "presentation": {
+        "panel": "dedicated",
+        "reveal": "never"
+      },
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "pnpm: watch",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["--filter", "beacon-lsp", "watch"],
+      "isBackground": true,
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "panel": "dedicated",
+        "reveal": "never"
+      },
+      "problemMatcher": ["$tsc-watch"]
+    },
+    {
+      "label": "build extension",
+      "dependsOn": ["cargo build (debug)", "pnpm: compile"],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      }
+    }
+  ]
+}
