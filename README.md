@@ -1,5 +1,9 @@
 # Beacon
 
+[![codecov](https://codecov.io/gh/stormlightlabs/beacon/branch/main/graph/badge.svg)](https://codecov.io/gh/stormlightlabs/beacon)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Status - CI/CD](https://github.com/stormlightlabs/beacon/actions/workflows/ci.yml/badge.svg)
+
 Beacon is a Rust implementation of the language server protocol & a hindley-milner type system for Python, inspired by languages like F# & OCaml and the work of [Astral](https://astral.sh).
 
 ## Project
@@ -23,25 +27,30 @@ The system should support Python’s dynamic features thoughtfully, interoperate
 
 ### Why HM for Python?
 
-- HM type systems provide principled inference (no annotations required), compositional reasoning, strong guarantees, & fast unification-based algorithms (Algorithm W family).
-- Challenges (related to type checking a dynamic language like Python)
-    - Pervasive dynamism (monkey-patching, `__getattr__`, metaclasses, duck typing, runtime reflection),
-    - Nominal & structural patterns mixed
-    - Subtyping-ish expectations (`None`, unions, protocols)
-    - First-class classes & functions
-    - Decorators
-    - Generators
-    - Async
-    - Pattern matching (PEP 634).
+HM type systems provide principled inference (no annotations required), compositional reasoning, strong guarantees, & fast unification-based algorithms (Algorithm W family).
+
+#### Challenges
+
+- Pervasive dynamism (monkey-patching, `__getattr__`, metaclasses, duck typing, runtime reflection),
+- Nominal & structural patterns mixed
+- Subtyping-ish expectations (`None`, unions, protocols)
+- First-class classes & functions
+- Decorators
+- Generators
+- Async
+- Pattern matching (PEP 634).
 
 ### Design
 
 **HM core + pragmatic extensions**, with a **gradual boundary** to accommodate Python idioms and annotations:
 
-- HM for expressions and local bindings.
-- Controlled **subtyping-like** features via **union/optionals** and **protocols/structural constraints**.
-- **Annotation-aware**: treat PEP 484/PEP 695 types as constraints and hints.
-- **Soundness modes**: "strict", "balanced", "loose" (affecting treatment of `Any`, unknown attributes, dynamic imports).
+HM for expressions and local bindings.
+
+Controlled **subtyping-like** features via **union/optionals** and **protocols/structural constraints**.
+
+**Annotation-aware**: treat PEP 484/PEP 695 types as constraints and hints.
+
+**Soundness modes**: "strict", "balanced", "loose" (affecting treatment of `Any`, unknown attributes, dynamic imports).
 
 ## High-Level Architecture
 
@@ -68,7 +77,7 @@ The system should support Python’s dynamic features thoughtfully, interoperate
 │     │  syntax facts) │        │  extensions)       │      │  row/structural)    │ │
 │     └───────▲────────┘        └─────────▲──────────┘      └────────▲────────────┘ │
 │             │                           │                          │              │
-│             └──────── Source → AST  ────┴── Constraints ───────────┘              │
+│             └─────── Source -> AST  ────┴── Constraints ───────────┘              │
 └───────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -149,7 +158,7 @@ The VSCode extension allows you to run and debug the Beacon LSP server locally.
 **Rust Server Logs:**
 
 - Server logs are written to stderr
-- View in Output panel → "Beacon Language Server"
+- View in Output panel -> "Beacon Language Server"
 - Set `RUST_LOG=beacon_lsp=debug` for verbose logging (configured in launch.json)
 
 **TypeScript Client Debugging:**
@@ -160,7 +169,7 @@ The VSCode extension allows you to run and debug the Beacon LSP server locally.
 **LSP Communication:**
 
 - Enable trace in VSCode settings: `"beacon.trace.server": "verbose"`
-- View LSP messages in Output panel → "Beacon Language Server"
+- View LSP messages in Output panel -> "Beacon Language Server"
 
 #### Testing Changes
 
