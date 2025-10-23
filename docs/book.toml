@@ -7,3 +7,5 @@ title = "Beacon.rs"
 
 [output.html]
 mathjax-support = true
+default-theme = "dark"
+preferred-dark-theme = "navy"

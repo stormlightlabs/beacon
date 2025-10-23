@@ -1,6 +1,7 @@
 # Introduction
 
-Beacon is an experimental Python type checker and developer experience platform written in Rust. This documentation set describes the architecture, design decisions, and research that power the project. Whether you are contributing to the codebase, evaluating the language server, or exploring the type system, start here to orient yourself.
+Beacon is an experimental Python type checker and developer experience platform written in Rust.
+This documentation set describes the architecture, design decisions, and research that power the project. Whether you are contributing to the [codebase](https://github.com/stormlightlabs/beacon), evaluating the language server, or exploring the type system, start here to orient yourself.
 
 ## What You’ll Find
 
@@ -27,7 +28,7 @@ Beacon aims to combine precise type checking with interactive tooling that stays
 
 We welcome pull requests and discussions. To get involved:
 
-- Review open issues labeled `good first issue` or `help wanted`.
+- Review open issues
 - Read the upcoming contributor guide (work in progress).
 - Join the conversation in our community channels (details to be added).
 
