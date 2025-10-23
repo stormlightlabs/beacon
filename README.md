@@ -177,21 +177,3 @@ The VSCode extension allows you to run and debug the Beacon LSP server locally.
 2. Rebuild: `cargo build --package beacon-lsp`
 3. Reload Extension Development Host window (Cmd+R / Ctrl+R)
 4. Test with Python files in `samples/`
-
-#### Troubleshooting
-
-**Extension doesn't activate:**
-
-- Check that you're opening a `.py` file
-- Check Output panel for errors
-
-**Server not found:**
-
-- Verify binary exists: `ls target/debug/beacon-lsp`
-- Rebuild: `cargo build --package beacon-lsp`
-
-**No diagnostics/features:**
-
-- Check server logs in Output panel
-- Enable verbose logging: `"beacon.trace.server": "verbose"`
-- Check for Rust compilation errors
