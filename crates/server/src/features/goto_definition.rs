@@ -20,7 +20,7 @@ impl GotoDefinitionProvider {
 
     /// Find the definition of the symbol at a position
     ///
-    /// TODO: Implement using symbol table and name resolution
+    /// Uses symbol table and name resolution with proper scope tracking
     pub fn goto_definition(&self, params: GotoDefinitionParams) -> Option<GotoDefinitionResponse> {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
@@ -28,11 +28,10 @@ impl GotoDefinitionProvider {
         Some(GotoDefinitionResponse::Scalar(definition_location))
     }
 
-    /// Find the definition location for a symbol at a position
+    /// Find the definition location for a symbol at a position by looking up the identifier at the
+    /// given position in the symbol table and returns its definition location.
     ///
-    /// Looks up the identifier at the given position in the symbol table and returns its definition location.
-    ///
-    /// TODO: Implement proper scope resolution - currently uses root_scope which only finds module-level symbols; need position-to-scope mapping for local symbols.
+    /// Uses position-based scope resolution to find symbols in the correct lexical scope.
     fn find_definition(&self, uri: &Url, position: Position) -> Option<Location> {
         self.documents.get_document(uri, |doc| {
             let tree = doc.tree()?;
@@ -45,7 +44,9 @@ impl GotoDefinitionProvider {
                 None
             } else {
                 let identifier_text = node.utf8_text(text.as_bytes()).ok()?;
-                let symbol = symbol_table.lookup_symbol(identifier_text, symbol_table.root_scope)?;
+                let byte_offset = crate::utils::position_to_byte_offset(&text, position);
+                let scope = symbol_table.find_scope_at_position(byte_offset);
+                let symbol = symbol_table.lookup_symbol(identifier_text, scope)?;
                 let range = self.find_identifier_range_at_definition(tree, &text, symbol, identifier_text)?;
                 Some(Location { uri: uri.clone(), range })
             }
@@ -54,25 +55,26 @@ impl GotoDefinitionProvider {
 
     /// Find the range of an identifier at its definition location
     ///
-    /// Symbols store the position of the entire statement (e.g., "def" for functions), but we want to return the range of the actual identifier name.
+    /// Symbols store the position of the entire statement (e.g., "def" for functions), but we want to
+    /// return the range of the actual identifier name.
     fn find_identifier_range_at_definition(
         &self, tree: &tree_sitter::Tree, text: &str, symbol: &beacon_parser::Symbol, identifier_name: &str,
     ) -> Option<lsp_types::Range> {
         let line_idx = symbol.line.saturating_sub(1);
         let byte_col = symbol.col.saturating_sub(1);
-
         let rope = Rope::from_str(text);
+
         if line_idx >= rope.len_lines() {
-            return None;
+            None
+        } else {
+            let symbol_byte_offset = rope.line_to_byte(line_idx) + byte_col;
+            let node = tree
+                .root_node()
+                .descendant_for_byte_range(symbol_byte_offset, symbol_byte_offset)?;
+
+            let identifier_node = Self::find_identifier_node(text, node, identifier_name)?;
+            Some(utils::tree_sitter_range_to_lsp_range(text, identifier_node.range()))
         }
-
-        let symbol_byte_offset = rope.line_to_byte(line_idx) + byte_col;
-        let node = tree
-            .root_node()
-            .descendant_for_byte_range(symbol_byte_offset, symbol_byte_offset)?;
-
-        let identifier_node = Self::find_identifier_node(text, node, identifier_name)?;
-        Some(utils::tree_sitter_range_to_lsp_range(text, identifier_node.range()))
     }
 
     /// Traverses up the tree to find a node matching `identifier_name`.
@@ -143,8 +145,6 @@ impl GotoDefinitionProvider {
         None
     }
 
-    /// Go to type definition (for variables, show the class/type definition)
-    ///
     /// TODO: Implement type definition lookup
     pub fn _goto_type_definition(&self, _uri: &Url, _position: Position) -> Option<Location> {
         // Use type inference to get type of expression
@@ -399,6 +399,70 @@ x = os"#;
                 assert_eq!(location.range.start.line, 0);
                 assert_eq!(location.range.start.character, 0);
                 assert_eq!(location.range.end.character, 4); // "café" in UTF-16 is 4 code units
+            }
+            _ => panic!("Expected scalar location"),
+        }
+    }
+
+    #[test]
+    fn test_goto_definition_local_variable() {
+        let (provider, uri) = create_test_provider();
+        let source = r#"def foo():
+    test_data = [1, 2, 3]
+    result = test_data
+    return result"#;
+        open_test_document(&provider.documents, &uri, source);
+
+        let params = GotoDefinitionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                position: Position { line: 2, character: 13 },
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let result = provider.goto_definition(params);
+        assert!(result.is_some());
+
+        match result.unwrap() {
+            GotoDefinitionResponse::Scalar(location) => {
+                assert_eq!(location.uri, uri);
+                assert_eq!(location.range.start.line, 1);
+                assert_eq!(location.range.start.character, 4);
+            }
+            _ => panic!("Expected scalar location"),
+        }
+    }
+
+    #[test]
+    fn test_goto_definition_nested_function_variable() {
+        let (provider, uri) = create_test_provider();
+        let source = r#"def outer():
+    x = 10
+    def inner():
+        y = x + 5
+        return y
+    return inner()"#;
+        open_test_document(&provider.documents, &uri, source);
+
+        let params = GotoDefinitionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                position: Position { line: 4, character: 15 },
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let result = provider.goto_definition(params);
+        assert!(result.is_some());
+
+        match result.unwrap() {
+            GotoDefinitionResponse::Scalar(location) => {
+                assert_eq!(location.uri, uri);
+                assert_eq!(location.range.start.line, 3); // Definition on line 3
+                assert_eq!(location.range.start.character, 8); // Start of 'y'
             }
             _ => panic!("Expected scalar location"),
         }

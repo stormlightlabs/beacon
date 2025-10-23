@@ -18,6 +18,11 @@ use tokio::sync::RwLock;
 use tower_lsp::{Client, LanguageServer, jsonrpc::Result, lsp_types::*};
 
 /// LSP Backend implements the LSP LanguageServer trait and coordinates all features.
+/// TODO: Implement additional LSP methods:
+/// - formatting
+/// - range_formatting
+/// - on_type_formatting
+/// - execute_command
 pub struct Backend {
     /// LSP client for sending notifications and requests
     client: Client,
@@ -249,12 +254,6 @@ impl LanguageServer for Backend {
     async fn symbol_resolve(&self, params: WorkspaceSymbol) -> Result<WorkspaceSymbol> {
         Ok(self.features.workspace_symbols.symbol_resolve(params))
     }
-
-    // TODO: Implement additional LSP methods:
-    // - formatting
-    // - range_formatting
-    // - on_type_formatting
-    // - execute_command
 }
 
 #[cfg(test)]
@@ -278,7 +277,7 @@ mod tests {
     fn test_features_creation() {
         let service = create_backend();
         let backend = service.inner();
-        // Verify all features are initialized by accessing them
+
         let _ = &backend.features.diagnostics;
         let _ = &backend.features.hover;
         let _ = &backend.features.completion;
@@ -336,8 +335,7 @@ mod tests {
         let service = create_backend();
         let backend = service.inner();
         let params = InitializedParams {};
-        backend.initialized(params).await;
-        // Just verify it doesn't panic
+        let _ = backend.initialized(params).await;
     }
 
     #[tokio::test]
@@ -365,7 +363,6 @@ mod tests {
 
         backend.did_open(params).await;
 
-        // Verify document was opened
         assert!(backend.documents.has_document(&uri));
     }
 
@@ -375,7 +372,6 @@ mod tests {
         let backend = service.inner();
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        // First open the document
         backend
             .documents
             .open_document(uri.clone(), 1, "x = 42".to_string())
@@ -392,7 +388,6 @@ mod tests {
 
         backend.did_change(params).await;
 
-        // Verify document was updated
         let text = backend.documents.get_document(&uri, |doc| doc.text());
         assert_eq!(text, Some("y = 100".to_string()));
     }
@@ -403,7 +398,6 @@ mod tests {
         let backend = service.inner();
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        // Open document first
         backend
             .documents
             .open_document(uri.clone(), 1, "x = 42".to_string())
@@ -413,7 +407,6 @@ mod tests {
 
         backend.did_close(params).await;
 
-        // Verify document was closed
         assert!(!backend.documents.has_document(&uri));
     }
 
@@ -423,7 +416,6 @@ mod tests {
         let backend = service.inner();
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        // Open document first
         backend
             .documents
             .open_document(uri.clone(), 1, "x = 42".to_string())
@@ -432,8 +424,7 @@ mod tests {
         let params =
             DidSaveTextDocumentParams { text_document: TextDocumentIdentifier { uri: uri.clone() }, text: None };
 
-        backend.did_save(params).await;
-        // Just verify it doesn't panic
+        let _ = backend.did_save(params).await;
     }
 
     #[tokio::test]
@@ -745,9 +736,7 @@ mod tests {
             .open_document(uri.clone(), 1, "x = undefined_var".to_string())
             .unwrap();
 
-        // Call publish_diagnostics directly
-        backend.publish_diagnostics(uri).await;
-        // Just verify it doesn't panic
+        let _ = backend.publish_diagnostics(uri).await;
     }
 
     #[tokio::test]
@@ -878,19 +867,18 @@ mod tests {
         let service = create_backend();
         let backend = service.inner();
 
-        // Verify all feature fields exist and are accessible
-        let _diag = &backend.features.diagnostics;
-        let _hover = &backend.features.hover;
-        let _comp = &backend.features.completion;
-        let _goto = &backend.features.goto_definition;
-        let _refs = &backend.features.references;
-        let _hints = &backend.features.inlay_hints;
-        let _actions = &backend.features.code_actions;
-        let _tokens = &backend.features.semantic_tokens;
-        let _symbols = &backend.features.document_symbols;
-        let _highlight = &backend.features.document_highlight;
-        let _rename = &backend.features.rename;
-        let _workspace = &backend.features.workspace_symbols;
+        let _ = &backend.features.diagnostics;
+        let _ = &backend.features.hover;
+        let _ = &backend.features.completion;
+        let _ = &backend.features.goto_definition;
+        let _ = &backend.features.references;
+        let _ = &backend.features.inlay_hints;
+        let _ = &backend.features.code_actions;
+        let _ = &backend.features.semantic_tokens;
+        let _ = &backend.features.document_symbols;
+        let _ = &backend.features.document_highlight;
+        let _ = &backend.features.rename;
+        let _ = &backend.features.workspace_symbols;
     }
 
     #[test]
@@ -898,11 +886,10 @@ mod tests {
         let service = create_backend();
         let backend = service.inner();
 
-        // Verify all components are initialized
-        let _client = &backend.client;
-        let _documents = &backend.documents;
-        let _analyzer = &backend.analyzer;
-        let _workspace = &backend.workspace;
-        let _features = &backend.features;
+        let _ = &backend.client;
+        let _ = &backend.documents;
+        let _ = &backend.analyzer;
+        let _ = &backend.workspace;
+        let _ = &backend.features;
     }
 }

@@ -4,7 +4,8 @@ VSCode extension for Beacon Language Server - Hindley-Milner type inference for 
 
 ## Features
 
-This extension provides advanced type inference and analysis for Python files using the Beacon LSP server. Features include:
+This extension provides advanced type inference and analysis for Python files using the Beacon LSP server.
+Features include:
 
 - Diagnostics (syntax and semantic errors)
 - Hover information (type information)
@@ -18,16 +19,16 @@ This extension provides advanced type inference and analysis for Python files us
 
 ## Structure
 
-```
+```sh
 .
-├── client                  // VSCode Extension Client
+├── client                 # VSCode Extension Client
 │   ├── src
-│   │   ├── test           // E2E tests
-│   │   └── extension.ts   // Extension entry point
-├── package.json           // Extension manifest
+│   │   ├── test           # E2E tests
+│   │   └── extension.ts   # Extension entry point
+├── package.json           # Extension manifest
 └── .vscode
-    ├── launch.json        // Debug configurations
-    └── tasks.json         // Build tasks
+    ├── launch.json        # Debug configurations
+    └── tasks.json         # Build tasks
 ```
 
 The LSP server is implemented in Rust and located at `../../crates/server`.
@@ -35,17 +36,20 @@ The LSP server is implemented in Rust and located at `../../crates/server`.
 ## Development Setup
 
 1. Install dependencies (from project root):
+
    ```bash
    pnpm install
    ```
 
 2. Build the extension and Rust LSP server:
+
    ```bash
    pnpm --filter beacon-lsp compile
-   cargo build --package beacon-lsp
+   cargo build --package=beacon-lsp
    ```
 
 3. Open VSCode in this folder:
+
    ```bash
    code .
    ```
@@ -59,10 +63,10 @@ The LSP server is implemented in Rust and located at `../../crates/server`.
 Open the project root (not `pkg/vscode/`) in VSCode, then press F5.
 
 The launch configuration will:
+
 - Build the Rust LSP server (debug mode)
 - Compile the TypeScript client
 - Open a new VSCode window with the extension loaded
 - Open the `samples/` directory with Python test files
 
 **Note:** Launch configurations are in `../../.vscode/launch.json` at the project root.
-

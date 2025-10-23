@@ -3,7 +3,6 @@ use beacon_core::Result;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 
-/// Represents different kinds of symbols in Python
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SymbolKind {
     Variable,
@@ -44,6 +43,10 @@ pub struct Scope {
     pub parent: Option<ScopeId>,
     pub symbols: FxHashMap<String, Symbol>,
     pub children: Vec<ScopeId>,
+    /// Start byte offset of this scope in the source
+    pub start_byte: usize,
+    /// End byte offset of this scope in the source
+    pub end_byte: usize,
 }
 
 /// Symbol table with scope hierarchy
@@ -67,23 +70,31 @@ impl SymbolTable {
                 parent: None,
                 symbols: FxHashMap::default(),
                 children: Vec::new(),
+                start_byte: 0,
+                end_byte: usize::MAX,
             },
         );
 
         Self { scopes, root_scope: root_id, next_scope_id: 1 }
     }
 
-    /// Create a new scope as a child of the given parent
-    pub fn create_scope(&mut self, kind: ScopeKind, parent: ScopeId) -> ScopeId {
+    /// Create a new scope as a child of the given parent with position information
+    pub fn create_scope(&mut self, kind: ScopeKind, parent: ScopeId, start_byte: usize, end_byte: usize) -> ScopeId {
         let new_id = ScopeId(self.next_scope_id);
         self.next_scope_id += 1;
 
-        let new_scope =
-            Scope { id: new_id, kind, parent: Some(parent), symbols: FxHashMap::default(), children: Vec::new() };
+        let new_scope = Scope {
+            id: new_id,
+            kind,
+            parent: Some(parent),
+            symbols: FxHashMap::default(),
+            children: Vec::new(),
+            start_byte,
+            end_byte,
+        };
 
         self.scopes.insert(new_id, new_scope);
 
-        // Add to parent's children
         if let Some(parent_scope) = self.scopes.get_mut(&parent) {
             parent_scope.children.push(new_id);
         }
@@ -129,25 +140,112 @@ impl SymbolTable {
     pub fn get_scope(&self, scope_id: ScopeId) -> Option<&Scope> {
         self.scopes.get(&scope_id)
     }
+
+    /// Find the innermost scope containing the given byte offset by searching the scope hierarchy to find the most specific scope that contains the given position.
+    /// Returns root_scope if no more specific scope is found.
+    pub fn find_scope_at_position(&self, byte_offset: usize) -> ScopeId {
+        self.find_scope_at_position_recursive(self.root_scope, byte_offset)
+            .unwrap_or(self.root_scope)
+    }
+
+    /// Recursively search for the innermost scope containing byte_offset
+    fn find_scope_at_position_recursive(&self, scope_id: ScopeId, byte_offset: usize) -> Option<ScopeId> {
+        let scope = self.scopes.get(&scope_id)?;
+
+        if byte_offset < scope.start_byte || byte_offset > scope.end_byte {
+            return None;
+        }
+
+        for &child_id in &scope.children {
+            if let Some(child_scope_id) = self.find_scope_at_position_recursive(child_id, byte_offset) {
+                return Some(child_scope_id);
+            }
+        }
+
+        Some(scope_id)
+    }
 }
 
 /// Name resolution context for traversing the AST
 pub struct NameResolver {
     pub symbol_table: SymbolTable,
     current_scope: ScopeId,
+    source: String,
 }
 
 impl NameResolver {
-    pub fn new() -> Self {
+    pub fn new(source: String) -> Self {
         let symbol_table = SymbolTable::new();
         let root_scope = symbol_table.root_scope;
 
-        Self { symbol_table, current_scope: root_scope }
+        Self { symbol_table, current_scope: root_scope, source }
+    }
+
+    /// Convert line and column (1-indexed) to byte offset
+    fn line_col_to_byte_offset(&self, line: usize, col: usize) -> usize {
+        let mut byte_offset = 0;
+        let mut current_line = 1;
+        let mut current_col = 1;
+
+        for ch in self.source.chars() {
+            if current_line == line && current_col == col {
+                return byte_offset;
+            }
+
+            if ch == '\n' {
+                current_line += 1;
+                current_col = 1;
+            } else {
+                current_col += 1;
+            }
+
+            byte_offset += ch.len_utf8();
+        }
+
+        byte_offset
     }
 
     /// Resolve names in an AST and build the symbol table
     pub fn resolve(&mut self, ast: &AstNode) -> Result<()> {
         self.visit_node(ast)
+    }
+
+    /// Get the approximate end byte of a node by finding the end of its last line
+    fn get_node_end_byte(&self, node: &AstNode) -> usize {
+        match node {
+            AstNode::Module { body } => {
+                if let Some(last) = body.last() {
+                    self.get_node_end_byte(last)
+                } else {
+                    self.source.len()
+                }
+            }
+            AstNode::FunctionDef { body, line, col, .. } | AstNode::ClassDef { body, line, col, .. } => {
+                if let Some(last) = body.last() {
+                    self.get_node_end_byte(last)
+                } else {
+                    self.line_col_to_byte_offset(*line, *col) + 50
+                }
+            }
+            AstNode::Assignment { line, col, .. }
+            | AstNode::Call { line, col, .. }
+            | AstNode::Identifier { line, col, .. }
+            | AstNode::Literal { line, col, .. }
+            | AstNode::Return { line, col, .. }
+            | AstNode::Import { line, col, .. }
+            | AstNode::ImportFrom { line, col, .. }
+            | AstNode::Attribute { line, col, .. } => {
+                let start_byte = self.line_col_to_byte_offset(*line, *col);
+                let mut end_byte = start_byte;
+                for (i, ch) in self.source[start_byte..].chars().enumerate() {
+                    if ch == '\n' {
+                        break;
+                    }
+                    end_byte = start_byte + i + ch.len_utf8();
+                }
+                end_byte
+            }
+        }
     }
 
     fn visit_node(&mut self, node: &AstNode) -> Result<()> {
@@ -167,7 +265,16 @@ impl NameResolver {
                 };
                 self.symbol_table.add_symbol(self.current_scope, symbol);
 
-                let func_scope = self.symbol_table.create_scope(ScopeKind::Function, self.current_scope);
+                let start_byte = self.line_col_to_byte_offset(*line, *col);
+                let end_byte = if let Some(last_stmt) = body.last() {
+                    self.get_node_end_byte(last_stmt)
+                } else {
+                    start_byte + name.len()
+                };
+
+                let func_scope =
+                    self.symbol_table
+                        .create_scope(ScopeKind::Function, self.current_scope, start_byte, end_byte);
                 let prev_scope = self.current_scope;
                 self.current_scope = func_scope;
 
@@ -197,7 +304,16 @@ impl NameResolver {
                 };
                 self.symbol_table.add_symbol(self.current_scope, symbol);
 
-                let class_scope = self.symbol_table.create_scope(ScopeKind::Class, self.current_scope);
+                let start_byte = self.line_col_to_byte_offset(*line, *col);
+                let end_byte = if let Some(last_stmt) = body.last() {
+                    self.get_node_end_byte(last_stmt)
+                } else {
+                    start_byte + name.len()
+                };
+
+                let class_scope =
+                    self.symbol_table
+                        .create_scope(ScopeKind::Class, self.current_scope, start_byte, end_byte);
                 let prev_scope = self.current_scope;
                 self.current_scope = class_scope;
 
@@ -224,7 +340,7 @@ impl NameResolver {
                     self.visit_node(arg)?;
                 }
             }
-            // TODO: track Identifier usage
+            // TODO: Track Identifier usage
             AstNode::Identifier { .. } => {}
             // Literals don't affect name resolution
             AstNode::Literal { .. } => {}
@@ -233,7 +349,6 @@ impl NameResolver {
                     self.visit_node(val)?;
                 }
             }
-
             AstNode::Import { module, alias, line, col } => self.symbol_table.add_symbol(
                 self.current_scope,
                 Symbol {
@@ -244,7 +359,6 @@ impl NameResolver {
                     scope_id: self.current_scope,
                 },
             ),
-
             AstNode::ImportFrom { names, line, col, .. } => {
                 for (i, name) in names.iter().enumerate() {
                     self.symbol_table.add_symbol(
@@ -259,7 +373,6 @@ impl NameResolver {
                     );
                 }
             }
-
             AstNode::Attribute { object, .. } => self.visit_node(object)?,
         }
 
@@ -285,7 +398,7 @@ impl Default for SymbolTable {
 
 impl Default for NameResolver {
     fn default() -> Self {
-        Self::new()
+        Self::new(String::new())
     }
 }
 
@@ -303,8 +416,7 @@ mod tests {
     #[test]
     fn test_scope_creation() {
         let mut table = SymbolTable::new();
-        let func_scope = table.create_scope(ScopeKind::Function, table.root_scope);
-
+        let func_scope = table.create_scope(ScopeKind::Function, table.root_scope, 0, 100);
         assert_eq!(table.scopes.len(), 2);
         assert!(table.scopes.contains_key(&func_scope));
 
@@ -316,7 +428,7 @@ mod tests {
     #[test]
     fn test_symbol_lookup() {
         let mut table = SymbolTable::new();
-        let func_scope = table.create_scope(ScopeKind::Function, table.root_scope);
+        let func_scope = table.create_scope(ScopeKind::Function, table.root_scope, 10, 50);
 
         let root_symbol = Symbol {
             name: "global_var".to_string(),
@@ -334,14 +446,14 @@ mod tests {
         assert!(table.lookup_symbol("local_var", func_scope).is_some());
         assert!(table.lookup_symbol("global_var", func_scope).is_some());
         assert!(table.lookup_symbol("nonexistent", func_scope).is_none());
-
         assert!(table.lookup_symbol("global_var", table.root_scope).is_some());
         assert!(table.lookup_symbol("local_var", table.root_scope).is_none());
     }
 
     #[test]
     fn test_name_resolver_basic() {
-        let mut resolver = NameResolver::new();
+        let source = "x = 42".to_string();
+        let mut resolver = NameResolver::new(source);
 
         let ast = AstNode::Assignment {
             target: "x".to_string(),
@@ -359,7 +471,8 @@ mod tests {
 
     #[test]
     fn test_name_resolver_function() {
-        let mut resolver = NameResolver::new();
+        let source = "def test_func(param1, param2):\n    local_var = param1".to_string();
+        let mut resolver = NameResolver::new(source);
 
         let ast = AstNode::FunctionDef {
             name: "test_func".to_string(),
@@ -399,8 +512,79 @@ mod tests {
     }
 
     #[test]
+    fn test_find_scope_at_position() {
+        let source = "x = 1\ndef foo():\n    y = 2\n    z = 3\nw = 4".to_string();
+        let mut resolver = NameResolver::new(source.clone());
+
+        let ast = AstNode::Module {
+            body: vec![
+                AstNode::Assignment {
+                    target: "x".to_string(),
+                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 5 }),
+                    line: 1,
+                    col: 1,
+                },
+                AstNode::FunctionDef {
+                    name: "foo".to_string(),
+                    args: vec![],
+                    body: vec![
+                        AstNode::Assignment {
+                            target: "y".to_string(),
+                            value: Box::new(AstNode::Literal {
+                                value: crate::LiteralValue::Integer(2),
+                                line: 3,
+                                col: 9,
+                            }),
+                            line: 3,
+                            col: 5,
+                        },
+                        AstNode::Assignment {
+                            target: "z".to_string(),
+                            value: Box::new(AstNode::Literal {
+                                value: crate::LiteralValue::Integer(3),
+                                line: 4,
+                                col: 9,
+                            }),
+                            line: 4,
+                            col: 5,
+                        },
+                    ],
+                    line: 2,
+                    col: 1,
+                },
+                AstNode::Assignment {
+                    target: "w".to_string(),
+                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(4), line: 5, col: 5 }),
+                    line: 5,
+                    col: 1,
+                },
+            ],
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        let byte_offset_x = 0;
+        let scope_x = resolver.symbol_table.find_scope_at_position(byte_offset_x);
+        assert_eq!(scope_x, resolver.symbol_table.root_scope);
+
+        let byte_offset_y = 23;
+        let scope_y = resolver.symbol_table.find_scope_at_position(byte_offset_y);
+        assert_ne!(scope_y, resolver.symbol_table.root_scope);
+
+        let y_symbol = resolver.symbol_table.lookup_symbol("y", scope_y);
+        assert!(y_symbol.is_some());
+        assert_eq!(y_symbol.unwrap().kind, SymbolKind::Variable);
+
+        let y_from_root = resolver
+            .symbol_table
+            .lookup_symbol("y", resolver.symbol_table.root_scope);
+        assert!(y_from_root.is_none());
+    }
+
+    #[test]
     fn test_nested_scopes() {
-        let mut resolver = NameResolver::new();
+        let source = "global_var = 1\ndef outer(param):\n    outer_var = 2".to_string();
+        let mut resolver = NameResolver::new(source);
 
         let ast = AstNode::Module {
             body: vec![
@@ -447,7 +631,6 @@ mod tests {
                 .is_some()
         );
         assert!(resolver.symbol_table.lookup_symbol("param", func_scope_id).is_some());
-
         assert!(
             resolver
                 .symbol_table

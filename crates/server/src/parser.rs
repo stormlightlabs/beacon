@@ -16,7 +16,7 @@ use tree_sitter::{InputEdit, Parser, Point, Tree};
 
 /// LSP-specific parser that manages incremental updates
 ///
-/// Maintains parse state for a single document and supports efficient reparsing when document content changes.
+/// Holds parse state for a single document and supports efficient reparsing when document content changes.
 pub struct LspParser {
     parser: PythonParser,
     ts_parser: Parser,
@@ -54,7 +54,6 @@ pub enum ErrorSeverity {
 impl LspParser {
     pub fn new() -> Result<Self> {
         let parser = PythonParser::new()?;
-
         let language = tree_sitter_python::LANGUAGE;
         let mut ts_parser = Parser::new();
         ts_parser
@@ -64,13 +63,11 @@ impl LspParser {
         Ok(Self { parser, ts_parser })
     }
 
-    /// Parse a document from scratch
-    ///
-    /// This performs a full parse of the document and generates the AST and symbol table.
+    /// Perform a full parse on a document from scratch to generate AST & symbol table
     pub fn parse(&mut self, text: &str) -> Result<ParseResult> {
         let parsed = self.parser.parse(text)?;
         let ast = self.parser.to_ast(&parsed)?;
-        let symbol_table = self.parser.resolve_names(&ast)?;
+        let symbol_table = self.parser.resolve_names(&ast, text)?;
         let rope = Arc::new(Rope::from_str(text));
         let errors = self.collect_errors(&parsed.tree, text);
 
@@ -80,8 +77,7 @@ impl LspParser {
     /// Incrementally reparse a document after an edit
     ///
     /// Uses tree-sitter's incremental parsing to efficiently update the parse tree.
-    ///
-    /// TODO: Implement using InputEdit for efficiency
+    /// TODO: Implement using [`InputEdit`] for efficiency
     pub fn reparse(
         &mut self, old_tree: &Tree, old_text: &str, new_text: &str, edits: &[TextEdit],
     ) -> Result<ParseResult> {
@@ -99,7 +95,7 @@ impl LspParser {
 
         let parsed = ParsedFile { tree: new_tree.clone(), source: new_text.to_string() };
         let ast = self.parser.to_ast(&parsed)?;
-        let symbol_table = self.parser.resolve_names(&ast)?;
+        let symbol_table = self.parser.resolve_names(&ast, new_text)?;
         let rope = Arc::new(Rope::from_str(new_text));
         let errors = self.collect_errors(&new_tree, new_text);
         Ok(ParseResult { tree: new_tree, ast, symbol_table, rope, errors })
@@ -182,9 +178,7 @@ impl LspParser {
         }
     }
 
-    /// Find the AST node at a given position
-    ///
-    /// Returns the most specific (deepest) node at the given position.
+    /// Find the most specific (deepest) AST node at a given position
     pub fn node_at_position<'a>(
         &self, tree: &'a Tree, text: &str, position: Position,
     ) -> Option<tree_sitter::Node<'a>> {

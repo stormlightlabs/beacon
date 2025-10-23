@@ -7,7 +7,7 @@ pub mod resolve;
 pub use highlight::PythonHighlighter;
 pub use resolve::{NameResolver, ScopeId, ScopeKind, Symbol, SymbolKind, SymbolTable};
 
-/// Python parser using tree-sitter
+/// Python parser using [`tree_sitter`]
 pub struct PythonParser {
     parser: Parser,
 }
@@ -169,13 +169,11 @@ impl PythonParser {
                 let name = self.extract_identifier(&node, source, "name")?;
                 let args = self.extract_function_args(&node, source)?;
                 let body = self.extract_function_body(&node, source)?;
-
                 Ok(AstNode::FunctionDef { name, args, body, line, col })
             }
             "class_definition" => {
                 let name = self.extract_identifier(&node, source, "name")?;
                 let body = self.extract_class_body(&node, source)?;
-
                 Ok(AstNode::ClassDef { name, body, line, col })
             }
             "expression_statement" => {
@@ -192,15 +190,12 @@ impl PythonParser {
                 Ok(AstNode::Assignment { target, value: Box::new(value), line, col })
             }
             "call" => {
-                // Check if the function is an attribute or identifier
                 let function_node = node
                     .child_by_field_name("function")
                     .ok_or_else(|| ParseError::TreeSitterError("Missing call function".to_string()))?;
 
-                // If the function is an attribute, we need to handle it differently
                 if function_node.kind() == "attribute" {
-                    // For method calls like obj.method(), we want to preserve the structure
-                    // But for now, extract as string for backward compatibility
+                    // TODO: preserve the structure
                     let function = self.extract_call_function(&node, source)?;
                     let args = self.extract_call_args(&node, source)?;
                     Ok(AstNode::Call { function, args, line, col })
@@ -212,17 +207,14 @@ impl PythonParser {
             }
             "identifier" => {
                 let name = node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
-
                 Ok(AstNode::Identifier { name: name.to_string(), line, col })
             }
             "string" | "integer" | "float" | "true" | "false" | "none" => {
                 let value = self.extract_literal_value(&node, source)?;
-
                 Ok(AstNode::Literal { value, line, col })
             }
             "return_statement" => {
                 let value = self.extract_return_value(&node, source)?;
-
                 Ok(AstNode::Return { value: value.map(Box::new), line, col })
             }
             "import_statement" => {
@@ -499,8 +491,8 @@ impl PythonParser {
     }
 
     /// Perform name resolution on an AST and return a symbol table
-    pub fn resolve_names(&self, ast: &AstNode) -> Result<SymbolTable> {
-        let mut resolver = NameResolver::new();
+    pub fn resolve_names(&self, ast: &AstNode, source: &str) -> Result<SymbolTable> {
+        let mut resolver = NameResolver::new(source.to_string());
         resolver.resolve(ast)?;
         Ok(resolver.symbol_table)
     }
@@ -509,7 +501,7 @@ impl PythonParser {
         let parsed = self.parse(source)?;
         let ast = self.to_ast(&parsed)?;
         let symbol_table = self
-            .resolve_names(&ast)
+            .resolve_names(&ast, source)
             .map_err(|e| ParseError::TreeSitterError(format!("Name resolution failed: {}", e)))?;
         Ok((ast, symbol_table))
     }
@@ -816,10 +808,7 @@ result = factorial(5)
             _ => panic!("Expected module"),
         }
 
-        // Check symbol table
         let root_scope = symbol_table.root_scope;
-
-        // Should have 'factorial' function and 'result' variable in module scope
         let factorial_symbol = symbol_table.lookup_symbol("factorial", root_scope);
         assert!(factorial_symbol.is_some());
         assert_eq!(factorial_symbol.unwrap().kind, SymbolKind::Function);
@@ -828,7 +817,6 @@ result = factorial(5)
         assert!(result_symbol.is_some());
         assert_eq!(result_symbol.unwrap().kind, SymbolKind::Variable);
 
-        // Check function scope has parameter
         let func_scope_id = symbol_table.scopes.get(&root_scope).unwrap().children[0];
         let param_symbol = symbol_table.lookup_symbol("n", func_scope_id);
         assert!(param_symbol.is_some());
