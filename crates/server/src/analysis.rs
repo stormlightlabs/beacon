@@ -25,16 +25,9 @@ use crate::document::DocumentManager;
 /// 4. Unification/solving -> Type substitution
 /// 5. Caching -> Type cache
 pub struct Analyzer {
-    /// Configuration
     _config: Config,
-
-    /// Cache manager
     cache: CacheManager,
-
-    /// Type variable generator
     type_var_gen: TypeVarGen,
-
-    /// Document manager
     documents: DocumentManager,
 }
 
@@ -180,6 +173,44 @@ impl Analyzer {
         unbound
     }
 
+    /// Find the function scope for a given function name
+    ///
+    /// When a function is defined, a child scope is created for it.
+    /// This method finds that child scope by looking for a Function-kind scope among the children of the current scope.
+    fn find_function_scope(
+        symbol_table: &SymbolTable, parent_scope: beacon_parser::ScopeId, _function_name: &str,
+    ) -> beacon_parser::ScopeId {
+        if let Some(parent) = symbol_table.scopes.get(&parent_scope) {
+            for &child_id in &parent.children {
+                if let Some(child) = symbol_table.scopes.get(&child_id) {
+                    if child.kind == beacon_parser::ScopeKind::Function {
+                        return child_id;
+                    }
+                }
+            }
+        }
+        parent_scope
+    }
+
+    /// Find the class scope for a given class name
+    ///
+    /// When a class is defined, a child scope is created for it.
+    /// This method finds that child scope by looking for a Class-kind scope among the children of the current scope.
+    fn find_class_scope(
+        symbol_table: &SymbolTable, parent_scope: beacon_parser::ScopeId, _class_name: &str,
+    ) -> beacon_parser::ScopeId {
+        if let Some(parent) = symbol_table.scopes.get(&parent_scope) {
+            for &child_id in &parent.children {
+                if let Some(child) = symbol_table.scopes.get(&child_id) {
+                    if child.kind == beacon_parser::ScopeKind::Class {
+                        return child_id;
+                    }
+                }
+            }
+        }
+        parent_scope
+    }
+
     /// Recursively collect unbound variables in an AST node
     fn collect_unbound_in_node(
         &self, node: &AstNode, symbol_table: &SymbolTable, current_scope: beacon_parser::ScopeId,
@@ -196,16 +227,20 @@ impl Analyzer {
                 }
             }
 
-            // TODO: track scope IDs in AST
-            AstNode::FunctionDef { body, .. } => {
+            AstNode::FunctionDef { name, body, .. } => {
+                let func_scope = Self::find_function_scope(symbol_table, current_scope, name);
+
                 for stmt in body {
-                    self.collect_unbound_in_node(stmt, symbol_table, current_scope, unbound);
+                    self.collect_unbound_in_node(stmt, symbol_table, func_scope, unbound);
                 }
             }
 
-            AstNode::ClassDef { body, .. } => {
+            AstNode::ClassDef { name, body, .. } => {
+                // Find the child scope for this class
+                let class_scope = Self::find_class_scope(symbol_table, current_scope, name);
+
                 for stmt in body {
-                    self.collect_unbound_in_node(stmt, symbol_table, current_scope, unbound);
+                    self.collect_unbound_in_node(stmt, symbol_table, class_scope, unbound);
                 }
             }
 
@@ -234,7 +269,6 @@ impl Analyzer {
                     self.collect_unbound_in_node(arg, symbol_table, current_scope, unbound);
                 }
             }
-
             AstNode::Return { value, .. } => {
                 if let Some(val) = value {
                     self.collect_unbound_in_node(val, symbol_table, current_scope, unbound);
@@ -349,7 +383,6 @@ impl Analyzer {
 /// Type error with location information
 #[derive(Debug, Clone)]
 pub struct TypeErrorInfo {
-    /// The type error
     pub error: beacon_core::TypeError,
     /// Line number (1-indexed)
     pub line: usize,
@@ -468,7 +501,6 @@ def hello():
 
         let unbound = analyzer.find_unbound_variables(&uri);
 
-        // Should find 'undefined_var'
         assert!(!unbound.is_empty());
         assert!(unbound.iter().any(|(name, _, _)| name == "undefined_var"));
     }
@@ -480,7 +512,6 @@ def hello():
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
         let analyzer = Analyzer::new(config, documents.clone());
-
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"
 x = len([1, 2, 3])
@@ -495,8 +526,6 @@ print(x)
             eprintln!("Found unbound: {} at {}:{}", name, line, col);
         }
 
-        // Should not report 'len' or 'print' as unbound (they're builtins)
-        // Filter out any that are builtins and check we don't have false positives
         let non_builtins: Vec<_> = unbound
             .iter()
             .filter(|(name, _, _)| !Analyzer::is_builtin(name))

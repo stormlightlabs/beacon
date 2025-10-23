@@ -17,9 +17,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_lsp::{Client, LanguageServer, jsonrpc::Result, lsp_types::*};
 
-/// Beacon LSP backend
-///
-/// Implements the LSP LanguageServer trait and coordinates all features.
+/// LSP Backend implements the LSP LanguageServer trait and coordinates all features.
 pub struct Backend {
     /// LSP client for sending notifications and requests
     client: Client,
@@ -44,6 +42,9 @@ struct Features {
     code_actions: CodeActionsProvider,
     semantic_tokens: SemanticTokensProvider,
     document_symbols: DocumentSymbolsProvider,
+    document_highlight: DocumentHighlightProvider,
+    rename: RenameProvider,
+    workspace_symbols: WorkspaceSymbolsProvider,
 }
 
 impl Backend {
@@ -62,6 +63,9 @@ impl Backend {
             code_actions: CodeActionsProvider::new((*documents).clone()),
             semantic_tokens: SemanticTokensProvider::new((*documents).clone()),
             document_symbols: DocumentSymbolsProvider::new((*documents).clone()),
+            document_highlight: DocumentHighlightProvider::new((*documents).clone()),
+            rename: RenameProvider::new((*documents).clone()),
+            workspace_symbols: WorkspaceSymbolsProvider::new((*documents).clone()),
         });
 
         Self { client, documents, analyzer, workspace, features }
@@ -161,34 +165,33 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         // let version = params.text_document.version;
 
-        if let Err(e) = self
+        match self
             .documents
             .update_document(params.text_document, params.content_changes)
         {
-            self.client
-                .log_message(MessageType::ERROR, format!("Failed to update document: {}", e))
-                .await;
-            return;
+            Ok(_) => {
+                let mut analyzer = self.analyzer.write().await;
+                analyzer.invalidate(&uri);
+
+                drop(analyzer);
+                self.publish_diagnostics(uri).await;
+            }
+            Err(e) => {
+                self.client
+                    .log_message(MessageType::ERROR, format!("Failed to update document: {}", e))
+                    .await;
+            }
         }
-
-        let mut analyzer = self.analyzer.write().await;
-        analyzer.invalidate(&uri);
-
-        drop(analyzer);
-        self.publish_diagnostics(uri).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
         self.documents.close_document(&uri);
-
         self.client.publish_diagnostics(uri, Vec::new(), None).await;
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
-        let uri = params.text_document.uri;
-
-        self.publish_diagnostics(uri).await;
+        self.publish_diagnostics(params.text_document.uri).await;
     }
 
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
@@ -231,23 +234,675 @@ impl LanguageServer for Backend {
         Ok(self.features.document_symbols.document_symbols(params))
     }
 
+    async fn document_highlight(&self, params: DocumentHighlightParams) -> Result<Option<Vec<DocumentHighlight>>> {
+        Ok(self.features.document_highlight.document_highlight(params))
+    }
+
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        Ok(self.features.rename.rename(params))
+    }
+
+    async fn symbol(&self, params: WorkspaceSymbolParams) -> Result<Option<Vec<SymbolInformation>>> {
+        Ok(self.features.workspace_symbols.workspace_symbol(params))
+    }
+
+    async fn symbol_resolve(&self, params: WorkspaceSymbol) -> Result<WorkspaceSymbol> {
+        Ok(self.features.workspace_symbols.symbol_resolve(params))
+    }
+
     // TODO: Implement additional LSP methods:
     // - formatting
     // - range_formatting
     // - on_type_formatting
-    // - rename
-    // - workspace_symbol
     // - execute_command
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
     use tower_lsp::LspService;
+
+    fn create_backend() -> LspService<Backend> {
+        let (service, _socket) = LspService::new(Backend::new);
+        service
+    }
 
     #[test]
     fn test_backend_creation() {
         let (service, _socket) = LspService::new(Backend::new);
         let _backend = service;
+    }
+
+    #[test]
+    fn test_features_creation() {
+        let service = create_backend();
+        let backend = service.inner();
+        // Verify all features are initialized by accessing them
+        let _ = &backend.features.diagnostics;
+        let _ = &backend.features.hover;
+        let _ = &backend.features.completion;
+        let _ = &backend.features.goto_definition;
+        let _ = &backend.features.references;
+        let _ = &backend.features.inlay_hints;
+        let _ = &backend.features.code_actions;
+        let _ = &backend.features.semantic_tokens;
+        let _ = &backend.features.document_symbols;
+        let _ = &backend.features.document_highlight;
+        let _ = &backend.features.rename;
+        let _ = &backend.features.workspace_symbols;
+    }
+
+    #[tokio::test]
+    async fn test_initialize() {
+        let service = create_backend();
+        let backend = service.inner();
+        let params = InitializeParams {
+            root_uri: Some(Url::from_str("file:///test").unwrap()),
+            capabilities: ClientCapabilities::default(),
+            ..Default::default()
+        };
+
+        let result = backend.initialize(params).await;
+        assert!(result.is_ok());
+
+        let init_result = result.unwrap();
+        assert!(init_result.capabilities.text_document_sync.is_some());
+        assert!(init_result.capabilities.hover_provider.is_some());
+        assert!(init_result.capabilities.completion_provider.is_some());
+        assert!(init_result.capabilities.definition_provider.is_some());
+        assert!(init_result.capabilities.references_provider.is_some());
+        assert!(init_result.capabilities.document_highlight_provider.is_some());
+        assert!(init_result.capabilities.code_action_provider.is_some());
+        assert!(init_result.capabilities.inlay_hint_provider.is_some());
+        assert!(init_result.capabilities.semantic_tokens_provider.is_some());
+        assert!(init_result.capabilities.document_symbol_provider.is_some());
+        assert!(init_result.server_info.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_initialize_without_root_uri() {
+        let service = create_backend();
+        let backend = service.inner();
+        let params =
+            InitializeParams { root_uri: None, capabilities: ClientCapabilities::default(), ..Default::default() };
+
+        let result = backend.initialize(params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_initialized() {
+        let service = create_backend();
+        let backend = service.inner();
+        let params = InitializedParams {};
+        backend.initialized(params).await;
+        // Just verify it doesn't panic
+    }
+
+    #[tokio::test]
+    async fn test_shutdown() {
+        let service = create_backend();
+        let backend = service.inner();
+        let result = backend.shutdown().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_did_open() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        let params = DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: uri.clone(),
+                language_id: "python".to_string(),
+                version: 1,
+                text: "x = 42".to_string(),
+            },
+        };
+
+        backend.did_open(params).await;
+
+        // Verify document was opened
+        assert!(backend.documents.has_document(&uri));
+    }
+
+    #[tokio::test]
+    async fn test_did_change() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        // First open the document
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "x = 42".to_string())
+            .unwrap();
+
+        let params = DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier { uri: uri.clone(), version: 2 },
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: "y = 100".to_string(),
+            }],
+        };
+
+        backend.did_change(params).await;
+
+        // Verify document was updated
+        let text = backend.documents.get_document(&uri, |doc| doc.text());
+        assert_eq!(text, Some("y = 100".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_did_close() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        // Open document first
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "x = 42".to_string())
+            .unwrap();
+
+        let params = DidCloseTextDocumentParams { text_document: TextDocumentIdentifier { uri: uri.clone() } };
+
+        backend.did_close(params).await;
+
+        // Verify document was closed
+        assert!(!backend.documents.has_document(&uri));
+    }
+
+    #[tokio::test]
+    async fn test_did_save() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        // Open document first
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "x = 42".to_string())
+            .unwrap();
+
+        let params =
+            DidSaveTextDocumentParams { text_document: TextDocumentIdentifier { uri: uri.clone() }, text: None };
+
+        backend.did_save(params).await;
+        // Just verify it doesn't panic
+    }
+
+    #[tokio::test]
+    async fn test_hover() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "x = 42".to_string())
+            .unwrap();
+
+        let params = HoverParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line: 0, character: 0 },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        };
+
+        let result = backend.hover(params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_completion() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "x = 42\ny = ".to_string())
+            .unwrap();
+
+        let params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line: 1, character: 4 },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: None,
+        };
+
+        let result = backend.completion(params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_goto_definition() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "def hello():\n    pass".to_string())
+            .unwrap();
+
+        let params = GotoDefinitionParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line: 0, character: 4 },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let result = backend.goto_definition(params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_references() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "x = 42\ny = x".to_string())
+            .unwrap();
+
+        let params = ReferenceParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line: 0, character: 0 },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+            context: ReferenceContext { include_declaration: true },
+        };
+
+        let result = backend.references(params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_inlay_hint() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "x = 42".to_string())
+            .unwrap();
+
+        let params = InlayHintParams {
+            text_document: TextDocumentIdentifier { uri },
+            range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 1, character: 0 } },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        };
+
+        let result = backend.inlay_hint(params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_code_action() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "x = 42".to_string())
+            .unwrap();
+
+        let params = CodeActionParams {
+            text_document: TextDocumentIdentifier { uri },
+            range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 0, character: 6 } },
+            context: CodeActionContext { diagnostics: vec![], only: None, trigger_kind: None },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let result = backend.code_action(params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_semantic_tokens_full() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "x = 42".to_string())
+            .unwrap();
+
+        let params = SemanticTokensParams {
+            text_document: TextDocumentIdentifier { uri },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let result = backend.semantic_tokens_full(params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_semantic_tokens_range() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "x = 42".to_string())
+            .unwrap();
+
+        let params = SemanticTokensRangeParams {
+            text_document: TextDocumentIdentifier { uri },
+            range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 1, character: 0 } },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let result = backend.semantic_tokens_range(params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_document_symbol() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "def hello():\n    pass".to_string())
+            .unwrap();
+
+        let params = DocumentSymbolParams {
+            text_document: TextDocumentIdentifier { uri },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let result = backend.document_symbol(params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_document_highlight() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "x = 42\ny = x".to_string())
+            .unwrap();
+
+        let params = DocumentHighlightParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line: 0, character: 0 },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let result = backend.document_highlight(params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_rename() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "x = 42\ny = x".to_string())
+            .unwrap();
+
+        let params = RenameParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line: 0, character: 0 },
+            },
+            new_name: "renamed_var".to_string(),
+            work_done_progress_params: WorkDoneProgressParams::default(),
+        };
+
+        let result = backend.rename(params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_workspace_symbol() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        backend
+            .documents
+            .open_document(uri, 1, "def hello():\n    pass".to_string())
+            .unwrap();
+
+        let params = WorkspaceSymbolParams {
+            query: "hello".to_string(),
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            partial_result_params: PartialResultParams::default(),
+        };
+
+        let result = backend.symbol(params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_symbol_resolve() {
+        let service = create_backend();
+        let backend = service.inner();
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let location = Location {
+            uri,
+            range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 0, character: 5 } },
+        };
+
+        let symbol = WorkspaceSymbol {
+            name: "test".to_string(),
+            kind: SymbolKind::FUNCTION,
+            tags: None,
+            location: OneOf::Left(location),
+            container_name: None,
+            data: None,
+        };
+
+        let result = backend.symbol_resolve(symbol).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_publish_diagnostics() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "x = undefined_var".to_string())
+            .unwrap();
+
+        // Call publish_diagnostics directly
+        backend.publish_diagnostics(uri).await;
+        // Just verify it doesn't panic
+    }
+
+    #[tokio::test]
+    async fn test_did_change_incremental() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        backend
+            .documents
+            .open_document(uri.clone(), 1, "x = 42".to_string())
+            .unwrap();
+
+        let params = DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier { uri: uri.clone(), version: 2 },
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: Some(Range {
+                    start: Position { line: 0, character: 4 },
+                    end: Position { line: 0, character: 6 },
+                }),
+                range_length: Some(2),
+                text: "100".to_string(),
+            }],
+        };
+
+        backend.did_change(params).await;
+
+        let text = backend.documents.get_document(&uri, |doc| doc.text());
+        assert_eq!(text, Some("x = 100".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_multiple_documents() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri1 = Url::from_str("file:///test1.py").unwrap();
+        let uri2 = Url::from_str("file:///test2.py").unwrap();
+
+        backend
+            .documents
+            .open_document(uri1.clone(), 1, "x = 1".to_string())
+            .unwrap();
+        backend
+            .documents
+            .open_document(uri2.clone(), 1, "y = 2".to_string())
+            .unwrap();
+
+        assert!(backend.documents.has_document(&uri1));
+        assert!(backend.documents.has_document(&uri2));
+
+        backend.documents.close_document(&uri1);
+        assert!(!backend.documents.has_document(&uri1));
+        assert!(backend.documents.has_document(&uri2));
+    }
+
+    #[tokio::test]
+    async fn test_server_info() {
+        let service = create_backend();
+        let backend = service.inner();
+        let params = InitializeParams::default();
+
+        let result = backend.initialize(params).await.unwrap();
+        let server_info = result.server_info.unwrap();
+
+        assert_eq!(server_info.name, "beacon-lsp");
+        assert!(server_info.version.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_text_document_sync_capability() {
+        let service = create_backend();
+        let backend = service.inner();
+        let params = InitializeParams::default();
+
+        let result = backend.initialize(params).await.unwrap();
+        let sync = result.capabilities.text_document_sync.unwrap();
+
+        match sync {
+            TextDocumentSyncCapability::Kind(kind) => {
+                assert_eq!(kind, TextDocumentSyncKind::INCREMENTAL);
+            }
+            _ => panic!("Expected TextDocumentSyncKind"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_completion_trigger_characters() {
+        let service = create_backend();
+        let backend = service.inner();
+        let params = InitializeParams::default();
+
+        let result = backend.initialize(params).await.unwrap();
+        let completion = result.capabilities.completion_provider.unwrap();
+
+        assert!(completion.trigger_characters.is_some());
+        assert!(completion.trigger_characters.unwrap().contains(&".".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_inlay_hint_capability() {
+        let service = create_backend();
+        let backend = service.inner();
+        let params = InitializeParams::default();
+
+        let result = backend.initialize(params).await.unwrap();
+        assert!(result.capabilities.inlay_hint_provider.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_semantic_tokens_legend() {
+        let service = create_backend();
+        let backend = service.inner();
+        let params = InitializeParams::default();
+
+        let result = backend.initialize(params).await.unwrap();
+
+        match result.capabilities.semantic_tokens_provider {
+            Some(SemanticTokensServerCapabilities::SemanticTokensOptions(options)) => {
+                assert!(!options.legend.token_types.is_empty());
+                assert!(!options.legend.token_modifiers.is_empty());
+            }
+            _ => panic!("Expected SemanticTokensOptions"),
+        }
+    }
+
+    #[test]
+    fn test_backend_has_all_features() {
+        let service = create_backend();
+        let backend = service.inner();
+
+        // Verify all feature fields exist and are accessible
+        let _diag = &backend.features.diagnostics;
+        let _hover = &backend.features.hover;
+        let _comp = &backend.features.completion;
+        let _goto = &backend.features.goto_definition;
+        let _refs = &backend.features.references;
+        let _hints = &backend.features.inlay_hints;
+        let _actions = &backend.features.code_actions;
+        let _tokens = &backend.features.semantic_tokens;
+        let _symbols = &backend.features.document_symbols;
+        let _highlight = &backend.features.document_highlight;
+        let _rename = &backend.features.rename;
+        let _workspace = &backend.features.workspace_symbols;
+    }
+
+    #[test]
+    fn test_backend_components() {
+        let service = create_backend();
+        let backend = service.inner();
+
+        // Verify all components are initialized
+        let _client = &backend.client;
+        let _documents = &backend.documents;
+        let _analyzer = &backend.analyzer;
+        let _workspace = &backend.workspace;
+        let _features = &backend.features;
     }
 }
