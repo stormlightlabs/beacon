@@ -1,8 +1,10 @@
 # Research
 
-## Theory
+## Reading List
 
-### Hindley–Milner Type Inference
+### Theory
+
+#### Hindley–Milner Type Inference
 
 1. Principal Type-Schemes for Functional Programs - <https://doi.org/10.1145/582153.582176>
 2. Types and Programming Languages (2002), ch. 22-24
@@ -12,7 +14,7 @@
 6. TypeScript Specification - 2–4 (structural subtyping)
 7. PEP 544 - Protocols: Structural subtyping in Python
 
-### Implementation-Level Concepts
+#### Implementation-Level Concepts
 
 1. Tree-sitter docs: [https://tree-sitter.github.io/tree-sitter/](https://tree-sitter.github.io/tree-sitter/)
 2. "Rust for Rustaceans"

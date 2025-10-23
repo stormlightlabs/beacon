@@ -1,3 +1,18 @@
 # Summary
 
-- [Chapter 1](./chapter_1.md)
+[Introduction](./introduction.md)
+
+- [Beacon LSP](./lsp/index.md)
+    - [Goals And Scope](./lsp/goals.md)
+    - [Architecture Overview](./lsp/architecture.md)
+    - [Document Pipeline](./lsp/document_pipeline.md)
+    - [Feature Providers](./lsp/feature_providers.md)
+    - [Request Lifecycles](./lsp/request_lifecycles.md)
+    - [Workspace Services](./lsp/workspace_services.md)
+    - [Testing Strategy](./lsp/testing.md)
+    - [Current Limitations](./lsp/limitations.md)
+    - [Next Steps](./lsp/next_steps.md)
+- [Editor Extensions](./extensions/vscode.md)
+- [Hindley–Milner](./learn/hm.md)
+- [Language Server Protocol](./learn/lsp_overview.md)
+- [Research](./learn/research.md)
