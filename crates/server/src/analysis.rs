@@ -7,7 +7,7 @@ use beacon_core::{
     Type, TypeVar, TypeVarGen,
     errors::{AnalysisError, Result},
 };
-use beacon_parser::{AstNode, SymbolTable};
+use beacon_parser::{AstNode, ScopeId, ScopeKind, SymbolTable};
 use lsp_types::Position;
 use rustc_hash::FxHashMap;
 use url::Url;
@@ -137,24 +137,35 @@ impl Analyzer {
                     LiteralValue::None => Type::Con(beacon_core::TypeCtor::NoneType),
                 })
             }
-
             // TODO: Generate return type constraint
             AstNode::Return { .. } => Ok(Type::Var(self.type_var_gen.fresh())),
+            AstNode::Import { .. } => {
+                // Imports don't have a type in the traditional sense
+                // They introduce names into the scope
+                Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
+            }
+            AstNode::ImportFrom { .. } => {
+                // Same as Import
+                Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
+            }
+
+            AstNode::Attribute { object, .. } => {
+                // TODO: Proper attribute type checking
+                // For now, infer the object type
+                self.visit_node(object, _constraints)
+            }
         }
     }
 
-    /// Solve a set of constraints
+    /// Solve a set of constraints using beacon-core's unification algorithm
     ///
     /// TODO: Implement unification and constraint solving
-    /// Use beacon-core's unification algorithm
     fn solve_constraints(&mut self, _constraints: ConstraintSet) -> Result<Substitution> {
         // TODO: Implement constraint solving using beacon-core::Unifier
         Ok(Substitution::empty())
     }
 
     /// Find unbound variables in the AST
-    ///
-    /// Returns a list of (name, line, col) for variables that are used but not defined.
     pub fn find_unbound_variables(&self, uri: &Url) -> Vec<(String, usize, usize)> {
         let result = self.documents.get_document(uri, |doc| {
             let ast = doc.ast()?;
@@ -174,35 +185,32 @@ impl Analyzer {
     }
 
     /// Find the function scope for a given function name
-    ///
-    /// When a function is defined, a child scope is created for it.
-    /// This method finds that child scope by looking for a Function-kind scope among the children of the current scope.
-    fn find_function_scope(
-        symbol_table: &SymbolTable, parent_scope: beacon_parser::ScopeId, _function_name: &str,
-    ) -> beacon_parser::ScopeId {
-        if let Some(parent) = symbol_table.scopes.get(&parent_scope) {
-            for &child_id in &parent.children {
-                if let Some(child) = symbol_table.scopes.get(&child_id) {
-                    if child.kind == beacon_parser::ScopeKind::Function {
-                        return child_id;
-                    }
-                }
-            }
+    fn find_function_scope(symbol_table: &SymbolTable, parent_scope: ScopeId, _function_name: &str) -> ScopeId {
+        match symbol_table.scopes.get(&parent_scope) {
+            Some(parent) => parent
+                .children
+                .iter()
+                .find_map(|&child_id| {
+                    symbol_table
+                        .scopes
+                        .get(&child_id)
+                        .filter(|child| child.kind == ScopeKind::Function)
+                        .map(|_| child_id)
+                })
+                .unwrap_or(parent_scope),
+            None => parent_scope,
         }
-        parent_scope
     }
 
     /// Find the class scope for a given class name
     ///
     /// When a class is defined, a child scope is created for it.
     /// This method finds that child scope by looking for a Class-kind scope among the children of the current scope.
-    fn find_class_scope(
-        symbol_table: &SymbolTable, parent_scope: beacon_parser::ScopeId, _class_name: &str,
-    ) -> beacon_parser::ScopeId {
+    fn find_class_scope(symbol_table: &SymbolTable, parent_scope: ScopeId, _class_name: &str) -> ScopeId {
         if let Some(parent) = symbol_table.scopes.get(&parent_scope) {
             for &child_id in &parent.children {
                 if let Some(child) = symbol_table.scopes.get(&child_id) {
-                    if child.kind == beacon_parser::ScopeKind::Class {
+                    if child.kind == ScopeKind::Class {
                         return child_id;
                     }
                 }
@@ -213,7 +221,7 @@ impl Analyzer {
 
     /// Recursively collect unbound variables in an AST node
     fn collect_unbound_in_node(
-        &self, node: &AstNode, symbol_table: &SymbolTable, current_scope: beacon_parser::ScopeId,
+        &self, node: &AstNode, symbol_table: &SymbolTable, current_scope: ScopeId,
         unbound: &mut Vec<(String, usize, usize)>,
     ) {
         match node {
@@ -236,7 +244,6 @@ impl Analyzer {
             }
 
             AstNode::ClassDef { name, body, .. } => {
-                // Find the child scope for this class
                 let class_scope = Self::find_class_scope(symbol_table, current_scope, name);
 
                 for stmt in body {
@@ -273,6 +280,12 @@ impl Analyzer {
                 if let Some(val) = value {
                     self.collect_unbound_in_node(val, symbol_table, current_scope, unbound);
                 }
+            }
+            // Imports introduce new names, no unbound references
+            AstNode::Import { .. } | AstNode::ImportFrom { .. } => {}
+            // Attributes: check the object
+            AstNode::Attribute { object, .. } => {
+                self.collect_unbound_in_node(object, symbol_table, current_scope, unbound)
             }
             // Literals don't have unbound references
             AstNode::Literal { .. } => {}
@@ -455,6 +468,7 @@ impl Substitution {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn test_analyzer_creation() {
@@ -485,8 +499,6 @@ mod tests {
 
     #[test]
     fn test_find_unbound_variables() {
-        use std::str::FromStr;
-
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
         let analyzer = Analyzer::new(config, documents.clone());
@@ -507,8 +519,6 @@ def hello():
 
     #[test]
     fn test_find_unbound_variables_with_builtins() {
-        use std::str::FromStr;
-
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
         let analyzer = Analyzer::new(config, documents.clone());

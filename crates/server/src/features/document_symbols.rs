@@ -74,7 +74,6 @@ impl DocumentSymbolsProvider {
                     .iter()
                     .filter_map(|child| match child {
                         AstNode::FunctionDef { .. } => {
-                            // Convert to method symbol
                             let mut symbol = self.node_to_symbol(child)?;
                             symbol.kind = SymbolKind::METHOD;
                             Some(symbol)
@@ -133,43 +132,40 @@ impl DocumentSymbolsProvider {
 
     fn identifier_range(&self, line: usize, col: usize, name_len: usize) -> Range {
         let start = Position { line: (line.saturating_sub(1)) as u32, character: (col.saturating_sub(1)) as u32 };
-
         let end = Position { line: start.line, character: start.character + name_len as u32 };
-
         Range { start, end }
     }
 
     fn assignment_range(&self, line: usize, col: usize, value: &AstNode) -> Range {
         let start = Position { line: (line.saturating_sub(1)) as u32, character: (col.saturating_sub(1)) as u32 };
-
         let end = self.node_end_position(value);
-
         Range { start, end }
     }
 
     fn node_end_position(&self, node: &AstNode) -> Position {
         match node {
             AstNode::FunctionDef { body, line, col, .. } | AstNode::ClassDef { body, line, col, .. } => {
-                if let Some(last) = body.last() {
-                    self.node_end_position(last)
-                } else {
-                    Position { line: (*line).saturating_sub(1) as u32, character: (*col).saturating_sub(1) as u32 }
+                match body.last() {
+                    Some(last) => self.node_end_position(last),
+                    None => {
+                        Position { line: (*line).saturating_sub(1) as u32, character: (*col).saturating_sub(1) as u32 }
+                    }
                 }
             }
             AstNode::Literal { line, col, .. }
             | AstNode::Identifier { line, col, .. }
             | AstNode::Assignment { line, col, .. }
             | AstNode::Call { line, col, .. }
-            | AstNode::Return { line, col, .. } => {
+            | AstNode::Return { line, col, .. }
+            | AstNode::Import { line, col, .. }
+            | AstNode::ImportFrom { line, col, .. }
+            | AstNode::Attribute { line, col, .. } => {
                 Position { line: (*line).saturating_sub(1) as u32, character: (*col + 10).saturating_sub(1) as u32 }
             }
-            AstNode::Module { body } => {
-                if let Some(last) = body.last() {
-                    self.node_end_position(last)
-                } else {
-                    Position { line: 0, character: 0 }
-                }
-            }
+            AstNode::Module { body } => match body.last() {
+                Some(last) => self.node_end_position(last),
+                None => Position { line: 0, character: 0 },
+            },
         }
     }
 }

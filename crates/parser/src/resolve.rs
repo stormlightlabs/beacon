@@ -108,7 +108,6 @@ impl SymbolTable {
                     return Some(symbol);
                 }
 
-                // Move to parent scope
                 match scope.parent {
                     Some(parent_id) => current_scope = parent_id,
                     None => break,
@@ -158,7 +157,6 @@ impl NameResolver {
                     self.visit_node(stmt)?;
                 }
             }
-
             AstNode::FunctionDef { name, args, body, line, col } => {
                 let symbol = Symbol {
                     name: name.clone(),
@@ -178,7 +176,7 @@ impl NameResolver {
                         name: param.clone(),
                         kind: SymbolKind::Parameter,
                         line: *line,
-                        col: *col + i, // Rough approximation
+                        col: *col + i,
                         scope_id: func_scope,
                     };
                     self.symbol_table.add_symbol(func_scope, param_symbol);
@@ -189,7 +187,6 @@ impl NameResolver {
 
                 self.current_scope = prev_scope;
             }
-
             AstNode::ClassDef { name, body, line, col } => {
                 let symbol = Symbol {
                     name: name.clone(),
@@ -200,25 +197,19 @@ impl NameResolver {
                 };
                 self.symbol_table.add_symbol(self.current_scope, symbol);
 
-                // Create new class scope
                 let class_scope = self.symbol_table.create_scope(ScopeKind::Class, self.current_scope);
                 let prev_scope = self.current_scope;
                 self.current_scope = class_scope;
 
-                // Visit class body
                 for stmt in body {
                     self.visit_node(stmt)?;
                 }
 
-                // Restore previous scope
                 self.current_scope = prev_scope;
             }
-
             AstNode::Assignment { target, value, line, col } => {
-                // Visit the value expression first
                 self.visit_node(value)?;
 
-                // Add variable to current scope
                 let symbol = Symbol {
                     name: target.clone(),
                     kind: SymbolKind::Variable,
@@ -228,28 +219,48 @@ impl NameResolver {
                 };
                 self.symbol_table.add_symbol(self.current_scope, symbol);
             }
-
             AstNode::Call { args, .. } => {
-                // For calls, we just check arguments since function is a String
                 for arg in args {
                     self.visit_node(arg)?;
                 }
             }
-
-            AstNode::Identifier { .. } => {
-                // For identifiers, we could track usage here
-                // For now, just continue
-            }
-
-            AstNode::Literal { .. } => {
-                // Literals don't affect name resolution
-            }
-
+            // TODO: track Identifier usage
+            AstNode::Identifier { .. } => {}
+            // Literals don't affect name resolution
+            AstNode::Literal { .. } => {}
             AstNode::Return { value, .. } => {
                 if let Some(val) = value {
                     self.visit_node(val)?;
                 }
             }
+
+            AstNode::Import { module, alias, line, col } => self.symbol_table.add_symbol(
+                self.current_scope,
+                Symbol {
+                    name: alias.as_ref().unwrap_or(module).clone(),
+                    kind: SymbolKind::Import,
+                    line: *line,
+                    col: *col,
+                    scope_id: self.current_scope,
+                },
+            ),
+
+            AstNode::ImportFrom { names, line, col, .. } => {
+                for (i, name) in names.iter().enumerate() {
+                    self.symbol_table.add_symbol(
+                        self.current_scope,
+                        Symbol {
+                            name: name.clone(),
+                            kind: SymbolKind::Import,
+                            line: *line,
+                            col: *col + i,
+                            scope_id: self.current_scope,
+                        },
+                    );
+                }
+            }
+
+            AstNode::Attribute { object, .. } => self.visit_node(object)?,
         }
 
         Ok(())

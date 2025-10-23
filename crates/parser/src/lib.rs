@@ -64,6 +64,27 @@ pub enum AstNode {
         line: usize,
         col: usize,
     },
+    /// Import statement: import module [as alias]
+    Import {
+        module: String,
+        alias: Option<String>,
+        line: usize,
+        col: usize,
+    },
+    /// Import from statement: from module import names
+    ImportFrom {
+        module: String,
+        names: Vec<String>,
+        line: usize,
+        col: usize,
+    },
+    /// Attribute access: object.attribute
+    Attribute {
+        object: Box<AstNode>,
+        attribute: String,
+        line: usize,
+        col: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -76,7 +97,6 @@ pub enum LiteralValue {
 }
 
 impl PythonParser {
-    /// Create a new Python parser
     pub fn new() -> Result<Self> {
         let language = tree_sitter_python::LANGUAGE;
         let mut parser = Parser::new();
@@ -172,10 +192,23 @@ impl PythonParser {
                 Ok(AstNode::Assignment { target, value: Box::new(value), line, col })
             }
             "call" => {
-                let function = self.extract_call_function(&node, source)?;
-                let args = self.extract_call_args(&node, source)?;
+                // Check if the function is an attribute or identifier
+                let function_node = node
+                    .child_by_field_name("function")
+                    .ok_or_else(|| ParseError::TreeSitterError("Missing call function".to_string()))?;
 
-                Ok(AstNode::Call { function, args, line, col })
+                // If the function is an attribute, we need to handle it differently
+                if function_node.kind() == "attribute" {
+                    // For method calls like obj.method(), we want to preserve the structure
+                    // But for now, extract as string for backward compatibility
+                    let function = self.extract_call_function(&node, source)?;
+                    let args = self.extract_call_args(&node, source)?;
+                    Ok(AstNode::Call { function, args, line, col })
+                } else {
+                    let function = self.extract_call_function(&node, source)?;
+                    let args = self.extract_call_args(&node, source)?;
+                    Ok(AstNode::Call { function, args, line, col })
+                }
             }
             "identifier" => {
                 let name = node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
@@ -192,6 +225,18 @@ impl PythonParser {
 
                 Ok(AstNode::Return { value: value.map(Box::new), line, col })
             }
+            "import_statement" => {
+                let (module, alias) = self.extract_import_info(&node, source)?;
+                Ok(AstNode::Import { module, alias, line, col })
+            }
+            "import_from_statement" => {
+                let (module, names) = self.extract_import_from_info(&node, source)?;
+                Ok(AstNode::ImportFrom { module, names, line, col })
+            }
+            "attribute" => {
+                let (object, attribute) = self.extract_attribute_info(&node, source)?;
+                Ok(AstNode::Attribute { object: Box::new(object), attribute, line, col })
+            }
             _ => match node.utf8_text(source.as_bytes()) {
                 Ok(text) => Ok(AstNode::Identifier { name: text.to_string(), line, col }),
                 Err(_) => Ok(AstNode::Identifier { name: format!("<{}>]", node.kind()), line, col }),
@@ -200,15 +245,14 @@ impl PythonParser {
     }
 
     fn extract_identifier(&self, node: &Node, source: &str, field: &str) -> Result<String> {
-        let name_node = node
+        let name = node
             .child_by_field_name(field)
-            .ok_or_else(|| ParseError::TreeSitterError(format!("Missing {} field", field)))?;
-
-        let name = name_node
+            .ok_or_else(|| ParseError::TreeSitterError(format!("Missing {} field", field)))?
             .utf8_text(source.as_bytes())
-            .map_err(|_| ParseError::InvalidUtf8)?;
+            .map_err(|_| ParseError::InvalidUtf8)?
+            .to_string();
 
-        Ok(name.to_string())
+        Ok(name)
     }
 
     fn extract_function_args(&self, node: &Node, source: &str) -> Result<Vec<String>> {
@@ -239,9 +283,11 @@ impl PythonParser {
         let mut cursor = body_node.walk();
 
         for child in body_node.children(&mut cursor) {
-            if !child.is_extra() {
-                body.push(self.node_to_ast(child, source)?);
+            if child.is_extra() {
+                continue;
             }
+
+            body.push(self.node_to_ast(child, source)?);
         }
 
         Ok(body)
@@ -354,6 +400,104 @@ impl PythonParser {
         }
     }
 
+    fn extract_import_info(&self, node: &Node, source: &str) -> Result<(String, Option<String>)> {
+        let mut module = String::new();
+        let mut alias = None;
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "dotted_name" | "identifier" => {
+                    if module.is_empty() {
+                        module = child
+                            .utf8_text(source.as_bytes())
+                            .map_err(|_| ParseError::InvalidUtf8)?
+                            .to_string();
+                    }
+                }
+                "aliased_import" => {
+                    if let Some(name_node) = child.child_by_field_name("name") {
+                        module = name_node
+                            .utf8_text(source.as_bytes())
+                            .map_err(|_| ParseError::InvalidUtf8)?
+                            .to_string();
+                    }
+                    if let Some(alias_node) = child.child_by_field_name("alias") {
+                        alias = Some(
+                            alias_node
+                                .utf8_text(source.as_bytes())
+                                .map_err(|_| ParseError::InvalidUtf8)?
+                                .to_string(),
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if module.is_empty() {
+            Err(ParseError::TreeSitterError("Missing import name".to_string()).into())
+        } else {
+            Ok((module, alias))
+        }
+    }
+
+    fn extract_import_from_info(&self, node: &Node, source: &str) -> Result<(String, Vec<String>)> {
+        let module_node = node
+            .child_by_field_name("module_name")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing module name in import from".to_string()))?;
+
+        let module = module_node
+            .utf8_text(source.as_bytes())
+            .map_err(|_| ParseError::InvalidUtf8)?
+            .to_string();
+
+        let mut names = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "dotted_name" | "identifier" => {
+                    if child.id() != module_node.id() {
+                        if let Ok(name) = child.utf8_text(source.as_bytes()) {
+                            if name != "from" && name != "import" {
+                                names.push(name.to_string());
+                            }
+                        }
+                    }
+                }
+                "aliased_import" => {
+                    if let Some(name_node) = child.child_by_field_name("name") {
+                        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                            names.push(name.to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok((module, names))
+    }
+
+    fn extract_attribute_info(&self, node: &Node, source: &str) -> Result<(AstNode, String)> {
+        let object_node = node
+            .child_by_field_name("object")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing object in attribute".to_string()))?;
+
+        let attribute_node = node
+            .child_by_field_name("attribute")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing attribute name".to_string()))?;
+
+        let object = self.node_to_ast(object_node, source)?;
+
+        let attribute = attribute_node
+            .utf8_text(source.as_bytes())
+            .map_err(|_| ParseError::InvalidUtf8)?
+            .to_string();
+
+        Ok((object, attribute))
+    }
+
     /// Perform name resolution on an AST and return a symbol table
     pub fn resolve_names(&self, ast: &AstNode) -> Result<SymbolTable> {
         let mut resolver = NameResolver::new();
@@ -361,7 +505,6 @@ impl PythonParser {
         Ok(resolver.symbol_table)
     }
 
-    /// Parse and resolve names in one step
     pub fn parse_and_resolve(&mut self, source: &str) -> Result<(AstNode, SymbolTable)> {
         let parsed = self.parse(source)?;
         let ast = self.to_ast(&parsed)?;
@@ -392,7 +535,6 @@ mod tests {
     fn test_simple_function_parse() {
         let mut parser = PythonParser::new().unwrap();
         let source = "def hello(name):\n    return f'Hello {name}'";
-
         let parsed = parser.parse(source).unwrap();
         assert!(!parsed.tree.root_node().has_error());
     }
@@ -401,7 +543,6 @@ mod tests {
     fn test_function_to_ast() {
         let mut parser = PythonParser::new().unwrap();
         let source = "def add(x, y):\n    return x + y";
-
         let parsed = parser.parse(source).unwrap();
         let ast = parser.to_ast(&parsed).unwrap();
 
@@ -426,7 +567,6 @@ mod tests {
     fn test_assignment_to_ast() {
         let mut parser = PythonParser::new().unwrap();
         let source = "x = 42";
-
         let parsed = parser.parse(source).unwrap();
         let ast = parser.to_ast(&parsed).unwrap();
 
@@ -452,7 +592,6 @@ mod tests {
     fn test_call_to_ast() {
         let mut parser = PythonParser::new().unwrap();
         let source = "print('hello')";
-
         let parsed = parser.parse(source).unwrap();
         let ast = parser.to_ast(&parsed).unwrap();
 
@@ -481,7 +620,6 @@ mod tests {
     fn test_class_to_ast() {
         let mut parser = PythonParser::new().unwrap();
         let source = "class Person:\n    pass";
-
         let parsed = parser.parse(source).unwrap();
         let ast = parser.to_ast(&parsed).unwrap();
 
@@ -567,7 +705,6 @@ if __name__ == "__main__":
     fn test_function_with_multiple_args() {
         let mut parser = PythonParser::new().unwrap();
         let source = "def multiply(a, b, c):\n    return a * b * c";
-
         let parsed = parser.parse(source).unwrap();
         let ast = parser.to_ast(&parsed).unwrap();
 
@@ -587,12 +724,11 @@ if __name__ == "__main__":
     fn test_nested_calls() {
         let mut parser = PythonParser::new().unwrap();
         let source = "result = max(min(5, 10), 3)";
-
         let parsed = parser.parse(source).unwrap();
-        assert!(!parsed.tree.root_node().has_error());
-        let ast = parser.to_ast(&parsed).unwrap();
 
-        match ast {
+        assert!(!parsed.tree.root_node().has_error());
+
+        match parser.to_ast(&parsed).unwrap() {
             AstNode::Module { body } => match &body[0] {
                 AstNode::Assignment { target, .. } => {
                     assert_eq!(target, "result");
@@ -606,7 +742,6 @@ if __name__ == "__main__":
     #[test]
     fn test_error_handling() {
         let mut parser = PythonParser::new().unwrap();
-
         let source = "def incomplete_func(";
         let parsed = parser.parse(source).unwrap();
 
@@ -676,11 +811,8 @@ result = factorial(5)
 
         let (ast, symbol_table) = parser.parse_and_resolve(source).unwrap();
 
-        // Check AST structure
         match ast {
-            AstNode::Module { body } => {
-                assert_eq!(body.len(), 2); // function def + assignment
-            }
+            AstNode::Module { body } => assert_eq!(body.len(), 2),
             _ => panic!("Expected module"),
         }
 
@@ -721,16 +853,171 @@ class MyClass:
 
         let root_scope = symbol_table.root_scope;
 
-        // Check global scope
         assert!(symbol_table.lookup_symbol("global_var", root_scope).is_some());
         assert!(symbol_table.lookup_symbol("MyClass", root_scope).is_some());
 
-        // Check class scope exists
         let root_children = &symbol_table.scopes.get(&root_scope).unwrap().children;
         assert!(!root_children.is_empty());
 
         let class_scope = root_children[0];
         assert!(symbol_table.lookup_symbol("class_var", class_scope).is_some());
         assert!(symbol_table.lookup_symbol("method", class_scope).is_some());
+    }
+
+    #[test]
+    fn test_import_statement() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "import os";
+
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::Import { module, alias, .. } => {
+                        assert_eq!(module, "os");
+                        assert_eq!(*alias, None);
+                    }
+                    _ => panic!("Expected Import node"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_import_with_alias() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "import numpy as np";
+
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::Import { module, alias, .. } => {
+                        assert_eq!(module, "numpy");
+                        assert_eq!(*alias, Some("np".to_string()));
+                    }
+                    _ => panic!("Expected Import node"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_import_from() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "from math import sqrt, pi";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::ImportFrom { module, names, .. } => {
+                        assert_eq!(module, "math");
+                        assert!(names.contains(&"sqrt".to_string()));
+                        assert!(names.contains(&"pi".to_string()));
+                    }
+                    _ => panic!("Expected ImportFrom node"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_attribute_access() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "x = os.path";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::Assignment { value, .. } => match value.as_ref() {
+                        AstNode::Attribute { object, attribute, .. } => {
+                            match object.as_ref() {
+                                AstNode::Identifier { name, .. } => {
+                                    assert_eq!(name, "os");
+                                }
+                                _ => panic!("Expected Identifier for object"),
+                            }
+                            assert_eq!(attribute, "path");
+                        }
+                        _ => panic!("Expected Attribute node"),
+                    },
+                    _ => panic!("Expected Assignment"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_nested_attribute_access() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "result = os.path.join";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::Assignment { value, .. } => match value.as_ref() {
+                        AstNode::Attribute { attribute, .. } => {
+                            assert_eq!(attribute, "join");
+                        }
+                        _ => panic!("Expected Attribute node"),
+                    },
+                    _ => panic!("Expected Assignment"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_import_resolution() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"
+import os
+import sys as system
+from math import sqrt
+
+x = os
+y = system
+z = sqrt(16)
+"#;
+
+        let (ast, symbol_table) = parser.parse_and_resolve(source).unwrap();
+
+        match ast {
+            AstNode::Module { body } => assert!(body.len() >= 6),
+            _ => panic!("Expected module"),
+        }
+
+        let root_scope = symbol_table.root_scope;
+
+        let os_symbol = symbol_table.lookup_symbol("os", root_scope);
+        assert!(os_symbol.is_some());
+        assert_eq!(os_symbol.unwrap().kind, SymbolKind::Import);
+
+        let sys_symbol = symbol_table.lookup_symbol("system", root_scope);
+        assert!(sys_symbol.is_some());
+        assert_eq!(sys_symbol.unwrap().kind, SymbolKind::Import);
+
+        let sqrt_symbol = symbol_table.lookup_symbol("sqrt", root_scope);
+        assert!(sqrt_symbol.is_some());
+        assert_eq!(sqrt_symbol.unwrap().kind, SymbolKind::Import);
     }
 }
