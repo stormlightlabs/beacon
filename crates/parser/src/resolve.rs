@@ -229,6 +229,50 @@ impl NameResolver {
                     self.line_col_to_byte_offset(*line, *col) + 50
                 }
             }
+            AstNode::If { body, else_body, .. } => {
+                if let Some(else_stmts) = else_body {
+                    if let Some(last) = else_stmts.last() {
+                        return self.get_node_end_byte(last);
+                    }
+                }
+                if let Some(last) = body.last() { self.get_node_end_byte(last) } else { self.source.len() }
+            }
+            AstNode::For { body, else_body, .. } | AstNode::While { body, else_body, .. } => {
+                if let Some(else_stmts) = else_body {
+                    if let Some(last) = else_stmts.last() {
+                        return self.get_node_end_byte(last);
+                    }
+                }
+                if let Some(last) = body.last() { self.get_node_end_byte(last) } else { self.source.len() }
+            }
+            AstNode::Try { body, else_body, finally_body, .. } => {
+                if let Some(finally_stmts) = finally_body {
+                    if let Some(last) = finally_stmts.last() {
+                        return self.get_node_end_byte(last);
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    if let Some(last) = else_stmts.last() {
+                        return self.get_node_end_byte(last);
+                    }
+                }
+                if let Some(last) = body.last() { self.get_node_end_byte(last) } else { self.source.len() }
+            }
+            AstNode::With { body, .. } => {
+                if let Some(last) = body.last() {
+                    self.get_node_end_byte(last)
+                } else {
+                    self.source.len()
+                }
+            }
+            AstNode::Match { cases, .. } => {
+                if let Some(last_case) = cases.last() {
+                    if let Some(last_stmt) = last_case.body.last() {
+                        return self.get_node_end_byte(last_stmt);
+                    }
+                }
+                self.source.len()
+            }
             AstNode::Assignment { line, col, .. }
             | AstNode::AnnotatedAssignment { line, col, .. }
             | AstNode::Call { line, col, .. }
@@ -237,7 +281,20 @@ impl NameResolver {
             | AstNode::Return { line, col, .. }
             | AstNode::Import { line, col, .. }
             | AstNode::ImportFrom { line, col, .. }
-            | AstNode::Attribute { line, col, .. } => {
+            | AstNode::Attribute { line, col, .. }
+            | AstNode::ListComp { line, col, .. }
+            | AstNode::DictComp { line, col, .. }
+            | AstNode::SetComp { line, col, .. }
+            | AstNode::GeneratorExp { line, col, .. }
+            | AstNode::NamedExpr { line, col, .. }
+            | AstNode::BinaryOp { line, col, .. }
+            | AstNode::UnaryOp { line, col, .. }
+            | AstNode::Compare { line, col, .. }
+            | AstNode::Lambda { line, col, .. }
+            | AstNode::Subscript { line, col, .. }
+            | AstNode::Pass { line, col }
+            | AstNode::Break { line, col }
+            | AstNode::Continue { line, col } => {
                 let start_byte = self.line_col_to_byte_offset(*line, *col);
                 let mut end_byte = start_byte;
                 for (i, ch) in self.source[start_byte..].chars().enumerate() {
@@ -345,27 +402,25 @@ impl NameResolver {
             AstNode::AnnotatedAssignment { target, value, line, col, .. } => {
                 if let Some(val) = value {
                     self.visit_node(val)?;
+                } else {
+                    self.symbol_table.add_symbol(
+                        self.current_scope,
+                        Symbol {
+                            name: target.clone(),
+                            kind: SymbolKind::Variable,
+                            line: *line,
+                            col: *col,
+                            scope_id: self.current_scope,
+                            docstring: None,
+                        },
+                    );
                 }
-
-                let symbol = Symbol {
-                    name: target.clone(),
-                    kind: SymbolKind::Variable,
-                    line: *line,
-                    col: *col,
-                    scope_id: self.current_scope,
-                    docstring: None,
-                };
-                self.symbol_table.add_symbol(self.current_scope, symbol);
             }
             AstNode::Call { args, .. } => {
                 for arg in args {
                     self.visit_node(arg)?;
                 }
             }
-            // TODO: Track Identifier usage
-            AstNode::Identifier { .. } => {}
-            // Literals don't affect name resolution
-            AstNode::Literal { .. } => {}
             AstNode::Return { value, .. } => {
                 if let Some(val) = value {
                     self.visit_node(val)?;
@@ -398,6 +453,198 @@ impl NameResolver {
                 }
             }
             AstNode::Attribute { object, .. } => self.visit_node(object)?,
+            AstNode::If { test, body, elif_parts, else_body, .. } => {
+                self.visit_node(test)?;
+                for stmt in body {
+                    self.visit_node(stmt)?;
+                }
+                for (elif_test, elif_body) in elif_parts {
+                    self.visit_node(elif_test)?;
+                    for stmt in elif_body {
+                        self.visit_node(stmt)?;
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        self.visit_node(stmt)?;
+                    }
+                }
+            }
+            AstNode::For { target, iter, body, else_body, line, col } => {
+                self.visit_node(iter)?;
+
+                let symbol = Symbol {
+                    name: target.clone(),
+                    kind: SymbolKind::Variable,
+                    line: *line,
+                    col: *col,
+                    scope_id: self.current_scope,
+                    docstring: None,
+                };
+                self.symbol_table.add_symbol(self.current_scope, symbol);
+
+                for stmt in body {
+                    self.visit_node(stmt)?;
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        self.visit_node(stmt)?;
+                    }
+                }
+            }
+            AstNode::While { test, body, else_body, .. } => {
+                self.visit_node(test)?;
+                for stmt in body {
+                    self.visit_node(stmt)?;
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        self.visit_node(stmt)?;
+                    }
+                }
+            }
+            AstNode::Try { body, handlers, else_body, finally_body, .. } => {
+                for stmt in body {
+                    self.visit_node(stmt)?;
+                }
+                for handler in handlers {
+                    if let Some(name) = &handler.name {
+                        let symbol = Symbol {
+                            name: name.clone(),
+                            kind: SymbolKind::Variable,
+                            line: handler.line,
+                            col: handler.col,
+                            scope_id: self.current_scope,
+                            docstring: None,
+                        };
+                        self.symbol_table.add_symbol(self.current_scope, symbol);
+                    }
+                    for stmt in &handler.body {
+                        self.visit_node(stmt)?;
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        self.visit_node(stmt)?;
+                    }
+                }
+                if let Some(finally_stmts) = finally_body {
+                    for stmt in finally_stmts {
+                        self.visit_node(stmt)?;
+                    }
+                }
+            }
+            AstNode::With { items, body, .. } => {
+                for item in items {
+                    self.visit_node(&item.context_expr)?;
+                    if let Some(var_name) = &item.optional_vars {
+                        // TODO: extract position
+                        let symbol = Symbol {
+                            name: var_name.clone(),
+                            kind: SymbolKind::Variable,
+                            line: 0,
+                            col: 0,
+                            scope_id: self.current_scope,
+                            docstring: None,
+                        };
+                        self.symbol_table.add_symbol(self.current_scope, symbol);
+                    }
+                }
+                for stmt in body {
+                    self.visit_node(stmt)?;
+                }
+            }
+            AstNode::ListComp { element, generators, .. }
+            | AstNode::SetComp { element, generators, .. }
+            | AstNode::GeneratorExp { element, generators, .. } => {
+                self.visit_node(element)?;
+                for generator in generators {
+                    self.visit_node(&generator.iter)?;
+                    for if_clause in &generator.ifs {
+                        self.visit_node(if_clause)?;
+                    }
+                }
+            }
+            AstNode::DictComp { key, value, generators, .. } => {
+                self.visit_node(key)?;
+                self.visit_node(value)?;
+                for generator in generators {
+                    self.visit_node(&generator.iter)?;
+                    for if_clause in &generator.ifs {
+                        self.visit_node(if_clause)?;
+                    }
+                }
+            }
+            AstNode::NamedExpr { target, value, line, col } => {
+                self.visit_node(value)?;
+                let symbol = Symbol {
+                    name: target.clone(),
+                    kind: SymbolKind::Variable,
+                    line: *line,
+                    col: *col,
+                    scope_id: self.current_scope,
+                    docstring: None,
+                };
+                self.symbol_table.add_symbol(self.current_scope, symbol);
+            }
+            AstNode::BinaryOp { left, right, .. } => {
+                self.visit_node(left)?;
+                self.visit_node(right)?;
+            }
+            AstNode::UnaryOp { operand, .. } => self.visit_node(operand)?,
+            AstNode::Compare { left, comparators, .. } => {
+                self.visit_node(left)?;
+                for comp in comparators {
+                    self.visit_node(comp)?;
+                }
+            }
+            AstNode::Lambda { args, body, line, col } => {
+                let start_byte = self.line_col_to_byte_offset(*line, *col);
+                let end_byte = self.get_node_end_byte(node);
+
+                let lambda_scope =
+                    self.symbol_table
+                        .create_scope(ScopeKind::Function, self.current_scope, start_byte, end_byte);
+                let prev_scope = self.current_scope;
+
+                self.current_scope = lambda_scope;
+
+                for param in args {
+                    let param_symbol = Symbol {
+                        name: param.name.clone(),
+                        kind: SymbolKind::Parameter,
+                        line: param.line,
+                        col: param.col,
+                        scope_id: lambda_scope,
+                        docstring: None,
+                    };
+                    self.symbol_table.add_symbol(lambda_scope, param_symbol);
+                }
+
+                self.visit_node(body)?;
+                self.current_scope = prev_scope;
+            }
+            AstNode::Subscript { value, slice, .. } => {
+                self.visit_node(value)?;
+                self.visit_node(slice)?;
+            }
+            AstNode::Match { subject, cases, .. } => {
+                self.visit_node(subject)?;
+                for case in cases {
+                    if let Some(guard) = &case.guard {
+                        self.visit_node(guard)?;
+                    }
+                    for stmt in &case.body {
+                        self.visit_node(stmt)?;
+                    }
+                }
+            }
+            // TODO: Track Identifier usage
+            AstNode::Identifier { .. }
+            | AstNode::Literal { .. }
+            | AstNode::Pass { .. }
+            | AstNode::Break { .. }
+            | AstNode::Continue { .. } => {}
         }
 
         Ok(())

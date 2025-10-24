@@ -107,6 +107,143 @@ pub enum AstNode {
         line: usize,
         col: usize,
     },
+    /// If statement: if test: body elif test: body else: body
+    If {
+        test: Box<AstNode>,
+        body: Vec<AstNode>,
+        elif_parts: Vec<(AstNode, Vec<AstNode>)>,
+        else_body: Option<Vec<AstNode>>,
+        line: usize,
+        col: usize,
+    },
+    /// For loop: for target in iter: body
+    For {
+        target: String,
+        iter: Box<AstNode>,
+        body: Vec<AstNode>,
+        else_body: Option<Vec<AstNode>>,
+        line: usize,
+        col: usize,
+    },
+    /// While loop: while test: body
+    While {
+        test: Box<AstNode>,
+        body: Vec<AstNode>,
+        else_body: Option<Vec<AstNode>>,
+        line: usize,
+        col: usize,
+    },
+    /// Try/except/finally: try: body except: handlers else: orelse finally: finalbody
+    Try {
+        body: Vec<AstNode>,
+        handlers: Vec<ExceptHandler>,
+        else_body: Option<Vec<AstNode>>,
+        finally_body: Option<Vec<AstNode>>,
+        line: usize,
+        col: usize,
+    },
+    /// With statement: with item as target: body
+    With {
+        items: Vec<WithItem>,
+        body: Vec<AstNode>,
+        line: usize,
+        col: usize,
+    },
+    /// List comprehension: [expr for target in iter if cond]
+    ListComp {
+        element: Box<AstNode>,
+        generators: Vec<Comprehension>,
+        line: usize,
+        col: usize,
+    },
+    /// Dict comprehension: {key: value for target in iter if cond}
+    DictComp {
+        key: Box<AstNode>,
+        value: Box<AstNode>,
+        generators: Vec<Comprehension>,
+        line: usize,
+        col: usize,
+    },
+    /// Set comprehension: {expr for target in iter if cond}
+    SetComp {
+        element: Box<AstNode>,
+        generators: Vec<Comprehension>,
+        line: usize,
+        col: usize,
+    },
+    /// Generator expression: (expr for target in iter if cond)
+    GeneratorExp {
+        element: Box<AstNode>,
+        generators: Vec<Comprehension>,
+        line: usize,
+        col: usize,
+    },
+    /// Named expression (walrus operator): target := value
+    NamedExpr {
+        target: String,
+        value: Box<AstNode>,
+        line: usize,
+        col: usize,
+    },
+    /// Binary operation: left op right
+    BinaryOp {
+        left: Box<AstNode>,
+        op: BinaryOperator,
+        right: Box<AstNode>,
+        line: usize,
+        col: usize,
+    },
+    /// Unary operation: op operand
+    UnaryOp {
+        op: UnaryOperator,
+        operand: Box<AstNode>,
+        line: usize,
+        col: usize,
+    },
+    /// Comparison operation: left op right (can chain)
+    Compare {
+        left: Box<AstNode>,
+        ops: Vec<CompareOperator>,
+        comparators: Vec<AstNode>,
+        line: usize,
+        col: usize,
+    },
+    /// Lambda expression: lambda args: body
+    Lambda {
+        args: Vec<Parameter>,
+        body: Box<AstNode>,
+        line: usize,
+        col: usize,
+    },
+    /// Subscript: value[slice]
+    Subscript {
+        value: Box<AstNode>,
+        slice: Box<AstNode>,
+        line: usize,
+        col: usize,
+    },
+    /// Match statement (PEP 634): match subject: case pattern: body
+    Match {
+        subject: Box<AstNode>,
+        cases: Vec<MatchCase>,
+        line: usize,
+        col: usize,
+    },
+    /// Pass statement
+    Pass {
+        line: usize,
+        col: usize,
+    },
+    /// Break statement
+    Break {
+        line: usize,
+        col: usize,
+    },
+    /// Continue statement
+    Continue {
+        line: usize,
+        col: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -116,6 +253,103 @@ pub enum LiteralValue {
     Float(f64),
     Boolean(bool),
     None,
+}
+
+/// Exception handler for try/except
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExceptHandler {
+    pub exception_type: Option<String>,
+    pub name: Option<String>,
+    pub body: Vec<AstNode>,
+    pub line: usize,
+    pub col: usize,
+}
+
+/// With item for with statements
+#[derive(Debug, Clone, PartialEq)]
+pub struct WithItem {
+    pub context_expr: AstNode,
+    pub optional_vars: Option<String>,
+}
+
+/// Comprehension clause: for target in iter if conditions
+#[derive(Debug, Clone, PartialEq)]
+pub struct Comprehension {
+    pub target: String,
+    pub iter: AstNode,
+    pub ifs: Vec<AstNode>,
+}
+
+/// Binary operators
+#[derive(Debug, Clone, PartialEq)]
+pub enum BinaryOperator {
+    Add,
+    Sub,
+    Mult,
+    Div,
+    FloorDiv,
+    Mod,
+    Pow,
+    MatMult,
+    BitAnd,
+    BitOr,
+    BitXor,
+    LeftShift,
+    RightShift,
+    And,
+    Or,
+}
+
+/// Unary operators
+#[derive(Debug, Clone, PartialEq)]
+pub enum UnaryOperator {
+    Not,
+    Invert,
+    Plus,
+    Minus,
+}
+
+/// Comparison operators
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompareOperator {
+    Eq,
+    NotEq,
+    Lt,
+    LtE,
+    Gt,
+    GtE,
+    Is,
+    IsNot,
+    In,
+    NotIn,
+}
+
+/// Match case for pattern matching
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchCase {
+    pub pattern: Pattern,
+    pub guard: Option<AstNode>,
+    pub body: Vec<AstNode>,
+}
+
+/// Pattern for pattern matching
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    MatchValue(AstNode),
+    MatchSequence(Vec<Pattern>),
+    MatchMapping {
+        keys: Vec<AstNode>,
+        patterns: Vec<Pattern>,
+    },
+    MatchClass {
+        cls: String,
+        patterns: Vec<Pattern>,
+    },
+    MatchAs {
+        pattern: Option<Box<Pattern>>,
+        name: Option<String>,
+    },
+    MatchOr(Vec<Pattern>),
 }
 
 impl PythonParser {
@@ -176,7 +410,6 @@ impl PythonParser {
 
         match node.kind() {
             "decorated_definition" => {
-                // Extract decorators and the actual definition
                 let mut decorators = Vec::new();
                 let mut definition_node = None;
 
@@ -195,11 +428,9 @@ impl PythonParser {
                     }
                 }
 
-                // Parse the definition and attach decorators
                 if let Some(def_node) = definition_node {
                     let mut ast = self.node_to_ast(def_node, source)?;
 
-                    // Attach decorators to the definition
                     match &mut ast {
                         AstNode::FunctionDef { decorators: decs, .. } | AstNode::ClassDef { decorators: decs, .. } => {
                             *decs = decorators;
@@ -210,44 +441,38 @@ impl PythonParser {
                     return Ok(ast);
                 }
 
-                // Fallback if no definition found
                 Ok(AstNode::Identifier { name: "<decorated>".to_string(), line, col })
             }
             "module" => {
                 let mut body = Vec::new();
                 let mut cursor = node.walk();
-
                 for child in node.children(&mut cursor) {
                     if !child.is_extra() {
                         body.push(self.node_to_ast(child, source)?);
                     }
                 }
 
-                // Extract module-level docstring
                 let docstring = self.extract_docstring(&node, source);
-
                 Ok(AstNode::Module { body, docstring })
             }
+            // TODO: extract decorators
             "function_definition" => {
                 let name = self.extract_identifier(&node, source, "name")?;
                 let args = self.extract_function_args(&node, source)?;
                 let body = self.extract_function_body(&node, source)?;
                 let return_type = self.extract_return_type(&node, source);
-                let decorators = Vec::new(); // TODO: extract decorators
-
-                // Extract docstring from function body
+                let decorators = Vec::new();
                 let docstring = node
                     .child_by_field_name("body")
                     .and_then(|body_node| self.extract_docstring(&body_node, source));
 
                 Ok(AstNode::FunctionDef { name, args, body, docstring, return_type, decorators, line, col })
             }
+            // TODO: extract decorators
             "class_definition" => {
                 let name = self.extract_identifier(&node, source, "name")?;
                 let body = self.extract_class_body(&node, source)?;
-                let decorators = Vec::new(); // TODO: extract decorators
-
-                // Extract docstring from class body
+                let decorators = Vec::new();
                 let docstring = node
                     .child_by_field_name("body")
                     .and_then(|body_node| self.extract_docstring(&body_node, source));
@@ -263,16 +488,14 @@ impl PythonParser {
             }
             "assignment" => {
                 let target = self.extract_assignment_target(&node, source)?;
-
-                // Check if this is an annotated assignment (has a type annotation)
                 if let Some(type_node) = node.child_by_field_name("type") {
                     let type_annotation = type_node
                         .utf8_text(source.as_bytes())
                         .map_err(|_| ParseError::InvalidUtf8)?
                         .to_string();
 
-                    // Value may be None for declarations like "x: int"
-                    let value = node.child_by_field_name("right")
+                    let value = node
+                        .child_by_field_name("right")
                         .map(|v| self.node_to_ast(v, source))
                         .transpose()?
                         .map(Box::new);
@@ -288,8 +511,8 @@ impl PythonParser {
                     .child_by_field_name("function")
                     .ok_or_else(|| ParseError::TreeSitterError("Missing call function".to_string()))?;
 
+                // TODO: preserve the structure
                 if function_node.kind() == "attribute" {
-                    // TODO: preserve the structure
                     let function = self.extract_call_function(&node, source)?;
                     let args = self.extract_call_args(&node, source)?;
                     Ok(AstNode::Call { function, args, line, col })
@@ -322,6 +545,77 @@ impl PythonParser {
             "attribute" => {
                 let (object, attribute) = self.extract_attribute_info(&node, source)?;
                 Ok(AstNode::Attribute { object: Box::new(object), attribute, line, col })
+            }
+            "if_statement" => {
+                let (test, body, elif_parts, else_body) = self.extract_if_info(&node, source)?;
+                Ok(AstNode::If { test: Box::new(test), body, elif_parts, else_body, line, col })
+            }
+            "for_statement" => {
+                let (target, iter, body, else_body) = self.extract_for_info(&node, source)?;
+                Ok(AstNode::For { target, iter: Box::new(iter), body, else_body, line, col })
+            }
+            "while_statement" => {
+                let (test, body, else_body) = self.extract_while_info(&node, source)?;
+                Ok(AstNode::While { test: Box::new(test), body, else_body, line, col })
+            }
+            "try_statement" => {
+                let (body, handlers, else_body, finally_body) = self.extract_try_info(&node, source)?;
+                Ok(AstNode::Try { body, handlers, else_body, finally_body, line, col })
+            }
+            "with_statement" => {
+                let (items, body) = self.extract_with_info(&node, source)?;
+                Ok(AstNode::With { items, body, line, col })
+            }
+            "list_comprehension" => {
+                let (element, generators) = self.extract_list_comp_info(&node, source)?;
+                Ok(AstNode::ListComp { element: Box::new(element), generators, line, col })
+            }
+            "dictionary_comprehension" => {
+                let (key, value, generators) = self.extract_dict_comp_info(&node, source)?;
+                Ok(AstNode::DictComp { key: Box::new(key), value: Box::new(value), generators, line, col })
+            }
+            "set_comprehension" => {
+                let (element, generators) = self.extract_set_comp_info(&node, source)?;
+                Ok(AstNode::SetComp { element: Box::new(element), generators, line, col })
+            }
+            "generator_expression" => {
+                let (element, generators) = self.extract_generator_exp_info(&node, source)?;
+                Ok(AstNode::GeneratorExp { element: Box::new(element), generators, line, col })
+            }
+            "named_expression" => {
+                let (target, value) = self.extract_named_expr_info(&node, source)?;
+                Ok(AstNode::NamedExpr { target, value: Box::new(value), line, col })
+            }
+            "binary_operator" => {
+                let (left, op, right) = self.extract_binary_op_info(&node, source)?;
+                Ok(AstNode::BinaryOp { left: Box::new(left), op, right: Box::new(right), line, col })
+            }
+            "unary_operator" => {
+                let (op, operand) = self.extract_unary_op_info(&node, source)?;
+                Ok(AstNode::UnaryOp { op, operand: Box::new(operand), line, col })
+            }
+            "comparison_operator" => {
+                let (left, ops, comparators) = self.extract_comparison_info(&node, source)?;
+                Ok(AstNode::Compare { left: Box::new(left), ops, comparators, line, col })
+            }
+            "lambda" => {
+                let (args, body) = self.extract_lambda_info(&node, source)?;
+                Ok(AstNode::Lambda { args, body: Box::new(body), line, col })
+            }
+            "subscript" => {
+                let (value, slice) = self.extract_subscript_info(&node, source)?;
+                Ok(AstNode::Subscript { value: Box::new(value), slice: Box::new(slice), line, col })
+            }
+            "match_statement" => {
+                let (subject, cases) = self.extract_match_info(&node, source)?;
+                Ok(AstNode::Match { subject: Box::new(subject), cases, line, col })
+            }
+            "pass_statement" => Ok(AstNode::Pass { line, col }),
+            "break_statement" => Ok(AstNode::Break { line, col }),
+            "continue_statement" => Ok(AstNode::Continue { line, col }),
+            "boolean_operator" => {
+                let (left, op, right) = self.extract_boolean_op_info(&node, source)?;
+                Ok(AstNode::BinaryOp { left: Box::new(left), op, right: Box::new(right), line, col })
             }
             _ => match node.utf8_text(source.as_bytes()) {
                 Ok(text) => Ok(AstNode::Identifier { name: text.to_string(), line, col }),
@@ -362,7 +656,6 @@ impl PythonParser {
             "identifier" => {
                 let arg_name = node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
                 let start_position = node.start_position();
-
                 Ok(Some(Parameter {
                     name: arg_name.to_string(),
                     line: start_position.row + 1,
@@ -374,16 +667,25 @@ impl PythonParser {
                 let mut name = None;
                 let mut type_annotation = None;
                 let mut position = node.start_position();
-
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
                     match child.kind() {
                         "identifier" => {
-                            name = Some(child.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?.to_string());
+                            name = Some(
+                                child
+                                    .utf8_text(source.as_bytes())
+                                    .map_err(|_| ParseError::InvalidUtf8)?
+                                    .to_string(),
+                            );
                             position = child.start_position();
                         }
                         "type" => {
-                            type_annotation = Some(child.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?.to_string());
+                            type_annotation = Some(
+                                child
+                                    .utf8_text(source.as_bytes())
+                                    .map_err(|_| ParseError::InvalidUtf8)?
+                                    .to_string(),
+                            );
                         }
                         _ => {}
                     }
@@ -692,6 +994,637 @@ impl PythonParser {
         }
 
         if content.is_empty() { None } else { Some(content) }
+    }
+
+    fn extract_if_info(
+        &self, node: &Node, source: &str,
+    ) -> Result<(
+        AstNode,
+        Vec<AstNode>,
+        Vec<(AstNode, Vec<AstNode>)>,
+        Option<Vec<AstNode>>,
+    )> {
+        let condition = node
+            .child_by_field_name("condition")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing if condition".to_string()))?;
+        let test = self.node_to_ast(condition, source)?;
+        let consequence = node
+            .child_by_field_name("consequence")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing if body".to_string()))?;
+        let body = self.extract_body(&consequence, source)?;
+
+        let mut elif_parts = Vec::new();
+        let mut else_body = None;
+
+        if let Some(alternative) = node.child_by_field_name("alternative") {
+            match alternative.kind() {
+                "elif_clause" => {
+                    if let Some(elif_cond) = alternative.child_by_field_name("condition") {
+                        let elif_test = self.node_to_ast(elif_cond, source)?;
+                        if let Some(elif_cons) = alternative.child_by_field_name("consequence") {
+                            let elif_body = self.extract_body(&elif_cons, source)?;
+                            elif_parts.push((elif_test, elif_body));
+                        }
+                    }
+                }
+                "else_clause" => {
+                    if let Some(else_block) = alternative.child_by_field_name("body") {
+                        else_body = Some(self.extract_body(&else_block, source)?);
+                    }
+                }
+                "if_statement" => {
+                    let nested_if = self.node_to_ast(alternative, source)?;
+                    match nested_if {
+                        AstNode::If {
+                            test, body: if_body, elif_parts: nested_elif, else_body: nested_else, ..
+                        } => {
+                            elif_parts.push((*test, if_body));
+                            elif_parts.extend(nested_elif);
+                            else_body = nested_else;
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok((test, body, elif_parts, else_body))
+    }
+
+    fn extract_for_info(
+        &self, node: &Node, source: &str,
+    ) -> Result<(String, AstNode, Vec<AstNode>, Option<Vec<AstNode>>)> {
+        let left = node
+            .child_by_field_name("left")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing for target".to_string()))?;
+        let target = left
+            .utf8_text(source.as_bytes())
+            .map_err(|_| ParseError::InvalidUtf8)?
+            .to_string();
+
+        let right = node
+            .child_by_field_name("right")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing for iterator".to_string()))?;
+        let iter = self.node_to_ast(right, source)?;
+
+        let body_node = node
+            .child_by_field_name("body")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing for body".to_string()))?;
+        let body = self.extract_body(&body_node, source)?;
+
+        let else_body = node
+            .child_by_field_name("alternative")
+            .map(|alt| self.extract_body(&alt, source))
+            .transpose()?;
+
+        Ok((target, iter, body, else_body))
+    }
+
+    fn extract_while_info(&self, node: &Node, source: &str) -> Result<(AstNode, Vec<AstNode>, Option<Vec<AstNode>>)> {
+        let condition = node
+            .child_by_field_name("condition")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing while condition".to_string()))?;
+        let test = self.node_to_ast(condition, source)?;
+
+        let body_node = node
+            .child_by_field_name("body")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing while body".to_string()))?;
+        let body = self.extract_body(&body_node, source)?;
+
+        let else_body = node
+            .child_by_field_name("alternative")
+            .map(|alt| self.extract_body(&alt, source))
+            .transpose()?;
+
+        Ok((test, body, else_body))
+    }
+
+    fn extract_try_info(
+        &self, node: &Node, source: &str,
+    ) -> Result<(
+        Vec<AstNode>,
+        Vec<ExceptHandler>,
+        Option<Vec<AstNode>>,
+        Option<Vec<AstNode>>,
+    )> {
+        let body_node = node
+            .child_by_field_name("body")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing try body".to_string()))?;
+        let body = self.extract_body(&body_node, source)?;
+        let mut handlers = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "except_clause" {
+                let handler = self.extract_except_handler(&child, source)?;
+                handlers.push(handler);
+            }
+        }
+
+        let else_body = node
+            .children(&mut node.walk())
+            .find(|n| n.kind() == "else_clause")
+            .and_then(|n| n.child_by_field_name("body"))
+            .map(|n| self.extract_body(&n, source))
+            .transpose()?;
+
+        let finally_body = node
+            .children(&mut node.walk())
+            .find(|n| n.kind() == "finally_clause")
+            .and_then(|n| n.child_by_field_name("body"))
+            .map(|n| self.extract_body(&n, source))
+            .transpose()?;
+
+        Ok((body, handlers, else_body, finally_body))
+    }
+
+    fn extract_except_handler(&self, node: &Node, source: &str) -> Result<ExceptHandler> {
+        let start_position = node.start_position();
+        let line = start_position.row + 1;
+        let col = start_position.column + 1;
+        let exception_type = node
+            .children(&mut node.walk())
+            .find(|n| n.kind() == "dotted_name" || n.kind() == "identifier")
+            .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+            .map(|s| s.to_string());
+
+        let name = node
+            .child_by_field_name("name")
+            .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+            .map(|s| s.to_string());
+
+        let body_node = node
+            .children(&mut node.walk())
+            .find(|n| n.kind() == "block")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing except body".to_string()))?;
+        let body = self.extract_body(&body_node, source)?;
+
+        Ok(ExceptHandler { exception_type, name, body, line, col })
+    }
+
+    fn extract_with_info(&self, node: &Node, source: &str) -> Result<(Vec<WithItem>, Vec<AstNode>)> {
+        let mut items = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "with_item" {
+                let context_expr_node = child.named_child(0).ok_or_else(|| {
+                    ParseError::TreeSitterError("Missing context expression in with item".to_string())
+                })?;
+                let context_expr = self.node_to_ast(context_expr_node, source)?;
+
+                let optional_vars = child
+                    .child_by_field_name("alias")
+                    .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                    .map(|s| s.to_string());
+
+                items.push(WithItem { context_expr, optional_vars });
+            }
+        }
+
+        let body_node = node
+            .child_by_field_name("body")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing with body".to_string()))?;
+        let body = self.extract_body(&body_node, source)?;
+
+        Ok((items, body))
+    }
+
+    fn extract_list_comp_info(&self, node: &Node, source: &str) -> Result<(AstNode, Vec<Comprehension>)> {
+        let element = node
+            .child_by_field_name("body")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing list comprehension body".to_string()))?;
+        let element_ast = self.node_to_ast(element, source)?;
+        let generators = self.extract_comprehension_clauses(node, source)?;
+
+        Ok((element_ast, generators))
+    }
+
+    fn extract_dict_comp_info(&self, node: &Node, source: &str) -> Result<(AstNode, AstNode, Vec<Comprehension>)> {
+        let mut key = None;
+        let mut value = None;
+        let mut cursor = node.walk();
+
+        for child in node.children(&mut cursor) {
+            if child.kind() == "pair" {
+                if let Some(key_node) = child.child_by_field_name("key") {
+                    key = Some(self.node_to_ast(key_node, source)?);
+                }
+                if let Some(value_node) = child.child_by_field_name("value") {
+                    value = Some(self.node_to_ast(value_node, source)?);
+                }
+            }
+        }
+
+        let key = key.ok_or_else(|| ParseError::TreeSitterError("Missing dict comprehension key".to_string()))?;
+        let value = value.ok_or_else(|| ParseError::TreeSitterError("Missing dict comprehension value".to_string()))?;
+        let generators = self.extract_comprehension_clauses(node, source)?;
+
+        Ok((key, value, generators))
+    }
+
+    fn extract_set_comp_info(&self, node: &Node, source: &str) -> Result<(AstNode, Vec<Comprehension>)> {
+        let element = node
+            .child_by_field_name("body")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing set comprehension body".to_string()))?;
+        let element_ast = self.node_to_ast(element, source)?;
+        let generators = self.extract_comprehension_clauses(node, source)?;
+
+        Ok((element_ast, generators))
+    }
+
+    fn extract_generator_exp_info(&self, node: &Node, source: &str) -> Result<(AstNode, Vec<Comprehension>)> {
+        let element = node
+            .child_by_field_name("body")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing generator expression body".to_string()))?;
+        let element_ast = self.node_to_ast(element, source)?;
+        let generators = self.extract_comprehension_clauses(node, source)?;
+
+        Ok((element_ast, generators))
+    }
+
+    fn extract_comprehension_clauses(&self, node: &Node, source: &str) -> Result<Vec<Comprehension>> {
+        let mut generators = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "for_in_clause" {
+                let left = child
+                    .child_by_field_name("left")
+                    .ok_or_else(|| ParseError::TreeSitterError("Missing comprehension target".to_string()))?;
+                let target = left
+                    .utf8_text(source.as_bytes())
+                    .map_err(|_| ParseError::InvalidUtf8)?
+                    .to_string();
+
+                let right = child
+                    .child_by_field_name("right")
+                    .ok_or_else(|| ParseError::TreeSitterError("Missing comprehension iterator".to_string()))?;
+                let iter = self.node_to_ast(right, source)?;
+
+                let mut ifs = Vec::new();
+                let mut sibling_cursor = child.walk();
+                if let Some(parent) = child.parent() {
+                    for sibling in parent.children(&mut sibling_cursor) {
+                        if sibling.kind() == "if_clause" && sibling.start_byte() > child.end_byte() {
+                            if let Some(cond) = sibling.named_child(0) {
+                                ifs.push(self.node_to_ast(cond, source)?);
+                            }
+                        }
+                    }
+                }
+
+                generators.push(Comprehension { target, iter, ifs });
+            }
+        }
+
+        Ok(generators)
+    }
+
+    // Expression extraction methods
+
+    fn extract_named_expr_info(&self, node: &Node, source: &str) -> Result<(String, AstNode)> {
+        let name = node
+            .child_by_field_name("name")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing named expression target".to_string()))?
+            .utf8_text(source.as_bytes())
+            .map_err(|_| ParseError::InvalidUtf8)?
+            .to_string();
+
+        let value_node = node
+            .child_by_field_name("value")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing named expression value".to_string()))?;
+        let value = self.node_to_ast(value_node, source)?;
+
+        Ok((name, value))
+    }
+
+    fn extract_binary_op_info(&self, node: &Node, source: &str) -> Result<(AstNode, BinaryOperator, AstNode)> {
+        let left_node = node
+            .child_by_field_name("left")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing binary operator left operand".to_string()))?;
+        let left = self.node_to_ast(left_node, source)?;
+
+        let right_node = node
+            .child_by_field_name("right")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing binary operator right operand".to_string()))?;
+        let right = self.node_to_ast(right_node, source)?;
+
+        let mut cursor = node.walk();
+        let op_str = node
+            .children(&mut cursor)
+            .find(|n| self.is_binary_operator(n.kind()))
+            .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+            .ok_or_else(|| ParseError::TreeSitterError("Missing binary operator".to_string()))?;
+
+        let op = self.parse_binary_operator(op_str)?;
+
+        Ok((left, op, right))
+    }
+
+    fn extract_unary_op_info(&self, node: &Node, source: &str) -> Result<(UnaryOperator, AstNode)> {
+        let operand_node = node
+            .child_by_field_name("argument")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing unary operator operand".to_string()))?;
+        let operand = self.node_to_ast(operand_node, source)?;
+
+        let mut cursor = node.walk();
+        let op_str = node
+            .children(&mut cursor)
+            .find(|n| self.is_unary_operator(n.kind()))
+            .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+            .ok_or_else(|| ParseError::TreeSitterError("Missing unary operator".to_string()))?;
+
+        let op = self.parse_unary_operator(op_str)?;
+
+        Ok((op, operand))
+    }
+
+    fn extract_comparison_info(
+        &self, node: &Node, source: &str,
+    ) -> Result<(AstNode, Vec<CompareOperator>, Vec<AstNode>)> {
+        let mut operands = Vec::new();
+        let mut operators = Vec::new();
+        let mut cursor = node.walk();
+
+        for child in node.children(&mut cursor) {
+            if !child.is_extra() {
+                if self.is_compare_operator(child.kind()) {
+                    if let Ok(text) = child.utf8_text(source.as_bytes()) {
+                        if let Ok(op) = self.parse_compare_operator(text) {
+                            operators.push(op);
+                        }
+                    }
+                } else if child.kind() != "(" && child.kind() != ")" {
+                    operands.push(self.node_to_ast(child, source)?);
+                }
+            }
+        }
+
+        if operands.is_empty() {
+            return Err(ParseError::TreeSitterError("No operands in comparison".to_string()).into());
+        }
+
+        let left = operands.remove(0);
+
+        Ok((left, operators, operands))
+    }
+
+    fn extract_boolean_op_info(&self, node: &Node, source: &str) -> Result<(AstNode, BinaryOperator, AstNode)> {
+        let left_node = node
+            .child_by_field_name("left")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing boolean operator left operand".to_string()))?;
+        let left = self.node_to_ast(left_node, source)?;
+
+        let right_node = node
+            .child_by_field_name("right")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing boolean operator right operand".to_string()))?;
+        let right = self.node_to_ast(right_node, source)?;
+
+        let mut cursor = node.walk();
+        let op_str = node
+            .children(&mut cursor)
+            .find(|n| n.kind() == "and" || n.kind() == "or")
+            .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+            .ok_or_else(|| ParseError::TreeSitterError("Missing boolean operator".to_string()))?;
+
+        let op = match op_str {
+            "and" => BinaryOperator::And,
+            "or" => BinaryOperator::Or,
+            _ => return Err(ParseError::TreeSitterError(format!("Unknown boolean operator: {}", op_str)).into()),
+        };
+
+        Ok((left, op, right))
+    }
+
+    fn extract_lambda_info(&self, node: &Node, source: &str) -> Result<(Vec<Parameter>, AstNode)> {
+        let args = node
+            .child_by_field_name("parameters")
+            .map(|params| self.extract_function_args(&Node::from(params), source))
+            .transpose()?
+            .unwrap_or_default();
+
+        let body_node = node
+            .child_by_field_name("body")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing lambda body".to_string()))?;
+        let body = self.node_to_ast(body_node, source)?;
+
+        Ok((args, body))
+    }
+
+    fn extract_subscript_info(&self, node: &Node, source: &str) -> Result<(AstNode, AstNode)> {
+        let value_node = node
+            .child_by_field_name("value")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing subscript value".to_string()))?;
+        let value = self.node_to_ast(value_node, source)?;
+
+        let subscript_node = node
+            .child_by_field_name("subscript")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing subscript index".to_string()))?;
+        let slice = self.node_to_ast(subscript_node, source)?;
+
+        Ok((value, slice))
+    }
+
+    fn extract_match_info(&self, node: &Node, source: &str) -> Result<(AstNode, Vec<MatchCase>)> {
+        let subject_node = node
+            .child_by_field_name("subject")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing match subject".to_string()))?;
+        let subject = self.node_to_ast(subject_node, source)?;
+
+        let mut cases = Vec::new();
+        let mut cursor = node.walk();
+
+        for child in node.children(&mut cursor) {
+            if child.kind() == "case_clause" {
+                let case = self.extract_match_case(&child, source)?;
+                cases.push(case);
+            }
+        }
+
+        Ok((subject, cases))
+    }
+
+    fn extract_match_case(&self, node: &Node, source: &str) -> Result<MatchCase> {
+        let pattern_node = node
+            .child_by_field_name("pattern")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing case pattern".to_string()))?;
+        let pattern = self.extract_pattern(&pattern_node, source)?;
+
+        let guard = node
+            .child_by_field_name("guard")
+            .map(|g| self.node_to_ast(g, source))
+            .transpose()?;
+
+        let body_node = node
+            .child_by_field_name("consequence")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing case body".to_string()))?;
+        let body = self.extract_body(&body_node, source)?;
+
+        Ok(MatchCase { pattern, guard, body })
+    }
+
+    fn extract_pattern(&self, node: &Node, source: &str) -> Result<Pattern> {
+        match node.kind() {
+            "as_pattern" => {
+                let pattern = node
+                    .child_by_field_name("pattern")
+                    .map(|p| self.extract_pattern(&p, source))
+                    .transpose()?
+                    .map(Box::new);
+
+                let name = node
+                    .child_by_field_name("alias")
+                    .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                    .map(|s| s.to_string());
+
+                Ok(Pattern::MatchAs { pattern, name })
+            }
+            "list_pattern" | "tuple_pattern" => {
+                let mut patterns = Vec::new();
+                let mut cursor = node.walk();
+
+                for child in node.children(&mut cursor) {
+                    if !child.is_extra()
+                        && child.kind() != "["
+                        && child.kind() != "]"
+                        && child.kind() != "("
+                        && child.kind() != ")"
+                        && child.kind() != ","
+                    {
+                        patterns.push(self.extract_pattern(&child, source)?);
+                    }
+                }
+
+                Ok(Pattern::MatchSequence(patterns))
+            }
+            "dict_pattern" => {
+                let mut keys = Vec::new();
+                let mut patterns = Vec::new();
+                let mut cursor = node.walk();
+
+                for child in node.children(&mut cursor) {
+                    if child.kind() == "pair" {
+                        if let Some(key_node) = child.child_by_field_name("key") {
+                            keys.push(self.node_to_ast(key_node, source)?);
+                        }
+                        if let Some(value_node) = child.child_by_field_name("value") {
+                            patterns.push(self.extract_pattern(&value_node, source)?);
+                        }
+                    }
+                }
+
+                Ok(Pattern::MatchMapping { keys, patterns })
+            }
+            "class_pattern" => {
+                let cls = node
+                    .child_by_field_name("class")
+                    .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                    .ok_or_else(|| ParseError::TreeSitterError("Missing class in class pattern".to_string()))?
+                    .to_string();
+
+                let mut patterns = Vec::new();
+                let mut cursor = node.walk();
+
+                for child in node.children(&mut cursor) {
+                    if child.kind() == "pattern" {
+                        patterns.push(self.extract_pattern(&child, source)?);
+                    }
+                }
+
+                Ok(Pattern::MatchClass { cls, patterns })
+            }
+            "or_pattern" => {
+                let mut patterns = Vec::new();
+                let mut cursor = node.walk();
+
+                for child in node.children(&mut cursor) {
+                    if !child.is_extra() && child.kind() != "|" {
+                        patterns.push(self.extract_pattern(&child, source)?);
+                    }
+                }
+
+                Ok(Pattern::MatchOr(patterns))
+            }
+            _ => {
+                // Fallback to value pattern
+                let value = self.node_to_ast(*node, source)?;
+                Ok(Pattern::MatchValue(value))
+            }
+        }
+    }
+
+    // Helper methods
+
+    fn extract_body(&self, node: &Node, source: &str) -> Result<Vec<AstNode>> {
+        let mut body = Vec::new();
+        let mut cursor = node.walk();
+
+        for child in node.children(&mut cursor) {
+            if !child.is_extra() {
+                body.push(self.node_to_ast(child, source)?);
+            }
+        }
+
+        Ok(body)
+    }
+
+    fn is_binary_operator(&self, kind: &str) -> bool {
+        matches!(
+            kind,
+            "+" | "-" | "*" | "/" | "//" | "%" | "**" | "@" | "&" | "|" | "^" | "<<" | ">>"
+        )
+    }
+
+    fn is_unary_operator(&self, kind: &str) -> bool {
+        matches!(kind, "not" | "~" | "+" | "-")
+    }
+
+    fn is_compare_operator(&self, kind: &str) -> bool {
+        matches!(kind, "==" | "!=" | "<" | "<=" | ">" | ">=" | "is" | "in" | "not")
+    }
+
+    fn parse_binary_operator(&self, op: &str) -> Result<BinaryOperator> {
+        match op {
+            "+" => Ok(BinaryOperator::Add),
+            "-" => Ok(BinaryOperator::Sub),
+            "*" => Ok(BinaryOperator::Mult),
+            "/" => Ok(BinaryOperator::Div),
+            "//" => Ok(BinaryOperator::FloorDiv),
+            "%" => Ok(BinaryOperator::Mod),
+            "**" => Ok(BinaryOperator::Pow),
+            "@" => Ok(BinaryOperator::MatMult),
+            "&" => Ok(BinaryOperator::BitAnd),
+            "|" => Ok(BinaryOperator::BitOr),
+            "^" => Ok(BinaryOperator::BitXor),
+            "<<" => Ok(BinaryOperator::LeftShift),
+            ">>" => Ok(BinaryOperator::RightShift),
+            _ => Err(ParseError::TreeSitterError(format!("Unknown binary operator: {}", op)).into()),
+        }
+    }
+
+    fn parse_unary_operator(&self, op: &str) -> Result<UnaryOperator> {
+        match op {
+            "not" => Ok(UnaryOperator::Not),
+            "~" => Ok(UnaryOperator::Invert),
+            "+" => Ok(UnaryOperator::Plus),
+            "-" => Ok(UnaryOperator::Minus),
+            _ => Err(ParseError::TreeSitterError(format!("Unknown unary operator: {}", op)).into()),
+        }
+    }
+
+    fn parse_compare_operator(&self, op: &str) -> Result<CompareOperator> {
+        match op {
+            "==" => Ok(CompareOperator::Eq),
+            "!=" => Ok(CompareOperator::NotEq),
+            "<" => Ok(CompareOperator::Lt),
+            "<=" => Ok(CompareOperator::LtE),
+            ">" => Ok(CompareOperator::Gt),
+            ">=" => Ok(CompareOperator::GtE),
+            "is" => Ok(CompareOperator::Is),
+            "is not" => Ok(CompareOperator::IsNot),
+            "in" => Ok(CompareOperator::In),
+            "not in" => Ok(CompareOperator::NotIn),
+            _ => Err(ParseError::TreeSitterError(format!("Unknown comparison operator: {}", op)).into()),
+        }
     }
 
     /// Perform name resolution on an AST and return a symbol table

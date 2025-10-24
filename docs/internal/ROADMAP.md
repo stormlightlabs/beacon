@@ -9,7 +9,7 @@ This document tracks the major milestones required to deliver a robust Hindley-M
     - [x] Bind `tree-sitter-python` and expose the node kinds required for analysis.
     - [x] Implement scope building for modules, classes, functions, and blocks, including import alias tracking.
     - [x] Capture type annotations (parameters, return types, variable annotations) in AST.
-    - [ ] Build CST-to-AST adapters for `with` statements, comprehensions, walrus operator, pattern matching, and decorators.
+    - [x] Build CST-to-AST adapters for `with` statements, comprehensions, walrus operator, pattern matching, and decorators.
     - [ ] Support incremental edits by invalidating AST slices via Tree-sitter edit sessions (deferred).
 **Implementation Notes:**
     - Preserve trivia for diagnostics, ranges, and code actions.
@@ -19,7 +19,7 @@ This document tracks the major milestones required to deliver a robust Hindley-M
     - [x] Parser captures type annotations from function parameters, return types, and variable declarations.
     - [x] AST records scopes and symbol tables for downstream passes.
     - [x] Semantic tokens provide accurate highlighting for type annotations.
-    - [ ] Parser handles with, comprehensions, walrus operator, pattern matching, and decorators.
+    - [x] Parser handles with, comprehensions, walrus operator, pattern matching, and decorators.
     - [ ] Parser updates respond to document edits without full reparse (deferred).
 
 ## Core Type System

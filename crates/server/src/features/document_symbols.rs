@@ -155,6 +155,43 @@ impl DocumentSymbolsProvider {
                     }
                 }
             }
+            AstNode::Module { body, .. } => match body.last() {
+                Some(last) => self.node_end_position(last),
+                None => Position { line: 0, character: 0 },
+            },
+            AstNode::If { body, else_body, .. } => {
+                if let Some(else_stmts) = else_body {
+                    if let Some(last) = else_stmts.last() {
+                        return self.node_end_position(last);
+                    }
+                }
+                if let Some(last) = body.last() {
+                    self.node_end_position(last)
+                } else {
+                    Position { line: 0, character: 0 }
+                }
+            }
+            AstNode::For { body, line, col, .. }
+            | AstNode::While { body, line, col, .. }
+            | AstNode::With { body, line, col, .. } => {
+                if let Some(last) = body.last() {
+                    self.node_end_position(last)
+                } else {
+                    Position { line: (*line).saturating_sub(1) as u32, character: (*col + 10).saturating_sub(1) as u32 }
+                }
+            }
+            AstNode::Try { body, finally_body, line, col, .. } => {
+                if let Some(finally_stmts) = finally_body {
+                    if let Some(last) = finally_stmts.last() {
+                        return self.node_end_position(last);
+                    }
+                }
+                if let Some(last) = body.last() {
+                    self.node_end_position(last)
+                } else {
+                    Position { line: (*line).saturating_sub(1) as u32, character: (*col + 10).saturating_sub(1) as u32 }
+                }
+            }
             AstNode::Literal { line, col, .. }
             | AstNode::Identifier { line, col, .. }
             | AstNode::Assignment { line, col, .. }
@@ -163,13 +200,23 @@ impl DocumentSymbolsProvider {
             | AstNode::Return { line, col, .. }
             | AstNode::Import { line, col, .. }
             | AstNode::ImportFrom { line, col, .. }
-            | AstNode::Attribute { line, col, .. } => {
+            | AstNode::Attribute { line, col, .. }
+            | AstNode::ListComp { line, col, .. }
+            | AstNode::DictComp { line, col, .. }
+            | AstNode::SetComp { line, col, .. }
+            | AstNode::GeneratorExp { line, col, .. }
+            | AstNode::NamedExpr { line, col, .. }
+            | AstNode::BinaryOp { line, col, .. }
+            | AstNode::UnaryOp { line, col, .. }
+            | AstNode::Compare { line, col, .. }
+            | AstNode::Lambda { line, col, .. }
+            | AstNode::Subscript { line, col, .. }
+            | AstNode::Match { line, col, .. }
+            | AstNode::Pass { line, col }
+            | AstNode::Break { line, col }
+            | AstNode::Continue { line, col } => {
                 Position { line: (*line).saturating_sub(1) as u32, character: (*col + 10).saturating_sub(1) as u32 }
             }
-            AstNode::Module { body, .. } => match body.last() {
-                Some(last) => self.node_end_position(last),
-                None => Position { line: 0, character: 0 },
-            },
         }
     }
 }

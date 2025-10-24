@@ -38,8 +38,6 @@ impl Analyzer {
     }
 
     /// Analyze a document and return inferred types
-    ///
-    /// TODO: Implement full analysis pipeline
     pub fn analyze(&mut self, uri: &Url) -> Result<AnalysisResult> {
         let result = self.documents.get_document(uri, |doc| {
             let ast = doc.ast().ok_or(AnalysisError::MissingAst)?.clone();
@@ -56,12 +54,10 @@ impl Analyzer {
 
         let constraints = self.generate_constraints(&ast, &symbol_table)?;
 
-        // Solve constraints to get type substitution
         // TODO: Implement constraint solving
         let _substitution = self.solve_constraints(constraints)?;
 
-        // Build type map for all nodes
-        // TODO: Walk AST and apply substitution to build type map
+        // TODO: Walk AST and apply substitution to build type map for all nodes
         let type_map = FxHashMap::default();
 
         // TODO: Extract type errors from constraint solving
@@ -132,13 +128,14 @@ impl Analyzer {
                 LiteralValue::Boolean(_) => Type::Con(beacon_core::TypeCtor::Bool),
                 LiteralValue::None => Type::Con(beacon_core::TypeCtor::NoneType),
             }),
-            // TODO: Generate return type constraint
+            // TODO: Return type constraint
             AstNode::Return { .. } => Ok(Type::Var(self.type_var_gen.fresh())),
             AstNode::Import { .. } | AstNode::ImportFrom { .. } => {
                 Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
             }
-            // TODO: Proper attribute type checking
+            // TODO: Attribute type checking
             AstNode::Attribute { object, .. } => self.visit_node(object, _constraints),
+            _ => Ok(Type::Var(self.type_var_gen.fresh())),
         }
     }
 
@@ -211,6 +208,130 @@ impl Analyzer {
             }
             AstNode::Attribute { object, .. } => self.collect_unbound_in_node(object, symbol_table, text, unbound),
             AstNode::Import { .. } | AstNode::ImportFrom { .. } | AstNode::Literal { .. } => {}
+            // Handle control flow statements by recursively visiting their bodies
+            AstNode::If { test, body, elif_parts, else_body, .. } => {
+                self.collect_unbound_in_node(test, symbol_table, text, unbound);
+                for stmt in body {
+                    self.collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                }
+                for (elif_test, elif_body) in elif_parts {
+                    self.collect_unbound_in_node(elif_test, symbol_table, text, unbound);
+                    for stmt in elif_body {
+                        self.collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        self.collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                    }
+                }
+            }
+            AstNode::For { iter, body, else_body, .. } => {
+                self.collect_unbound_in_node(iter, symbol_table, text, unbound);
+                for stmt in body {
+                    self.collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        self.collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                    }
+                }
+            }
+            AstNode::While { test, body, else_body, .. } => {
+                self.collect_unbound_in_node(test, symbol_table, text, unbound);
+                for stmt in body {
+                    self.collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        self.collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                    }
+                }
+            }
+            AstNode::Try { body, handlers, else_body, finally_body, .. } => {
+                for stmt in body {
+                    self.collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                }
+                for handler in handlers {
+                    for stmt in &handler.body {
+                        self.collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        self.collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                    }
+                }
+                if let Some(finally_stmts) = finally_body {
+                    for stmt in finally_stmts {
+                        self.collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                    }
+                }
+            }
+            AstNode::With { items, body, .. } => {
+                for item in items {
+                    self.collect_unbound_in_node(&item.context_expr, symbol_table, text, unbound);
+                }
+                for stmt in body {
+                    self.collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                }
+            }
+            AstNode::ListComp { element, generators, .. }
+            | AstNode::SetComp { element, generators, .. }
+            | AstNode::GeneratorExp { element, generators, .. } => {
+                self.collect_unbound_in_node(element, symbol_table, text, unbound);
+                for generator in generators {
+                    self.collect_unbound_in_node(&generator.iter, symbol_table, text, unbound);
+                    for if_clause in &generator.ifs {
+                        self.collect_unbound_in_node(if_clause, symbol_table, text, unbound);
+                    }
+                }
+            }
+            AstNode::DictComp { key, value, generators, .. } => {
+                self.collect_unbound_in_node(key, symbol_table, text, unbound);
+                self.collect_unbound_in_node(value, symbol_table, text, unbound);
+                for generator in generators {
+                    self.collect_unbound_in_node(&generator.iter, symbol_table, text, unbound);
+                    for if_clause in &generator.ifs {
+                        self.collect_unbound_in_node(if_clause, symbol_table, text, unbound);
+                    }
+                }
+            }
+            AstNode::NamedExpr { value, .. } => {
+                self.collect_unbound_in_node(value, symbol_table, text, unbound);
+            }
+            AstNode::BinaryOp { left, right, .. } => {
+                self.collect_unbound_in_node(left, symbol_table, text, unbound);
+                self.collect_unbound_in_node(right, symbol_table, text, unbound);
+            }
+            AstNode::UnaryOp { operand, .. } => {
+                self.collect_unbound_in_node(operand, symbol_table, text, unbound);
+            }
+            AstNode::Compare { left, comparators, .. } => {
+                self.collect_unbound_in_node(left, symbol_table, text, unbound);
+                for comp in comparators {
+                    self.collect_unbound_in_node(comp, symbol_table, text, unbound);
+                }
+            }
+            AstNode::Lambda { body, .. } => {
+                self.collect_unbound_in_node(body, symbol_table, text, unbound);
+            }
+            AstNode::Subscript { value, slice, .. } => {
+                self.collect_unbound_in_node(value, symbol_table, text, unbound);
+                self.collect_unbound_in_node(slice, symbol_table, text, unbound);
+            }
+            AstNode::Match { subject, cases, .. } => {
+                self.collect_unbound_in_node(subject, symbol_table, text, unbound);
+                for case in cases {
+                    if let Some(guard) = &case.guard {
+                        self.collect_unbound_in_node(guard, symbol_table, text, unbound);
+                    }
+                    for stmt in &case.body {
+                        self.collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                    }
+                }
+            }
+            AstNode::Pass { .. } | AstNode::Break { .. } | AstNode::Continue { .. } => {}
         }
     }
 
