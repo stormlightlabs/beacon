@@ -6,9 +6,9 @@ use crate::analysis::Analyzer;
 use crate::cache::IntrospectionCache;
 use crate::document::DocumentManager;
 use crate::parser;
-use beacon_parser::{AstNode, SymbolKind};
+use beacon_parser::{AstNode, SymbolKind, rst};
 use lsp_types::{Hover, HoverContents, HoverParams, MarkupContent, MarkupKind, Position};
-use std::path::PathBuf;
+use std::{ops::Not, path::PathBuf};
 use url::Url;
 
 pub struct HoverProvider {
@@ -92,8 +92,11 @@ impl HoverProvider {
         );
 
         if let Some(doc) = docstring {
-            value.push_str("\n\n---\n\n");
-            value.push_str(doc);
+            let rendered = rst::markdown_of(doc);
+            if rendered.trim().is_empty().not() {
+                value.push_str("\n\n---\n\n");
+                value.push_str(rendered.trim());
+            }
         }
 
         MarkupContent { kind: MarkupKind::Markdown, value }
@@ -109,8 +112,11 @@ impl HoverProvider {
         );
 
         if let Some(doc) = docstring {
-            value.push_str("\n\n---\n\n");
-            value.push_str(doc);
+            let rendered = rst::markdown_of(doc);
+            if rendered.trim().is_empty().not() {
+                value.push_str("\n\n---\n\n");
+                value.push_str(rendered.trim());
+            }
         }
 
         MarkupContent { kind: MarkupKind::Markdown, value }
@@ -192,7 +198,7 @@ impl HoverProvider {
     ) -> MarkupContent {
         let mut value = String::new();
 
-        if !result.signature.is_empty() {
+        if result.signature.is_empty().not() {
             value.push_str(&format!("```python\n{}{}\n```\n\n", symbol_name, result.signature));
         } else {
             value.push_str(&format!("```python\n{}\n```\n\n", symbol_name));
@@ -200,9 +206,12 @@ impl HoverProvider {
 
         value.push_str(&format!("**Imported from** `{}`\n\n", module_name));
 
-        if !result.docstring.is_empty() {
-            value.push_str("---\n\n");
-            value.push_str(&result.docstring);
+        if result.docstring.is_empty().not() {
+            let rendered = rst::markdown_of(&result.docstring);
+            if rendered.trim().is_empty().not() {
+                value.push_str("---\n\n");
+                value.push_str(rendered.trim());
+            }
         }
 
         MarkupContent { kind: MarkupKind::Markdown, value }

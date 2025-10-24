@@ -25,21 +25,13 @@ impl InlayHintsProvider {
     /// - Function parameter names
     /// - Function return types
     /// - Type arguments for generic calls
-    pub fn inlay_hints(
-        &self,
-        params: InlayHintParams,
-        _analyzer: &mut Analyzer,
-    ) -> Vec<InlayHint> {
+    pub fn inlay_hints(&self, params: InlayHintParams, _analyzer: &mut Analyzer) -> Vec<InlayHint> {
         let uri = params.text_document.uri;
         let range = params.range;
 
         let mut hints = Vec::new();
 
-        // Get hints for variables in range
         self.add_variable_type_hints(&uri, range, &mut hints);
-
-        // TODO: Add parameter name hints
-        // TODO: Add return type hints
 
         hints
     }
@@ -55,7 +47,6 @@ impl InlayHintsProvider {
 
             let _ast = doc.ast()?;
 
-            // Placeholder
             hints.push(InlayHint {
                 position: Position { line: 0, character: 0 },
                 label: InlayHintLabel::String(": int".to_string()),
