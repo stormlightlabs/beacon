@@ -153,7 +153,15 @@ impl SemanticTokensProvider {
                 }
             }
 
-            AstNode::FunctionDef { name, args, body, line, col, .. } => {
+            AstNode::FunctionDef { name, args, body, return_type, decorators, line, col, .. } => {
+                // Add decorator tokens
+                let decorator_token_type = self.get_token_type_index(&SymbolKind::Function);
+                for decorator in decorators {
+                    // Decorators appear before the function definition
+                    let decorator_line = line.saturating_sub(decorators.len());
+                    self.add_token(decorator, decorator_line, 1, decorator_token_type, 0, text, raw_tokens);
+                }
+
                 let token_type = self.get_token_type_index(&SymbolKind::Function);
                 let modifiers = self.get_definition_modifier();
                 self.add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
@@ -162,6 +170,11 @@ impl SemanticTokensProvider {
 
                 let param_token_type = self.get_token_type_index(&SymbolKind::Parameter);
                 let param_modifiers = self.get_definition_modifier();
+                let type_token_type = SUPPORTED_TYPES
+                    .iter()
+                    .position(|t| *t == SemanticTokenType::TYPE)
+                    .unwrap_or(0) as u32;
+
                 for param in args {
                     self.add_token(
                         &param.name,
@@ -172,13 +185,35 @@ impl SemanticTokensProvider {
                         text,
                         raw_tokens,
                     );
+
+                    // Add type annotation token if present
+                    if let Some(type_ann) = &param.type_annotation {
+                        let type_col = param.col + param.name.len() + 2; // +2 for ": "
+                        self.add_token(type_ann, param.line, type_col, type_token_type, 0, text, raw_tokens);
+                    }
+                }
+
+                // Add return type annotation if present
+                if let Some(ret_type) = return_type {
+                    // Find position after the closing paren and "->"
+                    // This is approximate - ideally we'd track the actual position
+                    let return_type_col = *col + name.len() + 10; // Approximate
+                    self.add_token(ret_type, *line, return_type_col, type_token_type, 0, text, raw_tokens);
                 }
 
                 for stmt in body {
                     self.collect_tokens_from_node(stmt, symbol_table, func_scope, text, raw_tokens);
                 }
             }
-            AstNode::ClassDef { name, body, line, col, .. } => {
+            AstNode::ClassDef { name, body, decorators, line, col, .. } => {
+                // Add decorator tokens
+                let decorator_token_type = self.get_token_type_index(&SymbolKind::Function);
+                for decorator in decorators {
+                    // Decorators appear before the class definition
+                    let decorator_line = line.saturating_sub(decorators.len());
+                    self.add_token(decorator, decorator_line, 1, decorator_token_type, 0, text, raw_tokens);
+                }
+
                 let token_type = self.get_token_type_index(&SymbolKind::Class);
                 let modifiers = self.get_definition_modifier();
                 self.add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
@@ -194,6 +229,25 @@ impl SemanticTokensProvider {
                 let modifiers = self.get_definition_modifier();
                 self.add_token(target, *line, *col, token_type, modifiers, text, raw_tokens);
                 self.collect_tokens_from_node(value, symbol_table, current_scope, text, raw_tokens);
+            }
+
+            AstNode::AnnotatedAssignment { target, type_annotation, value, line, col } => {
+                let token_type = self.get_token_type_index(&SymbolKind::Variable);
+                let modifiers = self.get_definition_modifier();
+                self.add_token(target, *line, *col, token_type, modifiers, text, raw_tokens);
+
+                // Add type annotation token
+                let type_token_type = SUPPORTED_TYPES
+                    .iter()
+                    .position(|t| *t == SemanticTokenType::TYPE)
+                    .unwrap_or(0) as u32;
+                // Find the position of the type annotation after the colon
+                let type_col = *col + target.len() + 2; // +2 for ": "
+                self.add_token(type_annotation, *line, type_col, type_token_type, 0, text, raw_tokens);
+
+                if let Some(val) = value {
+                    self.collect_tokens_from_node(val, symbol_table, current_scope, text, raw_tokens);
+                }
             }
 
             AstNode::Call { function, args, line, col } => {

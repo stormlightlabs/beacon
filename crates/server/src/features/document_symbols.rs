@@ -158,6 +158,7 @@ impl DocumentSymbolsProvider {
             AstNode::Literal { line, col, .. }
             | AstNode::Identifier { line, col, .. }
             | AstNode::Assignment { line, col, .. }
+            | AstNode::AnnotatedAssignment { line, col, .. }
             | AstNode::Call { line, col, .. }
             | AstNode::Return { line, col, .. }
             | AstNode::Import { line, col, .. }

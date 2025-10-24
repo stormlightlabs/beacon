@@ -104,7 +104,6 @@ impl Analyzer {
         match node {
             // TODO: Generate constraints for module body
             AstNode::Module { body: _, .. } => Ok(Type::Con(beacon_core::TypeCtor::Module("".into()))),
-
             // TODO: Generate function type constraints
             // - Fresh type vars for parameters
             // - Generate constraints from body
@@ -118,6 +117,7 @@ impl Analyzer {
             // - Infer RHS type
             // - Generalize if non-expansive
             AstNode::Assignment { .. } => Ok(Type::Var(self.type_var_gen.fresh())),
+            AstNode::AnnotatedAssignment { .. } => Ok(Type::Var(self.type_var_gen.fresh())),
             // TODO: Generate call constraints
             // - Function must have arrow type
             // - Unify parameter types with arguments
@@ -137,10 +137,8 @@ impl Analyzer {
             AstNode::Import { .. } | AstNode::ImportFrom { .. } => {
                 Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
             }
-            AstNode::Attribute { object, .. } => {
-                // TODO: Proper attribute type checking
-                self.visit_node(object, _constraints)
-            }
+            // TODO: Proper attribute type checking
+            AstNode::Attribute { object, .. } => self.visit_node(object, _constraints),
         }
     }
 
@@ -200,8 +198,11 @@ impl Analyzer {
                     self.collect_unbound_in_node(arg, symbol_table, text, unbound);
                 }
             }
-            AstNode::Assignment { value, .. } => {
-                self.collect_unbound_in_node(value, symbol_table, text, unbound);
+            AstNode::Assignment { value, .. } => self.collect_unbound_in_node(value, symbol_table, text, unbound),
+            AstNode::AnnotatedAssignment { value, .. } => {
+                if let Some(val) = value {
+                    self.collect_unbound_in_node(val, symbol_table, text, unbound);
+                }
             }
             AstNode::Return { value, .. } => {
                 if let Some(val) = value {

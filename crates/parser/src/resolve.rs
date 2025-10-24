@@ -230,6 +230,7 @@ impl NameResolver {
                 }
             }
             AstNode::Assignment { line, col, .. }
+            | AstNode::AnnotatedAssignment { line, col, .. }
             | AstNode::Call { line, col, .. }
             | AstNode::Identifier { line, col, .. }
             | AstNode::Literal { line, col, .. }
@@ -257,7 +258,7 @@ impl NameResolver {
                     self.visit_node(stmt)?;
                 }
             }
-            AstNode::FunctionDef { name, args, body, docstring, line, col } => {
+            AstNode::FunctionDef { name, args, body, docstring, line, col, .. } => {
                 let symbol = Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Function,
@@ -298,7 +299,7 @@ impl NameResolver {
 
                 self.current_scope = prev_scope;
             }
-            AstNode::ClassDef { name, body, docstring, line, col } => {
+            AstNode::ClassDef { name, body, docstring, line, col, .. } => {
                 let symbol = Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Class,
@@ -330,6 +331,21 @@ impl NameResolver {
             }
             AstNode::Assignment { target, value, line, col } => {
                 self.visit_node(value)?;
+
+                let symbol = Symbol {
+                    name: target.clone(),
+                    kind: SymbolKind::Variable,
+                    line: *line,
+                    col: *col,
+                    scope_id: self.current_scope,
+                    docstring: None,
+                };
+                self.symbol_table.add_symbol(self.current_scope, symbol);
+            }
+            AstNode::AnnotatedAssignment { target, value, line, col, .. } => {
+                if let Some(val) = value {
+                    self.visit_node(val)?;
+                }
 
                 let symbol = Symbol {
                     name: target.clone(),
@@ -412,6 +428,8 @@ impl Default for NameResolver {
 
 #[cfg(test)]
 mod tests {
+    use crate::Parameter;
+
     use super::*;
 
     #[test]
@@ -492,8 +510,8 @@ mod tests {
         let ast = AstNode::FunctionDef {
             name: "test_func".to_string(),
             args: vec![
-                crate::Parameter { name: "param1".to_string(), line: 1, col: 15 },
-                crate::Parameter { name: "param2".to_string(), line: 1, col: 23 },
+                Parameter { name: "param1".to_string(), line: 1, col: 15, type_annotation: None },
+                Parameter { name: "param2".to_string(), line: 1, col: 23, type_annotation: None },
             ],
             body: vec![AstNode::Assignment {
                 target: "local_var".to_string(),
@@ -501,9 +519,11 @@ mod tests {
                 line: 2,
                 col: 5,
             }],
-            docstring: None,
             line: 1,
             col: 1,
+            docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
         };
 
         resolver.resolve(&ast).unwrap();
@@ -568,9 +588,11 @@ mod tests {
                             col: 5,
                         },
                     ],
-                    docstring: None,
                     line: 2,
                     col: 1,
+                    docstring: None,
+                    return_type: None,
+                    decorators: Vec::new(),
                 },
                 AstNode::Assignment {
                     target: "w".to_string(),
@@ -617,16 +639,18 @@ mod tests {
                 },
                 AstNode::FunctionDef {
                     name: "outer".to_string(),
-                    args: vec![crate::Parameter { name: "param".to_string(), line: 2, col: 11 }],
+                    args: vec![Parameter { name: "param".to_string(), line: 2, col: 11, type_annotation: None }],
                     body: vec![AstNode::Assignment {
                         target: "outer_var".to_string(),
                         value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(2), line: 3, col: 20 }),
                         line: 3,
                         col: 9,
                     }],
-                    docstring: None,
                     line: 2,
                     col: 1,
+                    docstring: None,
+                    return_type: None,
+                    decorators: Vec::new(),
                 },
             ],
             docstring: None,

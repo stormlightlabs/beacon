@@ -12,7 +12,7 @@ class DataProcessor:
 
     def __init__(self, filters: List[str]):
         self.filters = filters
-        self.processed_count = 0
+        self.processed_count: int = 0
 
     def process(self, data: List[str]) -> List[str]:
         """Process data through filters."""

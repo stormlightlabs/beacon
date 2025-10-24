@@ -252,6 +252,7 @@ impl HoverProvider {
 mod tests {
     use super::*;
     use beacon_core::{Type, TypeCtor};
+    use beacon_parser::Parameter;
 
     #[test]
     fn test_format_type_simple() {
@@ -339,17 +340,19 @@ mod tests {
     fn test_format_function_hover() {
         let documents = DocumentManager::new().unwrap();
         let provider = HoverProvider::new(documents);
-        let ast = beacon_parser::AstNode::Module {
-            body: vec![beacon_parser::AstNode::FunctionDef {
+        let ast = AstNode::Module {
+            body: vec![AstNode::FunctionDef {
                 name: "test_func".to_string(),
                 args: vec![
-                    beacon_parser::Parameter { name: "x".to_string(), line: 1, col: 15 },
-                    beacon_parser::Parameter { name: "y".to_string(), line: 1, col: 18 },
+                    Parameter { name: "x".to_string(), line: 1, col: 15, type_annotation: None },
+                    Parameter { name: "y".to_string(), line: 1, col: 18, type_annotation: None },
                 ],
                 body: vec![],
-                docstring: None,
                 line: 1,
                 col: 1,
+                docstring: None,
+                return_type: None,
+                decorators: Vec::new(),
             }],
             docstring: None,
         };
@@ -421,17 +424,19 @@ mod tests {
     fn test_extract_function_signature() {
         let documents = DocumentManager::new().unwrap();
         let provider = HoverProvider::new(documents);
-        let ast = beacon_parser::AstNode::Module {
-            body: vec![beacon_parser::AstNode::FunctionDef {
+        let ast = AstNode::Module {
+            body: vec![AstNode::FunctionDef {
                 name: "calculate".to_string(),
                 args: vec![
-                    beacon_parser::Parameter { name: "a".to_string(), line: 1, col: 16 },
-                    beacon_parser::Parameter { name: "b".to_string(), line: 1, col: 19 },
+                    Parameter { name: "a".to_string(), line: 1, col: 16, type_annotation: None },
+                    Parameter { name: "b".to_string(), line: 1, col: 19, type_annotation: None },
                 ],
                 body: vec![],
-                docstring: None,
                 line: 1,
                 col: 1,
+                docstring: None,
+                return_type: None,
+                decorators: Vec::new(),
             }],
             docstring: None,
         };
@@ -445,20 +450,23 @@ mod tests {
     fn test_extract_function_signature_nested_in_class() {
         let documents = DocumentManager::new().unwrap();
         let provider = HoverProvider::new(documents);
-        let ast = beacon_parser::AstNode::Module {
-            body: vec![beacon_parser::AstNode::ClassDef {
+        let ast = AstNode::Module {
+            body: vec![AstNode::ClassDef {
                 name: "MyClass".to_string(),
-                body: vec![beacon_parser::AstNode::FunctionDef {
+                body: vec![AstNode::FunctionDef {
                     name: "method".to_string(),
-                    args: vec![beacon_parser::Parameter { name: "self".to_string(), line: 2, col: 16 }],
+                    args: vec![Parameter { name: "self".to_string(), line: 2, col: 16, type_annotation: None }],
                     body: vec![],
-                    docstring: None,
                     line: 2,
                     col: 5,
+                    docstring: None,
+                    return_type: None,
+                    decorators: Vec::new(),
                 }],
-                docstring: None,
                 line: 1,
                 col: 1,
+                docstring: None,
+                decorators: Vec::new(),
             }],
             docstring: None,
         };
@@ -582,14 +590,16 @@ mod tests {
         let documents = DocumentManager::new().unwrap();
         let provider = HoverProvider::new(documents);
 
-        let ast = beacon_parser::AstNode::Module {
-            body: vec![beacon_parser::AstNode::FunctionDef {
+        let ast = AstNode::Module {
+            body: vec![AstNode::FunctionDef {
                 name: "no_args".to_string(),
                 args: vec![],
                 body: vec![],
                 line: 1,
                 col: 1,
                 docstring: None,
+                return_type: None,
+                decorators: Vec::new(),
             }],
             docstring: None,
         };

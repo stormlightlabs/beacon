@@ -6,16 +6,21 @@ This document tracks the major milestones required to deliver a robust Hindley-M
 
 **Goal:** Provide a lossless parser pipeline that feeds incremental AST updates into constraint generation.
 **Tasks:**
-    - [ ] Bind `tree-sitter-python` and expose the node kinds required for analysis.
-    - [ ] Build CST-to-AST adapters that normalize `with`, comprehensions, walrus operator, pattern matching, and decorators.
-    - [ ] Implement scope building for modules, classes, functions, and blocks, including import alias tracking.
-    - [ ] Support incremental edits by invalidating AST slices via Tree-sitter edit sessions.
+    - [x] Bind `tree-sitter-python` and expose the node kinds required for analysis.
+    - [x] Implement scope building for modules, classes, functions, and blocks, including import alias tracking.
+    - [x] Capture type annotations (parameters, return types, variable annotations) in AST.
+    - [ ] Build CST-to-AST adapters for `with` statements, comprehensions, walrus operator, pattern matching, and decorators.
+    - [ ] Support incremental edits by invalidating AST slices via Tree-sitter edit sessions (deferred).
 **Implementation Notes:**
     - Preserve trivia for diagnostics, ranges, and code actions.
     - Recognize typing syntax (`list[int]`, `Callable`, `Literal`, etc.) during AST lowering.
+    - Type annotations are captured and exposed via semantic tokens for syntax highlighting.
 **Acceptance:**
-    - Parser updates respond to document edits without full reparse.
-    - AST records scopes, decorators, and symbol tables for downstream passes.
+    - [x] Parser captures type annotations from function parameters, return types, and variable declarations.
+    - [x] AST records scopes and symbol tables for downstream passes.
+    - [x] Semantic tokens provide accurate highlighting for type annotations.
+    - [ ] Parser handles with, comprehensions, walrus operator, pattern matching, and decorators.
+    - [ ] Parser updates respond to document edits without full reparse (deferred).
 
 ## Core Type System
 
@@ -159,7 +164,7 @@ This document tracks the major milestones required to deliver a robust Hindley-M
     - Diagnostics include actionable fixes in both CLI and editor.
     - Changing config toggles behavior without restarting the server.
 
-## Hardening & Performance
+## Performance
 
 **Goal:** Ensure the server scales to large repositories with predictable resource usage.
 **Tasks:**
@@ -173,7 +178,7 @@ This document tracks the major milestones required to deliver a robust Hindley-M
     - Benchmark suite runs automatically and flags regressions.
     - Memory usage remains stable under large project loads.
 
-## Testing & Quality
+## Testing
 
 **Goal:** Maintain confidence with layered automated testing.
 **Tasks:**

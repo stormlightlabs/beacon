@@ -264,6 +264,8 @@ result = hello()"#;
             line: 1,
             col: 1,
             docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
         };
 
         let mut highlights = Vec::new();

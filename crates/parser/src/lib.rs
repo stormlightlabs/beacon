@@ -24,6 +24,7 @@ pub struct Parameter {
     pub name: String,
     pub line: usize,
     pub col: usize,
+    pub type_annotation: Option<String>,
 }
 
 /// Basic AST node types for Python
@@ -38,6 +39,8 @@ pub enum AstNode {
         args: Vec<Parameter>,
         body: Vec<AstNode>,
         docstring: Option<String>,
+        return_type: Option<String>,
+        decorators: Vec<String>,
         line: usize,
         col: usize,
     },
@@ -45,12 +48,20 @@ pub enum AstNode {
         name: String,
         body: Vec<AstNode>,
         docstring: Option<String>,
+        decorators: Vec<String>,
         line: usize,
         col: usize,
     },
     Assignment {
         target: String,
         value: Box<AstNode>,
+        line: usize,
+        col: usize,
+    },
+    AnnotatedAssignment {
+        target: String,
+        type_annotation: String,
+        value: Option<Box<AstNode>>,
         line: usize,
         col: usize,
     },
@@ -164,6 +175,44 @@ impl PythonParser {
         let col = start_position.column + 1;
 
         match node.kind() {
+            "decorated_definition" => {
+                // Extract decorators and the actual definition
+                let mut decorators = Vec::new();
+                let mut definition_node = None;
+
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    match child.kind() {
+                        "decorator" => {
+                            if let Some(dec_name) = self.extract_decorator_name(&child, source) {
+                                decorators.push(dec_name);
+                            }
+                        }
+                        "function_definition" | "class_definition" => {
+                            definition_node = Some(child);
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Parse the definition and attach decorators
+                if let Some(def_node) = definition_node {
+                    let mut ast = self.node_to_ast(def_node, source)?;
+
+                    // Attach decorators to the definition
+                    match &mut ast {
+                        AstNode::FunctionDef { decorators: decs, .. } | AstNode::ClassDef { decorators: decs, .. } => {
+                            *decs = decorators;
+                        }
+                        _ => {}
+                    }
+
+                    return Ok(ast);
+                }
+
+                // Fallback if no definition found
+                Ok(AstNode::Identifier { name: "<decorated>".to_string(), line, col })
+            }
             "module" => {
                 let mut body = Vec::new();
                 let mut cursor = node.walk();
@@ -183,24 +232,27 @@ impl PythonParser {
                 let name = self.extract_identifier(&node, source, "name")?;
                 let args = self.extract_function_args(&node, source)?;
                 let body = self.extract_function_body(&node, source)?;
+                let return_type = self.extract_return_type(&node, source);
+                let decorators = Vec::new(); // TODO: extract decorators
 
                 // Extract docstring from function body
                 let docstring = node
                     .child_by_field_name("body")
                     .and_then(|body_node| self.extract_docstring(&body_node, source));
 
-                Ok(AstNode::FunctionDef { name, args, body, docstring, line, col })
+                Ok(AstNode::FunctionDef { name, args, body, docstring, return_type, decorators, line, col })
             }
             "class_definition" => {
                 let name = self.extract_identifier(&node, source, "name")?;
                 let body = self.extract_class_body(&node, source)?;
+                let decorators = Vec::new(); // TODO: extract decorators
 
                 // Extract docstring from class body
                 let docstring = node
                     .child_by_field_name("body")
                     .and_then(|body_node| self.extract_docstring(&body_node, source));
 
-                Ok(AstNode::ClassDef { name, body, docstring, line, col })
+                Ok(AstNode::ClassDef { name, body, docstring, decorators, line, col })
             }
             "expression_statement" => {
                 if let Some(child) = node.named_child(0) {
@@ -211,9 +263,25 @@ impl PythonParser {
             }
             "assignment" => {
                 let target = self.extract_assignment_target(&node, source)?;
-                let value = self.extract_assignment_value(&node, source)?;
 
-                Ok(AstNode::Assignment { target, value: Box::new(value), line, col })
+                // Check if this is an annotated assignment (has a type annotation)
+                if let Some(type_node) = node.child_by_field_name("type") {
+                    let type_annotation = type_node
+                        .utf8_text(source.as_bytes())
+                        .map_err(|_| ParseError::InvalidUtf8)?
+                        .to_string();
+
+                    // Value may be None for declarations like "x: int"
+                    let value = node.child_by_field_name("right")
+                        .map(|v| self.node_to_ast(v, source))
+                        .transpose()?
+                        .map(Box::new);
+
+                    Ok(AstNode::AnnotatedAssignment { target, type_annotation, value, line, col })
+                } else {
+                    let value = self.extract_assignment_value(&node, source)?;
+                    Ok(AstNode::Assignment { target, value: Box::new(value), line, col })
+                }
             }
             "call" => {
                 let function_node = node
@@ -280,22 +348,68 @@ impl PythonParser {
         if let Some(params) = params_node {
             let mut cursor = params.walk();
             for child in params.children(&mut cursor) {
-                if child.kind() == "identifier" {
-                    let arg_name = child
-                        .utf8_text(source.as_bytes())
-                        .map_err(|_| ParseError::InvalidUtf8)?;
-
-                    let start_position = child.start_position();
-                    args.push(Parameter {
-                        name: arg_name.to_string(),
-                        line: start_position.row + 1,
-                        col: start_position.column + 1,
-                    });
+                if let Some(param) = self.extract_parameter(&child, source)? {
+                    args.push(param);
                 }
             }
         }
 
         Ok(args)
+    }
+
+    fn extract_parameter(&self, node: &Node, source: &str) -> Result<Option<Parameter>> {
+        match node.kind() {
+            "identifier" => {
+                let arg_name = node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
+                let start_position = node.start_position();
+
+                Ok(Some(Parameter {
+                    name: arg_name.to_string(),
+                    line: start_position.row + 1,
+                    col: start_position.column + 1,
+                    type_annotation: None,
+                }))
+            }
+            "typed_parameter" | "typed_default_parameter" => {
+                let mut name = None;
+                let mut type_annotation = None;
+                let mut position = node.start_position();
+
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    match child.kind() {
+                        "identifier" => {
+                            name = Some(child.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?.to_string());
+                            position = child.start_position();
+                        }
+                        "type" => {
+                            type_annotation = Some(child.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?.to_string());
+                        }
+                        _ => {}
+                    }
+                }
+
+                match name {
+                    Some(n) => Ok(Some(Parameter {
+                        name: n,
+                        line: position.row + 1,
+                        col: position.column + 1,
+                        type_annotation,
+                    })),
+                    None => Ok(None),
+                }
+            }
+            "default_parameter" => {
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if child.kind() == "identifier" {
+                        return self.extract_parameter(&child, source);
+                    }
+                }
+                Ok(None)
+            }
+            _ => Ok(None),
+        }
     }
 
     fn extract_function_body(&self, node: &Node, source: &str) -> Result<Vec<AstNode>> {
@@ -315,6 +429,12 @@ impl PythonParser {
         }
 
         Ok(body)
+    }
+
+    fn extract_return_type(&self, node: &Node, source: &str) -> Option<String> {
+        node.child_by_field_name("return_type")
+            .and_then(|type_node| type_node.utf8_text(source.as_bytes()).ok())
+            .map(|s| s.to_string())
     }
 
     fn extract_class_body(&self, node: &Node, source: &str) -> Result<Vec<AstNode>> {
@@ -522,6 +642,17 @@ impl PythonParser {
         Ok((object, attribute))
     }
 
+    /// Extract decorator name from a decorator node
+    fn extract_decorator_name(&self, decorator_node: &Node, source: &str) -> Option<String> {
+        let mut cursor = decorator_node.walk();
+        for child in decorator_node.children(&mut cursor) {
+            if child.kind() == "identifier" || child.kind() == "attribute" {
+                return child.utf8_text(source.as_bytes()).ok().map(|s| s.to_string());
+            }
+        }
+        None
+    }
+
     /// Extract docstring from a body node if present
     ///
     /// Docstrings are expression_statement nodes containing a string as the first child of a body.
@@ -533,9 +664,7 @@ impl PythonParser {
                 continue;
             }
 
-            // Check if first non-extra child is expression_statement
             if child.kind() == "expression_statement" {
-                // Check if it contains a string node
                 let mut expr_cursor = child.walk();
                 for expr_child in child.children(&mut expr_cursor) {
                     if expr_child.kind() == "string" {
@@ -543,7 +672,7 @@ impl PythonParser {
                     }
                 }
             }
-            // Only check the first statement
+
             break;
         }
         None
@@ -1201,6 +1330,210 @@ def foo():
                 }
                 _ => panic!("Expected function definition"),
             },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_typed_parameters() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"
+from typing import List
+
+class MyClass:
+    def __init__(self, filters: List[str], count: int = 0):
+        self.filters = filters
+        self.count = count
+
+def process(x, y: int, z=5, w: str = "default"):
+    return x + y + z + len(w)
+"#;
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                match &body[1] {
+                    AstNode::ClassDef { body: class_body, .. } => match &class_body[0] {
+                        AstNode::FunctionDef { name, args, .. } => {
+                            assert_eq!(name, "__init__");
+                            assert_eq!(args.len(), 3);
+                            assert_eq!(args[0].name, "self");
+                            assert_eq!(args[0].type_annotation, None);
+                            assert_eq!(args[1].name, "filters");
+                            assert!(args[1].type_annotation.is_some());
+                            assert_eq!(args[2].name, "count");
+                            assert!(args[2].type_annotation.is_some());
+                        }
+                        _ => panic!("Expected function definition"),
+                    },
+                    _ => panic!("Expected class definition"),
+                }
+
+                match &body[2] {
+                    AstNode::FunctionDef { name, args, .. } => {
+                        assert_eq!(name, "process");
+                        assert_eq!(args.len(), 4);
+                        assert_eq!(args[0].name, "x");
+                        assert_eq!(args[0].type_annotation, None);
+                        assert_eq!(args[1].name, "y");
+                        assert!(args[1].type_annotation.is_some());
+                        assert_eq!(args[2].name, "z");
+                        assert_eq!(args[3].name, "w");
+                        assert!(args[3].type_annotation.is_some());
+                    }
+                    _ => panic!("Expected function definition"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_function_return_type() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "def add(x: int, y: int) -> int:\n    return x + y";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::FunctionDef { name, return_type, args, .. } => {
+                    assert_eq!(name, "add");
+                    assert!(return_type.is_some(), "Expected return type to be captured");
+                    assert!(return_type.as_ref().unwrap().contains("int"));
+                    assert_eq!(args.len(), 2);
+                    assert!(args[0].type_annotation.is_some());
+                    assert!(args[1].type_annotation.is_some());
+                }
+                _ => panic!("Expected function definition"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_annotated_assignment_debug() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "x: int = 5";
+        let parsed = parser.parse(source).unwrap();
+        let debug_output = parser.debug_tree(&parsed);
+        println!("{}", debug_output);
+        // This test is just for debugging - we'll see the tree structure
+        assert!(!debug_output.is_empty());
+    }
+
+    #[test]
+    fn test_decorator_debug() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "@property\ndef foo():\n    pass";
+        let parsed = parser.parse(source).unwrap();
+        let debug_output = parser.debug_tree(&parsed);
+        println!("{}", debug_output);
+        assert!(!debug_output.is_empty());
+    }
+
+    #[test]
+    fn test_decorator_extraction() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "@property\ndef foo():\n    pass";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::FunctionDef { name, decorators, .. } => {
+                        assert_eq!(name, "foo");
+                        assert_eq!(decorators.len(), 1);
+                        assert_eq!(decorators[0], "property");
+                    }
+                    _ => panic!("Expected FunctionDef, got {:?}", &body[0]),
+                }
+            }
+            _ => panic!("Expected Module"),
+        }
+    }
+
+    #[test]
+    fn test_multiple_decorators() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "@staticmethod\n@cached\ndef bar():\n    pass";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::FunctionDef { name, decorators, .. } => {
+                        assert_eq!(name, "bar");
+                        assert_eq!(decorators.len(), 2);
+                        assert_eq!(decorators[0], "staticmethod");
+                        assert_eq!(decorators[1], "cached");
+                    }
+                    _ => panic!("Expected FunctionDef"),
+                }
+            }
+            _ => panic!("Expected Module"),
+        }
+    }
+
+    #[test]
+    fn test_class_decorator() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "@dataclass\nclass Point:\n    pass";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::ClassDef { name, decorators, .. } => {
+                        assert_eq!(name, "Point");
+                        assert_eq!(decorators.len(), 1);
+                        assert_eq!(decorators[0], "dataclass");
+                    }
+                    _ => panic!("Expected ClassDef"),
+                }
+            }
+            _ => panic!("Expected Module"),
+        }
+    }
+
+    #[test]
+    fn test_annotated_assignment() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"x: int = 5
+y: str
+count: int = 0"#;
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                // First statement: x: int = 5
+                match &body[0] {
+                    AstNode::AnnotatedAssignment { target, type_annotation, value, .. } => {
+                        assert_eq!(target, "x");
+                        assert!(type_annotation.contains("int"));
+                        assert!(value.is_some());
+                    }
+                    _ => panic!("Expected annotated assignment, got {:?}", &body[0]),
+                }
+
+                // Second statement: y: str (no value)
+                match &body[1] {
+                    AstNode::AnnotatedAssignment { target, type_annotation, value, .. } => {
+                        assert_eq!(target, "y");
+                        assert!(type_annotation.contains("str"));
+                        assert!(value.is_none());
+                    }
+                    _ => panic!("Expected annotated assignment, got {:?}", &body[1]),
+                }
+            }
             _ => panic!("Expected module"),
         }
     }
