@@ -3,6 +3,7 @@ use tree_sitter::{Node, Parser, Tree};
 
 pub mod highlight;
 pub mod resolve;
+pub mod rst;
 
 pub use highlight::PythonHighlighter;
 pub use resolve::{NameResolver, ScopeId, ScopeKind, Symbol, SymbolKind, SymbolTable};

@@ -5,6 +5,7 @@
 use crate::analysis::Analyzer;
 use crate::cache::IntrospectionCache;
 use crate::document::DocumentManager;
+use crate::parser;
 use beacon_parser::{AstNode, SymbolKind};
 use lsp_types::{Hover, HoverContents, HoverParams, MarkupContent, MarkupKind, Position};
 use std::path::PathBuf;
@@ -49,7 +50,7 @@ impl HoverProvider {
             let text = doc.text();
             let symbol_table = doc.symbol_table()?;
             let ast = doc.ast()?;
-            let parser = crate::parser::LspParser::new().ok()?;
+            let parser = parser::LspParser::new().ok()?;
             let node = parser.node_at_position(tree, &text, position)?;
 
             match node.kind() {

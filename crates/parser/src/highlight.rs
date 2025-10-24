@@ -65,11 +65,7 @@ impl PythonHighlighter {
     }
 
     fn collect_highlights(
-        &self,
-        node: Node,
-        source: &str,
-        color_scheme: &ColorScheme,
-        highlights: &mut Vec<Highlight>,
+        &self, node: Node, source: &str, color_scheme: &ColorScheme, highlights: &mut Vec<Highlight>,
     ) {
         let start_byte = node.start_byte();
         let end_byte = node.end_byte();
@@ -90,17 +86,13 @@ impl PythonHighlighter {
         }
     }
 
-    fn get_node_style(
-        &self,
-        node: Node,
-        source: &str,
-        color_scheme: &ColorScheme,
-    ) -> Option<Style> {
+    fn get_node_style(&self, node: Node, source: &str, color_scheme: &ColorScheme) -> Option<Style> {
         match node.kind() {
-            "def" | "class" | "if" | "elif" | "else" | "for" | "while" | "try" | "except"
-            | "finally" | "with" | "as" | "import" | "from" | "return" | "yield" | "break"
-            | "continue" | "pass" | "del" | "global" | "nonlocal" | "lambda" | "and" | "or"
-            | "not" | "in" | "is" | "async" | "await" => Some(color_scheme.keyword),
+            "def" | "class" | "if" | "elif" | "else" | "for" | "while" | "try" | "except" | "finally" | "with"
+            | "as" | "import" | "from" | "return" | "yield" | "break" | "continue" | "pass" | "del" | "global"
+            | "nonlocal" | "lambda" | "and" | "or" | "not" | "in" | "is" | "async" | "await" => {
+                Some(color_scheme.keyword)
+            }
             "function_definition" => match node.child_by_field_name("name") {
                 Some(_named_node) => return Some(color_scheme.function),
                 None => None,
@@ -113,19 +105,16 @@ impl PythonHighlighter {
             "integer" | "float" | "true" | "false" => Some(color_scheme.number),
             "none" => Some(color_scheme.keyword),
             "comment" => Some(color_scheme.comment),
-            "=" | "+" | "-" | "*" | "/" | "//" | "%" | "**" | "==" | "!=" | "<" | ">" | "<="
-            | ">=" | "+=" | "-=" | "*=" | "/=" | "//=" | "%=" | "**=" | "&" | "|" | "^" | "~"
-            | "<<" | ">>" | "&=" | "|=" | "^=" | "<<=" | ">>=" => Some(color_scheme.operator),
-            "(" | ")" | "[" | "]" | "{" | "}" | "," | ":" | ";" | "." => {
-                Some(color_scheme.punctuation)
-            }
+            "=" | "+" | "-" | "*" | "/" | "//" | "%" | "**" | "==" | "!=" | "<" | ">" | "<=" | ">=" | "+=" | "-="
+            | "*=" | "/=" | "//=" | "%=" | "**=" | "&" | "|" | "^" | "~" | "<<" | ">>" | "&=" | "|=" | "^=" | "<<="
+            | ">>=" => Some(color_scheme.operator),
+            "(" | ")" | "[" | "]" | "{" | "}" | "," | ":" | ";" | "." => Some(color_scheme.punctuation),
             "identifier" => {
                 let text = node.utf8_text(source.as_bytes()).ok()?;
                 match text {
-                    "print" | "len" | "range" | "enumerate" | "zip" | "map" | "filter" | "sum"
-                    | "min" | "max" | "abs" | "round" | "int" | "float" | "str" | "bool"
-                    | "list" | "dict" | "set" | "tuple" | "type" | "isinstance" | "hasattr"
-                    | "getattr" | "setattr" | "delattr" | "open" | "input" => {
+                    "print" | "len" | "range" | "enumerate" | "zip" | "map" | "filter" | "sum" | "min" | "max"
+                    | "abs" | "round" | "int" | "float" | "str" | "bool" | "list" | "dict" | "set" | "tuple"
+                    | "type" | "isinstance" | "hasattr" | "getattr" | "setattr" | "delattr" | "open" | "input" => {
                         Some(color_scheme.builtin)
                     }
                     "self" | "cls" => Some(color_scheme.keyword),
