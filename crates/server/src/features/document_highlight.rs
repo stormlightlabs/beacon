@@ -102,9 +102,9 @@ impl DocumentHighlightProvider {
                 }
 
                 for param in args {
-                    if param == symbol_name {
-                        // Parameter definition - we don't have position info
-                        // Skip for now
+                    if param.name == *symbol_name {
+                        // Parameter definition - we now have position info
+                        // TODO: Add highlight for parameter definition
                     }
                 }
 

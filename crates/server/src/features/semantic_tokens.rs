@@ -160,11 +160,18 @@ impl SemanticTokensProvider {
 
                 let func_scope = self.find_function_scope(symbol_table, current_scope);
 
-                // Parameters are in the function scope
-                for _param in args {
-                    // We don't have exact positions for params, but they're defined in the function scope
-                    // This is a limitation of the current AST
-                    // TODO: better position tracking
+                let param_token_type = self.get_token_type_index(&SymbolKind::Parameter);
+                let param_modifiers = self.get_definition_modifier();
+                for param in args {
+                    self.add_token(
+                        &param.name,
+                        param.line,
+                        param.col,
+                        param_token_type,
+                        param_modifiers,
+                        text,
+                        raw_tokens,
+                    );
                 }
 
                 for stmt in body {

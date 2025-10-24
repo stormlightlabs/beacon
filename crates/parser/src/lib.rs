@@ -18,6 +18,14 @@ pub struct ParsedFile {
     pub source: String,
 }
 
+/// Function parameter with position information
+#[derive(Debug, Clone, PartialEq)]
+pub struct Parameter {
+    pub name: String,
+    pub line: usize,
+    pub col: usize,
+}
+
 /// Basic AST node types for Python
 #[derive(Debug, Clone, PartialEq)]
 pub enum AstNode {
@@ -27,7 +35,7 @@ pub enum AstNode {
     },
     FunctionDef {
         name: String,
-        args: Vec<String>,
+        args: Vec<Parameter>,
         body: Vec<AstNode>,
         docstring: Option<String>,
         line: usize,
@@ -265,7 +273,7 @@ impl PythonParser {
         Ok(name)
     }
 
-    fn extract_function_args(&self, node: &Node, source: &str) -> Result<Vec<String>> {
+    fn extract_function_args(&self, node: &Node, source: &str) -> Result<Vec<Parameter>> {
         let params_node = node.child_by_field_name("parameters");
         let mut args = Vec::new();
 
@@ -276,7 +284,13 @@ impl PythonParser {
                     let arg_name = child
                         .utf8_text(source.as_bytes())
                         .map_err(|_| ParseError::InvalidUtf8)?;
-                    args.push(arg_name.to_string());
+
+                    let start_position = child.start_position();
+                    args.push(Parameter {
+                        name: arg_name.to_string(),
+                        line: start_position.row + 1,
+                        col: start_position.column + 1,
+                    });
                 }
             }
         }
@@ -548,11 +562,7 @@ impl PythonParser {
             }
         }
 
-        if content.is_empty() {
-            None
-        } else {
-            Some(content)
-        }
+        if content.is_empty() { None } else { Some(content) }
     }
 
     /// Perform name resolution on an AST and return a symbol table
@@ -610,8 +620,8 @@ mod tests {
                     AstNode::FunctionDef { name, args, .. } => {
                         assert_eq!(name, "add");
                         assert_eq!(args.len(), 2);
-                        assert_eq!(args[0], "x");
-                        assert_eq!(args[1], "y");
+                        assert_eq!(args[0].name, "x");
+                        assert_eq!(args[1].name, "y");
                     }
                     _ => panic!("Expected function definition"),
                 }
@@ -769,7 +779,9 @@ if __name__ == "__main__":
             AstNode::Module { body, .. } => match &body[0] {
                 AstNode::FunctionDef { args, .. } => {
                     assert_eq!(args.len(), 3);
-                    assert_eq!(args, &vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+                    assert_eq!(args[0].name, "a");
+                    assert_eq!(args[1].name, "b");
+                    assert_eq!(args[2].name, "c");
                 }
                 _ => panic!("Expected function definition"),
             },
@@ -1161,17 +1173,15 @@ def foo():
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body, .. } => {
-                match &body[0] {
-                    AstNode::FunctionDef { docstring, .. } => {
-                        assert!(docstring.is_some());
-                        let doc = docstring.as_ref().unwrap();
-                        assert!(doc.contains("Calculate something"));
-                        assert!(doc.contains("This function does a calculation"));
-                    }
-                    _ => panic!("Expected function definition"),
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::FunctionDef { docstring, .. } => {
+                    assert!(docstring.is_some());
+                    let doc = docstring.as_ref().unwrap();
+                    assert!(doc.contains("Calculate something"));
+                    assert!(doc.contains("This function does a calculation"));
                 }
-            }
+                _ => panic!("Expected function definition"),
+            },
             _ => panic!("Expected module"),
         }
     }
@@ -1185,14 +1195,12 @@ def foo():
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body, .. } => {
-                match &body[0] {
-                    AstNode::FunctionDef { docstring, .. } => {
-                        assert!(docstring.is_none());
-                    }
-                    _ => panic!("Expected function definition"),
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::FunctionDef { docstring, .. } => {
+                    assert!(docstring.is_none());
                 }
-            }
+                _ => panic!("Expected function definition"),
+            },
             _ => panic!("Expected module"),
         }
     }

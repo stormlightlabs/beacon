@@ -131,19 +131,14 @@ impl HoverProvider {
     }
 
     fn format_import_hover(&self, name: &str, ast: &AstNode, line: usize) -> MarkupContent {
-        // Try to find the import statement in the AST
         if let Some((module, symbol)) = self.find_import_info(ast, line, name) {
-            // Try introspection if we have a Python interpreter
             if let Some(ref python) = self.interpreter_path {
-                // Check cache first
                 if let Some(cached) = self.introspection_cache.get(&module, &symbol) {
                     return self.format_introspection_result(name, &module, &symbol, &cached);
                 }
 
-                // Cache miss - perform introspection
                 match crate::introspection::introspect_sync(python, &module, &symbol) {
                     Ok(result) => {
-                        // Cache the result
                         self.introspection_cache
                             .insert(module.clone(), symbol.clone(), result.clone());
 
@@ -161,7 +156,6 @@ impl HoverProvider {
             };
         }
 
-        // Fallback: just show the import name
         MarkupContent { kind: MarkupKind::Markdown, value: format!("**Import** `{}`", name) }
     }
 
@@ -215,9 +209,11 @@ impl HoverProvider {
 
     fn extract_function_signature(&self, node: &AstNode, name: &str) -> Option<String> {
         match node {
-            AstNode::FunctionDef { name: fn_name, args, .. } if fn_name == name => {
-                Some(format!("def {}({})", name, args.join(", ")))
-            }
+            AstNode::FunctionDef { name: fn_name, args, .. } if fn_name == name => Some(format!(
+                "def {}({})",
+                name,
+                args.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
+            )),
             AstNode::Module { body, .. } | AstNode::ClassDef { body, .. } => {
                 for stmt in body {
                     let sig = self.extract_function_signature(stmt, name);
@@ -346,7 +342,10 @@ mod tests {
         let ast = beacon_parser::AstNode::Module {
             body: vec![beacon_parser::AstNode::FunctionDef {
                 name: "test_func".to_string(),
-                args: vec!["x".to_string(), "y".to_string()],
+                args: vec![
+                    beacon_parser::Parameter { name: "x".to_string(), line: 1, col: 15 },
+                    beacon_parser::Parameter { name: "y".to_string(), line: 1, col: 18 },
+                ],
                 body: vec![],
                 docstring: None,
                 line: 1,
@@ -425,7 +424,10 @@ mod tests {
         let ast = beacon_parser::AstNode::Module {
             body: vec![beacon_parser::AstNode::FunctionDef {
                 name: "calculate".to_string(),
-                args: vec!["a".to_string(), "b".to_string()],
+                args: vec![
+                    beacon_parser::Parameter { name: "a".to_string(), line: 1, col: 16 },
+                    beacon_parser::Parameter { name: "b".to_string(), line: 1, col: 19 },
+                ],
                 body: vec![],
                 docstring: None,
                 line: 1,
@@ -448,7 +450,7 @@ mod tests {
                 name: "MyClass".to_string(),
                 body: vec![beacon_parser::AstNode::FunctionDef {
                     name: "method".to_string(),
-                    args: vec!["self".to_string()],
+                    args: vec![beacon_parser::Parameter { name: "self".to_string(), line: 2, col: 16 }],
                     body: vec![],
                     docstring: None,
                     line: 2,

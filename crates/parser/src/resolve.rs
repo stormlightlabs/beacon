@@ -116,8 +116,9 @@ impl SymbolTable {
 
         loop {
             if let Some(scope) = self.scopes.get(&current_scope) {
-                if let Some(symbol) = scope.symbols.get(name) {
-                    return Some(symbol);
+                let symbol = scope.symbols.get(name);
+                if symbol.is_some() {
+                    return symbol;
                 }
 
                 match scope.parent {
@@ -280,12 +281,12 @@ impl NameResolver {
                 let prev_scope = self.current_scope;
                 self.current_scope = func_scope;
 
-                for (i, param) in args.iter().enumerate() {
+                for param in args.iter() {
                     let param_symbol = Symbol {
-                        name: param.clone(),
+                        name: param.name.clone(),
                         kind: SymbolKind::Parameter,
-                        line: *line,
-                        col: *col + i,
+                        line: param.line,
+                        col: param.col,
                         scope_id: func_scope,
                         docstring: None,
                     };
@@ -490,7 +491,10 @@ mod tests {
 
         let ast = AstNode::FunctionDef {
             name: "test_func".to_string(),
-            args: vec!["param1".to_string(), "param2".to_string()],
+            args: vec![
+                crate::Parameter { name: "param1".to_string(), line: 1, col: 15 },
+                crate::Parameter { name: "param2".to_string(), line: 1, col: 23 },
+            ],
             body: vec![AstNode::Assignment {
                 target: "local_var".to_string(),
                 value: Box::new(AstNode::Identifier { name: "param1".to_string(), line: 2, col: 15 }),
@@ -613,7 +617,7 @@ mod tests {
                 },
                 AstNode::FunctionDef {
                     name: "outer".to_string(),
-                    args: vec!["param".to_string()],
+                    args: vec![crate::Parameter { name: "param".to_string(), line: 2, col: 11 }],
                     body: vec![AstNode::Assignment {
                         target: "outer_var".to_string(),
                         value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(2), line: 3, col: 20 }),

@@ -56,7 +56,10 @@ impl DocumentSymbolsProvider {
 
                 Some(DocumentSymbol {
                     name: name.clone(),
-                    detail: Some(format!("({})", args.join(", "))),
+                    detail: Some(format!(
+                        "({})",
+                        args.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
+                    )),
                     kind: SymbolKind::FUNCTION,
                     tags: None,
                     range,
