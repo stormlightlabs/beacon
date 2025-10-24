@@ -5,42 +5,6 @@ This document outlines the plan for implementing a minimal, working, testable LS
 1. Get basic LSP infrastructure working first
 2. Layer on the full Hindley-Milner type inference system.
 
-## Find References
-
-**Goal:** Locate all references to a symbol in the workspace
-**Tasks:**
-    - [ ] Implement single-file reference finding
-        - Find symbol at cursor position (reuse goto-definition logic)
-        - Traverse AST to find all identifier nodes
-        - Match identifier text against symbol name
-        - Scope-aware filtering (don't match different scopes)
-        - Return list of LSP Locations
-    - [ ] Add comprehensive tests
-        - Function references
-        - Variable references across scopes
-        - Class references
-        - Import references
-        - Parameter references
-    - [ ] Optimize for large files
-        - Consider caching AST traversal results
-        - Early termination strategies
-**Implementation Notes:**
-    - Inverse of goto-definition: find usage sites instead of definition site
-    - Current scaffold in `crates/server/src/features/references.rs`
-    - Need to traverse entire AST and collect matching identifiers
-    - Scope resolution challenge: `x` in function A ≠ `x` in function B
-    - Initial implementation: single-file only, workspace-wide deferred
-**Files to Modify:**
-    - `crates/server/src/features/references.rs`
-**Acceptance:**
-    - Find all uses of a function/class/variable within a file
-    - Correctly excludes same-named symbols in different scopes
-    - Returns accurate ranges for each reference
-    - Handles edge cases (undefined symbols, shadowing)
-**Deferred:**
-    - Cross-file references (requires workspace analysis)
-    - Reference counting and usage metrics
-
 ## Completions
 
 **Goal:** Provide context-aware autocomplete suggestions
