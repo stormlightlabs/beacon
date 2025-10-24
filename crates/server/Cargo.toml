@@ -14,6 +14,7 @@ path = "src/lib.rs"
 [dependencies]
 beacon-core = { path = "../core" }
 beacon-parser = { path = "../parser" }
+dirs = "6.0"
 lru = "0.16.2"
 lsp-types.workspace = true
 ropey = "1.6"
@@ -26,5 +27,5 @@ tower-lsp = "0.20.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tree-sitter.workspace = true
-tree-sitter-python = "0.25.0"
+tree-sitter-python.workspace = true
 url = "2.5"

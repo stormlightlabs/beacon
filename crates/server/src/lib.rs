@@ -26,6 +26,8 @@ pub mod cache;
 pub mod config;
 pub mod document;
 pub mod features;
+pub mod interpreter;
+pub mod introspection;
 pub mod parser;
 pub mod utils;
 pub mod workspace;
@@ -40,22 +42,8 @@ use tower_lsp::{LspService, Server};
 ///
 /// Starts the language server and listens on stdin/stdout for LSP messages.
 /// This function blocks until the server is shut down.
-///
-/// # Example
-///
-/// ```no_run
-/// use beacon_lsp::run_server;
-///
-/// #[tokio::main]
-/// async fn main() {
-///     run_server().await;
-/// }
-/// ```
 pub async fn run_server() {
-    // Create LSP service
     let (service, socket) = LspService::new(Backend::new);
-
-    // Start server on stdin/stdout
     Server::new(stdin(), stdout(), socket).serve(service).await;
 }
 

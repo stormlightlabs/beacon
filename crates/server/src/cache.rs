@@ -9,8 +9,10 @@
 use beacon_core::Type;
 use lru::LruCache;
 use rustc_hash::FxHashMap;
+use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, RwLock};
+use tracing::debug;
 use url::Url;
 
 /// Cache key for type inference results at specific AST node locations
@@ -45,10 +47,7 @@ impl TypeCache {
     /// Create a new type cache with the given capacity
     pub fn new(capacity: usize) -> Self {
         let cap = NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::new(100).unwrap());
-
-        Self {
-            cache: Arc::new(RwLock::new(LruCache::new(cap))),
-        }
+        Self { cache: Arc::new(RwLock::new(LruCache::new(cap))) }
     }
 
     /// Get a cached type for a node
@@ -57,18 +56,13 @@ impl TypeCache {
     pub fn get(&self, uri: &Url, node_id: usize, version: i32) -> Option<Type> {
         let mut cache = self.cache.write().unwrap();
 
-        let key = TypeCacheKey {
-            uri: uri.clone(),
-            node_id,
-        };
+        let key = TypeCacheKey { uri: uri.clone(), node_id };
 
-        cache.get(&key).and_then(|cached| {
-            if cached.version == version {
-                Some(cached.ty.clone())
-            } else {
-                None
-            }
-        })
+        cache.get(&key).and_then(
+            |cached| {
+                if cached.version == version { Some(cached.ty.clone()) } else { None }
+            },
+        )
     }
 
     /// Store a type in the cache
@@ -87,7 +81,6 @@ impl TypeCache {
     pub fn invalidate_document(&self, uri: &Url) {
         let mut cache = self.cache.write().unwrap();
 
-        // Collect keys to remove
         let keys_to_remove: Vec<_> = cache
             .iter()
             .filter(|(key, _)| key.uri == *uri)
@@ -111,10 +104,7 @@ impl TypeCache {
     pub fn stats(&self) -> CacheStats {
         let cache = self.cache.read().unwrap();
 
-        CacheStats {
-            size: cache.len(),
-            capacity: cache.cap().get(),
-        }
+        CacheStats { size: cache.len(), capacity: cache.cap().get() }
     }
 }
 
@@ -141,9 +131,7 @@ pub struct ConstraintCache {
 
 impl ConstraintCache {
     pub fn new() -> Self {
-        Self {
-            _cache: Arc::new(RwLock::new(FxHashMap::default())),
-        }
+        Self { _cache: Arc::new(RwLock::new(FxHashMap::default())) }
     }
 
     /// TODO: Implement constraint caching
@@ -164,6 +152,140 @@ impl Default for ConstraintCache {
     }
 }
 
+/// Cache key for introspection results
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IntrospectionCacheKey {
+    /// Module name (e.g., "math", "os.path")
+    pub module: String,
+
+    /// Symbol name (e.g., "sqrt", "join")
+    pub symbol: String,
+}
+
+/// Persistent cache for Python introspection results
+///
+/// Caches signature and docstring data from external modules.
+/// Persists to disk across LSP server restarts.
+pub struct IntrospectionCache {
+    cache: Arc<RwLock<LruCache<IntrospectionCacheKey, crate::introspection::IntrospectionResult>>>,
+    cache_file: Option<std::path::PathBuf>,
+}
+
+impl IntrospectionCache {
+    /// Create a new introspection cache
+    ///
+    /// Attempts to load from cache file if it exists.
+    /// Cache capacity is set to 1000 entries.
+    pub fn new(workspace_root: Option<&std::path::Path>) -> Self {
+        let capacity = NonZeroUsize::new(1000).unwrap();
+        let mut cache = LruCache::new(capacity);
+
+        let cache_file = workspace_root
+            .map(|root| root.join(".beacon-cache").join("introspection.json"))
+            .or_else(|| dirs::cache_dir().map(|dir| dir.join("beacon-lsp").join("introspection.json")));
+
+        if let Some(ref file) = cache_file {
+            if file.exists() {
+                match Self::load_from_disk(file) {
+                    Ok(loaded) => {
+                        for (key, value) in loaded {
+                            cache.put(key, value);
+                        }
+                        tracing::debug!(
+                            "Loaded {} introspection cache entries from {}",
+                            cache.len(),
+                            file.display()
+                        );
+                    }
+                    Err(_) => (),
+                }
+            }
+        }
+
+        Self { cache: Arc::new(RwLock::new(cache)), cache_file }
+    }
+
+    /// Get a cached introspection result
+    pub fn get(&self, module: &str, symbol: &str) -> Option<crate::introspection::IntrospectionResult> {
+        let mut cache = self.cache.write().unwrap();
+
+        let key = IntrospectionCacheKey { module: module.to_string(), symbol: symbol.to_string() };
+
+        cache.get(&key).cloned()
+    }
+
+    /// Store an introspection result in the cache and persists to disk asynchronously.
+    pub fn insert(&self, module: String, symbol: String, result: crate::introspection::IntrospectionResult) {
+        let mut cache = self.cache.write().unwrap();
+
+        let key = IntrospectionCacheKey { module, symbol };
+
+        cache.put(key, result);
+
+        drop(cache);
+        if let Err(e) = self.save_to_disk() {
+            tracing::warn!("Failed to persist introspection cache: {}", e);
+        }
+    }
+
+    pub fn clear(&self) {
+        let mut cache = self.cache.write().unwrap();
+        cache.clear();
+
+        if let Some(ref file) = self.cache_file {
+            let _ = std::fs::remove_file(file);
+        }
+    }
+
+    /// Save cache to disk
+    fn save_to_disk(&self) -> std::io::Result<()> {
+        let cache = self.cache.read().unwrap();
+
+        if let Some(ref file) = self.cache_file {
+            if let Some(parent) = file.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            let entries: Vec<_> = cache.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let json = serde_json::to_string_pretty(&entries)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            std::fs::write(file, json)?;
+            debug!(
+                "Saved {} introspection cache entries to {}",
+                entries.len(),
+                file.display()
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Load cache from disk
+    fn load_from_disk(
+        file: &std::path::Path,
+    ) -> std::io::Result<Vec<(IntrospectionCacheKey, crate::introspection::IntrospectionResult)>> {
+        let json = std::fs::read_to_string(file)?;
+
+        let entries: Vec<(IntrospectionCacheKey, crate::introspection::IntrospectionResult)> =
+            serde_json::from_str(&json).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        Ok(entries)
+    }
+
+    /// Get cache statistics
+    pub fn stats(&self) -> CacheStats {
+        let cache = self.cache.read().unwrap();
+
+        CacheStats { size: cache.len(), capacity: cache.cap().get() }
+    }
+}
+
+impl Default for IntrospectionCache {
+    fn default() -> Self {
+        Self::new(None)
+    }
+}
+
 /// Main cache manager coordinating all caches
 ///
 /// Provides a unified interface for caching all analysis artifacts.
@@ -173,6 +295,9 @@ pub struct CacheManager {
 
     /// Constraint solving cache
     pub constraint_cache: ConstraintCache,
+
+    /// Python introspection cache (persistent)
+    pub introspection_cache: IntrospectionCache,
     // TODO: Add more specialized caches:
     // - Symbol resolution cache
     // - Module import cache
@@ -185,6 +310,7 @@ impl CacheManager {
         Self {
             type_cache: TypeCache::default(),
             constraint_cache: ConstraintCache::default(),
+            introspection_cache: IntrospectionCache::default(),
         }
     }
 
@@ -193,6 +319,16 @@ impl CacheManager {
         Self {
             type_cache: TypeCache::new(capacity),
             constraint_cache: ConstraintCache::default(),
+            introspection_cache: IntrospectionCache::default(),
+        }
+    }
+
+    /// Create a new cache manager with workspace root for persistent caching
+    pub fn with_workspace(capacity: usize, workspace_root: Option<&std::path::Path>) -> Self {
+        Self {
+            type_cache: TypeCache::new(capacity),
+            constraint_cache: ConstraintCache::default(),
+            introspection_cache: IntrospectionCache::new(workspace_root),
         }
     }
 
@@ -247,7 +383,6 @@ mod tests {
         let ty = Type::Con(TypeCtor::Int);
         cache.insert(uri.clone(), 42, 1, ty);
 
-        // Different version should return None
         let retrieved = cache.get(&uri, 42, 2);
         assert_eq!(retrieved, None);
     }

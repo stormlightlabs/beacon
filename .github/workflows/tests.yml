@@ -12,6 +12,8 @@ jobs:
     name: Tests with LLVM-COV
     runs-on: ubuntu-latest
     steps:
+    - name: Verify Python available
+      run: python3 --version
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
       with:
@@ -32,6 +34,8 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
+    - name: Verify Python available
+      run: python3 --version
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
     - uses: Swatinem/rust-cache@v2

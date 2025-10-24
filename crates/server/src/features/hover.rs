@@ -3,18 +3,29 @@
 //! Displays type information, signatures, and documentation when hovering over identifiers and expressions.
 
 use crate::analysis::Analyzer;
+use crate::cache::IntrospectionCache;
 use crate::document::DocumentManager;
 use beacon_parser::{AstNode, SymbolKind};
 use lsp_types::{Hover, HoverContents, HoverParams, MarkupContent, MarkupKind, Position};
+use std::path::PathBuf;
 use url::Url;
 
 pub struct HoverProvider {
     documents: DocumentManager,
+    interpreter_path: Option<PathBuf>,
+    introspection_cache: IntrospectionCache,
 }
 
 impl HoverProvider {
     pub fn new(documents: DocumentManager) -> Self {
-        Self { documents }
+        Self { documents, interpreter_path: None, introspection_cache: IntrospectionCache::default() }
+    }
+
+    /// Create a new hover provider with introspection support
+    pub fn with_introspection(
+        documents: DocumentManager, interpreter_path: Option<PathBuf>, introspection_cache: IntrospectionCache,
+    ) -> Self {
+        Self { documents, interpreter_path, introspection_cache }
     }
 
     /// Provide hover information at a position
@@ -56,7 +67,7 @@ impl HoverProvider {
                             self.format_variable_hover(identifier_text, &symbol.kind, symbol.line, symbol.col)
                         }
                         SymbolKind::Parameter => self.format_parameter_hover(identifier_text, symbol.line, symbol.col),
-                        SymbolKind::Import => self.format_import_hover(identifier_text),
+                        SymbolKind::Import => self.format_import_hover(identifier_text, ast, symbol.line),
                     };
 
                     Some(Hover { contents: HoverContents::Markup(content), range: None })
@@ -119,25 +130,95 @@ impl HoverProvider {
         }
     }
 
-    fn format_import_hover(&self, name: &str) -> MarkupContent {
+    fn format_import_hover(&self, name: &str, ast: &AstNode, line: usize) -> MarkupContent {
+        // Try to find the import statement in the AST
+        if let Some((module, symbol)) = self.find_import_info(ast, line, name) {
+            // Try introspection if we have a Python interpreter
+            if let Some(ref python) = self.interpreter_path {
+                // Check cache first
+                if let Some(cached) = self.introspection_cache.get(&module, &symbol) {
+                    return self.format_introspection_result(name, &module, &symbol, &cached);
+                }
+
+                // Cache miss - perform introspection
+                match crate::introspection::introspect_sync(python, &module, &symbol) {
+                    Ok(result) => {
+                        // Cache the result
+                        self.introspection_cache
+                            .insert(module.clone(), symbol.clone(), result.clone());
+
+                        return self.format_introspection_result(name, &module, &symbol, &result);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Introspection failed for {}.{}: {}", module, symbol, e);
+                    }
+                }
+            }
+
+            return MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: format!("**Import** `{}` from module `{}`", name, module),
+            };
+        }
+
+        // Fallback: just show the import name
         MarkupContent { kind: MarkupKind::Markdown, value: format!("**Import** `{}`", name) }
     }
 
-    fn extract_function_signature(&self, node: &AstNode, name: &str) -> Option<String> {
+    /// Find import information from AST
+    ///
+    /// TODO: support import
+    fn find_import_info(&self, node: &AstNode, target_line: usize, symbol_name: &str) -> Option<(String, String)> {
         match node {
-            AstNode::Module { body, .. } => {
+            AstNode::ImportFrom { module, names, line, .. } if *line == target_line => {
+                if names.contains(&symbol_name.to_string()) {
+                    Some((module.clone(), symbol_name.to_string()))
+                } else {
+                    None
+                }
+            }
+            AstNode::Module { body, .. } | AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } => {
                 for stmt in body {
-                    let sig = self.extract_function_signature(stmt, name);
-                    if sig.is_some() {
-                        return sig;
+                    if let Some(info) = self.find_import_info(stmt, target_line, symbol_name) {
+                        return Some(info);
                     }
                 }
                 None
             }
+            AstNode::Import { .. } => None,
+            _ => None,
+        }
+    }
+
+    /// Format introspection result as hover content
+    fn format_introspection_result(
+        &self, symbol_name: &str, module_name: &str, _full_symbol: &str,
+        result: &crate::introspection::IntrospectionResult,
+    ) -> MarkupContent {
+        let mut value = String::new();
+
+        if !result.signature.is_empty() {
+            value.push_str(&format!("```python\n{}{}\n```\n\n", symbol_name, result.signature));
+        } else {
+            value.push_str(&format!("```python\n{}\n```\n\n", symbol_name));
+        }
+
+        value.push_str(&format!("**Imported from** `{}`\n\n", module_name));
+
+        if !result.docstring.is_empty() {
+            value.push_str("---\n\n");
+            value.push_str(&result.docstring);
+        }
+
+        MarkupContent { kind: MarkupKind::Markdown, value }
+    }
+
+    fn extract_function_signature(&self, node: &AstNode, name: &str) -> Option<String> {
+        match node {
             AstNode::FunctionDef { name: fn_name, args, .. } if fn_name == name => {
                 Some(format!("def {}({})", name, args.join(", ")))
             }
-            AstNode::ClassDef { body, .. } => {
+            AstNode::Module { body, .. } | AstNode::ClassDef { body, .. } => {
                 for stmt in body {
                     let sig = self.extract_function_signature(stmt, name);
                     if sig.is_some() {
@@ -319,10 +400,21 @@ mod tests {
     fn test_format_import_hover() {
         let documents = DocumentManager::new().unwrap();
         let provider = HoverProvider::new(documents);
-        let content = provider.format_import_hover("os");
+
+        let ast = beacon_parser::AstNode::Module {
+            body: vec![beacon_parser::AstNode::ImportFrom {
+                module: "os".to_string(),
+                names: vec!["path".to_string()],
+                line: 1,
+                col: 0,
+            }],
+            docstring: None,
+        };
+
+        let content = provider.format_import_hover("path", &ast, 1);
 
         assert_eq!(content.kind, MarkupKind::Markdown);
-        assert!(content.value.contains("os"));
+        assert!(content.value.contains("path"));
         assert!(content.value.contains("Import"));
     }
 
@@ -387,6 +479,49 @@ mod tests {
     fn test_hover_provider_creation() {
         let documents = DocumentManager::new().unwrap();
         let _provider = HoverProvider::new(documents);
+    }
+
+    #[test]
+    fn test_hover_on_imported_symbol() {
+        use std::str::FromStr;
+
+        let documents = DocumentManager::new().unwrap();
+        let interpreter = crate::interpreter::find_python_interpreter(None);
+
+        if interpreter.is_none() {
+            println!("Skipping test - Python not found");
+            return;
+        }
+
+        let cache = crate::cache::IntrospectionCache::new(None);
+        let provider = HoverProvider::with_introspection(documents.clone(), interpreter, cache);
+
+        let config = crate::config::Config::default();
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "from math import sqrt\nresult = sqrt(16)";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let params = HoverParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                position: Position { line: 0, character: 17 },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+        };
+
+        let result = provider.hover(params, &mut analyzer);
+
+        if let Some(hover) = result {
+            match hover.contents {
+                HoverContents::Markup(content) => {
+                    println!("Hover content: {}", content.value);
+                    assert!(content.value.contains("math") || content.value.contains("Import"));
+                }
+                _ => panic!("Expected Markup content"),
+            }
+        }
     }
 
     #[test]

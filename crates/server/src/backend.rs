@@ -34,6 +34,10 @@ pub struct Backend {
     workspace: Arc<RwLock<Workspace>>,
     /// Feature providers
     features: Arc<Features>,
+    /// Python interpreter path for runtime introspection
+    /// TODO: Make configurable via LSP settings
+    #[allow(dead_code)]
+    interpreter_path: Option<std::path::PathBuf>,
 }
 
 /// Collection of all feature providers
@@ -52,36 +56,55 @@ struct Features {
     workspace_symbols: WorkspaceSymbolsProvider,
 }
 
+impl Features {
+    fn new(
+        documents: DocumentManager, interpreter_path: Option<std::path::PathBuf>,
+        introspection_cache: crate::cache::IntrospectionCache,
+    ) -> Self {
+        Self {
+            diagnostics: DiagnosticProvider::new(documents.clone()),
+            hover: HoverProvider::with_introspection(documents.clone(), interpreter_path, introspection_cache),
+            completion: CompletionProvider::new(documents.clone()),
+            goto_definition: GotoDefinitionProvider::new(documents.clone()),
+            references: ReferencesProvider::new(documents.clone()),
+            inlay_hints: InlayHintsProvider::new(documents.clone()),
+            code_actions: CodeActionsProvider::new(documents.clone()),
+            semantic_tokens: SemanticTokensProvider::new(documents.clone()),
+            document_symbols: DocumentSymbolsProvider::new(documents.clone()),
+            document_highlight: DocumentHighlightProvider::new(documents.clone()),
+            rename: RenameProvider::new(documents.clone()),
+            workspace_symbols: WorkspaceSymbolsProvider::new(documents),
+        }
+    }
+}
+
 impl Backend {
     pub fn new(client: Client) -> Self {
         let config = Config::default();
         let documents = Arc::new(DocumentManager::new().expect("Failed to create document manager"));
         let analyzer = Arc::new(RwLock::new(Analyzer::new(config.clone(), (*documents).clone())));
         let workspace = Arc::new(RwLock::new(Workspace::new(None, config, (*documents).clone())));
-        let features = Arc::new(Features {
-            diagnostics: DiagnosticProvider::new((*documents).clone()),
-            hover: HoverProvider::new((*documents).clone()),
-            completion: CompletionProvider::new((*documents).clone()),
-            goto_definition: GotoDefinitionProvider::new((*documents).clone()),
-            references: ReferencesProvider::new((*documents).clone()),
-            inlay_hints: InlayHintsProvider::new((*documents).clone()),
-            code_actions: CodeActionsProvider::new((*documents).clone()),
-            semantic_tokens: SemanticTokensProvider::new((*documents).clone()),
-            document_symbols: DocumentSymbolsProvider::new((*documents).clone()),
-            document_highlight: DocumentHighlightProvider::new((*documents).clone()),
-            rename: RenameProvider::new((*documents).clone()),
-            workspace_symbols: WorkspaceSymbolsProvider::new((*documents).clone()),
-        });
 
-        Self { client, documents, analyzer, workspace, features }
+        // Detect Python interpreter
+        let interpreter_path = crate::interpreter::find_python_interpreter(None);
+
+        // Create introspection cache (will try to load from disk)
+        let introspection_cache = crate::cache::IntrospectionCache::new(None);
+
+        // Create features with introspection support
+        let features = Arc::new(Features::new(
+            (*documents).clone(),
+            interpreter_path.clone(),
+            introspection_cache,
+        ));
+
+        Self { client, documents, analyzer, workspace, features, interpreter_path }
     }
 
     /// Publish diagnostics for a document
     async fn publish_diagnostics(&self, uri: Url) {
         let mut analyzer = self.analyzer.write().await;
         let diagnostics = self.features.diagnostics.generate_diagnostics(&uri, &mut analyzer);
-
-        // Get document version
         let version = self.documents.get_document(&uri, |doc| doc.version);
 
         self.client.publish_diagnostics(uri, diagnostics, version).await;
@@ -128,7 +151,6 @@ impl LanguageServer for Backend {
                     },
                 )),
                 document_symbol_provider: Some(OneOf::Left(true)),
-                // TODO: Add more capabilities as features are implemented
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -168,7 +190,6 @@ impl LanguageServer for Backend {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri.clone();
-        // let version = params.text_document.version;
 
         match self
             .documents

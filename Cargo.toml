@@ -4,6 +4,7 @@ members = [ "crates/cli", "crates/constraints","crates/core", "crates/parser", "
 
 [workspace.dependencies]
 tree-sitter = "0.25.10"
+tree-sitter-python = "0.25"
 thiserror = "2.0.17"
 rustc-hash = "2.0"
 # NOTE: This cannot change

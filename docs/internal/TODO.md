@@ -43,7 +43,6 @@ This document outlines the plan for implementing a minimal, working, testable LS
     - Provides accurate attribute completions after `.`
     - Filters suggestions based on what's typed
     - Includes relevant keywords for context
-    - Fast response time (<100ms for typical files)
 **Deferred:**
     - Cross-file symbol completions (requires workspace analysis)
     - Snippet completions (function templates, etc.)
@@ -113,34 +112,12 @@ This document outlines the plan for implementing a minimal, working, testable LS
 - Dynamic docstring generation from type hints
 - Inline documentation for built-in types
 
-## Module/Package Documentation
+## Module/Package Documentation on Hover
 
-- Store `interpreter_path` in `Backend`
-    - Find with `which python` or `which python3`
-        - `poetry`, `pipenv`, `uv`
-        - Scan project dir
-    - Call `python -c "<script>" <module> <symbol>`
-
-        ```py
-        import sys, inspect, importlib
-
-        mod_name, sym_name = sys.argv[1], sys.argv[2]
-        mod = importlib.import_module(mod_name)
-        obj = getattr(mod, sym_name)
-
-        sig = ""
-        try:
-            sig = str(inspect.signature(obj))
-        except Exception:
-            pass
-
-        doc = inspect.getdoc(obj) or ""
-
-        print("###SIGNATURE###")
-        print(sig)
-        print("###DOC###")
-        print(doc)
-        ```
+- Make interpreter path configurable via LSP settings
+- Support module-level imports (`import os`)
+- Async introspection (non-blocking hover)
+- Cross-file import resolution
 
 ## Code actions (insert annotations, fix types)
 
