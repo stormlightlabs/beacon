@@ -84,8 +84,7 @@ impl WorkspaceSymbolsProvider {
                     self.collect_matching_symbols(uri, stmt, symbol_table, query, results);
                 }
             }
-
-            AstNode::ClassDef { name, line, col, body } => {
+            AstNode::ClassDef { name, line, col, body, .. } => {
                 if query.is_empty() || name.to_lowercase().contains(query) {
                     let symbol_kind = symbol_table
                         .lookup_symbol(name, symbol_table.root_scope)
@@ -112,7 +111,6 @@ impl WorkspaceSymbolsProvider {
                     self.collect_matching_symbols(uri, stmt, symbol_table, query, results);
                 }
             }
-
             AstNode::Assignment { target, value, line, col } => {
                 if query.is_empty() || target.to_lowercase().contains(query) {
                     let symbol_kind = symbol_table
@@ -139,8 +137,7 @@ impl WorkspaceSymbolsProvider {
 
                 self.collect_matching_symbols(uri, value, symbol_table, query, results);
             }
-
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 for stmt in body {
                     self.collect_matching_symbols(uri, stmt, symbol_table, query, results);
                 }

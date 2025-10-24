@@ -147,13 +147,13 @@ impl SemanticTokensProvider {
         raw_tokens: &mut Vec<RawToken>,
     ) {
         match node {
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 for stmt in body {
                     self.collect_tokens_from_node(stmt, symbol_table, current_scope, text, raw_tokens);
                 }
             }
 
-            AstNode::FunctionDef { name, args, body, line, col } => {
+            AstNode::FunctionDef { name, args, body, line, col, .. } => {
                 let token_type = self.get_token_type_index(&SymbolKind::Function);
                 let modifiers = self.get_definition_modifier();
                 self.add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
@@ -171,8 +171,7 @@ impl SemanticTokensProvider {
                     self.collect_tokens_from_node(stmt, symbol_table, func_scope, text, raw_tokens);
                 }
             }
-
-            AstNode::ClassDef { name, body, line, col } => {
+            AstNode::ClassDef { name, body, line, col, .. } => {
                 let token_type = self.get_token_type_index(&SymbolKind::Class);
                 let modifiers = self.get_definition_modifier();
                 self.add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
@@ -183,7 +182,6 @@ impl SemanticTokensProvider {
                     self.collect_tokens_from_node(stmt, symbol_table, class_scope, text, raw_tokens);
                 }
             }
-
             AstNode::Assignment { target, value, line, col } => {
                 let token_type = self.get_token_type_index(&SymbolKind::Variable);
                 let modifiers = self.get_definition_modifier();

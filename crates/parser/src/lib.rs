@@ -23,17 +23,20 @@ pub struct ParsedFile {
 pub enum AstNode {
     Module {
         body: Vec<AstNode>,
+        docstring: Option<String>,
     },
     FunctionDef {
         name: String,
         args: Vec<String>,
         body: Vec<AstNode>,
+        docstring: Option<String>,
         line: usize,
         col: usize,
     },
     ClassDef {
         name: String,
         body: Vec<AstNode>,
+        docstring: Option<String>,
         line: usize,
         col: usize,
     },
@@ -163,18 +166,33 @@ impl PythonParser {
                     }
                 }
 
-                Ok(AstNode::Module { body })
+                // Extract module-level docstring
+                let docstring = self.extract_docstring(&node, source);
+
+                Ok(AstNode::Module { body, docstring })
             }
             "function_definition" => {
                 let name = self.extract_identifier(&node, source, "name")?;
                 let args = self.extract_function_args(&node, source)?;
                 let body = self.extract_function_body(&node, source)?;
-                Ok(AstNode::FunctionDef { name, args, body, line, col })
+
+                // Extract docstring from function body
+                let docstring = node
+                    .child_by_field_name("body")
+                    .and_then(|body_node| self.extract_docstring(&body_node, source));
+
+                Ok(AstNode::FunctionDef { name, args, body, docstring, line, col })
             }
             "class_definition" => {
                 let name = self.extract_identifier(&node, source, "name")?;
                 let body = self.extract_class_body(&node, source)?;
-                Ok(AstNode::ClassDef { name, body, line, col })
+
+                // Extract docstring from class body
+                let docstring = node
+                    .child_by_field_name("body")
+                    .and_then(|body_node| self.extract_docstring(&body_node, source));
+
+                Ok(AstNode::ClassDef { name, body, docstring, line, col })
             }
             "expression_statement" => {
                 if let Some(child) = node.named_child(0) {
@@ -490,6 +508,53 @@ impl PythonParser {
         Ok((object, attribute))
     }
 
+    /// Extract docstring from a body node if present
+    ///
+    /// Docstrings are expression_statement nodes containing a string as the first child of a body.
+    /// Pattern: (body . (expression_statement (string)))
+    fn extract_docstring(&self, body_node: &Node, source: &str) -> Option<String> {
+        let mut cursor = body_node.walk();
+        for child in body_node.children(&mut cursor) {
+            if child.is_extra() {
+                continue;
+            }
+
+            // Check if first non-extra child is expression_statement
+            if child.kind() == "expression_statement" {
+                // Check if it contains a string node
+                let mut expr_cursor = child.walk();
+                for expr_child in child.children(&mut expr_cursor) {
+                    if expr_child.kind() == "string" {
+                        return self.extract_string_content(&expr_child, source);
+                    }
+                }
+            }
+            // Only check the first statement
+            break;
+        }
+        None
+    }
+
+    /// Extract the content of a string node, removing quotes
+    fn extract_string_content(&self, string_node: &Node, source: &str) -> Option<String> {
+        let mut cursor = string_node.walk();
+        let mut content = String::new();
+
+        for child in string_node.children(&mut cursor) {
+            if child.kind() == "string_content" {
+                if let Ok(text) = child.utf8_text(source.as_bytes()) {
+                    content.push_str(text);
+                }
+            }
+        }
+
+        if content.is_empty() {
+            None
+        } else {
+            Some(content)
+        }
+    }
+
     /// Perform name resolution on an AST and return a symbol table
     pub fn resolve_names(&self, ast: &AstNode, source: &str) -> Result<SymbolTable> {
         let mut resolver = NameResolver::new(source.to_string());
@@ -539,7 +604,7 @@ mod tests {
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     AstNode::FunctionDef { name, args, .. } => {
@@ -563,7 +628,7 @@ mod tests {
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     AstNode::Assignment { target, value, .. } => {
@@ -588,7 +653,7 @@ mod tests {
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     AstNode::Call { function, args, .. } => {
@@ -616,7 +681,7 @@ mod tests {
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     AstNode::ClassDef { name, .. } => {
@@ -656,7 +721,7 @@ if __name__ == "__main__":
 
         let ast = parser.to_ast(&parsed).unwrap();
         match ast {
-            AstNode::Module { body } => assert!(body.len() >= 3),
+            AstNode::Module { body, .. } => assert!(body.len() >= 3),
             _ => panic!("Expected module"),
         }
     }
@@ -679,7 +744,7 @@ if __name__ == "__main__":
             let ast = parser.to_ast(&parsed).unwrap();
 
             match ast {
-                AstNode::Module { body } => match &body[0] {
+                AstNode::Module { body, .. } => match &body[0] {
                     AstNode::Assignment { value, .. } => match value.as_ref() {
                         AstNode::Literal { value, .. } => {
                             assert_eq!(value, &expected, "Failed for source: {}", source)
@@ -701,7 +766,7 @@ if __name__ == "__main__":
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body } => match &body[0] {
+            AstNode::Module { body, .. } => match &body[0] {
                 AstNode::FunctionDef { args, .. } => {
                     assert_eq!(args.len(), 3);
                     assert_eq!(args, &vec!["a".to_string(), "b".to_string(), "c".to_string()]);
@@ -721,7 +786,7 @@ if __name__ == "__main__":
         assert!(!parsed.tree.root_node().has_error());
 
         match parser.to_ast(&parsed).unwrap() {
-            AstNode::Module { body } => match &body[0] {
+            AstNode::Module { body, .. } => match &body[0] {
                 AstNode::Assignment { target, .. } => {
                     assert_eq!(target, "result");
                 }
@@ -762,7 +827,7 @@ if __name__ == "__main__":
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 assert_eq!(body.len(), 0);
             }
             _ => panic!("Expected empty module"),
@@ -784,7 +849,7 @@ def hello():
         let parsed = parser.parse(source).unwrap();
         assert!(!parsed.tree.root_node().has_error());
         match parser.to_ast(&parsed).unwrap() {
-            AstNode::Module { body } => assert!(body.len() >= 2),
+            AstNode::Module { body, .. } => assert!(body.len() >= 2),
             _ => panic!("Expected module"),
         }
     }
@@ -804,7 +869,7 @@ result = factorial(5)
         let (ast, symbol_table) = parser.parse_and_resolve(source).unwrap();
 
         match ast {
-            AstNode::Module { body } => assert_eq!(body.len(), 2),
+            AstNode::Module { body, .. } => assert_eq!(body.len(), 2),
             _ => panic!("Expected module"),
         }
 
@@ -861,7 +926,7 @@ class MyClass:
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     AstNode::Import { module, alias, .. } => {
@@ -884,7 +949,7 @@ class MyClass:
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     AstNode::Import { module, alias, .. } => {
@@ -906,7 +971,7 @@ class MyClass:
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     AstNode::ImportFrom { module, names, .. } => {
@@ -929,7 +994,7 @@ class MyClass:
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     AstNode::Assignment { value, .. } => match value.as_ref() {
@@ -958,7 +1023,7 @@ class MyClass:
         let parsed = parser.parse(source).unwrap();
 
         match parser.to_ast(&parsed).unwrap() {
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     AstNode::Assignment { value, .. } => match value.as_ref() {
@@ -990,7 +1055,7 @@ z = sqrt(16)
         let (ast, symbol_table) = parser.parse_and_resolve(source).unwrap();
 
         match ast {
-            AstNode::Module { body } => assert!(body.len() >= 6),
+            AstNode::Module { body, .. } => assert!(body.len() >= 6),
             _ => panic!("Expected module"),
         }
 
@@ -1007,5 +1072,128 @@ z = sqrt(16)
         let sqrt_symbol = symbol_table.lookup_symbol("sqrt", root_scope);
         assert!(sqrt_symbol.is_some());
         assert_eq!(sqrt_symbol.unwrap().kind, SymbolKind::Import);
+    }
+
+    #[test]
+    fn test_function_docstring_extraction() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"def greet(name):
+    """Say hello to someone."""
+    return f"Hello {name}""#;
+
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::FunctionDef { name, docstring, .. } => {
+                        assert_eq!(name, "greet");
+                        assert!(docstring.is_some());
+                        assert_eq!(docstring.as_ref().unwrap(), "Say hello to someone.");
+                    }
+                    _ => panic!("Expected function definition"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_class_docstring_extraction() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"class Person:
+    """A person class."""
+    pass"#;
+
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::ClassDef { name, docstring, .. } => {
+                        assert_eq!(name, "Person");
+                        assert!(docstring.is_some());
+                        assert_eq!(docstring.as_ref().unwrap(), "A person class.");
+                    }
+                    _ => panic!("Expected class definition"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_module_docstring_extraction() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#""""This is a module docstring."""
+
+def foo():
+    pass"#;
+
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { docstring, .. } => {
+                assert!(docstring.is_some());
+                assert_eq!(docstring.as_ref().unwrap(), "This is a module docstring.");
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_multiline_docstring_extraction() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"def calculate(x, y):
+    """Calculate something.
+
+    This function does a calculation.
+    It takes two parameters.
+    """
+    return x + y"#;
+
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                match &body[0] {
+                    AstNode::FunctionDef { docstring, .. } => {
+                        assert!(docstring.is_some());
+                        let doc = docstring.as_ref().unwrap();
+                        assert!(doc.contains("Calculate something"));
+                        assert!(doc.contains("This function does a calculation"));
+                    }
+                    _ => panic!("Expected function definition"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_no_docstring() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "def foo():\n    pass";
+
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                match &body[0] {
+                    AstNode::FunctionDef { docstring, .. } => {
+                        assert!(docstring.is_none());
+                    }
+                    _ => panic!("Expected function definition"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
     }
 }

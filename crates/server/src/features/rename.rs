@@ -131,12 +131,7 @@ impl RenameProvider {
                     self.collect_renames(stmt, symbol_name, new_name, edits, _text);
                 }
             }
-            AstNode::ClassDef { body, .. } => {
-                for stmt in body {
-                    self.collect_renames(stmt, symbol_name, new_name, edits, _text);
-                }
-            }
-            AstNode::Module { body } => {
+            AstNode::ClassDef { body, .. } | AstNode::Module { body, .. } => {
                 for stmt in body {
                     self.collect_renames(stmt, symbol_name, new_name, edits, _text);
                 }
@@ -407,6 +402,7 @@ print(x)"#;
             ],
             line: 1,
             col: 1,
+            docstring: None,
         };
 
         let mut edits = Vec::new();
@@ -472,10 +468,13 @@ print(x)"#;
                     }],
                     line: 2,
                     col: 5,
+                    docstring: None,
                 }],
                 line: 1,
                 col: 1,
+                docstring: None,
             }],
+            docstring: None,
         };
 
         let mut edits = Vec::new();
@@ -571,6 +570,7 @@ print(x)"#;
                     col: 1,
                 },
             ],
+            docstring: None,
         };
 
         let mut edits = Vec::new();

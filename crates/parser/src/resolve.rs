@@ -20,6 +20,7 @@ pub struct Symbol {
     pub line: usize,
     pub col: usize,
     pub scope_id: ScopeId,
+    pub docstring: Option<String>,
 }
 
 /// Unique identifier for scopes
@@ -213,7 +214,7 @@ impl NameResolver {
     /// Get the approximate end byte of a node by finding the end of its last line
     fn get_node_end_byte(&self, node: &AstNode) -> usize {
         match node {
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 if let Some(last) = body.last() {
                     self.get_node_end_byte(last)
                 } else {
@@ -250,18 +251,19 @@ impl NameResolver {
 
     fn visit_node(&mut self, node: &AstNode) -> Result<()> {
         match node {
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 for stmt in body {
                     self.visit_node(stmt)?;
                 }
             }
-            AstNode::FunctionDef { name, args, body, line, col } => {
+            AstNode::FunctionDef { name, args, body, docstring, line, col } => {
                 let symbol = Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Function,
                     line: *line,
                     col: *col,
                     scope_id: self.current_scope,
+                    docstring: docstring.clone(),
                 };
                 self.symbol_table.add_symbol(self.current_scope, symbol);
 
@@ -285,6 +287,7 @@ impl NameResolver {
                         line: *line,
                         col: *col + i,
                         scope_id: func_scope,
+                        docstring: None,
                     };
                     self.symbol_table.add_symbol(func_scope, param_symbol);
                 }
@@ -294,13 +297,14 @@ impl NameResolver {
 
                 self.current_scope = prev_scope;
             }
-            AstNode::ClassDef { name, body, line, col } => {
+            AstNode::ClassDef { name, body, docstring, line, col } => {
                 let symbol = Symbol {
                     name: name.clone(),
                     kind: SymbolKind::Class,
                     line: *line,
                     col: *col,
                     scope_id: self.current_scope,
+                    docstring: docstring.clone(),
                 };
                 self.symbol_table.add_symbol(self.current_scope, symbol);
 
@@ -332,6 +336,7 @@ impl NameResolver {
                     line: *line,
                     col: *col,
                     scope_id: self.current_scope,
+                    docstring: None,
                 };
                 self.symbol_table.add_symbol(self.current_scope, symbol);
             }
@@ -357,6 +362,7 @@ impl NameResolver {
                     line: *line,
                     col: *col,
                     scope_id: self.current_scope,
+                    docstring: None,
                 },
             ),
             AstNode::ImportFrom { names, line, col, .. } => {
@@ -369,6 +375,7 @@ impl NameResolver {
                             line: *line,
                             col: *col + i,
                             scope_id: self.current_scope,
+                            docstring: None,
                         },
                     );
                 }
@@ -436,11 +443,18 @@ mod tests {
             line: 1,
             col: 1,
             scope_id: table.root_scope,
+            docstring: None,
         };
         table.add_symbol(table.root_scope, root_symbol);
 
-        let func_symbol =
-            Symbol { name: "local_var".to_string(), kind: SymbolKind::Variable, line: 2, col: 1, scope_id: func_scope };
+        let func_symbol = Symbol {
+            name: "local_var".to_string(),
+            kind: SymbolKind::Variable,
+            line: 2,
+            col: 1,
+            scope_id: func_scope,
+            docstring: None,
+        };
         table.add_symbol(func_scope, func_symbol);
 
         assert!(table.lookup_symbol("local_var", func_scope).is_some());
@@ -483,6 +497,7 @@ mod tests {
                 line: 2,
                 col: 5,
             }],
+            docstring: None,
             line: 1,
             col: 1,
         };
@@ -549,6 +564,7 @@ mod tests {
                             col: 5,
                         },
                     ],
+                    docstring: None,
                     line: 2,
                     col: 1,
                 },
@@ -559,6 +575,7 @@ mod tests {
                     col: 1,
                 },
             ],
+            docstring: None,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -603,10 +620,12 @@ mod tests {
                         line: 3,
                         col: 9,
                     }],
+                    docstring: None,
                     line: 2,
                     col: 1,
                 },
             ],
+            docstring: None,
         };
 
         resolver.resolve(&ast).unwrap();

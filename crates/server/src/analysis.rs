@@ -103,7 +103,7 @@ impl Analyzer {
     fn visit_node(&mut self, node: &AstNode, _constraints: &mut Vec<Constraint>) -> Result<Type> {
         match node {
             // TODO: Generate constraints for module body
-            AstNode::Module { body: _ } => Ok(Type::Con(beacon_core::TypeCtor::Module("".into()))),
+            AstNode::Module { body: _, .. } => Ok(Type::Con(beacon_core::TypeCtor::Module("".into()))),
 
             // TODO: Generate function type constraints
             // - Fresh type vars for parameters
@@ -190,7 +190,7 @@ impl Analyzer {
                     unbound.push((name.clone(), *line, *col));
                 }
             }
-            AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } | AstNode::Module { body } => {
+            AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } | AstNode::Module { body, .. } => {
                 for stmt in body {
                     self.collect_unbound_in_node(stmt, symbol_table, text, unbound);
                 }

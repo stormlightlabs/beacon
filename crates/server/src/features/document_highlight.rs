@@ -112,12 +112,7 @@ impl DocumentHighlightProvider {
                     self.collect_highlights(stmt, symbol_name, highlights, text);
                 }
             }
-            AstNode::ClassDef { body, .. } => {
-                for stmt in body {
-                    self.collect_highlights(stmt, symbol_name, highlights, text);
-                }
-            }
-            AstNode::Module { body } => {
+            AstNode::ClassDef { body, .. } | AstNode::Module { body, .. } => {
                 for stmt in body {
                     self.collect_highlights(stmt, symbol_name, highlights, text);
                 }
@@ -268,6 +263,7 @@ result = hello()"#;
             }],
             line: 1,
             col: 1,
+            docstring: None,
         };
 
         let mut highlights = Vec::new();

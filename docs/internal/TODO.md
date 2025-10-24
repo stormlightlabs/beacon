@@ -106,6 +106,42 @@ This document outlines the plan for implementing a minimal, working, testable LS
     - Partial workspace analysis (analyze subset)
     - Advanced caching strategies (persistent cache across sessions)
 
+## Hover Documentation
+
+- Advanced RST rendering (directives, cross-references)
+- NumPy/Google docstring style parsing
+- Dynamic docstring generation from type hints
+- Inline documentation for built-in types
+
+## Module/Package Documentation
+
+- Store `interpreter_path` in `Backend`
+    - Find with `which python` or `which python3`
+        - `poetry`, `pipenv`, `uv`
+        - Scan project dir
+    - Call `python -c "<script>" <module> <symbol>`
+
+        ```py
+        import sys, inspect, importlib
+
+        mod_name, sym_name = sys.argv[1], sys.argv[2]
+        mod = importlib.import_module(mod_name)
+        obj = getattr(mod, sym_name)
+
+        sig = ""
+        try:
+            sig = str(inspect.signature(obj))
+        except Exception:
+            pass
+
+        doc = inspect.getdoc(obj) or ""
+
+        print("###SIGNATURE###")
+        print(sig)
+        print("###DOC###")
+        print(doc)
+        ```
+
 ## Code actions (insert annotations, fix types)
 
 ## Protocol/structural type checking

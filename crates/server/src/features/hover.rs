@@ -46,8 +46,12 @@ impl HoverProvider {
                     let identifier_text = node.utf8_text(text.as_bytes()).ok()?;
                     let symbol = symbol_table.lookup_symbol(identifier_text, symbol_table.root_scope)?;
                     let content = match symbol.kind {
-                        SymbolKind::Function => self.format_function_hover(identifier_text, ast, symbol.line),
-                        SymbolKind::Class => self.format_class_hover(identifier_text, ast, symbol.line),
+                        SymbolKind::Function => {
+                            self.format_function_hover(identifier_text, ast, symbol.line, symbol.docstring.as_deref())
+                        }
+                        SymbolKind::Class => {
+                            self.format_class_hover(identifier_text, ast, symbol.line, symbol.docstring.as_deref())
+                        }
                         SymbolKind::Variable => {
                             self.format_variable_hover(identifier_text, &symbol.kind, symbol.line, symbol.col)
                         }
@@ -63,29 +67,41 @@ impl HoverProvider {
     }
 
     /// Format hover for a function
-    fn format_function_hover(&self, name: &str, ast: &AstNode, def_line: usize) -> MarkupContent {
+    fn format_function_hover(
+        &self, name: &str, ast: &AstNode, def_line: usize, docstring: Option<&str>,
+    ) -> MarkupContent {
         let signature = self
             .extract_function_signature(ast, name)
             .unwrap_or_else(|| format!("def {}(...)", name));
 
-        MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: format!(
-                "```python\n{}\n```\n\n**Function** defined at line {}",
-                signature, def_line
-            ),
+        let mut value = format!(
+            "```python\n{}\n```\n\n**Function** defined at line {}",
+            signature, def_line
+        );
+
+        if let Some(doc) = docstring {
+            value.push_str("\n\n---\n\n");
+            value.push_str(doc);
         }
+
+        MarkupContent { kind: MarkupKind::Markdown, value }
     }
 
     /// Format hover for a class
-    fn format_class_hover(&self, name: &str, _ast: &AstNode, def_line: usize) -> MarkupContent {
-        MarkupContent {
-            kind: MarkupKind::Markdown,
-            value: format!(
-                "```python\nclass {}\n```\n\n**Class** defined at line {}",
-                name, def_line
-            ),
+    fn format_class_hover(
+        &self, name: &str, _ast: &AstNode, def_line: usize, docstring: Option<&str>,
+    ) -> MarkupContent {
+        let mut value = format!(
+            "```python\nclass {}\n```\n\n**Class** defined at line {}",
+            name, def_line
+        );
+
+        if let Some(doc) = docstring {
+            value.push_str("\n\n---\n\n");
+            value.push_str(doc);
         }
+
+        MarkupContent { kind: MarkupKind::Markdown, value }
     }
 
     /// Format hover for a variable
@@ -109,7 +125,7 @@ impl HoverProvider {
 
     fn extract_function_signature(&self, node: &AstNode, name: &str) -> Option<String> {
         match node {
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 for stmt in body {
                     let sig = self.extract_function_signature(stmt, name);
                     if sig.is_some() {
@@ -251,11 +267,13 @@ mod tests {
                 name: "test_func".to_string(),
                 args: vec!["x".to_string(), "y".to_string()],
                 body: vec![],
+                docstring: None,
                 line: 1,
                 col: 1,
             }],
+            docstring: None,
         };
-        let content = provider.format_function_hover("test_func", &ast, 1);
+        let content = provider.format_function_hover("test_func", &ast, 1, None);
 
         assert_eq!(content.kind, MarkupKind::Markdown);
         assert!(content.value.contains("def test_func"));
@@ -267,8 +285,8 @@ mod tests {
     fn test_format_class_hover() {
         let documents = DocumentManager::new().unwrap();
         let provider = HoverProvider::new(documents);
-        let ast = beacon_parser::AstNode::Module { body: vec![] };
-        let content = provider.format_class_hover("MyClass", &ast, 5);
+        let ast = beacon_parser::AstNode::Module { body: vec![], docstring: None };
+        let content = provider.format_class_hover("MyClass", &ast, 5, None);
         assert_eq!(content.kind, MarkupKind::Markdown);
         assert!(content.value.contains("class MyClass"));
         assert!(content.value.contains("Class"));
@@ -317,9 +335,11 @@ mod tests {
                 name: "calculate".to_string(),
                 args: vec!["a".to_string(), "b".to_string()],
                 body: vec![],
+                docstring: None,
                 line: 1,
                 col: 1,
             }],
+            docstring: None,
         };
 
         let signature = provider.extract_function_signature(&ast, "calculate");
@@ -338,12 +358,15 @@ mod tests {
                     name: "method".to_string(),
                     args: vec!["self".to_string()],
                     body: vec![],
+                    docstring: None,
                     line: 2,
                     col: 5,
                 }],
+                docstring: None,
                 line: 1,
                 col: 1,
             }],
+            docstring: None,
         };
 
         let signature = provider.extract_function_signature(&ast, "method");
@@ -355,7 +378,7 @@ mod tests {
     fn test_extract_function_signature_not_found() {
         let documents = DocumentManager::new().unwrap();
         let provider = HoverProvider::new(documents);
-        let ast = beacon_parser::AstNode::Module { body: vec![] };
+        let ast = beacon_parser::AstNode::Module { body: vec![], docstring: None };
         let signature = provider.extract_function_signature(&ast, "nonexistent");
         assert!(signature.is_none());
     }
@@ -429,7 +452,9 @@ mod tests {
                 body: vec![],
                 line: 1,
                 col: 1,
+                docstring: None,
             }],
+            docstring: None,
         };
 
         let signature = provider.extract_function_signature(&ast, "no_args");
@@ -459,6 +484,85 @@ mod tests {
         };
 
         let _result = provider.hover(params, &mut analyzer);
+    }
+
+    #[test]
+    fn test_hover_with_function_docstring() {
+        use std::str::FromStr;
+
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents.clone());
+        let config = crate::config::Config::default();
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"def greet(name):
+    """Say hello to someone."""
+    return f"Hello {name}"
+
+greet("world")"#;
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let params = HoverParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                position: Position { line: 4, character: 0 },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+        };
+
+        let result = provider.hover(params, &mut analyzer);
+        assert!(result.is_some());
+
+        let hover = result.unwrap();
+        match hover.contents {
+            HoverContents::Markup(content) => {
+                assert!(content.value.contains("def greet(name)"));
+                assert!(content.value.contains("Say hello to someone."));
+                assert!(content.value.contains("Function"));
+            }
+            _ => panic!("Expected Markup content"),
+        }
+    }
+
+    #[test]
+    fn test_hover_with_class_docstring() {
+        use std::str::FromStr;
+
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents.clone());
+        let config = crate::config::Config::default();
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"class Person:
+    """A person class with name and age."""
+    def __init__(self, name):
+        self.name = name
+
+p = Person("Alice")"#;
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let params = HoverParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                position: Position { line: 5, character: 4 },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+        };
+
+        let result = provider.hover(params, &mut analyzer);
+        assert!(result.is_some());
+
+        let hover = result.unwrap();
+        match hover.contents {
+            HoverContents::Markup(content) => {
+                assert!(content.value.contains("class Person"));
+                assert!(content.value.contains("A person class with name and age."));
+                assert!(content.value.contains("Class"));
+            }
+            _ => panic!("Expected Markup content"),
+        }
     }
 
     #[test]

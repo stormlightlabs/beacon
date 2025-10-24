@@ -32,7 +32,7 @@ impl DocumentSymbolsProvider {
 
     fn ast_to_symbols(&self, node: &AstNode) -> Vec<DocumentSymbol> {
         match node {
-            AstNode::Module { body } => {
+            AstNode::Module { body, .. } => {
                 let mut symbols = Vec::new();
                 for stmt in body {
                     if let Some(symbol) = self.node_to_symbol(stmt) {
@@ -47,7 +47,7 @@ impl DocumentSymbolsProvider {
 
     fn node_to_symbol(&self, node: &AstNode) -> Option<DocumentSymbol> {
         match node {
-            AstNode::FunctionDef { name, args, body, line, col } => {
+            AstNode::FunctionDef { name, args, body, line, col, .. } => {
                 let range = self.node_range(*line, *col, body);
                 let selection_range = self.identifier_range(*line, *col, name.len());
 
@@ -67,7 +67,7 @@ impl DocumentSymbolsProvider {
                 })
             }
 
-            AstNode::ClassDef { name, body, line, col } => {
+            AstNode::ClassDef { name, body, line, col, .. } => {
                 let range = self.node_range(*line, *col, body);
                 let selection_range = self.identifier_range(*line, *col, name.len());
                 let children: Vec<DocumentSymbol> = body
@@ -162,7 +162,7 @@ impl DocumentSymbolsProvider {
             | AstNode::Attribute { line, col, .. } => {
                 Position { line: (*line).saturating_sub(1) as u32, character: (*col + 10).saturating_sub(1) as u32 }
             }
-            AstNode::Module { body } => match body.last() {
+            AstNode::Module { body, .. } => match body.last() {
                 Some(last) => self.node_end_position(last),
                 None => Position { line: 0, character: 0 },
             },
