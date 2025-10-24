@@ -29,7 +29,6 @@ impl CodeActionsProvider {
     pub fn code_actions(&self, params: CodeActionParams) -> Vec<CodeActionOrCommand> {
         let mut actions = Vec::new();
 
-        // Add quick fixes for diagnostics
         for diagnostic in &params.context.diagnostics {
             if let Some(action) = self.quick_fix_for_diagnostic(&params.text_document.uri, diagnostic) {
                 actions.push(CodeActionOrCommand::CodeAction(action));
@@ -62,7 +61,7 @@ impl CodeActionsProvider {
     pub fn _insert_type_annotation(&self, _uri: &Url, _range: Range) -> Option<CodeAction> {
         // Get inferred type at position
         // Generate edit to insert type annotation
-        // Example: `x = 42` → `x: int = 42`
+        // Example: `x = 42` -> `x: int = 42`
         None
     }
 
@@ -70,7 +69,7 @@ impl CodeActionsProvider {
     pub fn _convert_to_optional(&self, _uri: &Url, _range: Range) -> Option<CodeAction> {
         // Find assignments/returns with None
         // Add Optional[T] annotation
-        // Example: `def f() -> str:` with `return None` → `def f() -> Optional[str]:`
+        // Example: `def f() -> str:` with `return None` -> `def f() -> Optional[str]:`
         None
     }
 

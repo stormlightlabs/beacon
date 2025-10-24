@@ -26,6 +26,7 @@ pub struct Parameter {
     pub line: usize,
     pub col: usize,
     pub type_annotation: Option<String>,
+    pub default_value: Option<Box<AstNode>>,
 }
 
 /// Basic AST node types for Python
@@ -662,16 +663,27 @@ impl PythonParser {
                     line: start_position.row + 1,
                     col: start_position.column + 1,
                     type_annotation: None,
+                    default_value: None,
                 }))
             }
             "typed_parameter" | "typed_default_parameter" => {
                 let mut name = None;
                 let mut type_annotation = None;
+                let mut default_value = None;
                 let mut position = node.start_position();
-                let mut cursor = node.walk();
-                for child in node.children(&mut cursor) {
-                    match child.kind() {
-                        "identifier" => {
+
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    name = Some(
+                        name_node
+                            .utf8_text(source.as_bytes())
+                            .map_err(|_| ParseError::InvalidUtf8)?
+                            .to_string(),
+                    );
+                    position = name_node.start_position();
+                } else {
+                    let mut cursor = node.walk();
+                    for child in node.children(&mut cursor) {
+                        if child.kind() == "identifier" {
                             name = Some(
                                 child
                                     .utf8_text(source.as_bytes())
@@ -679,17 +691,22 @@ impl PythonParser {
                                     .to_string(),
                             );
                             position = child.start_position();
+                            break;
                         }
-                        "type" => {
-                            type_annotation = Some(
-                                child
-                                    .utf8_text(source.as_bytes())
-                                    .map_err(|_| ParseError::InvalidUtf8)?
-                                    .to_string(),
-                            );
-                        }
-                        _ => {}
                     }
+                }
+
+                if let Some(type_node) = node.child_by_field_name("type") {
+                    type_annotation = Some(
+                        type_node
+                            .utf8_text(source.as_bytes())
+                            .map_err(|_| ParseError::InvalidUtf8)?
+                            .to_string(),
+                    );
+                }
+
+                if let Some(value_node) = node.child_by_field_name("value") {
+                    default_value = Some(Box::new(self.node_to_ast(value_node, source)?));
                 }
 
                 match name {
@@ -698,18 +715,40 @@ impl PythonParser {
                         line: position.row + 1,
                         col: position.column + 1,
                         type_annotation,
+                        default_value,
                     })),
                     None => Ok(None),
                 }
             }
             "default_parameter" => {
-                let mut cursor = node.walk();
-                for child in node.children(&mut cursor) {
-                    if child.kind() == "identifier" {
-                        return self.extract_parameter(&child, source);
-                    }
+                let mut name = None;
+                let mut default_value = None;
+                let mut position = node.start_position();
+
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    name = Some(
+                        name_node
+                            .utf8_text(source.as_bytes())
+                            .map_err(|_| ParseError::InvalidUtf8)?
+                            .to_string(),
+                    );
+                    position = name_node.start_position();
                 }
-                Ok(None)
+
+                if let Some(value_node) = node.child_by_field_name("value") {
+                    default_value = Some(Box::new(self.node_to_ast(value_node, source)?));
+                }
+
+                match name {
+                    Some(n) => Ok(Some(Parameter {
+                        name: n,
+                        line: position.row + 1,
+                        col: position.column + 1,
+                        type_annotation: None,
+                        default_value,
+                    })),
+                    None => Ok(None),
+                }
             }
             _ => Ok(None),
         }
@@ -1280,8 +1319,6 @@ impl PythonParser {
         Ok(generators)
     }
 
-    // Expression extraction methods
-
     fn extract_named_expr_info(&self, node: &Node, source: &str) -> Result<(String, AstNode)> {
         let name = node
             .child_by_field_name("name")
@@ -1546,14 +1583,11 @@ impl PythonParser {
                 Ok(Pattern::MatchOr(patterns))
             }
             _ => {
-                // Fallback to value pattern
                 let value = self.node_to_ast(*node, source)?;
                 Ok(Pattern::MatchValue(value))
             }
         }
     }
-
-    // Helper methods
 
     fn extract_body(&self, node: &Node, source: &str) -> Result<Vec<AstNode>> {
         let mut body = Vec::new();
@@ -2353,7 +2387,6 @@ def process(x, y: int, z=5, w: str = "default"):
         let parsed = parser.parse(source).unwrap();
         let debug_output = parser.debug_tree(&parsed);
         println!("{}", debug_output);
-        // This test is just for debugging - we'll see the tree structure
         assert!(!debug_output.is_empty());
     }
 
@@ -2448,7 +2481,6 @@ count: int = 0"#;
 
         match ast {
             AstNode::Module { body, .. } => {
-                // First statement: x: int = 5
                 match &body[0] {
                     AstNode::AnnotatedAssignment { target, type_annotation, value, .. } => {
                         assert_eq!(target, "x");
@@ -2458,7 +2490,6 @@ count: int = 0"#;
                     _ => panic!("Expected annotated assignment, got {:?}", &body[0]),
                 }
 
-                // Second statement: y: str (no value)
                 match &body[1] {
                     AstNode::AnnotatedAssignment { target, type_annotation, value, .. } => {
                         assert_eq!(target, "y");
@@ -2468,6 +2499,151 @@ count: int = 0"#;
                     _ => panic!("Expected annotated assignment, got {:?}", &body[1]),
                 }
             }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_default_parameter_simple() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "def foo(x=5): pass";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::FunctionDef { name, args, .. } => {
+                    assert_eq!(name, "foo");
+                    assert_eq!(args.len(), 1);
+                    assert_eq!(args[0].name, "x");
+                    assert_eq!(args[0].type_annotation, None);
+                    assert!(args[0].default_value.is_some(), "Expected default value");
+
+                    match args[0].default_value.as_ref().unwrap().as_ref() {
+                        AstNode::Literal { value, .. } => match value {
+                            LiteralValue::Integer(5) => {}
+                            _ => panic!("Expected integer 5, got {:?}", value),
+                        },
+                        _ => panic!("Expected Literal node"),
+                    }
+                }
+                _ => panic!("Expected function definition"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_default_parameter_typed() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "def foo(x: int = 5): pass";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::FunctionDef { name, args, .. } => {
+                    assert_eq!(name, "foo");
+                    assert_eq!(args.len(), 1);
+                    assert_eq!(args[0].name, "x");
+                    assert!(args[0].type_annotation.is_some());
+                    assert!(args[0].type_annotation.as_ref().unwrap().contains("int"));
+                    assert!(args[0].default_value.is_some(), "Expected default value");
+
+                    match args[0].default_value.as_ref().unwrap().as_ref() {
+                        AstNode::Literal { value, .. } => match value {
+                            LiteralValue::Integer(5) => {}
+                            _ => panic!("Expected integer 5"),
+                        },
+                        _ => panic!("Expected Literal node"),
+                    }
+                }
+                _ => panic!("Expected function definition"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_default_parameter_complex() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"def foo(x=None): pass"#;
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::FunctionDef { args, .. } => {
+                    assert_eq!(args.len(), 1);
+                    assert!(args[0].default_value.is_some(), "Expected default value");
+
+                    match args[0].default_value.as_ref().unwrap().as_ref() {
+                        AstNode::Literal { value, .. } => match value {
+                            LiteralValue::None => {}
+                            _ => panic!("Expected None"),
+                        },
+                        _ => panic!("Expected Literal node"),
+                    }
+                }
+                _ => panic!("Expected function definition"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_mixed_parameters() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "def foo(a, b=2, c: int = 3): pass";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::FunctionDef { name, args, .. } => {
+                    assert_eq!(name, "foo");
+                    assert_eq!(args.len(), 3);
+
+                    assert_eq!(args[0].name, "a");
+                    assert_eq!(args[0].type_annotation, None);
+                    assert_eq!(args[0].default_value, None);
+
+                    assert_eq!(args[1].name, "b");
+                    assert_eq!(args[1].type_annotation, None);
+                    assert!(args[1].default_value.is_some());
+
+                    assert_eq!(args[2].name, "c");
+                    assert!(args[2].type_annotation.is_some());
+                    assert!(args[2].default_value.is_some());
+                }
+                _ => panic!("Expected function definition"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_default_with_identifier() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "def foo(x=CONST): pass";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::FunctionDef { args, .. } => {
+                    assert_eq!(args.len(), 1);
+                    assert!(args[0].default_value.is_some(), "Expected default value");
+
+                    match args[0].default_value.as_ref().unwrap().as_ref() {
+                        AstNode::Identifier { name, .. } => {
+                            assert_eq!(name, "CONST");
+                        }
+                        node => panic!("Expected Identifier node, got {:?}", node),
+                    }
+                }
+                _ => panic!("Expected function definition"),
+            },
             _ => panic!("Expected module"),
         }
     }

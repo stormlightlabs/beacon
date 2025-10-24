@@ -400,20 +400,20 @@ impl NameResolver {
                 self.symbol_table.add_symbol(self.current_scope, symbol);
             }
             AstNode::AnnotatedAssignment { target, value, line, col, .. } => {
+                self.symbol_table.add_symbol(
+                    self.current_scope,
+                    Symbol {
+                        name: target.clone(),
+                        kind: SymbolKind::Variable,
+                        line: *line,
+                        col: *col,
+                        scope_id: self.current_scope,
+                        docstring: None,
+                    },
+                );
+
                 if let Some(val) = value {
                     self.visit_node(val)?;
-                } else {
-                    self.symbol_table.add_symbol(
-                        self.current_scope,
-                        Symbol {
-                            name: target.clone(),
-                            kind: SymbolKind::Variable,
-                            line: *line,
-                            col: *col,
-                            scope_id: self.current_scope,
-                            docstring: None,
-                        },
-                    );
                 }
             }
             AstNode::Call { args, .. } => {
@@ -757,8 +757,8 @@ mod tests {
         let ast = AstNode::FunctionDef {
             name: "test_func".to_string(),
             args: vec![
-                Parameter { name: "param1".to_string(), line: 1, col: 15, type_annotation: None },
-                Parameter { name: "param2".to_string(), line: 1, col: 23, type_annotation: None },
+                Parameter { name: "param1".to_string(), line: 1, col: 15, type_annotation: None, default_value: None },
+                Parameter { name: "param2".to_string(), line: 1, col: 23, type_annotation: None, default_value: None },
             ],
             body: vec![AstNode::Assignment {
                 target: "local_var".to_string(),
@@ -886,7 +886,7 @@ mod tests {
                 },
                 AstNode::FunctionDef {
                     name: "outer".to_string(),
-                    args: vec![Parameter { name: "param".to_string(), line: 2, col: 11, type_annotation: None }],
+                    args: vec![Parameter { name: "param".to_string(), line: 2, col: 11, type_annotation: None, default_value: None }],
                     body: vec![AstNode::Assignment {
                         target: "outer_var".to_string(),
                         value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(2), line: 3, col: 20 }),

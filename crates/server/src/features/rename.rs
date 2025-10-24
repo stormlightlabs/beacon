@@ -3,7 +3,7 @@
 //! Renames a symbol across all references in the workspace.
 //! Validates the new name and creates workspace edits for all occurrences.
 
-use crate::document::DocumentManager;
+use crate::{document::DocumentManager, parser};
 use beacon_parser::{AstNode, SymbolTable};
 use lsp_types::{Position, Range, RenameParams, TextEdit, Url, WorkspaceEdit};
 use std::collections::{HashMap, HashSet};
@@ -35,8 +35,8 @@ impl RenameProvider {
         let symbol_name = self.documents.get_document(&uri, |doc| {
             let tree = doc.tree()?;
             let text = doc.text();
-            let parser = crate::parser::LspParser::new().ok()?;
-            let node = parser.node_at_position(tree, &text, position)?;
+            let p = parser::LspParser::new().ok()?;
+            let node = p.node_at_position(tree, &text, position)?;
 
             match node.kind() {
                 "identifier" => {

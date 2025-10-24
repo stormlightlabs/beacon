@@ -131,12 +131,7 @@ mod tests {
 
     #[test]
     fn test_find_interpreter_finds_something() {
-        // This test will only pass if Python is installed on the system
-        // which is a reasonable requirement for development
-        let result = find_python_interpreter(None);
-
-        // We can't guarantee Python exists in CI, so we just ensure the function doesn't panic
-        if let Some(path) = result {
+        if let Some(path) = find_python_interpreter(None) {
             println!("Found Python at: {}", path.display());
         }
     }

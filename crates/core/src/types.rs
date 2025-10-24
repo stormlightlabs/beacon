@@ -1,14 +1,14 @@
 use rustc_hash::FxHashMap;
-use std::fmt;
+use std::{fmt, ops::Not};
 
 /// Kinds classify types in the type system
 /// Star (*) is the kind of proper types like Int, String
-/// Arrow kinds (K1 → K2) are for type constructors like List, Dict
+/// Arrow kinds (K1 -> K2) are for type constructors like List, Dict
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Kind {
     /// Kind of proper types (*)
     Star,
-    /// Kind of type constructors (K1 → K2)
+    /// Kind of type constructors (K1 -> K2)
     Arrow(Box<Kind>, Box<Kind>),
 }
 
@@ -16,14 +16,14 @@ impl fmt::Display for Kind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Kind::Star => write!(f, "*"),
-            Kind::Arrow(k1, k2) => write!(f, "{} → {}", k1, k2),
+            Kind::Arrow(k1, k2) => write!(f, "{} -> {}", k1, k2),
         }
     }
 }
 
 impl Kind {
     /// Create a kind for a type constructor that takes n arguments
-    /// e.g., arity(2) creates * → * → *
+    /// e.g., arity(2) creates * -> * -> *
     pub fn arity(n: usize) -> Self {
         if n == 0 {
             Kind::Star
@@ -50,10 +50,7 @@ impl TypeVar {
     }
 
     pub fn named(id: u32, hint: &str) -> Self {
-        Self {
-            id,
-            hint: Some(hint.to_string()),
-        }
+        Self { id, hint: Some(hint.to_string()) }
     }
 }
 
@@ -82,28 +79,18 @@ impl From<u32> for TypeVar {
 /// Type constructors for built-in and user-defined types
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TypeCtor {
-    // Built-in scalar types
     Int,
     Float,
     String,
     Bool,
     NoneType,
-
-    // Collection types
     List,
     Dict,
     Set,
     Tuple,
-
-    // Function type constructor
     Function,
-
-    // Special types
     Any,
-    // Bottom type
     Never,
-
-    // User-defined types (classes)
     Class(String),
     Module(String),
 }
@@ -133,7 +120,6 @@ impl TypeCtor {
     /// Get the kind of a type constructor
     pub fn kind(&self) -> Kind {
         match self {
-            // Proper types have kind *
             TypeCtor::Int
             | TypeCtor::Float
             | TypeCtor::String
@@ -141,14 +127,10 @@ impl TypeCtor {
             | TypeCtor::NoneType
             | TypeCtor::Any
             | TypeCtor::Never => Kind::Star,
-
-            // Type constructors
-            TypeCtor::List | TypeCtor::Set => Kind::arity(1), // * → *
-            TypeCtor::Dict => Kind::arity(2),                 // * → * → *
+            TypeCtor::List | TypeCtor::Set => Kind::arity(1), // * -> *
+            TypeCtor::Dict => Kind::arity(2),                 // * -> * -> *
             TypeCtor::Tuple => Kind::Star,                    // Special case: can be 0-ary
-            TypeCtor::Function => Kind::arity(2),             // * → * → * (simplified)
-
-            // User-defined types are proper types
+            TypeCtor::Function => Kind::arity(2),             // * -> * -> * (simplified)
             TypeCtor::Class(_) | TypeCtor::Module(_) => Kind::Star,
         }
     }
@@ -178,24 +160,20 @@ impl TypeCtor {
 pub enum Type {
     /// Type variable
     Var(TypeVar),
-
     /// Type constructor (0-ary application)
     Con(TypeCtor),
-
     /// Type application (higher-kinded types)
     App(Box<Type>, Box<Type>),
-
     /// Function types (syntactic sugar for Type application)
-    Fun(Vec<Type>, Box<Type>), // args -> return
-
+    /// args -> return
+    Fun(Vec<Type>, Box<Type>),
     /// Forall quantification (type schemes)
     ForAll(Vec<TypeVar>, Box<Type>),
-
     /// Union types (for Python's Union[A, B])
     Union(Vec<Type>),
-
     /// Record types for objects/classes (row polymorphism)
-    Record(Vec<(String, Type)>, Option<TypeVar>), // fields, row variable
+    /// fields, row variable
+    Record(Vec<(String, Type)>, Option<TypeVar>),
 }
 
 impl fmt::Display for Type {
@@ -220,10 +198,7 @@ impl fmt::Display for Type {
                     write!(
                         f,
                         "({}) -> {}",
-                        args.iter()
-                            .map(|t| t.to_string())
-                            .collect::<Vec<_>>()
-                            .join(", "),
+                        args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", "),
                         ret
                     )
                 }
@@ -235,10 +210,7 @@ impl fmt::Display for Type {
                     write!(
                         f,
                         "∀{}. {}",
-                        tvs.iter()
-                            .map(|tv| tv.to_string())
-                            .collect::<Vec<_>>()
-                            .join(" "),
+                        tvs.iter().map(|tv| tv.to_string()).collect::<Vec<_>>().join(" "),
                         t
                     )
                 }
@@ -247,18 +219,11 @@ impl fmt::Display for Type {
                 write!(
                     f,
                     "{}",
-                    types
-                        .iter()
-                        .map(|t| t.to_string())
-                        .collect::<Vec<_>>()
-                        .join(" | ")
+                    types.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(" | ")
                 )
             }
             Type::Record(fields, row_var) => {
-                let field_strs: Vec<String> = fields
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}", k, v))
-                    .collect();
+                let field_strs: Vec<String> = fields.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
                 match row_var {
                     Some(rv) => write!(f, "{{ {} | {} }}", field_strs.join(", "), rv),
                     None => write!(f, "{{ {} }}", field_strs.join(", ")),
@@ -269,7 +234,6 @@ impl fmt::Display for Type {
 }
 
 impl Type {
-    /// Create commonly used types
     pub fn int() -> Self {
         Type::Con(TypeCtor::Int)
     }
@@ -306,10 +270,7 @@ impl Type {
     /// Create a dict type
     pub fn dict(key_type: Type, value_type: Type) -> Self {
         Type::App(
-            Box::new(Type::App(
-                Box::new(Type::Con(TypeCtor::Dict)),
-                Box::new(key_type),
-            )),
+            Box::new(Type::App(Box::new(Type::Con(TypeCtor::Dict)), Box::new(key_type))),
             Box::new(value_type),
         )
     }
@@ -319,8 +280,7 @@ impl Type {
         Type::Fun(args, Box::new(ret))
     }
 
-    /// Create a union type, flattening nested unions, removing duplications,
-    /// and sorting for canonical form
+    /// Create a union type, flattening nested unions, removing duplications, and sorting for canonical form
     pub fn union(mut types: Vec<Type>) -> Self {
         if types.len() == 1 {
             return types.pop().unwrap();
@@ -337,11 +297,7 @@ impl Type {
         flattened.sort();
         flattened.dedup();
 
-        if flattened.len() == 1 {
-            flattened.pop().unwrap()
-        } else {
-            Type::Union(flattened)
-        }
+        if flattened.len() == 1 { flattened.pop().unwrap() } else { Type::Union(flattened) }
     }
 
     /// Create Optional[T] which is Union[T, None]
@@ -359,7 +315,7 @@ impl Type {
     fn collect_free_vars(&self, vars: &mut FxHashMap<TypeVar, ()>, bound: &FxHashMap<TypeVar, ()>) {
         match self {
             Type::Var(tv) => {
-                if !bound.contains_key(tv) {
+                if bound.contains_key(tv).not() {
                     vars.insert(tv.clone(), ());
                 }
             }
@@ -391,7 +347,7 @@ impl Type {
                     t.collect_free_vars(vars, bound);
                 }
                 if let Some(rv) = row_var {
-                    if !bound.contains_key(rv) {
+                    if bound.contains_key(rv).not() {
                         vars.insert(rv.clone(), ());
                     }
                 }
@@ -409,10 +365,7 @@ pub struct TypeScheme {
 
 impl TypeScheme {
     pub fn new(quantified_vars: Vec<TypeVar>, ty: Type) -> Self {
-        Self {
-            quantified_vars,
-            ty,
-        }
+        Self { quantified_vars, ty }
     }
 
     /// Create a monomorphic type scheme (no quantified variables)
@@ -459,10 +412,7 @@ mod tests {
     #[test]
     fn test_kind_arity() {
         assert_eq!(Kind::arity(0), Kind::Star);
-        assert_eq!(
-            Kind::arity(1),
-            Kind::Arrow(Box::new(Kind::Star), Box::new(Kind::Star))
-        );
+        assert_eq!(Kind::arity(1), Kind::Arrow(Box::new(Kind::Star), Box::new(Kind::Star)));
         assert_eq!(
             Kind::arity(2),
             Kind::Arrow(
@@ -557,10 +507,7 @@ mod tests {
     fn test_type_display() {
         assert_eq!(Type::int().to_string(), "int");
         assert_eq!(Type::list(Type::string()).to_string(), "list[str]");
-        assert_eq!(
-            Type::dict(Type::string(), Type::int()).to_string(),
-            "dict[str, int]"
-        );
+        assert_eq!(Type::dict(Type::string(), Type::int()).to_string(), "dict[str, int]");
 
         let fun = Type::fun(vec![Type::int()], Type::bool());
         assert_eq!(fun.to_string(), "int -> bool");

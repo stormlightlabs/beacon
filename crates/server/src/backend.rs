@@ -3,11 +3,11 @@
 //! Implements the Language Server Protocol for Beacon type checker.
 //! Handles all LSP requests and routes them to appropriate feature providers.
 
-use crate::analysis::Analyzer;
 use crate::config::Config;
 use crate::document::DocumentManager;
-use crate::features::*;
 use crate::workspace::Workspace;
+use crate::{analysis::Analyzer, interpreter};
+use crate::{cache, features::*};
 use lsp_types::{
     CodeActionProviderCapability, CompletionOptions, HoverProviderCapability, InitializeParams, InitializeResult,
     InlayHintServerCapabilities, OneOf, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
@@ -85,13 +85,9 @@ impl Backend {
         let analyzer = Arc::new(RwLock::new(Analyzer::new(config.clone(), (*documents).clone())));
         let workspace = Arc::new(RwLock::new(Workspace::new(None, config, (*documents).clone())));
 
-        // Detect Python interpreter
-        let interpreter_path = crate::interpreter::find_python_interpreter(None);
+        let interpreter_path = interpreter::find_python_interpreter(None);
+        let introspection_cache = cache::IntrospectionCache::new(None);
 
-        // Create introspection cache (will try to load from disk)
-        let introspection_cache = crate::cache::IntrospectionCache::new(None);
-
-        // Create features with introspection support
         let features = Arc::new(Features::new(
             (*documents).clone(),
             interpreter_path.clone(),
@@ -114,10 +110,8 @@ impl Backend {
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     /// Initialize the language server
+    /// TODO: Parse initialization options and update config
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
-        // TODO: Parse initialization options and update config
-        // TODO: Initialize workspace with root_uri
-
         let root_uri = params.root_uri;
         let mut workspace = self.workspace.write().await;
         workspace.root_uri = root_uri;

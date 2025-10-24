@@ -3,7 +3,10 @@
 //! Tracks open documents with their parse trees, ASTs, symbol tables, and versions.
 //! Handles incremental updates and maintains derived analysis artifacts.
 
-use crate::parser::{LspParser, ParseResult};
+use crate::{
+    parser::{LspParser, ParseResult},
+    utils,
+};
 use beacon_core::{DocumentError, Result};
 use lsp_types::{TextDocumentContentChangeEvent, VersionedTextDocumentIdentifier};
 use ropey::Rope;
@@ -48,20 +51,14 @@ impl Document {
     pub fn apply_changes(&mut self, changes: Vec<TextDocumentContentChangeEvent>) {
         for change in changes {
             match change.range {
-                // Full document sync
-                None => {
-                    self.rope = Arc::new(Rope::from_str(&change.text));
-                }
-                // Incremental sync
                 Some(range) => {
-                    let start_offset = crate::utils::position_to_byte_offset(&self.text(), range.start);
-                    let end_offset = crate::utils::position_to_byte_offset(&self.text(), range.end);
-
-                    // Apply edit to rope
+                    let start_offset = utils::position_to_byte_offset(&self.text(), range.start);
+                    let end_offset = utils::position_to_byte_offset(&self.text(), range.end);
                     let rope_mut = Arc::make_mut(&mut self.rope);
                     rope_mut.remove(start_offset..end_offset);
                     rope_mut.insert(start_offset, &change.text);
                 }
+                None => self.rope = Arc::new(Rope::from_str(&change.text)),
             }
         }
     }
@@ -115,12 +112,9 @@ impl DocumentManager {
     /// Called when the client sends textDocument/didOpen.
     pub fn open_document(&self, uri: Url, version: i32, text: String) -> Result<()> {
         let mut document = Document::new(uri.clone(), version, text);
-
-        // Parse the document
         let mut parser = self.parser.write().unwrap();
         document.reparse(&mut parser)?;
 
-        // Insert into collection
         let mut documents = self.documents.write().unwrap();
         documents.insert(uri, document);
 
@@ -147,13 +141,9 @@ impl DocumentManager {
             .get_mut(&params.uri)
             .ok_or_else(|| DocumentError::DocumentNotFound(params.uri.clone()))?;
 
-        // Update version
         document.version = params.version;
-
-        // Apply changes
         document.apply_changes(changes);
 
-        // Reparse
         let mut parser = self.parser.write().unwrap();
         document.reparse(&mut parser)?;
 
@@ -214,9 +204,7 @@ impl DocumentManager {
     ///
     /// TODO: Parallelize for large workspaces
     pub fn reparse_all(&self) -> Result<()> {
-        let uris = self.all_documents();
-
-        for uri in uris {
+        for uri in self.all_documents() {
             self.force_reparse(&uri)?;
         }
 

@@ -2,10 +2,10 @@
 //!
 //! Displays type information, signatures, and documentation when hovering over identifiers and expressions.
 
-use crate::analysis::Analyzer;
 use crate::cache::IntrospectionCache;
 use crate::document::DocumentManager;
 use crate::parser;
+use crate::{analysis::Analyzer, introspection};
 use beacon_parser::{AstNode, SymbolKind, rst};
 use lsp_types::{Hover, HoverContents, HoverParams, MarkupContent, MarkupKind, Position};
 use std::{ops::Not, path::PathBuf};
@@ -50,8 +50,8 @@ impl HoverProvider {
             let text = doc.text();
             let symbol_table = doc.symbol_table()?;
             let ast = doc.ast()?;
-            let parser = parser::LspParser::new().ok()?;
-            let node = parser.node_at_position(tree, &text, position)?;
+            let p = parser::LspParser::new().ok()?;
+            let node = p.node_at_position(tree, &text, position)?;
 
             match node.kind() {
                 "identifier" => {
@@ -144,7 +144,7 @@ impl HoverProvider {
                     return self.format_introspection_result(name, &module, &symbol, &cached);
                 }
 
-                match crate::introspection::introspect_sync(python, &module, &symbol) {
+                match introspection::introspect_sync(python, &module, &symbol) {
                     Ok(result) => {
                         self.introspection_cache
                             .insert(module.clone(), symbol.clone(), result.clone());
@@ -193,8 +193,7 @@ impl HoverProvider {
 
     /// Format introspection result as hover content
     fn format_introspection_result(
-        &self, symbol_name: &str, module_name: &str, _full_symbol: &str,
-        result: &crate::introspection::IntrospectionResult,
+        &self, symbol_name: &str, module_name: &str, _full_symbol: &str, result: &introspection::IntrospectionResult,
     ) -> MarkupContent {
         let mut value = String::new();
 
@@ -263,6 +262,7 @@ mod tests {
     use super::*;
     use beacon_core::{Type, TypeCtor};
     use beacon_parser::Parameter;
+    use std::str::FromStr;
 
     #[test]
     fn test_format_type_simple() {
@@ -354,8 +354,8 @@ mod tests {
             body: vec![AstNode::FunctionDef {
                 name: "test_func".to_string(),
                 args: vec![
-                    Parameter { name: "x".to_string(), line: 1, col: 15, type_annotation: None },
-                    Parameter { name: "y".to_string(), line: 1, col: 18, type_annotation: None },
+                    Parameter { name: "x".to_string(), line: 1, col: 15, type_annotation: None, default_value: None },
+                    Parameter { name: "y".to_string(), line: 1, col: 18, type_annotation: None, default_value: None },
                 ],
                 body: vec![],
                 line: 1,
@@ -438,8 +438,8 @@ mod tests {
             body: vec![AstNode::FunctionDef {
                 name: "calculate".to_string(),
                 args: vec![
-                    Parameter { name: "a".to_string(), line: 1, col: 16, type_annotation: None },
-                    Parameter { name: "b".to_string(), line: 1, col: 19, type_annotation: None },
+                    Parameter { name: "a".to_string(), line: 1, col: 16, type_annotation: None, default_value: None },
+                    Parameter { name: "b".to_string(), line: 1, col: 19, type_annotation: None, default_value: None },
                 ],
                 body: vec![],
                 line: 1,
@@ -465,7 +465,7 @@ mod tests {
                 name: "MyClass".to_string(),
                 body: vec![AstNode::FunctionDef {
                     name: "method".to_string(),
-                    args: vec![Parameter { name: "self".to_string(), line: 2, col: 16, type_annotation: None }],
+                    args: vec![Parameter { name: "self".to_string(), line: 2, col: 16, type_annotation: None, default_value: None }],
                     body: vec![],
                     line: 2,
                     col: 5,
@@ -503,8 +503,6 @@ mod tests {
 
     #[test]
     fn test_hover_on_imported_symbol() {
-        use std::str::FromStr;
-
         let documents = DocumentManager::new().unwrap();
         let interpreter = crate::interpreter::find_python_interpreter(None);
 
@@ -621,8 +619,6 @@ mod tests {
 
     #[test]
     fn test_hover_with_type_at_position() {
-        use std::str::FromStr;
-
         let documents = DocumentManager::new().unwrap();
         let provider = HoverProvider::new(documents.clone());
         let config = crate::config::Config::default();
@@ -645,8 +641,6 @@ mod tests {
 
     #[test]
     fn test_hover_with_function_docstring() {
-        use std::str::FromStr;
-
         let documents = DocumentManager::new().unwrap();
         let provider = HoverProvider::new(documents.clone());
         let config = crate::config::Config::default();
@@ -684,8 +678,6 @@ greet("world")"#;
 
     #[test]
     fn test_hover_with_class_docstring() {
-        use std::str::FromStr;
-
         let documents = DocumentManager::new().unwrap();
         let provider = HoverProvider::new(documents.clone());
         let config = crate::config::Config::default();

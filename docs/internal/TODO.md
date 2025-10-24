@@ -131,3 +131,7 @@ This document outlines the plan for implementing a minimal, working, testable LS
 ## Improve Error Messaging
 
 - Write "did you mean?" suggestions
+
+## Parking Lot
+
+- Handle "dunder"/magic methods & variables, i.e. `__main__`

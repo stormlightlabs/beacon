@@ -83,8 +83,7 @@ fn main() -> Result<()> {
 
 fn read_input(file: Option<PathBuf>) -> Result<String> {
     match file {
-        Some(path) => fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read file: {}", path.display())),
+        Some(path) => fs::read_to_string(&path).with_context(|| format!("Failed to read file: {}", path.display())),
         None => {
             let mut buffer = String::new();
             io::stdin()
@@ -98,9 +97,7 @@ fn read_input(file: Option<PathBuf>) -> Result<String> {
 fn parse_command(source: &str, pretty: bool, show_tree: bool) -> Result<()> {
     let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
 
-    let parsed = parser
-        .parse(source)
-        .with_context(|| "Failed to parse Python source")?;
+    let parsed = parser.parse(source).with_context(|| "Failed to parse Python source")?;
 
     if show_tree {
         println!("Tree-sitter CST structure:");
@@ -108,9 +105,7 @@ fn parse_command(source: &str, pretty: bool, show_tree: bool) -> Result<()> {
         println!();
     }
 
-    let ast = parser
-        .to_ast(&parsed)
-        .with_context(|| "Failed to convert to AST")?;
+    let ast = parser.to_ast(&parsed).with_context(|| "Failed to convert to AST")?;
 
     if pretty {
         println!("Python AST:");
@@ -125,9 +120,7 @@ fn parse_command(source: &str, pretty: bool, show_tree: bool) -> Result<()> {
 fn highlight_command(source: &str, enable_colors: bool) -> Result<()> {
     let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
 
-    let parsed = parser
-        .parse(source)
-        .with_context(|| "Failed to parse Python source")?;
+    let parsed = parser.parse(source).with_context(|| "Failed to parse Python source")?;
 
     let highlighter = PythonHighlighter::new(enable_colors);
     let highlighted = highlighter.highlight(source, &parsed.tree);
@@ -145,7 +138,6 @@ fn check_command(source: &str) -> Result<()> {
             let root = parsed.tree.root_node();
             if root.has_error() {
                 if cfg!(test) {
-                    // In test mode, don't exit but return an error
                     anyhow::bail!("Parse errors found in source code");
                 } else {
                     println!("❌ Parse errors found:");
@@ -206,11 +198,7 @@ fn resolve_command(source: &str, verbose: bool) -> Result<()> {
     if verbose {
         println!("\n▶ Statistics:");
         println!("  • Total scopes: {}", symbol_table.scopes.len());
-        let total_symbols: usize = symbol_table
-            .scopes
-            .values()
-            .map(|scope| scope.symbols.len())
-            .sum();
+        let total_symbols: usize = symbol_table.scopes.values().map(|scope| scope.symbols.len()).sum();
         println!("  • Total symbols: {}", total_symbols);
     }
 
@@ -224,8 +212,6 @@ fn print_symbol_table(table: &SymbolTable, verbose: bool) {
 fn print_scope(table: &SymbolTable, scope_id: beacon_parser::ScopeId, depth: usize, verbose: bool) {
     let scope = table.get_scope(scope_id).unwrap();
     let indent = "  ".repeat(depth);
-
-    // Print scope header
     let scope_name = match scope.kind {
         beacon_parser::ScopeKind::Module => "Module",
         beacon_parser::ScopeKind::Function => "Function",
@@ -239,7 +225,6 @@ fn print_scope(table: &SymbolTable, scope_id: beacon_parser::ScopeId, depth: usi
         println!("{}▼ {} Scope:", indent, scope_name);
     }
 
-    // Print symbols in this scope
     let mut symbols: Vec<_> = scope.symbols.values().collect();
     symbols.sort_by_key(|s| (&s.kind, &s.name));
 
@@ -266,14 +251,10 @@ fn print_scope(table: &SymbolTable, scope_id: beacon_parser::ScopeId, depth: usi
                 indent, symbol_icon, kind_name, symbol.name, symbol.line, symbol.col
             );
         } else {
-            println!(
-                "{}  {} {} '{}'",
-                indent, symbol_icon, kind_name, symbol.name
-            );
+            println!("{}  {} {} '{}'", indent, symbol_icon, kind_name, symbol.name);
         }
     }
 
-    // Print child scopes
     for &child_id in &scope.children {
         println!();
         print_scope(table, child_id, depth + 1, verbose);
@@ -303,24 +284,15 @@ mod tests {
 
     #[test]
     fn test_read_input_from_stdin() {
-        // Note: Testing stdin is complex in unit tests
-        // This test verifies the function signature and error handling
         let non_existent = PathBuf::from("/non/existent/file.py");
         let result = read_input(Some(non_existent));
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Failed to read file")
-        );
+        assert!(result.unwrap_err().to_string().contains("Failed to read file"));
     }
 
     #[test]
     fn test_read_input_empty_file() {
         let temp_file = NamedTempFile::new().unwrap();
-        // Don't write anything to create empty file
-
         let content = read_input(Some(temp_file.path().to_path_buf())).unwrap();
         assert_eq!(content, "");
     }
@@ -357,7 +329,6 @@ print(calc.get())
     fn test_parse_command_with_syntax_errors() {
         let source = "def incomplete_function(\nprint('missing closing paren')";
         let result = parse_command(source, false, false);
-        // Parse command should succeed even with syntax errors (tree-sitter is fault-tolerant)
         assert!(result.is_ok());
     }
 
@@ -452,17 +423,10 @@ sorted_numbers = bubble_sort(numbers.copy())
 
     #[test]
     fn test_check_command_with_syntax_errors() {
-        // Tree-sitter may produce error nodes for malformed syntax
         let source = "x = 42\ndef func(\nprint('missing closing paren')";
         let result = check_command(source);
-        // Should return an error in test mode when syntax errors are found
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Parse errors found")
-        );
+        assert!(result.unwrap_err().to_string().contains("Parse errors found"));
     }
 
     #[test]
@@ -582,10 +546,8 @@ result = fibonacci(10)
         let parsed = parser.parse(source).unwrap();
         let root = parsed.tree.root_node();
 
-        // Verify we have a parsed tree (tree-sitter is fault-tolerant)
         assert!(root.child_count() > 0);
 
-        // Test that the function runs without panicking
         print_parse_errors(root, source, 0);
     }
 
@@ -598,7 +560,7 @@ result = fibonacci(10)
         let root = parsed.tree.root_node();
 
         assert!(root.child_count() > 0);
-        assert!(!root.has_error()); // Valid syntax should have no errors
+        assert!(!root.has_error());
 
         print_parse_errors(root, source, 0);
     }
@@ -624,8 +586,6 @@ result = obj.method(10)
 "#;
 
         let (_ast, symbol_table) = parser.parse_and_resolve(source).unwrap();
-
-        // Test that we can format symbol table info
         let output = format_symbol_table_for_test(&symbol_table, false);
         assert!(output.contains("variable 'global_var'"));
         assert!(output.contains("class 'TestClass'"));
@@ -641,7 +601,6 @@ result = obj.method(10)
         assert!(verbose_output.contains("Total scopes:"));
         assert!(verbose_output.contains("Total symbols:"));
 
-        // Also test the actual print functions don't panic
         print_symbol_table(&symbol_table, false);
         print_symbol_table(&symbol_table, true);
     }
@@ -661,7 +620,7 @@ result = obj.method(10)
         assert!(verbose_output.contains("Total symbols: 0"));
     }
 
-    // Test helper function that returns formatted output instead of printing
+    /// Test helper function that returns formatted output instead of printing
     fn format_symbol_table_for_test(table: &SymbolTable, verbose: bool) -> String {
         let mut output = String::new();
         format_scope_for_test(table, table.root_scope, 0, verbose, &mut output);
@@ -677,16 +636,11 @@ result = obj.method(10)
     }
 
     fn format_scope_for_test(
-        table: &SymbolTable,
-        scope_id: beacon_parser::ScopeId,
-        depth: usize,
-        verbose: bool,
-        output: &mut String,
+        table: &SymbolTable, scope_id: beacon_parser::ScopeId, depth: usize, verbose: bool, output: &mut String,
     ) {
         let scope = table.get_scope(scope_id).unwrap();
         let indent = "  ".repeat(depth);
 
-        // Format scope header
         let scope_name = match scope.kind {
             beacon_parser::ScopeKind::Module => "Module",
             beacon_parser::ScopeKind::Function => "Function",
@@ -700,7 +654,6 @@ result = obj.method(10)
             output.push_str(&format!("{}▼ {} Scope:\n", indent, scope_name));
         }
 
-        // Format symbols in this scope
         let mut symbols: Vec<_> = scope.symbols.values().collect();
         symbols.sort_by_key(|s| (&s.kind, &s.name));
 
@@ -734,7 +687,6 @@ result = obj.method(10)
             }
         }
 
-        // Format child scopes
         for &child_id in &scope.children {
             output.push('\n');
             format_scope_for_test(table, child_id, depth + 1, verbose, output);

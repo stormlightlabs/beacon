@@ -7,8 +7,9 @@ use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use url::Url;
 
 use crate::analysis::Analyzer;
+use crate::config;
 use crate::document::DocumentManager;
-use crate::parser::ParseError;
+use crate::parser::{self, ParseError};
 
 pub struct DiagnosticProvider {
     documents: DocumentManager,
@@ -48,7 +49,6 @@ impl DiagnosticProvider {
     fn add_type_errors(&self, uri: &Url, analyzer: &mut Analyzer, diagnostics: &mut Vec<Diagnostic>) {
         match analyzer.analyze(uri) {
             Ok(result) => {
-                // Convert type errors from analysis result
                 for type_error_info in &result.type_errors {
                     diagnostics.push(type_error_to_diagnostic(type_error_info));
                 }
@@ -138,7 +138,7 @@ impl DiagnosticProvider {
 
         // TODO: Get config mode from analyzer or pass as parameter
         // For now, use Balanced mode as default
-        let mode = crate::config::TypeCheckingMode::Balanced;
+        let mode = config::TypeCheckingMode::Balanced;
 
         // TODO: Extract annotations from AST and compare with inferred types
         // This requires:
@@ -159,9 +159,9 @@ fn parse_error_to_diagnostic(error: &ParseError) -> Diagnostic {
     Diagnostic {
         range: error.range,
         severity: Some(match error.severity {
-            crate::parser::ErrorSeverity::Error => DiagnosticSeverity::ERROR,
-            crate::parser::ErrorSeverity::Warning => DiagnosticSeverity::WARNING,
-            crate::parser::ErrorSeverity::Hint => DiagnosticSeverity::HINT,
+            parser::ErrorSeverity::Error => DiagnosticSeverity::ERROR,
+            parser::ErrorSeverity::Warning => DiagnosticSeverity::WARNING,
+            parser::ErrorSeverity::Hint => DiagnosticSeverity::HINT,
         }),
         code: None,
         code_description: None,
@@ -332,11 +332,9 @@ mod tests {
         let documents = DocumentManager::new().unwrap();
         let provider = DiagnosticProvider::new(documents);
 
-        // List[Any]
         let list_any = Type::App(Box::new(Type::Con(TypeCtor::List)), Box::new(Type::Con(TypeCtor::Any)));
         assert!(provider.contains_any_type(&list_any, 0));
 
-        // List[int]
         let list_int = Type::App(Box::new(Type::Con(TypeCtor::List)), Box::new(Type::Con(TypeCtor::Int)));
         assert!(!provider.contains_any_type(&list_int, 0));
     }
@@ -346,11 +344,9 @@ mod tests {
         let documents = DocumentManager::new().unwrap();
         let provider = DiagnosticProvider::new(documents);
 
-        // int -> Any
         let fun_any = Type::Fun(vec![Type::Con(TypeCtor::Int)], Box::new(Type::Con(TypeCtor::Any)));
         assert!(provider.contains_any_type(&fun_any, 0));
 
-        // int -> str
         let fun_normal = Type::Fun(vec![Type::Con(TypeCtor::Int)], Box::new(Type::Con(TypeCtor::String)));
         assert!(!provider.contains_any_type(&fun_normal, 0));
     }
@@ -360,11 +356,9 @@ mod tests {
         let documents = DocumentManager::new().unwrap();
         let provider = DiagnosticProvider::new(documents);
 
-        // int | Any
         let union_any = Type::Union(vec![Type::Con(TypeCtor::Int), Type::Con(TypeCtor::Any)]);
         assert!(provider.contains_any_type(&union_any, 0));
 
-        // int | str
         let union_normal = Type::Union(vec![Type::Con(TypeCtor::Int), Type::Con(TypeCtor::String)]);
         assert!(!provider.contains_any_type(&union_normal, 0));
     }

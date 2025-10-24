@@ -122,7 +122,6 @@ pub async fn introspect(
 
     let script = introspection_script();
 
-    // Spawn Python subprocess
     let output = tokio::time::timeout(
         Duration::from_secs(3),
         tokio::process::Command::new(interpreter)
@@ -136,15 +135,13 @@ pub async fn introspect(
     .map_err(|_| IntrospectionError::Timeout(Duration::from_secs(3)))?
     .map_err(|e| IntrospectionError::ExecutionFailed(e.to_string()))?;
 
-    // Parse output
     let stdout = String::from_utf8_lossy(&output.stdout);
-
     parse_introspection_output(&stdout)
 }
 
 /// Synchronous version of introspect for non-async contexts
 ///
-/// Uses std::process::Command with a timeout thread.
+/// Uses [std::process::Command] with a timeout thread.
 pub fn introspect_sync(
     interpreter: &Path, module_name: &str, symbol_name: &str,
 ) -> Result<IntrospectionResult, IntrospectionError> {
@@ -156,7 +153,6 @@ pub fn introspect_sync(
     );
 
     let script = introspection_script();
-
     let output = Command::new(interpreter)
         .arg("-c")
         .arg(&script)
@@ -235,7 +231,6 @@ mod tests {
 
     #[test]
     fn test_introspection_script_format() {
-        // Ensure the script contains the expected markers and modules
         let script = introspection_script();
         assert!(script.contains(SIGNATURE_MARKER));
         assert!(script.contains(DOC_MARKER));

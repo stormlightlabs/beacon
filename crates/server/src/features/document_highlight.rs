@@ -3,7 +3,7 @@
 //! Highlights all occurrences of the symbol under the cursor within the current document.
 //! This provides visual feedback when the user's cursor is on a symbol.
 
-use crate::document::DocumentManager;
+use crate::{document::DocumentManager, parser};
 use beacon_parser::{AstNode, SymbolTable};
 use lsp_types::{DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams, Position, Range};
 use url::Url;
@@ -32,8 +32,8 @@ impl DocumentHighlightProvider {
             let tree = doc.tree()?;
             let text = doc.text();
             let symbol_table = doc.symbol_table()?;
-            let parser = crate::parser::LspParser::new().ok()?;
-            let node = parser.node_at_position(tree, &text, position)?;
+            let p = parser::LspParser::new().ok()?;
+            let node = p.node_at_position(tree, &text, position)?;
 
             match node.kind() {
                 "identifier" => {
@@ -97,13 +97,11 @@ impl DocumentHighlightProvider {
             }
             AstNode::FunctionDef { name, body, args, .. } => {
                 if name == symbol_name {
-                    // We don't have precise position for function name in current AST
-                    // Skip for now - will be fixed when we improve AST
+                    // TODO: precise position for function name in AST
                 }
 
                 for param in args {
                     if param.name == *symbol_name {
-                        // Parameter definition - we now have position info
                         // TODO: Add highlight for parameter definition
                     }
                 }
@@ -168,8 +166,6 @@ print(x)"#;
         let highlights = provider.document_highlight(params);
         assert!(highlights.is_some());
         let highlights = highlights.unwrap();
-
-        // Should find at least the definition
         assert!(!highlights.is_empty());
     }
 
@@ -196,8 +192,8 @@ result = hello()"#;
         };
 
         let _highlights = provider.document_highlight(params);
+        // TODO: improve AST structure
         // Currently returns None because function names don't have position info in AST
-        // This will be fixed when we improve AST structure
     }
 
     #[test]
@@ -238,7 +234,6 @@ result = hello()"#;
         let mut highlights = Vec::new();
         provider.collect_highlights(&ast, "x", &mut highlights, "x = x");
 
-        // Should find both the write (target) and read (value)
         assert_eq!(highlights.len(), 2);
         assert_eq!(highlights[0].kind, Some(DocumentHighlightKind::WRITE));
         assert_eq!(highlights[1].kind, Some(DocumentHighlightKind::READ));

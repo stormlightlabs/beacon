@@ -44,12 +44,10 @@ impl Subst {
     /// Apply substitution to a type
     pub fn apply(&self, ty: &Type) -> Type {
         match ty {
-            Type::Var(tv) => {
-                match self.map.get(tv) {
-                    Some(replacement) => self.apply(replacement), // Apply recursively
-                    None => ty.clone(),
-                }
-            }
+            Type::Var(tv) => match self.map.get(tv) {
+                Some(replacement) => self.apply(replacement),
+                None => ty.clone(),
+            },
             Type::Con(_) => ty.clone(),
             Type::App(t1, t2) => Type::App(Box::new(self.apply(t1)), Box::new(self.apply(t2))),
             Type::Fun(args, ret) => {
@@ -71,12 +69,10 @@ impl Subst {
             Type::Record(fields, row_var) => {
                 let new_fields: Vec<(String, Type)> =
                     fields.iter().map(|(name, ty)| (name.clone(), self.apply(ty))).collect();
-                let new_row_var = row_var.as_ref().and_then(|rv| {
-                    match self.map.get(rv) {
-                        Some(Type::Var(new_rv)) => Some(new_rv.clone()),
-                        Some(_) => None, // Row variable substituted with non-variable
-                        None => Some(rv.clone()),
-                    }
+                let new_row_var = row_var.as_ref().and_then(|rv| match self.map.get(rv) {
+                    Some(Type::Var(new_rv)) => Some(new_rv.clone()),
+                    Some(_) => None,
+                    None => Some(rv.clone()),
                 });
                 Type::Record(new_fields, new_row_var)
             }

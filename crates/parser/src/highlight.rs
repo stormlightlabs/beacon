@@ -188,8 +188,6 @@ mod tests {
         let highlighter = PythonHighlighter::new(true);
         let highlighted = highlighter.highlight(source, &parsed.tree);
 
-        // The highlighted version should be different from the original
-        // (contains ANSI color codes)
         assert_ne!(highlighted, source);
         assert!(highlighted.len() > source.len());
     }
@@ -203,7 +201,6 @@ mod tests {
         let highlighter = PythonHighlighter::new(false);
         let highlighted = highlighter.highlight(source, &parsed.tree);
 
-        // Should be identical when colors are disabled
         assert_eq!(highlighted, source);
     }
 
@@ -216,7 +213,6 @@ mod tests {
         let highlighter = PythonHighlighter::new(true);
         let highlighted = highlighter.highlight(source, &parsed.tree);
 
-        // Should contain color codes for the string
         assert_ne!(highlighted, source);
         assert!(highlighted.contains("hello world"));
     }

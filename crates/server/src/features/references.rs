@@ -2,8 +2,8 @@
 //!
 //! Locates all references to a symbol across the workspace with scope-aware matching.
 
-use crate::document::DocumentManager;
 use crate::utils;
+use crate::{document::DocumentManager, parser};
 use beacon_parser::{Symbol, SymbolTable};
 use lsp_types::{Location, Position, Range, ReferenceParams};
 use url::Url;
@@ -50,8 +50,8 @@ impl ReferencesProvider {
             let tree = doc.tree()?;
             let text = doc.text();
             let symbol_table = doc.symbol_table()?;
-            let parser = crate::parser::LspParser::new().ok()?;
-            let node = parser.node_at_position(tree, &text, position)?;
+            let p = parser::LspParser::new().ok()?;
+            let node = p.node_at_position(tree, &text, position)?;
 
             if node.kind() != "identifier" {
                 return None;

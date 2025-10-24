@@ -144,11 +144,8 @@ impl Unifier {
         let remaining2: Vec<_> = map2.iter().filter(|(name, _)| !unified_fields.contains(name)).collect();
 
         match (remaining1.is_empty(), remaining2.is_empty(), row1, row2) {
-            // Both records have same fields, no row variables
             (true, true, None, None) => Ok(subst),
-            // Record 1 has extra fields, record 2 has row variable
             (false, true, None, Some(rv2)) => {
-                // Bind row variable to record containing the extra fields
                 let extra_record = Type::Record(
                     remaining1
                         .into_iter()

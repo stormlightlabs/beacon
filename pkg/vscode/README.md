@@ -56,7 +56,13 @@ The LSP server is implemented in Rust and located at `../../crates/server`.
 
 4. Press F5 to launch the extension in debug mode
 
-5. In the Extension Development Host window, open a Python file from the `samples/` directory
+5. This will:
+   - Build the Rust LSP server in debug mode
+   - Compile the TypeScript client
+   - Open a new Extension Development Host window
+   - Load the `samples/` directory with Python test files
+
+6. In the Extension Development Host window, open a Python file from the `samples/` directory to activate the extension
 
 ## Running the Extension
 
@@ -70,3 +76,25 @@ The launch configuration will:
 - Open the `samples/` directory with Python test files
 
 **Note:** Launch configurations are in `../../.vscode/launch.json` at the project root.
+
+## Development Workflow
+
+**Watch Mode:**
+
+- Use "Launch Extension (watch mode)" configuration
+- TypeScript changes will automatically recompile
+- Reload the extension window (Cmd+R / Ctrl+R) to see TypeScript changes
+- For Rust changes, rebuild with `cargo build --package beacon-lsp` and reload
+
+**Manual Build:**
+
+- Build Rust server: `cargo build --package beacon-lsp`
+- Build TypeScript: `pnpm --filter beacon-lsp compile`
+
+**Tasks Available:**
+
+- `cargo build (debug)` - Build Rust server in debug mode
+- `cargo build (release)` - Build Rust server in release mode (faster)
+- `pnpm: compile` - Compile TypeScript client
+- `pnpm: watch` - Watch and recompile TypeScript changes
+- `build extension` - Build both Rust server and TypeScript client

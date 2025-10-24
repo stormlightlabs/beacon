@@ -3,7 +3,7 @@
 //! Navigates to the definition of symbols (variables, functions, classes, imports).
 
 use crate::document::DocumentManager;
-use crate::utils;
+use crate::{parser, utils};
 use lsp_types::{GotoDefinitionParams, GotoDefinitionResponse, Location, Position};
 use ropey::Rope;
 use tree_sitter::Node;
@@ -37,14 +37,14 @@ impl GotoDefinitionProvider {
             let tree = doc.tree()?;
             let text = doc.text();
             let symbol_table = doc.symbol_table()?;
-            let parser = crate::parser::LspParser::new().ok()?;
-            let node = parser.node_at_position(tree, &text, position)?;
+            let p = parser::LspParser::new().ok()?;
+            let node = p.node_at_position(tree, &text, position)?;
 
             if node.kind() != "identifier" {
                 None
             } else {
                 let identifier_text = node.utf8_text(text.as_bytes()).ok()?;
-                let byte_offset = crate::utils::position_to_byte_offset(&text, position);
+                let byte_offset = utils::position_to_byte_offset(&text, position);
                 let scope = symbol_table.find_scope_at_position(byte_offset);
                 let symbol = symbol_table.lookup_symbol(identifier_text, scope)?;
                 let range = self.find_identifier_range_at_definition(tree, &text, symbol, identifier_text)?;

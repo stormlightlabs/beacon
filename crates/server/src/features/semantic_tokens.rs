@@ -7,6 +7,7 @@
 //! The encoding is relative to the previous token for efficiency.
 
 use crate::document::DocumentManager;
+use crate::utils;
 use beacon_parser::{AstNode, ScopeId, SymbolKind, SymbolTable};
 use lsp_types::{
     Position, Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensParams,
@@ -164,7 +165,27 @@ impl SemanticTokensProvider {
                 let modifiers = self.get_definition_modifier();
                 self.add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
 
-                let func_scope = self.find_function_scope(symbol_table, current_scope);
+                let func_scope = if let Some(first_param) = args.first() {
+                    let line = (first_param.line as u32).saturating_sub(1);
+                    let character = (first_param.col as u32).saturating_sub(1);
+                    let pos = Position::new(line, character);
+                    let byte_offset = utils::position_to_byte_offset(text, pos);
+                    symbol_table.find_scope_at_position(byte_offset)
+                } else if let Some(first_stmt) = body.first() {
+                    let (stmt_line, stmt_col) = Self::get_node_position(first_stmt);
+                    let line = (stmt_line as u32).saturating_sub(1);
+                    let character = (stmt_col as u32).saturating_sub(1);
+                    let pos = Position::new(line, character);
+                    let byte_offset = utils::position_to_byte_offset(text, pos);
+                    symbol_table.find_scope_at_position(byte_offset)
+                } else {
+                    let line = (*line as u32).saturating_sub(1);
+                    let character = (*col as u32) + name.len() as u32 + 2;
+                    let pos = Position::new(line, character);
+                    let byte_offset = utils::position_to_byte_offset(text, pos);
+                    symbol_table.find_scope_at_position(byte_offset)
+                };
+
                 let param_token_type = self.get_token_type_index(&SymbolKind::Parameter);
                 let param_modifiers = self.get_definition_modifier();
                 let type_token_type = SUPPORTED_TYPES
@@ -184,14 +205,22 @@ impl SemanticTokensProvider {
                     );
 
                     if let Some(type_ann) = &param.type_annotation {
-                        let type_col = param.col + param.name.len() + 2; // +2 for ": "
-                        self.add_token(type_ann, param.line, type_col, type_token_type, 0, text, raw_tokens);
+                        if let Some(type_col) =
+                            Self::find_type_annotation_position(text, param.line, param.col, &param.name, type_ann)
+                        {
+                            self.add_token(type_ann, param.line, type_col, type_token_type, 0, text, raw_tokens);
+                        }
+                    }
+
+                    if let Some(default) = &param.default_value {
+                        self.collect_tokens_from_node(default, symbol_table, current_scope, text, raw_tokens);
                     }
                 }
 
                 if let Some(ret_type) = return_type {
-                    let return_type_col = *col + name.len() + 10; // Approximate
-                    self.add_token(ret_type, *line, return_type_col, type_token_type, 0, text, raw_tokens);
+                    if let Some(ret_col) = Self::find_return_type_position(text, *line, ret_type) {
+                        self.add_token(ret_type, *line, ret_col, type_token_type, 0, text, raw_tokens);
+                    }
                 }
 
                 for stmt in body {
@@ -209,7 +238,20 @@ impl SemanticTokensProvider {
                 let modifiers = self.get_definition_modifier();
                 self.add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
 
-                let class_scope = self.find_class_scope(symbol_table, current_scope);
+                let class_scope = if let Some(first_stmt) = body.first() {
+                    let (stmt_line, stmt_col) = Self::get_node_position(first_stmt);
+                    let line = (stmt_line as u32).saturating_sub(1);
+                    let character = (stmt_col as u32).saturating_sub(1);
+                    let pos = Position::new(line, character);
+                    let byte_offset = utils::position_to_byte_offset(text, pos);
+                    symbol_table.find_scope_at_position(byte_offset)
+                } else {
+                    let line = (*line as u32).saturating_sub(1);
+                    let character = (*col as u32) + name.len() as u32 + 2;
+                    let pos = Position::new(line, character);
+                    let byte_offset = utils::position_to_byte_offset(text, pos);
+                    symbol_table.find_scope_at_position(byte_offset)
+                };
 
                 for stmt in body {
                     self.collect_tokens_from_node(stmt, symbol_table, class_scope, text, raw_tokens);
@@ -231,8 +273,11 @@ impl SemanticTokensProvider {
                     .iter()
                     .position(|t| *t == SemanticTokenType::TYPE)
                     .unwrap_or(0) as u32;
-                let type_col = *col + target.len() + 2; // +2 for ": "
-                self.add_token(type_annotation, *line, type_col, type_token_type, 0, text, raw_tokens);
+
+                if let Some(type_col) = Self::find_type_annotation_position(text, *line, *col, target, type_annotation)
+                {
+                    self.add_token(type_annotation, *line, type_col, type_token_type, 0, text, raw_tokens);
+                }
 
                 if let Some(val) = value {
                     self.collect_tokens_from_node(val, symbol_table, current_scope, text, raw_tokens);
@@ -374,40 +419,100 @@ impl SemanticTokensProvider {
         raw_tokens.push(RawToken { line: lsp_line, character: lsp_col, length, token_type, modifiers });
     }
 
-    /// Find the function scope (child of current scope with ScopeKind::Function)
-    fn find_function_scope(&self, symbol_table: &SymbolTable, parent_scope: ScopeId) -> ScopeId {
-        match symbol_table.scopes.get(&parent_scope) {
-            Some(parent) => parent
-                .children
-                .iter()
-                .find_map(|&child_id| {
-                    symbol_table
-                        .scopes
-                        .get(&child_id)
-                        .filter(|child| child.kind == beacon_parser::ScopeKind::Function)
-                        .map(|_| child_id)
-                })
-                .unwrap_or(parent_scope),
-            None => parent_scope,
+    /// Extract line and column from any AST node
+    fn get_node_position(node: &AstNode) -> (usize, usize) {
+        match node {
+            AstNode::Module { .. } => (1, 1),
+            AstNode::FunctionDef { line, col, .. }
+            | AstNode::ClassDef { line, col, .. }
+            | AstNode::Assignment { line, col, .. }
+            | AstNode::AnnotatedAssignment { line, col, .. }
+            | AstNode::Call { line, col, .. }
+            | AstNode::Identifier { line, col, .. }
+            | AstNode::Literal { line, col, .. }
+            | AstNode::Return { line, col, .. }
+            | AstNode::Import { line, col, .. }
+            | AstNode::ImportFrom { line, col, .. }
+            | AstNode::Attribute { line, col, .. }
+            | AstNode::If { line, col, .. }
+            | AstNode::For { line, col, .. }
+            | AstNode::While { line, col, .. }
+            | AstNode::Try { line, col, .. }
+            | AstNode::With { line, col, .. }
+            | AstNode::ListComp { line, col, .. }
+            | AstNode::DictComp { line, col, .. }
+            | AstNode::SetComp { line, col, .. }
+            | AstNode::GeneratorExp { line, col, .. }
+            | AstNode::NamedExpr { line, col, .. }
+            | AstNode::BinaryOp { line, col, .. }
+            | AstNode::UnaryOp { line, col, .. }
+            | AstNode::Compare { line, col, .. }
+            | AstNode::Lambda { line, col, .. }
+            | AstNode::Subscript { line, col, .. }
+            | AstNode::Match { line, col, .. }
+            | AstNode::Pass { line, col }
+            | AstNode::Break { line, col }
+            | AstNode::Continue { line, col } => (*line, *col),
         }
     }
 
-    /// Find the class scope (child of current scope with ScopeKind::Class)
-    fn find_class_scope(&self, symbol_table: &SymbolTable, parent_scope: ScopeId) -> ScopeId {
-        match symbol_table.scopes.get(&parent_scope) {
-            Some(parent) => parent
-                .children
-                .iter()
-                .find_map(|&child_id| {
-                    symbol_table
-                        .scopes
-                        .get(&child_id)
-                        .filter(|child| child.kind == beacon_parser::ScopeKind::Class)
-                        .map(|_| child_id)
-                })
-                .unwrap_or(parent_scope),
-            None => parent_scope,
+    /// Find the actual column position of a type annotation in source text
+    /// Searches for the type annotation after the identifier (e.g., after "name" in "name: int")
+    fn find_type_annotation_position(
+        text: &str, line: usize, identifier_col: usize, identifier_name: &str, type_annotation: &str,
+    ) -> Option<usize> {
+        let lines: Vec<&str> = text.lines().collect();
+        if line == 0 || line > lines.len() {
+            return None;
         }
+
+        let line_text = lines[line - 1];
+        let start_pos = identifier_col.saturating_sub(1) + identifier_name.len();
+
+        if start_pos >= line_text.len() {
+            return None;
+        }
+
+        if let Some(colon_pos) = line_text[start_pos..].find(':') {
+            let after_colon = start_pos + colon_pos + 1;
+            if after_colon < line_text.len() {
+                let remaining = &line_text[after_colon..];
+                if let Some(type_start) = remaining.find(|c: char| !c.is_whitespace()) {
+                    let type_pos = after_colon + type_start;
+                    if line_text[type_pos..].starts_with(type_annotation) {
+                        return Some(type_pos + 1); // +1 for 1-indexed column
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Find the column position of a return type annotation
+    /// Searches for "-> <type>" pattern on the line
+    fn find_return_type_position(text: &str, line: usize, type_annotation: &str) -> Option<usize> {
+        let lines: Vec<&str> = text.lines().collect();
+        if line == 0 || line > lines.len() {
+            return None;
+        }
+
+        let line_text = lines[line - 1];
+
+        if let Some(arrow_pos) = line_text.find("->") {
+            let after_arrow = arrow_pos + 2;
+            if after_arrow < line_text.len() {
+                let remaining = &line_text[after_arrow..];
+                if let Some(type_start) = remaining.find(|c: char| !c.is_whitespace()) {
+                    let type_pos = after_arrow + type_start;
+                    if line_text[type_pos..].starts_with(type_annotation) {
+                        return Some(type_pos + 1); // +1 for 1-indexed column
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Map symbol kind to semantic token type index
@@ -835,13 +940,11 @@ x = os.path
         documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
-
         let property_type_idx = SUPPORTED_TYPES
             .iter()
             .position(|t| *t == SemanticTokenType::PROPERTY)
             .unwrap() as u32;
 
-        // Should have token for attribute 'path'
         let property_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == property_type_idx).collect();
         assert!(!property_tokens.is_empty(), "Expected PROPERTY token for attribute");
     }
