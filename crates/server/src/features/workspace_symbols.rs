@@ -154,6 +154,8 @@ impl WorkspaceSymbolsProvider {
             SymbolKind::Variable => LspSymbolKind::VARIABLE,
             SymbolKind::Parameter => LspSymbolKind::VARIABLE,
             SymbolKind::Import => LspSymbolKind::MODULE,
+            SymbolKind::MagicMethod => LspSymbolKind::METHOD,
+            SymbolKind::BuiltinVar => LspSymbolKind::CONSTANT,
         }
     }
 
@@ -485,8 +487,8 @@ def func2():
             data: None,
         };
 
-        let _resolved = provider.symbol_resolve(symbol);
-        // Currently just returns the symbol unchanged
+        let _ = provider.symbol_resolve(symbol);
+        // TODO: incomplete - currently just returns the symbol unchanged
     }
 
     #[test]
@@ -511,7 +513,6 @@ def func2():
         let symbols = result.unwrap();
         let symbol = &symbols[0];
 
-        // Verify range is correct
         assert_eq!(symbol.location.range.start.line, 0);
         assert_eq!(
             symbol.location.range.end.character,
@@ -542,7 +543,6 @@ def func():
         assert!(result.is_some());
 
         let symbols = result.unwrap();
-        // Should find x, y, and func
         assert!(symbols.len() >= 3);
     }
 }

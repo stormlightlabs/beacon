@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use beacon_parser::{PythonHighlighter, PythonParser, SymbolKind, SymbolTable};
+use beacon_parser::{PythonHighlighter, PythonParser, SymbolTable};
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::io::{self, Read};
@@ -229,21 +229,8 @@ fn print_scope(table: &SymbolTable, scope_id: beacon_parser::ScopeId, depth: usi
     symbols.sort_by_key(|s| (&s.kind, &s.name));
 
     for symbol in symbols {
-        let symbol_icon = match symbol.kind {
-            SymbolKind::Variable => "◆",
-            SymbolKind::Function => "λ",
-            SymbolKind::Class => "●",
-            SymbolKind::Parameter => "▲",
-            SymbolKind::Import => "↳",
-        };
-
-        let kind_name = match symbol.kind {
-            SymbolKind::Variable => "variable",
-            SymbolKind::Function => "function",
-            SymbolKind::Class => "class",
-            SymbolKind::Parameter => "parameter",
-            SymbolKind::Import => "import",
-        };
+        let symbol_icon = symbol.kind.icon();
+        let kind_name = symbol.kind.name();
 
         if verbose {
             println!(
@@ -617,7 +604,8 @@ result = obj.method(10)
 
         let verbose_output = format_symbol_table_for_test(&symbol_table, true);
         assert!(verbose_output.contains("Total scopes: 1"));
-        assert!(verbose_output.contains("Total symbols: 0"));
+        // NOTE: Symbol table includes 4 builtin dunders: __name__, __file__, __doc__, __package__
+        assert!(verbose_output.contains("Total symbols: 4"));
     }
 
     /// Test helper function that returns formatted output instead of printing
@@ -658,21 +646,8 @@ result = obj.method(10)
         symbols.sort_by_key(|s| (&s.kind, &s.name));
 
         for symbol in symbols {
-            let symbol_icon = match symbol.kind {
-                SymbolKind::Variable => "◆",
-                SymbolKind::Function => "λ",
-                SymbolKind::Class => "●",
-                SymbolKind::Parameter => "▲",
-                SymbolKind::Import => "↳",
-            };
-
-            let kind_name = match symbol.kind {
-                SymbolKind::Variable => "variable",
-                SymbolKind::Function => "function",
-                SymbolKind::Class => "class",
-                SymbolKind::Parameter => "parameter",
-                SymbolKind::Import => "import",
-            };
+            let symbol_icon = symbol.kind.icon();
+            let kind_name = symbol.kind.name();
 
             if verbose {
                 output.push_str(&format!(

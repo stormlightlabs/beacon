@@ -6,7 +6,7 @@ pub mod resolve;
 pub mod rst;
 
 pub use highlight::PythonHighlighter;
-pub use resolve::{NameResolver, ScopeId, ScopeKind, Symbol, SymbolKind, SymbolTable};
+pub use resolve::{BUILTIN_DUNDERS, MAGIC_METHODS, NameResolver, ScopeId, ScopeKind, Symbol, SymbolKind, SymbolTable};
 
 /// Python parser using [`tree_sitter`]
 pub struct PythonParser {

@@ -3,6 +3,66 @@ use beacon_core::Result;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 
+/// Builtin dunder variables available at module level
+pub static BUILTIN_DUNDERS: &[&str] = &["__name__", "__file__", "__doc__", "__package__"];
+
+/// Magic methods that can be defined in classes
+pub static MAGIC_METHODS: &[&str] = &[
+    "__init__",
+    "__new__",
+    "__repr__",
+    "__str__",
+    "__len__",
+    "__eq__",
+    "__lt__",
+    "__le__",
+    "__gt__",
+    "__ge__",
+    "__ne__",
+    "__getitem__",
+    "__setitem__",
+    "__delitem__",
+    "__enter__",
+    "__exit__",
+    "__iter__",
+    "__next__",
+    "__call__",
+    "__add__",
+    "__sub__",
+    "__mul__",
+    "__truediv__",
+    "__floordiv__",
+    "__mod__",
+    "__pow__",
+    "__neg__",
+    "__pos__",
+    "__abs__",
+    "__bool__",
+    "__copy__",
+    "__deepcopy__",
+    "__sizeof__",
+    "__bytes__",
+    "__format__",
+    "__complex__",
+    "__int__",
+    "__float__",
+    "__round__",
+    "__index__",
+    "__hash__",
+    "__getattr__",
+    "__setattr__",
+    "__delattr__",
+    "__getattribute__",
+    "__dir__",
+    "__radd__",
+    "__rand__",
+    "__ior__",
+    "__imul__",
+    "__reduce_ex__",
+    "__reduce__",
+    "__getnewargs__",
+];
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SymbolKind {
     Variable,
@@ -10,6 +70,33 @@ pub enum SymbolKind {
     Class,
     Parameter,
     Import,
+    MagicMethod,
+    BuiltinVar,
+}
+
+impl SymbolKind {
+    pub fn icon(&self) -> &'static str {
+        match self {
+            SymbolKind::Variable => "◆",
+            SymbolKind::Function => "λ",
+            SymbolKind::Class => "●",
+            SymbolKind::Parameter => "▲",
+            SymbolKind::Import => "↳",
+            SymbolKind::BuiltinVar => "⧉",
+            SymbolKind::MagicMethod => "★",
+        }
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            SymbolKind::Variable => "variable",
+            SymbolKind::Function => "function",
+            SymbolKind::Class => "class",
+            SymbolKind::Parameter => "parameter",
+            SymbolKind::Import => "import",
+            _ => "dunder",
+        }
+    }
 }
 
 /// Information about a symbol definition
@@ -59,9 +146,25 @@ pub struct SymbolTable {
 }
 
 impl SymbolTable {
+    /// Creates new instance of [SymbolTable] & injects builtin dunder variables into root scope
     pub fn new() -> Self {
         let root_id = ScopeId(0);
         let mut scopes = HashMap::new();
+        let mut root_symbols = FxHashMap::default();
+
+        for &dunder_name in BUILTIN_DUNDERS {
+            root_symbols.insert(
+                dunder_name.to_string(),
+                Symbol {
+                    name: dunder_name.to_string(),
+                    kind: SymbolKind::BuiltinVar,
+                    line: 0,
+                    col: 0,
+                    scope_id: root_id,
+                    docstring: None,
+                },
+            );
+        }
 
         scopes.insert(
             root_id,
@@ -69,7 +172,7 @@ impl SymbolTable {
                 id: root_id,
                 kind: ScopeKind::Module,
                 parent: None,
-                symbols: FxHashMap::default(),
+                symbols: root_symbols,
                 children: Vec::new(),
                 start_byte: 0,
                 end_byte: usize::MAX,
@@ -143,6 +246,21 @@ impl SymbolTable {
     pub fn find_scope_at_position(&self, byte_offset: usize) -> ScopeId {
         self.find_scope_at_position_recursive(self.root_scope, byte_offset)
             .unwrap_or(self.root_scope)
+    }
+
+    /// Check if the given scope or any of its ancestors is a class scope
+    pub fn is_in_class_scope(&self, scope_id: ScopeId) -> bool {
+        let mut current_scope = scope_id;
+        while let Some(scope) = self.scopes.get(&current_scope) {
+            if scope.kind == ScopeKind::Class {
+                return true;
+            }
+            match scope.parent {
+                Some(parent_id) => current_scope = parent_id,
+                None => break,
+            }
+        }
+        false
     }
 
     /// Recursively search for the innermost scope containing byte_offset
@@ -1107,6 +1225,110 @@ mod tests {
         };
 
         resolver.resolve(&ast).unwrap();
+    }
+
+    #[test]
+    fn test_builtin_dunders_injected() {
+        let table = SymbolTable::new();
+
+        for &dunder_name in BUILTIN_DUNDERS {
+            let symbol = table.lookup_symbol(dunder_name, table.root_scope);
+            assert!(symbol.is_some(), "Expected {dunder_name} to be in symbol table");
+
+            let sym = symbol.unwrap();
+            assert_eq!(sym.kind, SymbolKind::BuiltinVar);
+            assert_eq!(sym.name, dunder_name);
+        }
+    }
+
+    #[test]
+    fn test_is_in_class_scope() {
+        let source = "class MyClass:\\n    def method(self):\\n        pass".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::Module {
+            body: vec![AstNode::ClassDef {
+                name: "MyClass".to_string(),
+                body: vec![AstNode::FunctionDef {
+                    name: "method".to_string(),
+                    args: vec![Parameter {
+                        name: "self".to_string(),
+                        line: 2,
+                        col: 16,
+                        type_annotation: None,
+                        default_value: None,
+                    }],
+                    body: vec![AstNode::Pass { line: 3, col: 9 }],
+                    line: 2,
+                    col: 5,
+                    docstring: None,
+                    return_type: None,
+                    decorators: Vec::new(),
+                }],
+                line: 1,
+                col: 1,
+                docstring: None,
+                decorators: Vec::new(),
+            }],
+            docstring: None,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        assert!(
+            !resolver
+                .symbol_table
+                .is_in_class_scope(resolver.symbol_table.root_scope)
+        );
+
+        let class_scope_id = resolver
+            .symbol_table
+            .scopes
+            .get(&resolver.symbol_table.root_scope)
+            .unwrap()
+            .children[0];
+        assert!(resolver.symbol_table.is_in_class_scope(class_scope_id));
+
+        let method_scope_id = resolver.symbol_table.scopes.get(&class_scope_id).unwrap().children[0];
+        assert!(resolver.symbol_table.is_in_class_scope(method_scope_id));
+    }
+
+    #[test]
+    fn test_builtin_dunders_accessible_in_nested_scopes() {
+        let source = "def foo():\\n    x = __name__".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::Module {
+            body: vec![AstNode::FunctionDef {
+                name: "foo".to_string(),
+                args: vec![],
+                body: vec![AstNode::Assignment {
+                    target: "x".to_string(),
+                    value: Box::new(AstNode::Identifier { name: "__name__".to_string(), line: 2, col: 9 }),
+                    line: 2,
+                    col: 5,
+                }],
+                line: 1,
+                col: 1,
+                docstring: None,
+                return_type: None,
+                decorators: Vec::new(),
+            }],
+            docstring: None,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        let func_scope_id = resolver
+            .symbol_table
+            .scopes
+            .get(&resolver.symbol_table.root_scope)
+            .unwrap()
+            .children[0];
+
+        let symbol = resolver.symbol_table.lookup_symbol("__name__", func_scope_id);
+        assert!(symbol.is_some());
+        assert_eq!(symbol.unwrap().kind, SymbolKind::BuiltinVar);
     }
 
     #[test]

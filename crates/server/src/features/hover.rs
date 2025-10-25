@@ -4,6 +4,7 @@
 
 use crate::cache::IntrospectionCache;
 use crate::document::DocumentManager;
+use crate::features::dunders;
 use crate::parser;
 use crate::{analysis::Analyzer, introspection};
 use beacon_parser::{AstNode, SymbolKind, rst};
@@ -56,6 +57,16 @@ impl HoverProvider {
             match node.kind() {
                 "identifier" => {
                     let identifier_text = node.utf8_text(text.as_bytes()).ok()?;
+
+                    if identifier_text.starts_with("__") && identifier_text.ends_with("__") {
+                        if let Some(dunder_info) = dunders::get_dunder_info(identifier_text) {
+                            return Some(Hover {
+                                contents: HoverContents::Markup(self.format_dunder_hover(dunder_info)),
+                                range: None,
+                            });
+                        }
+                    }
+
                     let symbol = symbol_table.lookup_symbol(identifier_text, symbol_table.root_scope)?;
                     let content = match symbol.kind {
                         SymbolKind::Function => {
@@ -69,6 +80,8 @@ impl HoverProvider {
                         }
                         SymbolKind::Parameter => self.format_parameter_hover(identifier_text, symbol.line, symbol.col),
                         SymbolKind::Import => self.format_import_hover(identifier_text, ast, symbol.line),
+                        SymbolKind::BuiltinVar => self.format_builtin_var_hover(identifier_text),
+                        SymbolKind::MagicMethod => self.format_magic_method_hover(identifier_text),
                     };
 
                     Some(Hover { contents: HoverContents::Markup(content), range: None })
@@ -127,6 +140,36 @@ impl HoverProvider {
             kind: MarkupKind::Markdown,
             value: format!("**Parameter** `{name}`\n\nDefined at line {def_line}"),
         }
+    }
+
+    /// Format hover for a builtin dunder variable
+    fn format_builtin_var_hover(&self, name: &str) -> MarkupContent {
+        if let Some(info) = dunders::get_dunder_info(name) {
+            self.format_dunder_hover(info)
+        } else {
+            MarkupContent { kind: MarkupKind::Markdown, value: format!("**Builtin Variable** `{name}`") }
+        }
+    }
+
+    /// Format hover for a magic method
+    fn format_magic_method_hover(&self, name: &str) -> MarkupContent {
+        if let Some(info) = dunders::get_dunder_info(name) {
+            self.format_dunder_hover(info)
+        } else {
+            MarkupContent { kind: MarkupKind::Markdown, value: format!("**Magic Method** `{name}`") }
+        }
+    }
+
+    /// Format hover for a dunder with full documentation
+    fn format_dunder_hover(&self, info: &dunders::DunderInfo) -> MarkupContent {
+        let kind_label = if info.category == "method" { "Magic Method" } else { "Builtin Variable" };
+
+        let value = format!(
+            "```python\n{}\n```\n\n**{}**\n\n{}\n\n[Python Documentation]({})",
+            info.name, kind_label, info.doc, info.link
+        );
+
+        MarkupContent { kind: MarkupKind::Markdown, value }
     }
 
     fn format_import_hover(&self, name: &str, ast: &AstNode, line: usize) -> MarkupContent {

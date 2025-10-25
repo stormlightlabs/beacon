@@ -3,6 +3,7 @@
 //! Converts type errors, parse errors, and other analysis results into LSP diagnostics for display in the editor.
 
 use beacon_core::BeaconError;
+use beacon_parser::{AstNode, MAGIC_METHODS};
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use url::Url;
 
@@ -30,6 +31,7 @@ impl DiagnosticProvider {
         self.add_type_errors(uri, analyzer, &mut diagnostics);
         self.add_unsafe_any_warnings(uri, analyzer, &mut diagnostics);
         self.add_annotation_mismatch_warnings(uri, analyzer, &mut diagnostics);
+        self.add_dunder_diagnostics(uri, &mut diagnostics);
 
         diagnostics
     }
@@ -137,7 +139,6 @@ impl DiagnosticProvider {
         };
 
         // TODO: Get config mode from analyzer or pass as parameter
-        // For now, use Balanced mode as default
         let mode = config::TypeCheckingMode::Balanced;
 
         // TODO: Extract annotations from AST and compare with inferred types
@@ -151,6 +152,157 @@ impl DiagnosticProvider {
         let _ = mode;
 
         // TODO: Implement annotation checking when AST includes annotation info
+    }
+
+    /// Add dunder-specific diagnostics
+    fn add_dunder_diagnostics(&self, uri: &Url, diagnostics: &mut Vec<Diagnostic>) {
+        self.documents.get_document(uri, |doc| {
+            if let Some(ast) = doc.ast() {
+                Self::check_dunder_patterns(ast, diagnostics);
+
+                if let Some(symbol_table) = doc.symbol_table() {
+                    let source = doc.text();
+                    self.check_magic_methods_in_scope(ast, symbol_table, diagnostics, &source);
+                }
+            }
+        });
+    }
+
+    /// Check for common dunder patterns like if __name__ == "__main__"
+    fn check_dunder_patterns(node: &AstNode, diagnostics: &mut Vec<Diagnostic>) {
+        match node {
+            AstNode::If { test, body, line, col, .. } => {
+                if Self::is_name_main_check(test) {
+                    let position = Position { line: (*line - 1) as u32, character: (*col - 1) as u32 };
+                    diagnostics.push(Diagnostic {
+                        range: Range {
+                            start: position,
+                            end: Position { line: position.line, character: position.character + 10 },
+                        },
+                        severity: Some(DiagnosticSeverity::HINT),
+                        code: Some(lsp_types::NumberOrString::String("DUNDER_INFO".to_string())),
+                        source: Some("beacon".to_string()),
+                        message: "Entry point guard: This code runs only when the script is executed directly"
+                            .to_string(),
+                        related_information: None,
+                        tags: None,
+                        data: None,
+                        code_description: None,
+                    });
+                }
+
+                for stmt in body {
+                    Self::check_dunder_patterns(stmt, diagnostics);
+                }
+            }
+            AstNode::Module { body, .. } | AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } => {
+                for stmt in body {
+                    Self::check_dunder_patterns(stmt, diagnostics);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Check if a test expression is: __name__ == "__main__"
+    fn is_name_main_check(test: &AstNode) -> bool {
+        match test {
+            AstNode::Compare { left, ops, comparators, .. } => {
+                let is_name = matches!(**left, AstNode::Identifier { ref name, .. } if name == "__name__");
+
+                let is_eq_main = ops.iter().any(|op| matches!(op, beacon_parser::CompareOperator::Eq))
+                    && comparators.iter().any(|comp| {
+                        matches!(comp, AstNode::Literal { value: beacon_parser::LiteralValue::String(s), .. } if s == "__main__")
+                    });
+
+                is_name && is_eq_main
+            }
+            _ => false,
+        }
+    }
+
+    /// Check for magic methods defined outside class scope
+    fn check_magic_methods_in_scope(
+        &self, node: &AstNode, symbol_table: &beacon_parser::SymbolTable, diagnostics: &mut Vec<Diagnostic>,
+        source: &str,
+    ) {
+        match node {
+            AstNode::FunctionDef { name, line, col, body, .. } => {
+                if MAGIC_METHODS.contains(&name.as_str()) {
+                    let byte_offset = Self::line_col_to_byte_offset_from_source(source, line, col);
+                    let scope_id = symbol_table.find_scope_at_position(byte_offset);
+
+                    if !symbol_table.is_in_class_scope(scope_id) {
+                        let position = Position { line: (*line - 1) as u32, character: (*col - 1) as u32 };
+                        diagnostics.push(Diagnostic {
+                            range: Range {
+                                start: position,
+                                end: Position {
+                                    line: position.line,
+                                    character: position.character + name.len() as u32,
+                                },
+                            },
+                            severity: Some(DiagnosticSeverity::WARNING),
+                            code: Some(lsp_types::NumberOrString::String("DUNDER001".to_string())),
+                            source: Some("beacon".to_string()),
+                            message: format!("Magic method '{name}' defined outside of a class"),
+                            related_information: None,
+                            tags: None,
+                            data: None,
+                            code_description: None,
+                        });
+                    } else {
+                        self.validate_magic_method_signature(name, line, col, diagnostics);
+                    }
+                }
+
+                for stmt in body {
+                    self.check_magic_methods_in_scope(stmt, symbol_table, diagnostics, source);
+                }
+            }
+            AstNode::ClassDef { body, .. } => {
+                for stmt in body {
+                    self.check_magic_methods_in_scope(stmt, symbol_table, diagnostics, source);
+                }
+            }
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    self.check_magic_methods_in_scope(stmt, symbol_table, diagnostics, source);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Basic validation for magic method signatures
+    fn validate_magic_method_signature(
+        &self, name: &str, line: &usize, col: &usize, diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        // TODO: Implement more comprehensive signature validation
+        // This is a placeholder for future enhancement; just check common cases for now
+        let _ = (name, line, col, diagnostics);
+    }
+
+    /// Convert line/col to byte offset using the actual source
+    fn line_col_to_byte_offset_from_source(source: &str, line: &usize, col: &usize) -> usize {
+        let mut byte_offset = 0;
+        let mut current_line = 1;
+        let mut current_col = 1;
+
+        for ch in source.chars() {
+            if current_line == *line && current_col == *col {
+                return byte_offset;
+            }
+            if ch == '\n' {
+                current_line += 1;
+                current_col = 1;
+            } else {
+                current_col += 1;
+            }
+            byte_offset += ch.len_utf8();
+        }
+
+        byte_offset
     }
 }
 
@@ -364,7 +516,7 @@ mod tests {
         let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
 
         let uri = Url::from_str("file:///test.py").unwrap();
-        let source = "def broken("; // Syntax error
+        let source = "def broken(";
 
         documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
 
@@ -474,5 +626,120 @@ def test():
         assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::ERROR));
         assert_eq!(diagnostic.source, Some("beacon".to_string()));
         assert!(diagnostic.message.contains("Missing AST"));
+    }
+
+    #[test]
+    fn test_dunder_name_main_pattern_detected() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = DiagnosticProvider::new(documents.clone());
+        let config = crate::config::Config::default();
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+if __name__ == "__main__":
+    print("Running as main")
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let dunder_hint = diagnostics
+            .iter()
+            .find(|d| d.code == Some(lsp_types::NumberOrString::String("DUNDER_INFO".to_string())));
+
+        assert!(dunder_hint.is_some());
+        let hint = dunder_hint.unwrap();
+        assert_eq!(hint.severity, Some(DiagnosticSeverity::HINT));
+        assert!(hint.message.contains("Entry point guard"));
+    }
+
+    #[test]
+    fn test_magic_method_outside_class_warning() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = DiagnosticProvider::new(documents.clone());
+        let config = crate::config::Config::default();
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def __init__(self):
+    self.x = 1
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let magic_warning = diagnostics
+            .iter()
+            .find(|d| d.code == Some(lsp_types::NumberOrString::String("DUNDER001".to_string())));
+
+        assert!(magic_warning.is_some());
+        let warning = magic_warning.unwrap();
+        assert_eq!(warning.severity, Some(DiagnosticSeverity::WARNING));
+        assert!(warning.message.contains("Magic method"));
+        assert!(warning.message.contains("outside of a class"));
+    }
+
+    #[test]
+    fn test_magic_method_inside_class_no_warning() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = DiagnosticProvider::new(documents.clone());
+        let config = crate::config::Config::default();
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+class MyClass:
+    def __init__(self):
+        self.x = 1
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+        let magic_warnings: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| {
+                d.code == Some(lsp_types::NumberOrString::String("DUNDER001".to_string()))
+                    && d.message.contains("__init__")
+            })
+            .collect();
+
+        if !magic_warnings.is_empty() {
+            panic!("Got unexpected warning for __init__ inside class: {magic_warnings:?}");
+        }
+    }
+
+    #[test]
+    fn test_is_name_main_check_positive() {
+        let test_expr = AstNode::Compare {
+            left: Box::new(AstNode::Identifier { name: "__name__".to_string(), line: 1, col: 4 }),
+            ops: vec![beacon_parser::CompareOperator::Eq],
+            comparators: vec![AstNode::Literal {
+                value: beacon_parser::LiteralValue::String("__main__".to_string()),
+                line: 1,
+                col: 16,
+            }],
+            line: 1,
+            col: 12,
+        };
+
+        assert!(DiagnosticProvider::is_name_main_check(&test_expr));
+    }
+
+    #[test]
+    fn test_is_name_main_check_negative() {
+        let test_expr = AstNode::Compare {
+            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 4 }),
+            ops: vec![beacon_parser::CompareOperator::Eq],
+            comparators: vec![AstNode::Literal { value: beacon_parser::LiteralValue::Integer(42), line: 1, col: 9 }],
+            line: 1,
+            col: 6,
+        };
+
+        assert!(!DiagnosticProvider::is_name_main_check(&test_expr));
     }
 }

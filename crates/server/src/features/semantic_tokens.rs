@@ -575,8 +575,7 @@ impl SemanticTokensProvider {
         None
     }
 
-    /// Find the column position of a return type annotation
-    /// Searches for "-> <type>" pattern on the line
+    /// Find the column position of a return type annotation by searching for "-> <type>" pattern on the line
     fn find_return_type_position(text: &str, line: usize, type_annotation: &str) -> Option<usize> {
         let lines: Vec<&str> = text.lines().collect();
         if line == 0 || line > lines.len() {
@@ -609,6 +608,8 @@ impl SemanticTokensProvider {
             SymbolKind::Parameter => SemanticTokenType::PARAMETER,
             SymbolKind::Variable => SemanticTokenType::VARIABLE,
             SymbolKind::Import => SemanticTokenType::NAMESPACE,
+            SymbolKind::MagicMethod => SemanticTokenType::METHOD,
+            SymbolKind::BuiltinVar => SemanticTokenType::VARIABLE,
         };
 
         SUPPORTED_TYPES.iter().position(|t| *t == token_type).unwrap_or(0) as u32

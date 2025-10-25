@@ -134,36 +134,4 @@ This document outlines the plan for implementing a minimal, working, testable LS
 
 ## Parking Lot
 
-- Handle "dunder"/magic methods & variables, i.e. `__main__`
-    - Add `MagicMethod`, and `BuiltinVar` to `SymbolKind` and [static lists](#static-registry) (MAGIC_METHODS, BUILTIN_DUNDERS)
-        - Virtual definitions for builtins
-        - Inject builtins into each file’s symbol table
-    - Add hover docs for known dunders (`crates/server/src/data/dunders.json`)
-        - Detect and document `if __name__ == "__main__":`
-    - Add completions for `__` prefix
-    - Implement magic method diagnostics
-    - (Later) Add inheritance awareness (`__init__` in base classes)
-
-### Static Registry
-
-```rs
-pub static BUILTIN_DUNDERS: &[&str] = &[
-    "__name__", "__file__", "__doc__", "__package__", "__loader__", "__spec__"
-];
-
-pub static MAGIC_METHODS: &[&str] = &[
-    "__init__", "__repr__", "__len__", "__getitem__", "__setitem__", "__enter__", "__exit__",
-    "__iter__", "__next__", "__eq__", "__lt__", "__call__", "__str__", "__del__"
-];
-```
-
-### Docs
-
-```json
-{
-    "name": "__init__",
-    "category": "method",
-    "doc": "Initializer method called after an instance is created; used to set up object state.",
-    "link": "https://docs.python.org/3/reference/datamodel.html#object.__init__"
-}
-```
+- Add inheritance awareness (`__init__` in base classes)

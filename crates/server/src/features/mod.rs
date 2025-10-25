@@ -19,6 +19,7 @@ pub mod completion;
 pub mod diagnostics;
 pub mod document_highlight;
 pub mod document_symbols;
+pub mod dunders;
 pub mod goto_definition;
 pub mod hover;
 pub mod inlay_hints;
