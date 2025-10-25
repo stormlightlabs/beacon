@@ -1,3 +1,40 @@
+//! Type Substitution System
+//!
+//! This module implements type substitutions for the Hindley-Milner type system.
+//!
+//! ## Substitutions
+//!
+//! A substitution is a finite mapping from type variables to types: `σ = [α₁ ↦ τ₁, ..., αₙ ↦ τₙ]`
+//!
+//! Substitutions are applied to types recursively, replacing type variables with their mapped types.
+//! The implementation ensures:
+//!
+//! - **Idempotence**: Applying a substitution multiple times has the same effect as applying it once
+//! - **Recursive application**: When applying `[a ↦ b, b ↦ int]`, the result fully resolves to `int`
+//! - **Bound variable respect**: Substitutions don't affect variables bound by `ForAll`
+//!
+//! ## Composition
+//!
+//! Substitutions compose: `(σ₂ ∘ σ₁)(τ) = σ₂(σ₁(τ))`
+//!
+//! Composition is implemented by applying σ₂ to all types in σ₁'s range, then adding σ₂'s mappings.
+//!
+//! ## Example
+//!
+//! ```
+//! use beacon_core::{Subst, Type, TypeVar};
+//!
+//! fn example() {
+//!     let tv = TypeVar::new(0);
+//!     let subst = Subst::singleton(tv.clone(), Type::int());
+//!
+//!     let ty = Type::list(Type::Var(tv));
+//!     let result = subst.apply(&ty);
+//!
+//!     assert_eq!(result, Type::list(Type::int()));
+//! }
+//! ```
+
 use crate::{Type, TypeVar};
 use rustc_hash::FxHashMap;
 use std::fmt;

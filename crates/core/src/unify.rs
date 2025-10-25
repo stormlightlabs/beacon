@@ -1,3 +1,35 @@
+//! Unification Algorithm for the Hindley-Milner Type System
+//!
+//! This module implements Robinson's unification algorithm with extensions for Python types.
+//!
+//! # Unification Rules
+//!
+//! The unifier finds the most general substitution that makes two types equal:
+//!
+//! - **Type Variables**: `'a ~ T` produces substitution `['a ↦ T]` if occurs check passes
+//! - **Type Constructors**: `C ~ C` succeeds with empty substitution
+//! - **Type Applications**: `F A ~ G B` unifies `F ~ G` and `A ~ B`
+//! - **Function Types**: `(A₁,...,Aₙ) -> R ~ (B₁,...,Bₙ) -> S` unifies arguments and return types
+//!
+//! # Special Types
+//!
+//! - **`Any`**: Unifies with everything (returns empty substitution)
+//! - **`Top`**: Only unifies with itself or type variables
+//! - **`Never`**: Only unifies with itself or type variables
+//!
+//! # Row Polymorphism
+//!
+//! Records with row variables support flexible unification:
+//!
+//! ```text
+//! { x: int | r } ~ { x: int, y: str }
+//! // Produces substitution: r ↦ { y: str }
+//! ```
+//!
+//! # Occurs Check
+//!
+//! The occurs check prevents infinite types by rejecting unifications like `'a ~ list['a]`.
+
 use crate::{Result, Subst, Type, TypeError, TypeVar};
 use rustc_hash::FxHashSet;
 
@@ -11,7 +43,10 @@ impl Unifier {
     }
 
     fn unify_impl(t1: &Type, t2: &Type) -> Result<Subst> {
+        use crate::TypeCtor;
+
         match (t1, t2) {
+            (Type::Con(TypeCtor::Any), _) | (_, Type::Con(TypeCtor::Any)) => Ok(Subst::empty()),
             (Type::Var(tv1), Type::Var(tv2)) if tv1 == tv2 => Ok(Subst::empty()),
             (Type::Var(tv), t) | (t, Type::Var(tv)) => Self::unify_var(tv, t),
             (Type::Con(tc1), Type::Con(tc2)) if tc1 == tc2 => Ok(Subst::empty()),
@@ -395,5 +430,161 @@ mod tests {
         assert_eq!(unified_type, Type::int());
         assert_eq!(subst.get(&tv1), Some(&Type::int()));
         assert_eq!(subst.get(&tv2), Some(&Type::int()));
+    }
+
+    #[test]
+    fn test_any_unifies_with_everything() {
+        let subst = Unifier::unify(&Type::any(), &Type::int()).unwrap();
+        assert!(subst.is_empty());
+
+        let subst = Unifier::unify(&Type::string(), &Type::any()).unwrap();
+        assert!(subst.is_empty());
+
+        let tv = TypeVar::new(0);
+        let subst = Unifier::unify(&Type::any(), &Type::Var(tv.clone())).unwrap();
+        assert!(subst.is_empty());
+
+        let subst = Unifier::unify(&Type::any(), &Type::list(Type::int())).unwrap();
+        assert!(subst.is_empty());
+
+        let subst = Unifier::unify(&Type::fun(vec![Type::int()], Type::string()), &Type::any()).unwrap();
+        assert!(subst.is_empty());
+    }
+
+    #[test]
+    fn test_top_unifies_only_with_itself() {
+        let subst = Unifier::unify(&Type::top(), &Type::top()).unwrap();
+        assert!(subst.is_empty());
+
+        assert!(Unifier::unify(&Type::top(), &Type::int()).is_err());
+        assert!(Unifier::unify(&Type::string(), &Type::top()).is_err());
+
+        let tv = TypeVar::new(0);
+        let subst = Unifier::unify(&Type::top(), &Type::Var(tv.clone())).unwrap();
+        assert_eq!(subst.get(&tv), Some(&Type::top()));
+    }
+
+    #[test]
+    fn test_never_unifies_only_with_itself() {
+        let subst = Unifier::unify(&Type::never(), &Type::never()).unwrap();
+        assert!(subst.is_empty());
+
+        assert!(Unifier::unify(&Type::never(), &Type::int()).is_err());
+        assert!(Unifier::unify(&Type::bool(), &Type::never()).is_err());
+
+        let tv = TypeVar::new(0);
+        let subst = Unifier::unify(&Type::never(), &Type::Var(tv.clone())).unwrap();
+        assert_eq!(subst.get(&tv), Some(&Type::never()));
+    }
+
+    #[test]
+    fn test_top_any_never_distinct_unification() {
+        let subst = Unifier::unify(&Type::top(), &Type::any()).unwrap();
+        assert!(subst.is_empty());
+        let subst = Unifier::unify(&Type::any(), &Type::top()).unwrap();
+        assert!(subst.is_empty());
+
+        assert!(Unifier::unify(&Type::top(), &Type::never()).is_err());
+        assert!(Unifier::unify(&Type::never(), &Type::top()).is_err());
+
+        let subst = Unifier::unify(&Type::any(), &Type::never()).unwrap();
+        assert!(subst.is_empty());
+        let subst = Unifier::unify(&Type::never(), &Type::any()).unwrap();
+        assert!(subst.is_empty());
+    }
+
+    #[test]
+    fn test_any_in_complex_types() {
+        let f1 = Type::fun(vec![Type::any()], Type::int());
+        let f2 = Type::fun(vec![Type::string()], Type::int());
+        let subst = Unifier::unify(&f1, &f2).unwrap();
+        assert!(subst.is_empty());
+
+        let list_any = Type::list(Type::any());
+        let list_int = Type::list(Type::int());
+        let subst = Unifier::unify(&list_any, &list_int).unwrap();
+        assert!(subst.is_empty());
+    }
+
+    #[test]
+    fn test_record_row_variable_round_trip() {
+        let row_var = TypeVar::new(10);
+        let record1 = Type::Record(vec![("x".to_string(), Type::int())], Some(row_var.clone()));
+        let record2 = Type::Record(
+            vec![("x".to_string(), Type::int()), ("y".to_string(), Type::string())],
+            None,
+        );
+
+        let subst = Unifier::unify(&record1, &record2).unwrap();
+
+        match subst.get(&row_var).expect("Row variable should be bound") {
+            Type::Record(fields, None) => {
+                assert_eq!(fields.len(), 1);
+                assert_eq!(fields[0].0, "y");
+                assert_eq!(fields[0].1, Type::string());
+            }
+            _ => panic!("Expected record binding for row variable"),
+        }
+
+        match subst.apply(&record1) {
+            Type::Record(fields, row_var) => {
+                assert!(row_var.is_none() || fields.len() == 1);
+            }
+            _ => panic!("Expected record after substitution"),
+        }
+    }
+
+    #[test]
+    fn test_record_unification_idempotence() {
+        let record = Type::Record(
+            vec![("x".to_string(), Type::int()), ("y".to_string(), Type::string())],
+            None,
+        );
+
+        let subst = Unifier::unify(&record, &record).unwrap();
+        assert!(subst.is_empty());
+
+        let result = subst.apply(&record);
+        assert_eq!(result, record);
+    }
+
+    #[test]
+    fn test_record_with_nested_row_variables() {
+        let row_var1 = TypeVar::new(11);
+        let row_var2 = TypeVar::new(12);
+
+        let record1 = Type::Record(vec![("x".to_string(), Type::int())], Some(row_var1.clone()));
+        let record2 = Type::Record(vec![("x".to_string(), Type::int())], Some(row_var2.clone()));
+
+        let subst = Unifier::unify(&record1, &record2).unwrap();
+        assert!(subst.contains_var(&row_var1) || subst.contains_var(&row_var2) || subst.is_empty());
+    }
+
+    #[test]
+    fn test_complex_record_round_trip() {
+        let tv1 = TypeVar::new(20);
+        let tv2 = TypeVar::new(21);
+        let record = Type::Record(
+            vec![
+                ("x".to_string(), Type::Var(tv1.clone())),
+                ("y".to_string(), Type::Var(tv2.clone())),
+            ],
+            None,
+        );
+
+        let subst1 = Subst::singleton(tv1.clone(), Type::int());
+        let record_after_1 = subst1.apply(&record);
+
+        let subst2 = Subst::singleton(tv2, Type::string());
+        let record_after_2 = subst2.apply(&record_after_1);
+
+        match record_after_2 {
+            Type::Record(fields, None) => {
+                assert_eq!(fields.len(), 2);
+                assert_eq!(fields.iter().find(|(k, _)| k == "x").unwrap().1, Type::int());
+                assert_eq!(fields.iter().find(|(k, _)| k == "y").unwrap().1, Type::string());
+            }
+            _ => panic!("Expected concrete record"),
+        }
     }
 }

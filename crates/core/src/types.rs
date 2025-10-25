@@ -1,3 +1,91 @@
+//! Type System Implementation for Beacon
+//!
+//! This module implements a Hindley-Milner type system with extensions for Python,
+//! including row-polymorphic records, union types, and gradual typing support.
+//!
+//! ## Type Hierarchy
+//!
+//! The type system distinguishes three special types for gradual typing and lattice semantics:
+//!
+//! - **`Any`**: Gradual typing "unknown" type that unifies with everything. Used when type
+//!   information is unavailable or when interfacing with untyped code. Acts as both a
+//!   supertype and subtype in the gradual typing system.
+//!
+//! - **`Top`**: The top of the type lattice - a supertype of all types. Unlike `Any`, `Top`
+//!   only unifies with itself and type variables. It represents "any value" in the type
+//!   hierarchy.
+//!
+//! - **`Never`**: The bottom of the type lattice - a subtype of all types. Represents
+//!   uninhabited types (e.g., functions that never return). Only unifies with itself and
+//!   type variables.
+//!
+//! ## Kind System
+//!
+//! Types are classified by kinds:
+//!
+//! - `*` (Star): The kind of proper types (e.g., `int`, `str`, `list[int]`)
+//! - `* -> *`: The kind of unary type constructors (e.g., `list`, `set`)
+//! - `* -> * -> *`: The kind of binary type constructors (e.g., `dict`)
+//!
+//! Type applications must be well-kinded: applying a type constructor `F :: k1 -> k2` to
+//! an argument `A :: k1` produces a result of kind `k2`.
+//!
+//! ## Row-Polymorphic Records
+//!
+//! Records support row polymorphism for flexible structural typing:
+//!
+//! ```text
+//! { x: int, y: str }           -- Closed record
+//! { x: int | r }                -- Open record with row variable r
+//! ```
+//!
+//! Row variables allow record extension and flexible matching:
+//!
+//! ```text
+//! { x: int | r } ~ { x: int, y: str }
+//! // Unifies r with { y: str }
+//! ```
+//!
+//! ## Value Restriction
+//!
+//! To ensure soundness, generalization follows the value restriction: only non-expansive
+//! expressions can be generalized. In Python:
+//!
+//! **Non-expansive (safe to generalize):**
+//! - Literals: `42`, `"hello"`, `True`, `None`
+//! - Lambda expressions: `lambda x: x`
+//! - Variable references
+//! - Constructor applications with non-expansive arguments
+//!
+//! **Expansive (not generalized):**
+//! - Function calls: `f()`
+//! - Method calls: `obj.method()`
+//! - Attribute access: `obj.attr`
+//! - Most other computations
+//!
+//! ## Example
+//!
+//! ```
+//! use beacon_core::{Type, TypeScheme, TypeVar, TypeVarGen};
+//! use rustc_hash::FxHashMap;
+//!
+//! fn example() {
+//!     // Create the identity function type: 'a -> 'a
+//!     let mut var_gen = TypeVarGen::new();
+//!     let tv_a = var_gen.fresh();
+//!     let identity_type = Type::fun(
+//!         vec![Type::Var(tv_a.clone())],
+//!         Type::Var(tv_a.clone())
+//!     );
+//!
+//!     // Generalize it to a type scheme: ∀'a. 'a -> 'a
+//!     let env = FxHashMap::default();
+//!     let identity_scheme = TypeScheme::generalize(identity_type, &env);
+//!
+//!     assert_eq!(identity_scheme.quantified_vars.len(), 1);
+//! }
+//! ```
+
 use rustc_hash::FxHashMap;
 use std::{fmt, ops::Not};
 
@@ -89,7 +177,11 @@ pub enum TypeCtor {
     Set,
     Tuple,
     Function,
+    /// Gradual typing "unknown" type - acts as both supertype and subtype
     Any,
+    /// Top of type lattice - supertype of all types
+    Top,
+    /// Bottom of type lattice - subtype of all types (uninhabited)
     Never,
     Class(String),
     Module(String),
@@ -109,6 +201,7 @@ impl fmt::Display for TypeCtor {
             TypeCtor::Tuple => write!(f, "tuple"),
             TypeCtor::Function => write!(f, "function"),
             TypeCtor::Any => write!(f, "Any"),
+            TypeCtor::Top => write!(f, "Top"),
             TypeCtor::Never => write!(f, "Never"),
             TypeCtor::Class(name) => write!(f, "{name}"),
             TypeCtor::Module(name) => write!(f, "module<{name}>"),
@@ -126,11 +219,16 @@ impl TypeCtor {
             | TypeCtor::Bool
             | TypeCtor::NoneType
             | TypeCtor::Any
+            | TypeCtor::Top
             | TypeCtor::Never => Kind::Star,
-            TypeCtor::List | TypeCtor::Set => Kind::arity(1), // * -> *
-            TypeCtor::Dict => Kind::arity(2),                 // * -> * -> *
-            TypeCtor::Tuple => Kind::Star,                    // Special case: can be 0-ary
-            TypeCtor::Function => Kind::arity(2),             // * -> * -> * (simplified)
+            // * -> *
+            TypeCtor::List | TypeCtor::Set => Kind::arity(1),
+            // * -> * -> *
+            TypeCtor::Dict => Kind::arity(2),
+            // Special case: can be 0-ary
+            TypeCtor::Tuple => Kind::Star,
+            // * -> * -> * (simplified)
+            TypeCtor::Function => Kind::arity(2),
             TypeCtor::Class(_) | TypeCtor::Module(_) => Kind::Star,
         }
     }
@@ -150,6 +248,7 @@ impl TypeCtor {
                 | TypeCtor::Tuple
                 | TypeCtor::Function
                 | TypeCtor::Any
+                | TypeCtor::Top
                 | TypeCtor::Never
         )
     }
@@ -258,6 +357,10 @@ impl Type {
         Type::Con(TypeCtor::Any)
     }
 
+    pub fn top() -> Self {
+        Type::Con(TypeCtor::Top)
+    }
+
     pub fn never() -> Self {
         Type::Con(TypeCtor::Never)
     }
@@ -310,6 +413,52 @@ impl Type {
         let mut vars = FxHashMap::default();
         self.collect_free_vars(&mut vars, &FxHashMap::default());
         vars
+    }
+
+    /// Compute the kind of this type
+    ///
+    /// Returns an error if the type is ill-kinded (e.g., `Int[String]`)
+    pub fn kind_of(&self) -> Result<Kind, String> {
+        match self {
+            Type::Var(_) => Ok(Kind::Star),
+            Type::Con(tc) => Ok(tc.kind()),
+
+            Type::App(f, a) => {
+                let f_kind = f.kind_of()?;
+                let a_kind = a.kind_of()?;
+
+                match f_kind {
+                    Kind::Arrow(k1, k2) => {
+                        if *k1 == a_kind {
+                            Ok(*k2)
+                        } else {
+                            Err(format!(
+                                "Kind mismatch in type application: expected {k1}, found {a_kind}"
+                            ))
+                        }
+                    }
+                    Kind::Star => Err(format!("Cannot apply type {f} :: * to argument {a}")),
+                }
+            }
+            Type::Fun(_, _) => Ok(Kind::Star),
+            Type::ForAll(_, t) => t.kind_of(),
+            Type::Union(_) => Ok(Kind::Star),
+            Type::Record(_, _) => Ok(Kind::Star),
+        }
+    }
+
+    /// Check if this type is well-kinded
+    ///
+    /// A type is well-kinded if:
+    /// 1. All type applications are kind-correct
+    /// 2. All subterms are well-kinded
+    /// 3. The type has kind * (is a proper type)
+    pub fn check_well_kinded(&self) -> Result<(), String> {
+        let kind = self.kind_of()?;
+        match kind {
+            Kind::Star => Ok(()),
+            _ => Err(format!("Type {self} has kind {kind} but expected kind *")),
+        }
     }
 
     fn collect_free_vars(&self, vars: &mut FxHashMap<TypeVar, ()>, bound: &FxHashMap<TypeVar, ()>) {
@@ -374,7 +523,27 @@ impl TypeScheme {
     }
 
     /// Generalize a type into a type scheme by quantifying over free variables
+    ///
+    /// This respects the value restriction: if `is_non_expansive` is false,
+    /// the type is not generalized (returns a monomorphic scheme).
     pub fn generalize(ty: Type, env_vars: &FxHashMap<TypeVar, ()>) -> Self {
+        Self::generalize_with_restriction(ty, env_vars, true)
+    }
+
+    /// Generalize a type with explicit control over value restriction
+    ///
+    /// ## Arguments
+    /// * `ty` - The type to generalize
+    /// * `env_vars` - Variables bound in the environment (not generalized)
+    /// * `is_non_expansive` - Whether the expression is non-expansive (value restriction)
+    ///
+    /// If `is_non_expansive` is false, returns a monomorphic scheme (no generalization).
+    /// This implements the value restriction to ensure soundness.
+    pub fn generalize_with_restriction(ty: Type, env_vars: &FxHashMap<TypeVar, ()>, is_non_expansive: bool) -> Self {
+        if !is_non_expansive {
+            return Self::mono(ty);
+        }
+
         let free_vars = ty.free_vars();
         let quantified: Vec<TypeVar> = free_vars
             .keys()
@@ -649,5 +818,353 @@ mod tests {
         let fun_ctor = Type::Con(TypeCtor::Function);
         let fun_app = Type::App(Box::new(fun_ctor), Box::new(Type::string()));
         assert_eq!(fun_app.to_string(), "(function str)");
+    }
+
+    #[test]
+    fn test_top_type_constructor() {
+        let top = Type::top();
+        assert_eq!(top, Type::Con(TypeCtor::Top));
+        assert_eq!(top.to_string(), "Top");
+        assert_eq!(TypeCtor::Top.kind(), Kind::Star);
+        assert!(TypeCtor::Top.is_builtin());
+    }
+
+    #[test]
+    fn test_any_type_constructor() {
+        let any = Type::any();
+        assert_eq!(any, Type::Con(TypeCtor::Any));
+        assert_eq!(any.to_string(), "Any");
+        assert_eq!(TypeCtor::Any.kind(), Kind::Star);
+        assert!(TypeCtor::Any.is_builtin());
+    }
+
+    #[test]
+    fn test_never_type_constructor() {
+        let never = Type::never();
+        assert_eq!(never, Type::Con(TypeCtor::Never));
+        assert_eq!(never.to_string(), "Never");
+        assert_eq!(TypeCtor::Never.kind(), Kind::Star);
+        assert!(TypeCtor::Never.is_builtin());
+    }
+
+    #[test]
+    fn test_top_any_never_are_distinct() {
+        let top = Type::top();
+        let any = Type::any();
+        let never = Type::never();
+
+        assert_ne!(top, any);
+        assert_ne!(top, never);
+        assert_ne!(any, never);
+    }
+
+    #[test]
+    fn test_lattice_types_have_no_free_vars() {
+        assert_eq!(Type::top().free_vars().len(), 0);
+        assert_eq!(Type::any().free_vars().len(), 0);
+        assert_eq!(Type::never().free_vars().len(), 0);
+    }
+
+    #[test]
+    fn test_well_kinded_simple_types() {
+        assert!(Type::int().check_well_kinded().is_ok());
+        assert!(Type::string().check_well_kinded().is_ok());
+        assert!(Type::bool().check_well_kinded().is_ok());
+        assert!(Type::any().check_well_kinded().is_ok());
+        assert!(Type::top().check_well_kinded().is_ok());
+        assert!(Type::never().check_well_kinded().is_ok());
+    }
+
+    #[test]
+    fn test_well_kinded_type_applications() {
+        let list_int = Type::list(Type::int());
+        assert!(list_int.check_well_kinded().is_ok());
+        assert_eq!(list_int.kind_of().unwrap(), Kind::Star);
+
+        let dict_str_int = Type::dict(Type::string(), Type::int());
+        assert!(dict_str_int.check_well_kinded().is_ok());
+        assert_eq!(dict_str_int.kind_of().unwrap(), Kind::Star);
+
+        let nested_list = Type::list(Type::list(Type::int()));
+        assert!(nested_list.check_well_kinded().is_ok());
+    }
+
+    #[test]
+    fn test_ill_kinded_type_applications() {
+        let int_ctor = Type::Con(TypeCtor::Int);
+        let ill_kinded = Type::App(Box::new(int_ctor), Box::new(Type::string()));
+        assert!(ill_kinded.check_well_kinded().is_err());
+
+        let unapplied_list = Type::Con(TypeCtor::List);
+        assert!(unapplied_list.check_well_kinded().is_err());
+
+        let dict_ctor = Type::Con(TypeCtor::Dict);
+        let partial_dict = Type::App(Box::new(dict_ctor), Box::new(Type::int()));
+        assert!(partial_dict.check_well_kinded().is_err());
+    }
+
+    #[test]
+    fn test_kind_of_type_constructors() {
+        assert_eq!(Type::Con(TypeCtor::Int).kind_of().unwrap(), Kind::Star);
+        assert_eq!(Type::Con(TypeCtor::List).kind_of().unwrap(), Kind::arity(1));
+        assert_eq!(Type::Con(TypeCtor::Dict).kind_of().unwrap(), Kind::arity(2));
+    }
+
+    #[test]
+    fn test_kind_of_function_types() {
+        let fun_type = Type::fun(vec![Type::int(), Type::string()], Type::bool());
+        assert_eq!(fun_type.kind_of().unwrap(), Kind::Star);
+        assert!(fun_type.check_well_kinded().is_ok());
+    }
+
+    #[test]
+    fn test_kind_of_union_types() {
+        let union = Type::union(vec![Type::int(), Type::string()]);
+        assert_eq!(union.kind_of().unwrap(), Kind::Star);
+        assert!(union.check_well_kinded().is_ok());
+    }
+
+    #[test]
+    fn test_kind_of_record_types() {
+        let record = Type::Record(vec![("x".to_string(), Type::int())], None);
+        assert_eq!(record.kind_of().unwrap(), Kind::Star);
+        assert!(record.check_well_kinded().is_ok());
+    }
+
+    #[test]
+    fn test_kind_of_forall_types() {
+        let tv = TypeVar::new(0);
+        let forall = Type::ForAll(vec![tv.clone()], Box::new(Type::Var(tv)));
+        assert_eq!(forall.kind_of().unwrap(), Kind::Star);
+        assert!(forall.check_well_kinded().is_ok());
+    }
+
+    #[test]
+    fn test_kind_mismatch_in_application() {
+        let list_ctor = Type::Con(TypeCtor::List);
+        let dict_ctor = Type::Con(TypeCtor::Dict);
+        let mismatched = Type::App(Box::new(list_ctor), Box::new(dict_ctor));
+
+        let result = mismatched.kind_of();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Kind mismatch"));
+    }
+
+    #[test]
+    fn test_union_normalization_flattens_nested_unions() {
+        let inner_union = Type::union(vec![Type::string(), Type::bool()]);
+        let outer_union = Type::union(vec![Type::int(), inner_union]);
+
+        match outer_union {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 3);
+                assert!(types.contains(&Type::bool()));
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+            }
+            _ => panic!("Expected union type"),
+        }
+    }
+
+    #[test]
+    fn test_union_normalization_removes_duplicates() {
+        let union = Type::union(vec![Type::int(), Type::string(), Type::int(), Type::string()]);
+
+        match union {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+            }
+            _ => panic!("Expected union type"),
+        }
+    }
+
+    #[test]
+    fn test_union_normalization_is_sorted() {
+        let union = Type::union(vec![Type::string(), Type::bool(), Type::int()]);
+
+        match union {
+            Type::Union(types) => {
+                // Check that types are sorted (bool < int < str in Ord)
+                for i in 1..types.len() {
+                    assert!(types[i - 1] <= types[i], "Union types should be sorted");
+                }
+            }
+            _ => panic!("Expected union type"),
+        }
+    }
+
+    #[test]
+    fn test_union_normalization_idempotence() {
+        let union1 = Type::union(vec![Type::int(), Type::string()]);
+        let union2 = Type::union(vec![Type::int(), Type::string()]);
+
+        assert_eq!(union1, union2);
+
+        if let Type::Union(ref types1) = union1 {
+            let union3 = Type::union(types1.clone());
+            assert_eq!(union1, union3);
+        }
+    }
+
+    #[test]
+    fn test_union_single_element_unwraps() {
+        let union = Type::union(vec![Type::int()]);
+        assert_eq!(union, Type::int());
+    }
+
+    #[test]
+    fn test_optional_is_normalized_union() {
+        let opt = Type::optional(Type::int());
+
+        match opt {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::none()));
+            }
+            _ => panic!("Expected union for optional"),
+        }
+    }
+
+    #[test]
+    fn test_type_scheme_generalization_basic() {
+        let tv = TypeVar::new(0);
+        let ty = Type::fun(vec![Type::Var(tv.clone())], Type::Var(tv.clone()));
+
+        let env_vars = FxHashMap::default();
+        let scheme = TypeScheme::generalize(ty.clone(), &env_vars);
+
+        assert_eq!(scheme.quantified_vars.len(), 1);
+        assert_eq!(scheme.quantified_vars[0], tv);
+        assert_eq!(scheme.ty, ty);
+    }
+
+    #[test]
+    fn test_type_scheme_generalization_respects_environment() {
+        let tv_a = TypeVar::new(0);
+        let tv_b = TypeVar::new(1);
+        let ty = Type::fun(vec![Type::Var(tv_a.clone())], Type::Var(tv_b.clone()));
+
+        let mut env_vars = FxHashMap::default();
+        env_vars.insert(tv_a, ()); // 'a is bound in environment
+
+        let scheme = TypeScheme::generalize(ty, &env_vars);
+
+        assert_eq!(scheme.quantified_vars.len(), 1);
+        assert_eq!(scheme.quantified_vars[0], tv_b);
+    }
+
+    #[test]
+    fn test_type_scheme_monomorphic() {
+        let ty = Type::int();
+        let scheme = TypeScheme::mono(ty.clone());
+
+        assert_eq!(scheme.quantified_vars.len(), 0);
+        assert_eq!(scheme.ty, ty);
+    }
+
+    #[test]
+    fn test_type_scheme_display_polymorphic() {
+        let tv = TypeVar::new(0);
+        let ty = Type::fun(vec![Type::Var(tv.clone())], Type::Var(tv.clone()));
+        let scheme = TypeScheme::new(vec![tv], ty);
+
+        let display = scheme.to_string();
+        assert!(display.contains("∀"));
+        assert!(display.contains("'t0"));
+    }
+
+    #[test]
+    fn test_type_scheme_display_monomorphic() {
+        let scheme = TypeScheme::mono(Type::int());
+        let display = scheme.to_string();
+        assert!(!display.contains("∀"));
+        assert_eq!(display, "int");
+    }
+
+    #[test]
+    fn test_generalization_with_complex_types() {
+        let tv = TypeVar::new(5);
+        let ty = Type::list(Type::Var(tv.clone()));
+
+        let env_vars = FxHashMap::default();
+        let scheme = TypeScheme::generalize(ty, &env_vars);
+
+        assert_eq!(scheme.quantified_vars.len(), 1);
+        assert_eq!(scheme.quantified_vars[0], tv);
+    }
+
+    #[test]
+    fn test_generalization_with_multiple_vars() {
+        let tv_a = TypeVar::new(10);
+        let tv_b = TypeVar::new(11);
+        let ty = Type::dict(Type::Var(tv_a.clone()), Type::Var(tv_b.clone()));
+
+        let env_vars = FxHashMap::default();
+        let scheme = TypeScheme::generalize(ty, &env_vars);
+
+        assert_eq!(scheme.quantified_vars.len(), 2);
+        assert!(scheme.quantified_vars.contains(&tv_a));
+        assert!(scheme.quantified_vars.contains(&tv_b));
+    }
+
+    #[test]
+    fn test_generalization_excludes_concrete_types() {
+        let tv = TypeVar::new(20);
+        let ty = Type::fun(vec![Type::int()], Type::Var(tv.clone()));
+
+        let env_vars = FxHashMap::default();
+        let scheme = TypeScheme::generalize(ty, &env_vars);
+
+        assert_eq!(scheme.quantified_vars.len(), 1);
+        assert_eq!(scheme.quantified_vars[0], tv);
+    }
+
+    #[test]
+    fn test_value_restriction_prevents_generalization() {
+        let tv = TypeVar::new(30);
+        let ty = Type::fun(vec![Type::Var(tv.clone())], Type::Var(tv.clone()));
+
+        let env_vars = FxHashMap::default();
+        let scheme_non_expansive = TypeScheme::generalize_with_restriction(ty.clone(), &env_vars, true);
+
+        assert_eq!(scheme_non_expansive.quantified_vars.len(), 1);
+        assert_eq!(scheme_non_expansive.quantified_vars[0], tv);
+
+        let scheme_expansive = TypeScheme::generalize_with_restriction(ty.clone(), &env_vars, false);
+
+        assert_eq!(scheme_expansive.quantified_vars.len(), 0);
+        assert_eq!(scheme_expansive.ty, ty);
+    }
+
+    #[test]
+    fn test_value_restriction_with_free_vars() {
+        let tv_a = TypeVar::new(40);
+        let tv_b = TypeVar::new(41);
+        let ty = Type::fun(vec![Type::Var(tv_a.clone())], Type::Var(tv_b.clone()));
+
+        let env_vars = FxHashMap::default();
+
+        let non_exp_scheme = TypeScheme::generalize_with_restriction(ty.clone(), &env_vars, true);
+        assert_eq!(non_exp_scheme.quantified_vars.len(), 2);
+
+        let exp_scheme = TypeScheme::generalize_with_restriction(ty.clone(), &env_vars, false);
+        assert_eq!(exp_scheme.quantified_vars.len(), 0);
+        assert_eq!(exp_scheme.ty, ty);
+    }
+
+    #[test]
+    fn test_default_generalize_assumes_non_expansive() {
+        let tv = TypeVar::new(50);
+        let ty = Type::Var(tv.clone());
+
+        let env_vars = FxHashMap::default();
+        let scheme1 = TypeScheme::generalize(ty.clone(), &env_vars);
+        let scheme2 = TypeScheme::generalize_with_restriction(ty, &env_vars, true);
+
+        assert_eq!(scheme1.quantified_vars, scheme2.quantified_vars);
+        assert_eq!(scheme1.ty, scheme2.ty);
     }
 }

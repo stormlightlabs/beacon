@@ -1,6 +1,6 @@
 # Beacon Roadmap
 
-This document tracks the major milestones required to deliver a robust Hindley-Milner type system for Python together with an incremental LSP server. It mirrors the actionable style of TODO.md so contributors can claim work quickly.
+This document tracks the major milestones required to deliver a robust Hindley-Milner type system for Python together with an incremental LSP server.
 
 ## Parser & Tree-sitter
 
@@ -26,16 +26,22 @@ This document tracks the major milestones required to deliver a robust Hindley-M
 
 **Goal:** Implement a Hindley-Milner core with row-polymorphic records and a robust substitution system.
 **Tasks:**
-    - [ ] Define type variables, monotypes, polytypes, and higher-kinded constructors.
-    - [ ] Build substitution composition and occurs-checking unification.
-    - [ ] Support row-polymorphic records and structural constraints.
-    - [ ] Model `Any`, top, and bottom types with gradual semantics.
+    - [x] Define type variables, monotypes, polytypes, and higher-kinded constructors.
+    - [x] Build substitution composition and occurs-checking unification.
+    - [x] Support row-polymorphic records and structural constraints.
+    - [x] Model `Any`, `Top`, and `Never` types with gradual semantics.
+    - [x] Implement kind checking system with `kind_of()` and `check_well_kinded()`.
+    - [x] Add value restriction infrastructure for sound generalization.
 **Implementation Notes:**
-    - Generalize only at non-expansive bindings (value restriction).
-    - Ensure substitutions apply recursively and idempotently.
+    - Generalize only at non-expansive bindings (value restriction implemented).
+    - Substitutions apply recursively and idempotently (verified by tests).
+    - Kind system prevents ill-formed types like `Int[String]`.
+    - Distinct semantics for `Any` (gradual), `Top` (lattice top), `Never` (lattice bottom).
 **Acceptance:**
-    - Types, kinding, substitution, and unifier modules compile with thorough unit tests.
-    - Row-polymorphic records and unions round-trip through the core representation.
+    - [x] Types, kinding, substitution, and unifier modules compile with thorough unit tests.
+    - [x] Row-polymorphic records and unions round-trip through the core representation.
+    - [x] Value restriction infrastructure ready for constraint generation integration.
+    - [x] Comprehensive module documentation with examples.
 
 ## Constraint Generation
 

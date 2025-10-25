@@ -5,6 +5,7 @@
 //! - Type variable management
 //! - Substitution and unification algorithms
 //! - Type schemes and generalization
+//! - Value restriction for sound generalization
 
 pub mod errors;
 pub mod subst;
@@ -15,6 +16,58 @@ pub use errors::*;
 pub use subst::*;
 pub use types::*;
 pub use unify::*;
+
+/// Trait for expressions that can be tested for expansiveness
+///
+/// In ML-style type systems, the value restriction prevents unsound generalization by only generalizing non-expansive expressions.
+/// An expression is non-expansive if:
+///
+/// - It's a literal (number, string, bool, None)
+/// - It's a lambda expression
+/// - It's a variable reference
+/// - It's a constructor application with non-expansive arguments (tuples, lists)
+///
+/// Expansive expressions include:
+/// - Function calls
+/// - Attribute access
+/// - Subscript operations
+/// - Most other computations
+///
+/// This trait should be implemented by expression types in the AST.
+pub trait Expansiveness {
+    /// Returns true if this expression is non-expansive (safe to generalize)
+    fn is_non_expansive(&self) -> bool;
+}
+
+/// Helper for determining if a binding should be generalized based on value restriction
+///
+/// This function encapsulates the value restriction logic.
+/// In Python, we follow similar rules to ML but adapted for Python's semantics:
+///
+/// ## Non-expansive (can generalize):
+/// - Literals: `42`, `"hello"`, `True`, `None`
+/// - Lambda expressions: `lambda x: x`
+/// - Variable bindings: `x = y` where `y` is a variable
+/// - Tuple/List/Dict literals with non-expansive elements: `(1, 2)`, `[x]`
+///
+/// ## Expansive (cannot generalize):
+/// - Function calls: `f(x)`
+/// - Method calls: `obj.method()`
+/// - Attribute access: `obj.attr`
+/// - Subscripts: `lst[0]`
+/// - Comprehensions: `[x for x in xs]`
+///
+/// ## Example:
+/// ```ignore
+/// # Safe to generalize (non-expansive)
+/// x = lambda a: a  # ∀'a. 'a -> 'a
+///
+/// # Not safe to generalize (expansive)
+/// y = f()  # 'b (not ∀'b. 'b), where 'b is fresh
+/// ```
+pub fn should_generalize<E: Expansiveness>(expr: &E) -> bool {
+    expr.is_non_expansive()
+}
 
 /// Type variable generator for creating fresh type variables
 #[derive(Debug, Clone)]
