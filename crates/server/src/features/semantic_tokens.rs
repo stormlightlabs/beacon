@@ -72,8 +72,6 @@ impl SemanticTokensProvider {
     }
 
     /// Provide semantic tokens for an entire document
-    ///
-    /// TODO: Implement token generation from AST and symbol table
     pub fn semantic_tokens_full(&self, params: SemanticTokensParams) -> Option<SemanticTokensResult> {
         let uri = params.text_document.uri;
         let tokens = self.generate_tokens(&uri)?;
@@ -97,10 +95,7 @@ impl SemanticTokensProvider {
 
             let mut raw_tokens = Vec::new();
 
-            // Collect AST-based semantic tokens (identifiers)
             self.collect_tokens_from_node(ast, symbol_table, symbol_table.root_scope, &text, &mut raw_tokens);
-
-            // Collect keyword tokens from tree-sitter CST
             self.collect_keyword_tokens(tree.root_node(), &text, &mut raw_tokens);
 
             let filtered_tokens: Vec<_> = raw_tokens
@@ -481,20 +476,33 @@ impl SemanticTokensProvider {
         raw_tokens: &mut Vec<RawToken>,
     ) {
         let lsp_line = (line as u32).saturating_sub(1);
-        let mut lsp_col = (col as u32).saturating_sub(1);
+        let lsp_col = (col as u32).saturating_sub(1);
         let length = name.encode_utf16().count() as u32;
+        let mut final_line = lsp_line;
+        let mut final_col = lsp_col;
 
-        if line > 0 {
-            let lines: Vec<&str> = text.lines().collect();
-            if let Some(line_text) = lines.get(line - 1) {
-                let search_start = (col.saturating_sub(1)).min(line_text.len());
-                if let Some(pos) = line_text[search_start..].find(name) {
-                    lsp_col = (search_start + pos) as u32;
+        if !name.is_empty() && !text.is_empty() {
+            let approx_position = Position::new(lsp_line, lsp_col);
+            let approx_offset = utils::position_to_byte_offset(text, approx_position);
+
+            if approx_offset <= text.len() {
+                if let Some(relative) = text[approx_offset..].find(name) {
+                    let byte_offset = approx_offset + relative;
+                    let position = utils::byte_offset_to_position(text, byte_offset);
+                    final_line = position.line;
+                    final_col = position.character;
+                } else if line > 0 {
+                    if let Some(line_text) = text.lines().nth(line - 1) {
+                        if let Some(pos) = line_text.find(name) {
+                            final_line = lsp_line;
+                            final_col = pos as u32;
+                        }
+                    }
                 }
             }
         }
 
-        raw_tokens.push(RawToken { line: lsp_line, character: lsp_col, length, token_type, modifiers });
+        raw_tokens.push(RawToken { line: final_line, character: final_col, length, token_type, modifiers });
     }
 
     /// Extract line and column from any AST node
@@ -646,6 +654,25 @@ impl SemanticTokensProvider {
 mod tests {
     use super::*;
     use std::str::FromStr;
+
+    fn decode_tokens(tokens: &[SemanticToken]) -> Vec<(u32, u32, u32, u32)> {
+        let mut result = Vec::with_capacity(tokens.len());
+        let mut line = 0;
+        let mut character = 0;
+
+        for token in tokens {
+            line += token.delta_line;
+            if token.delta_line == 0 {
+                character += token.delta_start;
+            } else {
+                character = token.delta_start;
+            }
+
+            result.push((line, character, token.length, token.token_type));
+        }
+
+        result
+    }
 
     #[test]
     fn test_provider_creation() {
@@ -1227,7 +1254,6 @@ sys_info = system.version
             .position(|t| *t == SemanticTokenType::NAMESPACE)
             .unwrap() as u32;
 
-        // Count keyword tokens (import, from)
         let keyword_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == keyword_type_idx).collect();
         assert!(
             keyword_tokens.len() >= 3,
@@ -1244,6 +1270,35 @@ sys_info = system.version
             keyword_type_idx, namespace_type_idx,
             "Keywords and module names must have different token types"
         );
+    }
+
+    #[test]
+    fn test_import_module_token_position() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = SemanticTokensProvider::new(documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "import os\n";
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let tokens = provider.generate_tokens(&uri).unwrap();
+        let decoded = decode_tokens(&tokens);
+
+        let namespace_type_idx = SUPPORTED_TYPES
+            .iter()
+            .position(|t| *t == SemanticTokenType::NAMESPACE)
+            .unwrap() as u32;
+
+        let module_token = tokens
+            .iter()
+            .zip(decoded.iter())
+            .find(|(token, _)| token.token_type == namespace_type_idx)
+            .map(|(_, decoded)| decoded)
+            .expect("Expected namespace token for module name");
+
+        assert_eq!(module_token.0, 0, "Module should be on first line");
+        assert_eq!(module_token.1, 7, "Module token should start at character 7");
+        assert_eq!(module_token.2, 2, "Module token length should be 2");
     }
 
     #[test]

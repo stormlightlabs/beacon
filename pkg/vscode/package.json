@@ -12,7 +12,6 @@
   "activationEvents": ["onLanguage:python"],
   "main": "./client/out/extension",
   "contributes": {
-    "grammars": [{ "language": "python", "scopeName": "source.python", "path": "./syntaxes/Python.tmLanguage.json" }],
     "configuration": {
       "type": "object",
       "title": "Beacon LSP Configuration",
