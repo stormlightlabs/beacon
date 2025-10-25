@@ -16,10 +16,10 @@ impl fmt::Display for Inline {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Inline::Text(t) => write!(f, "{t}"),
-            Inline::Em(t) => write!(f, "<em>{}</em>", t),
-            Inline::Strong(t) => write!(f, "<strong>{}</strong>", t),
+            Inline::Em(t) => write!(f, "<em>{t}</em>"),
+            Inline::Strong(t) => write!(f, "<strong>{t}</strong>"),
             Inline::Code(t) => write!(f, "<code>{}</code>", html_escape(t)),
-            Inline::Link { text, url } => write!(f, "<a href=\"{}\">{}</a>", url, text),
+            Inline::Link { text, url } => write!(f, "<a href=\"{url}\">{text}</a>"),
         }
     }
 }
@@ -50,11 +50,11 @@ impl fmt::Display for Block {
                     ListKind::Unordered => "ul",
                     ListKind::Ordered => "ol",
                 };
-                write!(f, "<{}>", tag)?;
+                write!(f, "<{tag}>")?;
                 for it in items {
                     write!(f, "<li>{}</li>", join_inlines(it))?;
                 }
-                write!(f, "</{}>", tag)
+                write!(f, "</{tag}>")
             }
             Block::CodeBlock(code) => write!(f, "<pre><code>{}</code></pre>", html_escape(code)),
             Block::Quote(children) => {
@@ -229,7 +229,7 @@ fn colon_heading_text(current: &Line<'_>, next: Option<&Line<'_>>) -> Option<Str
     }
 }
 
-fn strip_indent_preserve<'a>(s: &'a str, indent: usize) -> &'a str {
+fn strip_indent_preserve(s: &str, indent: usize) -> &str {
     if indent == 0 {
         return s;
     }
@@ -306,7 +306,7 @@ fn build_definition_blocks(term: &str, classifier: Option<&str>, body_text: &str
 }
 
 fn split_definition_line(input: &str) -> (String, Option<String>, String) {
-    let idx = input.find(':').unwrap_or_else(|| input.len());
+    let idx = input.find(':').unwrap_or(input.len());
     let term_part = input[..idx].trim();
     let mut term = term_part.to_string();
 

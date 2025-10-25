@@ -16,7 +16,7 @@ impl fmt::Display for Kind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Kind::Star => write!(f, "*"),
-            Kind::Arrow(k1, k2) => write!(f, "{} -> {}", k1, k2),
+            Kind::Arrow(k1, k2) => write!(f, "{k1} -> {k2}"),
         }
     }
 }
@@ -110,8 +110,8 @@ impl fmt::Display for TypeCtor {
             TypeCtor::Function => write!(f, "function"),
             TypeCtor::Any => write!(f, "Any"),
             TypeCtor::Never => write!(f, "Never"),
-            TypeCtor::Class(name) => write!(f, "{}", name),
-            TypeCtor::Module(name) => write!(f, "module<{}>", name),
+            TypeCtor::Class(name) => write!(f, "{name}"),
+            TypeCtor::Module(name) => write!(f, "module<{name}>"),
         }
     }
 }
@@ -179,19 +179,19 @@ pub enum Type {
 impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Type::Var(tv) => write!(f, "{}", tv),
-            Type::Con(tc) => write!(f, "{}", tc),
+            Type::Var(tv) => write!(f, "{tv}"),
+            Type::Con(tc) => write!(f, "{tc}"),
             Type::App(t1, t2) => match t1.as_ref() {
-                Type::Con(TypeCtor::List) => write!(f, "list[{}]", t2),
-                Type::Con(TypeCtor::Set) => write!(f, "set[{}]", t2),
+                Type::Con(TypeCtor::List) => write!(f, "list[{t2}]"),
+                Type::Con(TypeCtor::Set) => write!(f, "set[{t2}]"),
                 Type::App(inner, key) if matches!(inner.as_ref(), Type::Con(TypeCtor::Dict)) => {
-                    write!(f, "dict[{}, {}]", key, t2)
+                    write!(f, "dict[{key}, {t2}]")
                 }
-                _ => write!(f, "({} {})", t1, t2),
+                _ => write!(f, "({t1} {t2})"),
             },
             Type::Fun(args, ret) => {
                 if args.is_empty() {
-                    write!(f, "() -> {}", ret)
+                    write!(f, "() -> {ret}")
                 } else if args.len() == 1 {
                     write!(f, "{} -> {}", args[0], ret)
                 } else {
@@ -205,7 +205,7 @@ impl fmt::Display for Type {
             }
             Type::ForAll(tvs, t) => {
                 if tvs.is_empty() {
-                    write!(f, "{}", t)
+                    write!(f, "{t}")
                 } else {
                     write!(
                         f,
@@ -223,7 +223,7 @@ impl fmt::Display for Type {
                 )
             }
             Type::Record(fields, row_var) => {
-                let field_strs: Vec<String> = fields.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
+                let field_strs: Vec<String> = fields.iter().map(|(k, v)| format!("{k}: {v}")).collect();
                 match row_var {
                     Some(rv) => write!(f, "{{ {} | {} }}", field_strs.join(", "), rv),
                     None => write!(f, "{{ {} }}", field_strs.join(", ")),

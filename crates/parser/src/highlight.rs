@@ -93,14 +93,8 @@ impl PythonHighlighter {
             | "nonlocal" | "lambda" | "and" | "or" | "not" | "in" | "is" | "async" | "await" => {
                 Some(color_scheme.keyword)
             }
-            "function_definition" => match node.child_by_field_name("name") {
-                Some(_named_node) => return Some(color_scheme.function),
-                None => None,
-            },
-            "class_definition" => match node.child_by_field_name("name") {
-                Some(_named_node) => return Some(color_scheme.class),
-                None => None,
-            },
+            "function_definition" => node.child_by_field_name("name").map(|_named_node| color_scheme.function),
+            "class_definition" => node.child_by_field_name("name").map(|_named_node| color_scheme.class),
             "string" | "string_content" => Some(color_scheme.string),
             "integer" | "float" | "true" | "false" => Some(color_scheme.number),
             "none" => Some(color_scheme.keyword),

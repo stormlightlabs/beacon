@@ -109,9 +109,9 @@ fn parse_command(source: &str, pretty: bool, show_tree: bool) -> Result<()> {
 
     if pretty {
         println!("Python AST:");
-        println!("{:#?}", ast);
+        println!("{ast:#?}");
     } else {
-        println!("{:?}", ast);
+        println!("{ast:?}");
     }
 
     Ok(())
@@ -125,7 +125,7 @@ fn highlight_command(source: &str, enable_colors: bool) -> Result<()> {
     let highlighter = PythonHighlighter::new(enable_colors);
     let highlighted = highlighter.highlight(source, &parsed.tree);
 
-    println!("{}", highlighted);
+    println!("{highlighted}");
 
     Ok(())
 }
@@ -152,7 +152,7 @@ fn check_command(source: &str) -> Result<()> {
             if cfg!(test) {
                 return Err(e).with_context(|| "Failed to parse source code");
             } else {
-                println!("❌ Failed to parse: {}", e);
+                println!("❌ Failed to parse: {e}");
                 std::process::exit(1);
             }
         }
@@ -199,7 +199,7 @@ fn resolve_command(source: &str, verbose: bool) -> Result<()> {
         println!("\n▶ Statistics:");
         println!("  • Total scopes: {}", symbol_table.scopes.len());
         let total_symbols: usize = symbol_table.scopes.values().map(|scope| scope.symbols.len()).sum();
-        println!("  • Total symbols: {}", total_symbols);
+        println!("  • Total symbols: {total_symbols}");
     }
 
     Ok(())
@@ -220,9 +220,9 @@ fn print_scope(table: &SymbolTable, scope_id: beacon_parser::ScopeId, depth: usi
     };
 
     if depth == 0 {
-        println!("▼ {} Scope:", scope_name);
+        println!("▼ {scope_name} Scope:");
     } else {
-        println!("{}▼ {} Scope:", indent, scope_name);
+        println!("{indent}▼ {scope_name} Scope:");
     }
 
     let mut symbols: Vec<_> = scope.symbols.values().collect();
@@ -626,10 +626,10 @@ result = obj.method(10)
         format_scope_for_test(table, table.root_scope, 0, verbose, &mut output);
 
         if verbose {
-            output.push_str(&format!("\nStatistics:\n"));
+            output.push_str("\nStatistics:\n");
             output.push_str(&format!("  • Total scopes: {}\n", table.scopes.len()));
             let total_symbols: usize = table.scopes.values().map(|scope| scope.symbols.len()).sum();
-            output.push_str(&format!("  • Total symbols: {}\n", total_symbols));
+            output.push_str(&format!("  • Total symbols: {total_symbols}\n"));
         }
 
         output
@@ -649,9 +649,9 @@ result = obj.method(10)
         };
 
         if depth == 0 {
-            output.push_str(&format!("▼ {} Scope:\n", scope_name));
+            output.push_str(&format!("▼ {scope_name} Scope:\n"));
         } else {
-            output.push_str(&format!("{}▼ {} Scope:\n", indent, scope_name));
+            output.push_str(&format!("{indent}▼ {scope_name} Scope:\n"));
         }
 
         let mut symbols: Vec<_> = scope.symbols.values().collect();

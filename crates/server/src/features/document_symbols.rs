@@ -125,7 +125,7 @@ impl DocumentSymbolsProvider {
         let start = Position { line: (line.saturating_sub(1)) as u32, character: (col.saturating_sub(1)) as u32 };
 
         let end = if let Some(last_child) = body.last() {
-            self.node_end_position(last_child)
+            Self::node_end_position(last_child)
         } else {
             Position { line: start.line, character: start.character + 10 }
         };
@@ -141,32 +141,32 @@ impl DocumentSymbolsProvider {
 
     fn assignment_range(&self, line: usize, col: usize, value: &AstNode) -> Range {
         let start = Position { line: (line.saturating_sub(1)) as u32, character: (col.saturating_sub(1)) as u32 };
-        let end = self.node_end_position(value);
+        let end = Self::node_end_position(value);
         Range { start, end }
     }
 
-    fn node_end_position(&self, node: &AstNode) -> Position {
+    fn node_end_position(node: &AstNode) -> Position {
         match node {
             AstNode::FunctionDef { body, line, col, .. } | AstNode::ClassDef { body, line, col, .. } => {
                 match body.last() {
-                    Some(last) => self.node_end_position(last),
+                    Some(last) => Self::node_end_position(last),
                     None => {
                         Position { line: (*line).saturating_sub(1) as u32, character: (*col).saturating_sub(1) as u32 }
                     }
                 }
             }
             AstNode::Module { body, .. } => match body.last() {
-                Some(last) => self.node_end_position(last),
+                Some(last) => Self::node_end_position(last),
                 None => Position { line: 0, character: 0 },
             },
             AstNode::If { body, else_body, .. } => {
                 if let Some(else_stmts) = else_body {
                     if let Some(last) = else_stmts.last() {
-                        return self.node_end_position(last);
+                        return Self::node_end_position(last);
                     }
                 }
                 if let Some(last) = body.last() {
-                    self.node_end_position(last)
+                    Self::node_end_position(last)
                 } else {
                     Position { line: 0, character: 0 }
                 }
@@ -175,7 +175,7 @@ impl DocumentSymbolsProvider {
             | AstNode::While { body, line, col, .. }
             | AstNode::With { body, line, col, .. } => {
                 if let Some(last) = body.last() {
-                    self.node_end_position(last)
+                    Self::node_end_position(last)
                 } else {
                     Position { line: (*line).saturating_sub(1) as u32, character: (*col + 10).saturating_sub(1) as u32 }
                 }
@@ -183,11 +183,11 @@ impl DocumentSymbolsProvider {
             AstNode::Try { body, finally_body, line, col, .. } => {
                 if let Some(finally_stmts) = finally_body {
                     if let Some(last) = finally_stmts.last() {
-                        return self.node_end_position(last);
+                        return Self::node_end_position(last);
                     }
                 }
                 if let Some(last) = body.last() {
-                    self.node_end_position(last)
+                    Self::node_end_position(last)
                 } else {
                     Position { line: (*line).saturating_sub(1) as u32, character: (*col + 10).saturating_sub(1) as u32 }
                 }

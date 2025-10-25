@@ -158,12 +158,12 @@ impl SemanticTokensProvider {
                 let decorator_token_type = self.get_token_type_index(&SymbolKind::Function);
                 for decorator in decorators {
                     let decorator_line = line.saturating_sub(decorators.len());
-                    self.add_token(decorator, decorator_line, 1, decorator_token_type, 0, text, raw_tokens);
+                    Self::add_token(decorator, decorator_line, 1, decorator_token_type, 0, text, raw_tokens);
                 }
 
                 let token_type = self.get_token_type_index(&SymbolKind::Function);
                 let modifiers = self.get_definition_modifier();
-                self.add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
+                Self::add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
 
                 let func_scope = if let Some(first_param) = args.first() {
                     let line = (first_param.line as u32).saturating_sub(1);
@@ -194,7 +194,7 @@ impl SemanticTokensProvider {
                     .unwrap_or(0) as u32;
 
                 for param in args {
-                    self.add_token(
+                    Self::add_token(
                         &param.name,
                         param.line,
                         param.col,
@@ -208,7 +208,7 @@ impl SemanticTokensProvider {
                         if let Some(type_col) =
                             Self::find_type_annotation_position(text, param.line, param.col, &param.name, type_ann)
                         {
-                            self.add_token(type_ann, param.line, type_col, type_token_type, 0, text, raw_tokens);
+                            Self::add_token(type_ann, param.line, type_col, type_token_type, 0, text, raw_tokens);
                         }
                     }
 
@@ -219,7 +219,7 @@ impl SemanticTokensProvider {
 
                 if let Some(ret_type) = return_type {
                     if let Some(ret_col) = Self::find_return_type_position(text, *line, ret_type) {
-                        self.add_token(ret_type, *line, ret_col, type_token_type, 0, text, raw_tokens);
+                        Self::add_token(ret_type, *line, ret_col, type_token_type, 0, text, raw_tokens);
                     }
                 }
 
@@ -231,12 +231,12 @@ impl SemanticTokensProvider {
                 let decorator_token_type = self.get_token_type_index(&SymbolKind::Function);
                 for decorator in decorators {
                     let decorator_line = line.saturating_sub(decorators.len());
-                    self.add_token(decorator, decorator_line, 1, decorator_token_type, 0, text, raw_tokens);
+                    Self::add_token(decorator, decorator_line, 1, decorator_token_type, 0, text, raw_tokens);
                 }
 
                 let token_type = self.get_token_type_index(&SymbolKind::Class);
                 let modifiers = self.get_definition_modifier();
-                self.add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
+                Self::add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
 
                 let class_scope = if let Some(first_stmt) = body.first() {
                     let (stmt_line, stmt_col) = Self::get_node_position(first_stmt);
@@ -260,14 +260,14 @@ impl SemanticTokensProvider {
             AstNode::Assignment { target, value, line, col } => {
                 let token_type = self.get_token_type_index(&SymbolKind::Variable);
                 let modifiers = self.get_definition_modifier();
-                self.add_token(target, *line, *col, token_type, modifiers, text, raw_tokens);
+                Self::add_token(target, *line, *col, token_type, modifiers, text, raw_tokens);
                 self.collect_tokens_from_node(value, symbol_table, current_scope, text, raw_tokens);
             }
 
             AstNode::AnnotatedAssignment { target, type_annotation, value, line, col } => {
                 let token_type = self.get_token_type_index(&SymbolKind::Variable);
                 let modifiers = self.get_definition_modifier();
-                self.add_token(target, *line, *col, token_type, modifiers, text, raw_tokens);
+                Self::add_token(target, *line, *col, token_type, modifiers, text, raw_tokens);
 
                 let type_token_type = SUPPORTED_TYPES
                     .iter()
@@ -276,7 +276,7 @@ impl SemanticTokensProvider {
 
                 if let Some(type_col) = Self::find_type_annotation_position(text, *line, *col, target, type_annotation)
                 {
-                    self.add_token(type_annotation, *line, type_col, type_token_type, 0, text, raw_tokens);
+                    Self::add_token(type_annotation, *line, type_col, type_token_type, 0, text, raw_tokens);
                 }
 
                 if let Some(val) = value {
@@ -293,23 +293,21 @@ impl SemanticTokensProvider {
                         if i == 0 {
                             if let Some(symbol) = symbol_table.lookup_symbol(part, current_scope) {
                                 let token_type = self.get_token_type_index(&symbol.kind);
-                                self.add_token(part, *line, current_col, token_type, 0, text, raw_tokens);
+                                Self::add_token(part, *line, current_col, token_type, 0, text, raw_tokens);
                             }
                         } else {
                             let token_type = SUPPORTED_TYPES
                                 .iter()
                                 .position(|t| *t == SemanticTokenType::PROPERTY)
                                 .unwrap_or(0) as u32;
-                            self.add_token(part, *line, current_col, token_type, 0, text, raw_tokens);
+                            Self::add_token(part, *line, current_col, token_type, 0, text, raw_tokens);
                         }
                         current_col += part.len() + 1;
                     }
-                } else {
-                    if let Some(symbol) = symbol_table.lookup_symbol(function, current_scope) {
-                        let token_type = self.get_token_type_index(&symbol.kind);
-                        let modifiers = 0;
-                        self.add_token(function, *line, *col, token_type, modifiers, text, raw_tokens);
-                    }
+                } else if let Some(symbol) = symbol_table.lookup_symbol(function, current_scope) {
+                    let token_type = self.get_token_type_index(&symbol.kind);
+                    let modifiers = 0;
+                    Self::add_token(function, *line, *col, token_type, modifiers, text, raw_tokens);
                 }
 
                 for arg in args {
@@ -321,7 +319,7 @@ impl SemanticTokensProvider {
                 if let Some(symbol) = symbol_table.lookup_symbol(name, current_scope) {
                     let token_type = self.get_token_type_index(&symbol.kind);
                     let modifiers = 0;
-                    self.add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
+                    Self::add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
                 }
             }
 
@@ -373,24 +371,22 @@ impl SemanticTokensProvider {
                 });
             }
 
-            AstNode::Return { value, .. } => {
-                if let Some(val) = value {
-                    self.collect_tokens_from_node(val, symbol_table, current_scope, text, raw_tokens);
-                }
+            AstNode::Return { value: Some(val), .. } => {
+                self.collect_tokens_from_node(val, symbol_table, current_scope, text, raw_tokens);
             }
 
             AstNode::Import { module, alias, line, col } => {
                 let name = alias.as_ref().unwrap_or(module);
                 let token_type = self.get_token_type_index(&SymbolKind::Import);
                 let modifiers = self.get_definition_modifier();
-                self.add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
+                Self::add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
             }
 
             AstNode::ImportFrom { names, line, col, .. } => {
                 let token_type = self.get_token_type_index(&SymbolKind::Import);
                 let modifiers = self.get_definition_modifier();
                 for name in names {
-                    self.add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
+                    Self::add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
                 }
             }
 
@@ -401,7 +397,7 @@ impl SemanticTokensProvider {
                     .iter()
                     .position(|t| *t == SemanticTokenType::PROPERTY)
                     .unwrap_or(0) as u32;
-                self.add_token(attribute, *line, *col, token_type, 0, text, raw_tokens);
+                Self::add_token(attribute, *line, *col, token_type, 0, text, raw_tokens);
             }
             _ => {}
         }
@@ -409,7 +405,7 @@ impl SemanticTokensProvider {
 
     /// Add a token for an identifier
     fn add_token(
-        &self, name: &str, line: usize, col: usize, token_type: u32, modifiers: u32, _text: &str,
+        name: &str, line: usize, col: usize, token_type: u32, modifiers: u32, _text: &str,
         raw_tokens: &mut Vec<RawToken>,
     ) {
         let lsp_line = (line as u32).saturating_sub(1);
@@ -577,13 +573,11 @@ mod tests {
 
     #[test]
     fn test_supported_types_count() {
-        assert!(!SUPPORTED_TYPES.is_empty());
         assert_eq!(SUPPORTED_TYPES.len(), 18);
     }
 
     #[test]
     fn test_supported_modifiers_count() {
-        assert!(!SUPPORTED_MODIFIERS.is_empty());
         assert_eq!(SUPPORTED_MODIFIERS.len(), 8);
     }
 

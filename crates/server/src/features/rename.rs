@@ -74,7 +74,7 @@ impl RenameProvider {
             }
 
             let mut edits = Vec::new();
-            self.collect_renames(ast, symbol_name, new_name, &mut edits, &text);
+            Self::collect_renames(ast, symbol_name, new_name, &mut edits, &text);
 
             let tree_edits = Self::collect_tree_identifier_edits(tree, &text, symbol_name, new_name);
             let edits = Self::merge_edits(edits, tree_edits);
@@ -92,9 +92,7 @@ impl RenameProvider {
     /// Recursively collect rename edits from the AST
     ///
     /// Finds all occurrences of the symbol and creates text edits to replace them.
-    fn collect_renames(
-        &self, node: &AstNode, symbol_name: &str, new_name: &str, edits: &mut Vec<TextEdit>, _text: &str,
-    ) {
+    fn collect_renames(node: &AstNode, symbol_name: &str, new_name: &str, edits: &mut Vec<TextEdit>, _text: &str) {
         match node {
             AstNode::Identifier { name, line, col } if name == symbol_name => {
                 let position =
@@ -123,28 +121,26 @@ impl RenameProvider {
                     matches!(value.as_ref(), AstNode::Identifier { name, .. } if name == symbol_name);
 
                 if !(target == symbol_name && value_is_same_identifier) {
-                    self.collect_renames(value, symbol_name, new_name, edits, _text);
+                    Self::collect_renames(value, symbol_name, new_name, edits, _text);
                 }
             }
             AstNode::FunctionDef { body, .. } => {
                 for stmt in body {
-                    self.collect_renames(stmt, symbol_name, new_name, edits, _text);
+                    Self::collect_renames(stmt, symbol_name, new_name, edits, _text);
                 }
             }
             AstNode::ClassDef { body, .. } | AstNode::Module { body, .. } => {
                 for stmt in body {
-                    self.collect_renames(stmt, symbol_name, new_name, edits, _text);
+                    Self::collect_renames(stmt, symbol_name, new_name, edits, _text);
                 }
             }
             AstNode::Call { args, .. } => {
                 for arg in args {
-                    self.collect_renames(arg, symbol_name, new_name, edits, _text);
+                    Self::collect_renames(arg, symbol_name, new_name, edits, _text);
                 }
             }
-            AstNode::Return { value, .. } => {
-                if let Some(val) = value {
-                    self.collect_renames(val, symbol_name, new_name, edits, _text);
-                }
+            AstNode::Return { value: Some(val), .. } => {
+                Self::collect_renames(val, symbol_name, new_name, edits, _text);
             }
             AstNode::Literal { .. } => {}
             _ => {}
@@ -338,13 +334,10 @@ print(x)"#;
 
     #[test]
     fn test_collect_renames_simple() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = RenameProvider::new(documents);
-
         let ast = AstNode::Identifier { name: "old_name".to_string(), line: 1, col: 1 };
         let mut edits = Vec::new();
 
-        provider.collect_renames(&ast, "old_name", "new_name", &mut edits, "old_name");
+        RenameProvider::collect_renames(&ast, "old_name", "new_name", &mut edits, "old_name");
 
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].new_text, "new_name");
@@ -354,9 +347,6 @@ print(x)"#;
 
     #[test]
     fn test_collect_renames_in_assignment() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = RenameProvider::new(documents);
-
         let ast = AstNode::Assignment {
             target: "x".to_string(),
             value: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 5 }),
@@ -365,7 +355,7 @@ print(x)"#;
         };
 
         let mut edits = Vec::new();
-        provider.collect_renames(&ast, "x", "y", &mut edits, "x = x");
+        RenameProvider::collect_renames(&ast, "x", "y", &mut edits, "x = x");
 
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].new_text, "y");
@@ -373,9 +363,6 @@ print(x)"#;
 
     #[test]
     fn test_collect_renames_in_function() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = RenameProvider::new(documents);
-
         let ast = AstNode::FunctionDef {
             name: "test".to_string(),
             args: vec![],
@@ -408,7 +395,7 @@ print(x)"#;
         };
 
         let mut edits = Vec::new();
-        provider.collect_renames(&ast, "x", "result", &mut edits, "");
+        RenameProvider::collect_renames(&ast, "x", "result", &mut edits, "");
 
         assert_eq!(edits.len(), 2);
         for edit in &edits {
@@ -418,9 +405,6 @@ print(x)"#;
 
     #[test]
     fn test_collect_renames_in_call() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = RenameProvider::new(documents);
-
         let ast = AstNode::Call {
             function: "print".to_string(),
             args: vec![AstNode::Identifier { name: "x".to_string(), line: 1, col: 7 }],
@@ -429,7 +413,7 @@ print(x)"#;
         };
 
         let mut edits = Vec::new();
-        provider.collect_renames(&ast, "x", "value", &mut edits, "");
+        RenameProvider::collect_renames(&ast, "x", "value", &mut edits, "");
 
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].new_text, "value");
@@ -437,22 +421,16 @@ print(x)"#;
 
     #[test]
     fn test_collect_renames_no_match() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = RenameProvider::new(documents);
-
         let ast = AstNode::Identifier { name: "x".to_string(), line: 1, col: 1 };
         let mut edits = Vec::new();
 
-        provider.collect_renames(&ast, "y", "z", &mut edits, "");
+        RenameProvider::collect_renames(&ast, "y", "z", &mut edits, "");
 
         assert_eq!(edits.len(), 0);
     }
 
     #[test]
     fn test_collect_renames_nested() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = RenameProvider::new(documents);
-
         let ast = AstNode::Module {
             body: vec![AstNode::ClassDef {
                 name: "MyClass".to_string(),
@@ -483,7 +461,7 @@ print(x)"#;
         };
 
         let mut edits = Vec::new();
-        provider.collect_renames(&ast, "x", "new_x", &mut edits, "");
+        RenameProvider::collect_renames(&ast, "x", "new_x", &mut edits, "");
 
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].new_text, "new_x");
@@ -491,13 +469,10 @@ print(x)"#;
 
     #[test]
     fn test_rename_position_calculation() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = RenameProvider::new(documents);
-
         let ast = AstNode::Identifier { name: "long_variable_name".to_string(), line: 5, col: 10 };
         let mut edits = Vec::new();
 
-        provider.collect_renames(&ast, "long_variable_name", "short", &mut edits, "");
+        RenameProvider::collect_renames(&ast, "long_variable_name", "short", &mut edits, "");
 
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].range.start.line, 4); // 0-indexed
@@ -534,7 +509,7 @@ print(x)"#;
         let changes = workspace_edit.changes.unwrap();
         let edits = &changes[&uri];
 
-        assert!(edits.len() >= 1);
+        assert!(!edits.is_empty());
     }
 
     #[test]
@@ -553,9 +528,6 @@ print(x)"#;
 
     #[test]
     fn test_collect_renames_module() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = RenameProvider::new(documents);
-
         let ast = AstNode::Module {
             body: vec![
                 AstNode::Assignment {
@@ -579,7 +551,7 @@ print(x)"#;
         };
 
         let mut edits = Vec::new();
-        provider.collect_renames(&ast, "x", "renamed", &mut edits, "");
+        RenameProvider::collect_renames(&ast, "x", "renamed", &mut edits, "");
 
         assert_eq!(edits.len(), 2);
     }

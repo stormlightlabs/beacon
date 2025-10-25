@@ -135,3 +135,9 @@ This document outlines the plan for implementing a minimal, working, testable LS
 ## Parking Lot
 
 - Handle "dunder"/magic methods & variables, i.e. `__main__`
+- match..case blocks are not exhaustively covered by tests
+    - `crates/parser/src/resolve.rs`
+    - `crates/parser/src/lib.rs`
+    - `field_label` in `crates/parser/src/rst.rs`
+    - `occurs_check` in `crates/core/src/unify.rs`
+    - `std::fmt::Display` implementations in `crates/core/src/types.rs`

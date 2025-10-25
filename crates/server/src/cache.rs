@@ -186,18 +186,15 @@ impl IntrospectionCache {
 
         if let Some(ref file) = cache_file {
             if file.exists() {
-                match Self::load_from_disk(file) {
-                    Ok(loaded) => {
-                        for (key, value) in loaded {
-                            cache.put(key, value);
-                        }
-                        tracing::debug!(
-                            "Loaded {} introspection cache entries from {}",
-                            cache.len(),
-                            file.display()
-                        );
+                if let Ok(loaded) = Self::load_from_disk(file) {
+                    for (key, value) in loaded {
+                        cache.put(key, value);
                     }
-                    Err(_) => (),
+                    tracing::debug!(
+                        "Loaded {} introspection cache entries from {}",
+                        cache.len(),
+                        file.display()
+                    );
                 }
             }
         }
@@ -248,7 +245,7 @@ impl IntrospectionCache {
 
             let entries: Vec<_> = cache.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             let json = serde_json::to_string_pretty(&entries)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                .map_err(std::io::Error::other)?;
             std::fs::write(file, json)?;
             debug!(
                 "Saved {} introspection cache entries to {}",

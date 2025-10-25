@@ -113,20 +113,15 @@ impl SymbolTable {
     /// Look up a symbol, walking up the scope chain
     pub fn lookup_symbol(&self, name: &str, from_scope: ScopeId) -> Option<&Symbol> {
         let mut current_scope = from_scope;
+        while let Some(scope) = self.scopes.get(&current_scope) {
+            let symbol = scope.symbols.get(name);
+            if symbol.is_some() {
+                return symbol;
+            }
 
-        loop {
-            if let Some(scope) = self.scopes.get(&current_scope) {
-                let symbol = scope.symbols.get(name);
-                if symbol.is_some() {
-                    return symbol;
-                }
-
-                match scope.parent {
-                    Some(parent_id) => current_scope = parent_id,
-                    None => break,
-                }
-            } else {
-                break;
+            match scope.parent {
+                Some(parent_id) => current_scope = parent_id,
+                None => break,
             }
         }
 
@@ -675,9 +670,8 @@ impl Default for NameResolver {
 
 #[cfg(test)]
 mod tests {
-    use crate::Parameter;
-
     use super::*;
+    use crate::Parameter;
 
     #[test]
     fn test_symbol_table_creation() {
@@ -886,7 +880,13 @@ mod tests {
                 },
                 AstNode::FunctionDef {
                     name: "outer".to_string(),
-                    args: vec![Parameter { name: "param".to_string(), line: 2, col: 11, type_annotation: None, default_value: None }],
+                    args: vec![Parameter {
+                        name: "param".to_string(),
+                        line: 2,
+                        col: 11,
+                        type_annotation: None,
+                        default_value: None,
+                    }],
                     body: vec![AstNode::Assignment {
                         target: "outer_var".to_string(),
                         value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(2), line: 3, col: 20 }),

@@ -7,7 +7,7 @@
 //! - Project-wide type checking
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::path::PathBuf;
+use std::path::Path;
 use url::Url;
 
 use crate::config::Config;
@@ -153,7 +153,7 @@ impl StubCache {
     }
 
     /// TODO: Load and parse a .pyi stub file
-    fn _load(&mut self, _path: &PathBuf) -> Option<StubFile> {
+    fn _load(&mut self, _path: &Path) -> Option<StubFile> {
         None
     }
 

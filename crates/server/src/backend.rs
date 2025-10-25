@@ -174,7 +174,7 @@ impl LanguageServer for Backend {
 
         if let Err(e) = self.documents.open_document(url.clone(), version, text) {
             self.client
-                .log_message(MessageType::ERROR, format!("Failed to open document: {}", e))
+                .log_message(MessageType::ERROR, format!("Failed to open document: {e}"))
                 .await;
             return;
         }
@@ -198,7 +198,7 @@ impl LanguageServer for Backend {
             }
             Err(e) => {
                 self.client
-                    .log_message(MessageType::ERROR, format!("Failed to update document: {}", e))
+                    .log_message(MessageType::ERROR, format!("Failed to update document: {e}"))
                     .await;
             }
         }

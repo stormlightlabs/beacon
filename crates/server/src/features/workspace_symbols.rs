@@ -33,7 +33,7 @@ impl WorkspaceSymbolsProvider {
                 let symbol_table = doc.symbol_table()?;
                 let ast = doc.ast()?;
 
-                self.collect_matching_symbols(&uri, ast, symbol_table, &query, &mut results);
+                Self::collect_matching_symbols(&uri, ast, symbol_table, &query, &mut results);
                 Some(())
             });
         }
@@ -53,7 +53,7 @@ impl WorkspaceSymbolsProvider {
     ///
     /// Recursively walks the AST and adds matching symbols to results.
     fn collect_matching_symbols(
-        &self, uri: &Url, node: &AstNode, symbol_table: &SymbolTable, query: &str, results: &mut Vec<SymbolInformation>,
+        uri: &Url, node: &AstNode, symbol_table: &SymbolTable, query: &str, results: &mut Vec<SymbolInformation>,
     ) {
         match node {
             AstNode::FunctionDef { name, line, col, body, .. } => {
@@ -81,7 +81,7 @@ impl WorkspaceSymbolsProvider {
                 }
 
                 for stmt in body {
-                    self.collect_matching_symbols(uri, stmt, symbol_table, query, results);
+                    Self::collect_matching_symbols(uri, stmt, symbol_table, query, results);
                 }
             }
             AstNode::ClassDef { name, line, col, body, .. } => {
@@ -108,7 +108,7 @@ impl WorkspaceSymbolsProvider {
                 }
 
                 for stmt in body {
-                    self.collect_matching_symbols(uri, stmt, symbol_table, query, results);
+                    Self::collect_matching_symbols(uri, stmt, symbol_table, query, results);
                 }
             }
             AstNode::Assignment { target, value, line, col } => {
@@ -135,11 +135,11 @@ impl WorkspaceSymbolsProvider {
                     ));
                 }
 
-                self.collect_matching_symbols(uri, value, symbol_table, query, results);
+                Self::collect_matching_symbols(uri, value, symbol_table, query, results);
             }
             AstNode::Module { body, .. } => {
                 for stmt in body {
-                    self.collect_matching_symbols(uri, stmt, symbol_table, query, results);
+                    Self::collect_matching_symbols(uri, stmt, symbol_table, query, results);
                 }
             }
             _ => {}

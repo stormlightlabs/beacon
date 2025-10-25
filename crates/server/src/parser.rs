@@ -136,7 +136,7 @@ impl LspParser {
         if newline_count == 0 {
             Point { row: start.row, column: start.column + inserted_text.len() }
         } else {
-            let last_line = inserted_text.split('\n').last().unwrap_or("");
+            let last_line = inserted_text.split('\n').next_back().unwrap_or("");
             Point { row: start.row + newline_count, column: last_line.len() }
         }
     }
@@ -148,13 +148,13 @@ impl LspParser {
         let mut errors = Vec::new();
         let root = tree.root_node();
 
-        self.collect_errors_recursive(root, text, &mut errors);
+        Self::collect_errors_recursive(root, text, &mut errors);
 
         errors
     }
 
     /// Recursively traverse the tree to find error nodes
-    fn collect_errors_recursive(&self, node: tree_sitter::Node, text: &str, errors: &mut Vec<ParseError>) {
+    fn collect_errors_recursive(node: tree_sitter::Node, text: &str, errors: &mut Vec<ParseError>) {
         if node.is_error() || node.is_missing() {
             let range = Range {
                 start: utils::tree_sitter_point_to_position(text, node.start_position()),
@@ -174,7 +174,7 @@ impl LspParser {
 
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            self.collect_errors_recursive(child, text, errors);
+            Self::collect_errors_recursive(child, text, errors);
         }
     }
 

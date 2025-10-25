@@ -88,9 +88,7 @@ impl Subst {
         }
 
         for (tv, ty) in other.map {
-            if !result.contains_key(&tv) {
-                result.insert(tv, ty);
-            }
+            result.entry(tv).or_insert(ty);
         }
 
         Subst { map: result }
@@ -126,7 +124,7 @@ impl fmt::Display for Subst {
         if self.map.is_empty() {
             write!(f, "[]")
         } else {
-            let mappings: Vec<String> = self.map.iter().map(|(tv, ty)| format!("{} ↦ {}", tv, ty)).collect();
+            let mappings: Vec<String> = self.map.iter().map(|(tv, ty)| format!("{tv} ↦ {ty}")).collect();
             write!(f, "[{}]", mappings.join(", "))
         }
     }

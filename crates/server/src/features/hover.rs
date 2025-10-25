@@ -82,14 +82,9 @@ impl HoverProvider {
     fn format_function_hover(
         &self, name: &str, ast: &AstNode, def_line: usize, docstring: Option<&str>,
     ) -> MarkupContent {
-        let signature = self
-            .extract_function_signature(ast, name)
-            .unwrap_or_else(|| format!("def {}(...)", name));
+        let signature = Self::extract_function_signature(ast, name).unwrap_or_else(|| format!("def {name}(...)"));
 
-        let mut value = format!(
-            "```python\n{}\n```\n\n**Function** defined at line {}",
-            signature, def_line
-        );
+        let mut value = format!("```python\n{signature}\n```\n\n**Function** defined at line {def_line}");
 
         if let Some(doc) = docstring {
             let rendered = rst::markdown_of(doc);
@@ -106,10 +101,7 @@ impl HoverProvider {
     fn format_class_hover(
         &self, name: &str, _ast: &AstNode, def_line: usize, docstring: Option<&str>,
     ) -> MarkupContent {
-        let mut value = format!(
-            "```python\nclass {}\n```\n\n**Class** defined at line {}",
-            name, def_line
-        );
+        let mut value = format!("```python\nclass {name}\n```\n\n**Class** defined at line {def_line}");
 
         if let Some(doc) = docstring {
             let rendered = rst::markdown_of(doc);
@@ -126,19 +118,19 @@ impl HoverProvider {
     fn format_variable_hover(&self, name: &str, _kind: &SymbolKind, def_line: usize, _def_col: usize) -> MarkupContent {
         MarkupContent {
             kind: MarkupKind::Markdown,
-            value: format!("**Variable** `{}`\n\nDefined at line {}", name, def_line),
+            value: format!("**Variable** `{name}`\n\nDefined at line {def_line}"),
         }
     }
 
     fn format_parameter_hover(&self, name: &str, def_line: usize, _def_col: usize) -> MarkupContent {
         MarkupContent {
             kind: MarkupKind::Markdown,
-            value: format!("**Parameter** `{}`\n\nDefined at line {}", name, def_line),
+            value: format!("**Parameter** `{name}`\n\nDefined at line {def_line}"),
         }
     }
 
     fn format_import_hover(&self, name: &str, ast: &AstNode, line: usize) -> MarkupContent {
-        if let Some((module, symbol)) = self.find_import_info(ast, line, name) {
+        if let Some((module, symbol)) = Self::find_import_info(ast, line, name) {
             if let Some(ref python) = self.interpreter_path {
                 if let Some(cached) = self.introspection_cache.get(&module, &symbol) {
                     return self.format_introspection_result(name, &module, &symbol, &cached);
@@ -159,17 +151,17 @@ impl HoverProvider {
 
             return MarkupContent {
                 kind: MarkupKind::Markdown,
-                value: format!("**Import** `{}` from module `{}`", name, module),
+                value: format!("**Import** `{name}` from module `{module}`"),
             };
         }
 
-        MarkupContent { kind: MarkupKind::Markdown, value: format!("**Import** `{}`", name) }
+        MarkupContent { kind: MarkupKind::Markdown, value: format!("**Import** `{name}`") }
     }
 
     /// Find import information from AST
     ///
     /// TODO: support import
-    fn find_import_info(&self, node: &AstNode, target_line: usize, symbol_name: &str) -> Option<(String, String)> {
+    fn find_import_info(node: &AstNode, target_line: usize, symbol_name: &str) -> Option<(String, String)> {
         match node {
             AstNode::ImportFrom { module, names, line, .. } if *line == target_line => {
                 if names.contains(&symbol_name.to_string()) {
@@ -180,7 +172,7 @@ impl HoverProvider {
             }
             AstNode::Module { body, .. } | AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } => {
                 for stmt in body {
-                    if let Some(info) = self.find_import_info(stmt, target_line, symbol_name) {
+                    if let Some(info) = Self::find_import_info(stmt, target_line, symbol_name) {
                         return Some(info);
                     }
                 }
@@ -200,10 +192,10 @@ impl HoverProvider {
         if result.signature.is_empty().not() {
             value.push_str(&format!("```python\n{}{}\n```\n\n", symbol_name, result.signature));
         } else {
-            value.push_str(&format!("```python\n{}\n```\n\n", symbol_name));
+            value.push_str(&format!("```python\n{symbol_name}\n```\n\n"));
         }
 
-        value.push_str(&format!("**Imported from** `{}`\n\n", module_name));
+        value.push_str(&format!("**Imported from** `{module_name}`\n\n"));
 
         if result.docstring.is_empty().not() {
             let rendered = rst::markdown_of(&result.docstring);
@@ -216,7 +208,7 @@ impl HoverProvider {
         MarkupContent { kind: MarkupKind::Markdown, value }
     }
 
-    fn extract_function_signature(&self, node: &AstNode, name: &str) -> Option<String> {
+    fn extract_function_signature(node: &AstNode, name: &str) -> Option<String> {
         match node {
             AstNode::FunctionDef { name: fn_name, args, .. } if fn_name == name => Some(format!(
                 "def {}({})",
@@ -225,7 +217,7 @@ impl HoverProvider {
             )),
             AstNode::Module { body, .. } | AstNode::ClassDef { body, .. } => {
                 for stmt in body {
-                    let sig = self.extract_function_signature(stmt, name);
+                    let sig = Self::extract_function_signature(stmt, name);
                     if sig.is_some() {
                         return sig;
                     }
@@ -241,7 +233,7 @@ impl HoverProvider {
     /// Provides rich formatting with type information
     fn format_type_hover(&self, ty: &beacon_core::Type) -> MarkupContent {
         let type_str = self.format_type(ty);
-        let value = format!("```python\n{}\n```\n\n**Inferred type**", type_str);
+        let value = format!("```python\n{type_str}\n```\n\n**Inferred type**");
         MarkupContent { kind: MarkupKind::Markdown, value }
     }
 
@@ -432,8 +424,6 @@ mod tests {
 
     #[test]
     fn test_extract_function_signature() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = HoverProvider::new(documents);
         let ast = AstNode::Module {
             body: vec![AstNode::FunctionDef {
                 name: "calculate".to_string(),
@@ -451,21 +441,25 @@ mod tests {
             docstring: None,
         };
 
-        let signature = provider.extract_function_signature(&ast, "calculate");
+        let signature = HoverProvider::extract_function_signature(&ast, "calculate");
         assert!(signature.is_some());
         assert_eq!(signature.unwrap(), "def calculate(a, b)");
     }
 
     #[test]
     fn test_extract_function_signature_nested_in_class() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = HoverProvider::new(documents);
         let ast = AstNode::Module {
             body: vec![AstNode::ClassDef {
                 name: "MyClass".to_string(),
                 body: vec![AstNode::FunctionDef {
                     name: "method".to_string(),
-                    args: vec![Parameter { name: "self".to_string(), line: 2, col: 16, type_annotation: None, default_value: None }],
+                    args: vec![Parameter {
+                        name: "self".to_string(),
+                        line: 2,
+                        col: 16,
+                        type_annotation: None,
+                        default_value: None,
+                    }],
                     body: vec![],
                     line: 2,
                     col: 5,
@@ -481,24 +475,22 @@ mod tests {
             docstring: None,
         };
 
-        let signature = provider.extract_function_signature(&ast, "method");
+        let signature = HoverProvider::extract_function_signature(&ast, "method");
         assert!(signature.is_some());
         assert_eq!(signature.unwrap(), "def method(self)");
     }
 
     #[test]
     fn test_extract_function_signature_not_found() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = HoverProvider::new(documents);
         let ast = beacon_parser::AstNode::Module { body: vec![], docstring: None };
-        let signature = provider.extract_function_signature(&ast, "nonexistent");
+        let signature = HoverProvider::extract_function_signature(&ast, "nonexistent");
         assert!(signature.is_none());
     }
 
     #[test]
     fn test_hover_provider_creation() {
         let documents = DocumentManager::new().unwrap();
-        let _provider = HoverProvider::new(documents);
+        let _ = HoverProvider::new(documents);
     }
 
     #[test]
@@ -595,9 +587,6 @@ mod tests {
 
     #[test]
     fn test_extract_function_signature_empty_args() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = HoverProvider::new(documents);
-
         let ast = AstNode::Module {
             body: vec![AstNode::FunctionDef {
                 name: "no_args".to_string(),
@@ -612,7 +601,7 @@ mod tests {
             docstring: None,
         };
 
-        let signature = provider.extract_function_signature(&ast, "no_args");
+        let signature = HoverProvider::extract_function_signature(&ast, "no_args");
         assert!(signature.is_some());
         assert_eq!(signature.unwrap(), "def no_args()");
     }

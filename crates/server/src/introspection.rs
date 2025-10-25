@@ -36,9 +36,9 @@ try:
     obj = getattr(mod, sym_name, None)
 
     if obj is None:
-        print("{}")
+        print("{SIGNATURE_MARKER}")
         print("")
-        print("{}")
+        print("{DOC_MARKER}")
         print("Symbol '{{}}' not found in module '{{}}'".format(sym_name, mod_name))
         sys.exit(0)
 
@@ -50,29 +50,21 @@ try:
 
     doc = inspect.getdoc(obj) or ""
 
-    print("{}")
+    print("{SIGNATURE_MARKER}")
     print(sig)
-    print("{}")
+    print("{DOC_MARKER}")
     print(doc)
 except ImportError as e:
-    print("{}")
+    print("{SIGNATURE_MARKER}")
     print("")
-    print("{}")
+    print("{DOC_MARKER}")
     print("Module '{{}}' not found: {{}}".format(mod_name, e))
 except Exception as e:
-    print("{}")
+    print("{SIGNATURE_MARKER}")
     print("")
-    print("{}")
+    print("{DOC_MARKER}")
     print("Error: {{}}".format(e))
-"#,
-        SIGNATURE_MARKER,
-        DOC_MARKER,
-        SIGNATURE_MARKER,
-        DOC_MARKER,
-        SIGNATURE_MARKER,
-        DOC_MARKER,
-        SIGNATURE_MARKER,
-        DOC_MARKER
+"#
     )
 }
 
@@ -193,8 +185,7 @@ mod tests {
     #[test]
     fn test_parse_introspection_output() {
         let output = format!(
-            "\n{}\n(x, y)\n{}\nAdd two numbers together.\n\nReturns the sum of x and y.\n",
-            SIGNATURE_MARKER, DOC_MARKER
+            "\n{SIGNATURE_MARKER}\n(x, y)\n{DOC_MARKER}\nAdd two numbers together.\n\nReturns the sum of x and y.\n"
         );
 
         let result = parse_introspection_output(&output).unwrap();
@@ -206,7 +197,7 @@ mod tests {
 
     #[test]
     fn test_parse_introspection_output_empty_signature() {
-        let output = format!("\n{}\n\n{}\nA constant value.\n", SIGNATURE_MARKER, DOC_MARKER);
+        let output = format!("\n{SIGNATURE_MARKER}\n\n{DOC_MARKER}\nA constant value.\n");
 
         let result = parse_introspection_output(&output).unwrap();
 
@@ -252,7 +243,7 @@ mod tests {
                     assert!(result.signature.contains("(") || !result.signature.is_empty());
                 }
                 Err(e) => {
-                    println!("Warning: Introspection test failed (this is okay in CI): {}", e);
+                    println!("Warning: Introspection test failed (this is okay in CI): {e}");
                 }
             }
         } else {
@@ -272,7 +263,7 @@ mod tests {
                     assert!(!result.docstring.is_empty());
                 }
                 Err(e) => {
-                    println!("Warning: Introspection test failed (this is okay in CI): {}", e);
+                    println!("Warning: Introspection test failed (this is okay in CI): {e}");
                 }
             }
         } else {

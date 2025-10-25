@@ -56,7 +56,7 @@ impl DocumentHighlightProvider {
 
         self.documents.get_document(uri, |doc| {
             let ast = doc.ast()?;
-            self.collect_highlights(ast, symbol_name, &mut highlights, text);
+            Self::collect_highlights(ast, symbol_name, &mut highlights, text);
             Some(())
         })?;
 
@@ -66,9 +66,7 @@ impl DocumentHighlightProvider {
     /// Recursively collect highlights from the AST
     ///
     /// Classifies each occurrence as Read or Write based on context.
-    fn collect_highlights(
-        &self, node: &AstNode, symbol_name: &str, highlights: &mut Vec<DocumentHighlight>, text: &str,
-    ) {
+    fn collect_highlights(node: &AstNode, symbol_name: &str, highlights: &mut Vec<DocumentHighlight>, _text: &str) {
         match node {
             AstNode::Identifier { name, line, col } if name == symbol_name => {
                 let position =
@@ -93,7 +91,7 @@ impl DocumentHighlightProvider {
                         kind: Some(DocumentHighlightKind::WRITE),
                     });
                 }
-                self.collect_highlights(value, symbol_name, highlights, text);
+                Self::collect_highlights(value, symbol_name, highlights, _text);
             }
             AstNode::FunctionDef { name, body, args, .. } => {
                 if name == symbol_name {
@@ -107,23 +105,21 @@ impl DocumentHighlightProvider {
                 }
 
                 for stmt in body {
-                    self.collect_highlights(stmt, symbol_name, highlights, text);
+                    Self::collect_highlights(stmt, symbol_name, highlights, _text);
                 }
             }
             AstNode::ClassDef { body, .. } | AstNode::Module { body, .. } => {
                 for stmt in body {
-                    self.collect_highlights(stmt, symbol_name, highlights, text);
+                    Self::collect_highlights(stmt, symbol_name, highlights, _text);
                 }
             }
             AstNode::Call { args, .. } => {
                 for arg in args {
-                    self.collect_highlights(arg, symbol_name, highlights, text);
+                    Self::collect_highlights(arg, symbol_name, highlights, _text);
                 }
             }
-            AstNode::Return { value, .. } => {
-                if let Some(val) = value {
-                    self.collect_highlights(val, symbol_name, highlights, text);
-                }
+            AstNode::Return { value: Some(val), .. } => {
+                Self::collect_highlights(val, symbol_name, highlights, _text);
             }
             AstNode::Literal { .. } => {}
             _ => {}
@@ -221,9 +217,6 @@ result = hello()"#;
 
     #[test]
     fn test_collect_highlights_assignment() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = DocumentHighlightProvider::new(documents);
-
         let ast = AstNode::Assignment {
             target: "x".to_string(),
             value: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 5 }),
@@ -232,7 +225,7 @@ result = hello()"#;
         };
 
         let mut highlights = Vec::new();
-        provider.collect_highlights(&ast, "x", &mut highlights, "x = x");
+        DocumentHighlightProvider::collect_highlights(&ast, "x", &mut highlights, "x = x");
 
         assert_eq!(highlights.len(), 2);
         assert_eq!(highlights[0].kind, Some(DocumentHighlightKind::WRITE));
@@ -241,9 +234,6 @@ result = hello()"#;
 
     #[test]
     fn test_collect_highlights_in_function() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = DocumentHighlightProvider::new(documents);
-
         let ast = AstNode::FunctionDef {
             name: "test".to_string(),
             args: vec![],
@@ -264,7 +254,7 @@ result = hello()"#;
         };
 
         let mut highlights = Vec::new();
-        provider.collect_highlights(&ast, "x", &mut highlights, "def test():\n    return x");
+        DocumentHighlightProvider::collect_highlights(&ast, "x", &mut highlights, "def test():\n    return x");
 
         assert_eq!(highlights.len(), 1);
         assert_eq!(highlights[0].kind, Some(DocumentHighlightKind::READ));
@@ -272,9 +262,6 @@ result = hello()"#;
 
     #[test]
     fn test_collect_highlights_in_call() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = DocumentHighlightProvider::new(documents);
-
         let ast = AstNode::Call {
             function: "print".to_string(),
             args: vec![AstNode::Identifier { name: "x".to_string(), line: 1, col: 7 }],
@@ -283,7 +270,7 @@ result = hello()"#;
         };
 
         let mut highlights = Vec::new();
-        provider.collect_highlights(&ast, "x", &mut highlights, "print(x)");
+        DocumentHighlightProvider::collect_highlights(&ast, "x", &mut highlights, "print(x)");
 
         assert_eq!(highlights.len(), 1);
         assert_eq!(highlights[0].kind, Some(DocumentHighlightKind::READ));
@@ -291,13 +278,10 @@ result = hello()"#;
 
     #[test]
     fn test_highlight_position_calculation() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = DocumentHighlightProvider::new(documents);
-
         let ast = AstNode::Identifier { name: "variable_name".to_string(), line: 5, col: 10 };
 
         let mut highlights = Vec::new();
-        provider.collect_highlights(&ast, "variable_name", &mut highlights, "");
+        DocumentHighlightProvider::collect_highlights(&ast, "variable_name", &mut highlights, "");
 
         assert_eq!(highlights.len(), 1);
         assert_eq!(highlights[0].range.start.line, 4); // 0-indexed

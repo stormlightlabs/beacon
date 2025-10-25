@@ -81,7 +81,7 @@ impl ReferencesProvider {
                     if let Some(symbol_table) = doc.symbol_table() {
                         let text = doc.text();
 
-                        self.collect_references_from_tree(
+                        Self::collect_references_from_tree(
                             tree.root_node(),
                             symbol_name,
                             target_symbol,
@@ -109,8 +109,8 @@ impl ReferencesProvider {
     /// For each match, verifies it resolves to the target symbol using scope-aware lookup.
     /// Excludes the definition itself (only references/uses are collected).
     fn collect_references_from_tree(
-        &self, node: tree_sitter::Node, symbol_name: &str, target_symbol: &Symbol, symbol_table: &SymbolTable,
-        text: &str, uri: &Url, locations: &mut Vec<Location>,
+        node: tree_sitter::Node, symbol_name: &str, target_symbol: &Symbol, symbol_table: &SymbolTable, text: &str,
+        uri: &Url, locations: &mut Vec<Location>,
     ) {
         if node.kind() == "identifier" {
             if let Ok(node_text) = node.utf8_text(text.as_bytes()) {
@@ -138,7 +138,7 @@ impl ReferencesProvider {
 
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            self.collect_references_from_tree(child, symbol_name, target_symbol, symbol_table, text, uri, locations);
+            Self::collect_references_from_tree(child, symbol_name, target_symbol, symbol_table, text, uri, locations);
         }
     }
 

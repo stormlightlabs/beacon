@@ -81,7 +81,7 @@ impl Unifier {
             Type::Union(types) => types.iter().any(|t_inner| Self::occurs_check(tv, t_inner)),
             Type::Record(fields, row_var) => {
                 fields.iter().any(|(_, field_type)| Self::occurs_check(tv, field_type))
-                    || row_var.as_ref().map_or(false, |rv| tv == rv)
+                    || (row_var.as_ref() == Some(tv))
             }
         }
     }

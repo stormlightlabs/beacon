@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn document_error_supports_io_conversion() {
-        let io_err = io::Error::new(io::ErrorKind::Other, "disk failure");
+        let io_err = io::Error::other("disk failure");
         let doc_err: DocumentError = io_err.into();
         let beacon_err: BeaconError = doc_err.into();
         assert!(matches!(beacon_err, BeaconError::DocumentError(_)));

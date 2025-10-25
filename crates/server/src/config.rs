@@ -190,10 +190,10 @@ impl Config {
     ///
     /// TODO: Include stdlib typeshed paths based on python_version
     pub fn effective_stub_paths(&self) -> Vec<PathBuf> {
-        let paths = self.stub_paths.clone();
+        
         // TODO: Add typeshed stdlib paths
         // TODO: Add site-packages paths
-        paths
+        self.stub_paths.clone()
     }
 }
 

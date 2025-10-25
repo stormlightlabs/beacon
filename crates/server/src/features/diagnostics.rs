@@ -75,7 +75,7 @@ impl DiagnosticProvider {
                 severity: Some(DiagnosticSeverity::ERROR),
                 code: Some(lsp_types::NumberOrString::String("undefined-variable".to_string())),
                 source: Some("beacon".to_string()),
-                message: format!("Undefined variable '{}'", name),
+                message: format!("Undefined variable '{name}'"),
                 related_information: None,
                 tags: None,
                 data: None,
@@ -94,8 +94,8 @@ impl DiagnosticProvider {
         // TODO: Track Any propagation depth through the type map
         // TODO: flow tracking is implemented
         // TODO: Get actual position from node_id
-        for (_node_id, ty) in &result.type_map {
-            if self.contains_any_type(ty, 0) {
+        for ty in result.type_map.values() {
+            if Self::contains_any_type(ty, 0) {
                 let diagnostic = Diagnostic {
                     range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 0, character: 1 } },
                     severity: Some(DiagnosticSeverity::WARNING),
@@ -113,24 +113,24 @@ impl DiagnosticProvider {
         }
     }
 
-    fn contains_any_type(&self, ty: &beacon_core::Type, _depth: u32) -> bool {
+    fn contains_any_type(ty: &beacon_core::Type, _depth: u32) -> bool {
         use beacon_core::{Type, TypeCtor};
 
         match ty {
             Type::Con(TypeCtor::Any) => true,
-            Type::App(t1, t2) => self.contains_any_type(t1, _depth + 1) || self.contains_any_type(t2, _depth + 1),
+            Type::App(t1, t2) => Self::contains_any_type(t1, _depth + 1) || Self::contains_any_type(t2, _depth + 1),
             Type::Fun(args, ret) => {
-                args.iter().any(|arg| self.contains_any_type(arg, _depth + 1))
-                    || self.contains_any_type(ret, _depth + 1)
+                args.iter().any(|arg| Self::contains_any_type(arg, _depth + 1))
+                    || Self::contains_any_type(ret, _depth + 1)
             }
-            Type::Union(types) => types.iter().any(|t| self.contains_any_type(t, _depth + 1)),
-            Type::Record(fields, _) => fields.iter().any(|(_, t)| self.contains_any_type(t, _depth + 1)),
+            Type::Union(types) => types.iter().any(|t| Self::contains_any_type(t, _depth + 1)),
+            Type::Record(fields, _) => fields.iter().any(|(_, t)| Self::contains_any_type(t, _depth + 1)),
             _ => false,
         }
     }
 
     /// Check annotation mismatches based on config mode
-    fn add_annotation_mismatch_warnings(&self, uri: &Url, analyzer: &mut Analyzer, _diagnostics: &mut Vec<Diagnostic>) {
+    fn add_annotation_mismatch_warnings(&self, uri: &Url, analyzer: &mut Analyzer, _diagnostics: &mut [Diagnostic]) {
         let result = match analyzer.analyze(uri) {
             Ok(r) => r,
             Err(_) => return,
@@ -207,16 +207,13 @@ fn type_error_to_diagnostic(error_info: &crate::analysis::TypeErrorInfo) -> Diag
     let range = Range { start: start_pos, end: end_pos };
 
     let (code, message) = match &error_info.error {
-        TypeError::UnificationError(t1, t2) => ("HM001", format!("Type mismatch: cannot unify {} with {}", t1, t2)),
-        TypeError::OccursCheckFailed(tv, ty) => {
-            ("HM002", format!("Infinite type: type variable {} occurs in {}", tv, ty))
+        TypeError::UnificationError(t1, t2) => ("HM001", format!("Type mismatch: cannot unify {t1} with {t2}")),
+        TypeError::OccursCheckFailed(tv, ty) => ("HM002", format!("Infinite type: type variable {tv} occurs in {ty}")),
+        TypeError::UndefinedTypeVar(tv) => ("HM003", format!("Undefined type variable: {tv}")),
+        TypeError::KindMismatch { expected, found } => {
+            ("HM004", format!("Kind mismatch: expected {expected}, found {found}"))
         }
-        TypeError::UndefinedTypeVar(tv) => ("HM003", format!("Undefined type variable: {}", tv)),
-        TypeError::KindMismatch { expected, found } => (
-            "HM004",
-            format!("Kind mismatch: expected {}, found {}", expected, found),
-        ),
-        TypeError::InfiniteType(msg) => ("HM005", format!("Infinite type: {}", msg)),
+        TypeError::InfiniteType(msg) => ("HM005", format!("Infinite type: {msg}")),
     };
 
     Diagnostic {
@@ -320,47 +317,35 @@ mod tests {
 
     #[test]
     fn test_contains_any_type_simple() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = DiagnosticProvider::new(documents);
-
-        assert!(provider.contains_any_type(&Type::Con(TypeCtor::Any), 0));
-        assert!(!provider.contains_any_type(&Type::Con(TypeCtor::Int), 0));
+        assert!(DiagnosticProvider::contains_any_type(&Type::Con(TypeCtor::Any), 0));
+        assert!(!DiagnosticProvider::contains_any_type(&Type::Con(TypeCtor::Int), 0));
     }
 
     #[test]
     fn test_contains_any_type_nested() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = DiagnosticProvider::new(documents);
-
         let list_any = Type::App(Box::new(Type::Con(TypeCtor::List)), Box::new(Type::Con(TypeCtor::Any)));
-        assert!(provider.contains_any_type(&list_any, 0));
+        assert!(DiagnosticProvider::contains_any_type(&list_any, 0));
 
         let list_int = Type::App(Box::new(Type::Con(TypeCtor::List)), Box::new(Type::Con(TypeCtor::Int)));
-        assert!(!provider.contains_any_type(&list_int, 0));
+        assert!(!DiagnosticProvider::contains_any_type(&list_int, 0));
     }
 
     #[test]
     fn test_contains_any_type_function() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = DiagnosticProvider::new(documents);
-
         let fun_any = Type::Fun(vec![Type::Con(TypeCtor::Int)], Box::new(Type::Con(TypeCtor::Any)));
-        assert!(provider.contains_any_type(&fun_any, 0));
+        assert!(DiagnosticProvider::contains_any_type(&fun_any, 0));
 
         let fun_normal = Type::Fun(vec![Type::Con(TypeCtor::Int)], Box::new(Type::Con(TypeCtor::String)));
-        assert!(!provider.contains_any_type(&fun_normal, 0));
+        assert!(!DiagnosticProvider::contains_any_type(&fun_normal, 0));
     }
 
     #[test]
     fn test_contains_any_type_union() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = DiagnosticProvider::new(documents);
-
         let union_any = Type::Union(vec![Type::Con(TypeCtor::Int), Type::Con(TypeCtor::Any)]);
-        assert!(provider.contains_any_type(&union_any, 0));
+        assert!(DiagnosticProvider::contains_any_type(&union_any, 0));
 
         let union_normal = Type::Union(vec![Type::Con(TypeCtor::Int), Type::Con(TypeCtor::String)]);
-        assert!(!provider.contains_any_type(&union_normal, 0));
+        assert!(!DiagnosticProvider::contains_any_type(&union_normal, 0));
     }
 
     #[test]
@@ -460,14 +445,11 @@ def test():
 
     #[test]
     fn test_contains_any_type_record() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = DiagnosticProvider::new(documents);
-
         let record_any = Type::Record(vec![("field".to_string(), Type::Con(TypeCtor::Any))], None);
-        assert!(provider.contains_any_type(&record_any, 0));
+        assert!(DiagnosticProvider::contains_any_type(&record_any, 0));
 
         let record_normal = Type::Record(vec![("field".to_string(), Type::Con(TypeCtor::Int))], None);
-        assert!(!provider.contains_any_type(&record_normal, 0));
+        assert!(!DiagnosticProvider::contains_any_type(&record_normal, 0));
     }
 
     #[test]
