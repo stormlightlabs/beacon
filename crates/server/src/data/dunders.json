@@ -1,0 +1,375 @@
+[
+    {
+        "name": "__new__",
+        "category": "method",
+        "doc": "Called to create a new instance of class. Rarely overridden; called before __init__.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__new__"
+    },
+    {
+        "name": "__init__",
+        "category": "method",
+        "doc": "Initializer method called after an instance is created; used to set up object state.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__init__"
+    },
+    {
+        "name": "__repr__",
+        "category": "method",
+        "doc": "Called by repr() to compute the “official” string representation of an object.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__repr__"
+    },
+    {
+        "name": "__str__",
+        "category": "method",
+        "doc": "Called by str() and print() to compute a nicely readable string representation of an object.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__str__"
+    },
+    {
+        "name": "__len__",
+        "category": "method",
+        "doc": "Called by len() to return the length (number of items) of an object.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__len__"
+    },
+    {
+        "name": "__eq__",
+        "category": "method",
+        "doc": "Called to implement equality comparison (==) between two objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__eq__"
+    },
+    {
+        "name": "__lt__",
+        "category": "method",
+        "doc": "Called to implement the ‘less-than’ comparison (<) between two objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__lt__"
+    },
+    {
+        "name": "__getitem__",
+        "category": "method",
+        "doc": "Called to implement retrieval of an item via indexing (e.g., obj[key]).",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__getitem__"
+    },
+    {
+        "name": "__setitem__",
+        "category": "method",
+        "doc": "Called to implement assignment to an indexed item (e.g., obj[key] = value).",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__setitem__"
+    },
+    {
+        "name": "__enter__",
+        "category": "method",
+        "doc": "Called at the beginning of a with-block (context manager); should return the context object.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__enter__"
+    },
+    {
+        "name": "__exit__",
+        "category": "method",
+        "doc": "Called at the end of a with-block (context manager); handles cleanup and accepts exception parameters.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__exit__"
+    },
+    {
+        "name": "__iter__",
+        "category": "method",
+        "doc": "Called by iter() to return an iterator object for the container.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__iter__"
+    },
+    {
+        "name": "__next__",
+        "category": "method",
+        "doc": "Called by next() (or implicitly by a for-loop) to retrieve the next item from an iterator.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__next__"
+    },
+    {
+        "name": "__call__",
+        "category": "method",
+        "doc": "Called when the instance is “called” as a function (object()).",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__call__"
+    },
+    {
+        "name": "__name__",
+        "category": "variable",
+        "doc": "The name of the module. When a module is run as the main program, its __name__ is set to \"__main__\".",
+        "link": "https://docs.python.org/3/library/__main__.html"
+    },
+    {
+        "name": "__file__",
+        "category": "variable",
+        "doc": "The pathname of the file from which the module was loaded, if it was loaded from a file.",
+        "link": "https://docs.python.org/3/reference/import.html#module-attributes"
+    },
+    {
+        "name": "__doc__",
+        "category": "variable",
+        "doc": "The documentation string (if provided) for a module, class, method, or function.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__doc__"
+    },
+    {
+        "name": "__package__",
+        "category": "variable",
+        "doc": "The package name for the module, used by the import system.",
+        "link": "https://docs.python.org/3/reference/import.html#module-attributes"
+    },
+    {
+        "name": "__add__",
+        "category": "method",
+        "doc": "Implements addition (x + y) for objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__add__"
+    },
+    {
+        "name": "__sub__",
+        "category": "method",
+        "doc": "Implements subtraction (x - y) for objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__sub__"
+    },
+    {
+        "name": "__mul__",
+        "category": "method",
+        "doc": "Implements multiplication (x * y) for objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__mul__"
+    },
+    {
+        "name": "__truediv__",
+        "category": "method",
+        "doc": "Implements true division (x / y) for objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__truediv__"
+    },
+    {
+        "name": "__floordiv__",
+        "category": "method",
+        "doc": "Implements floor division (x // y) for objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__floordiv__"
+    },
+    {
+        "name": "__mod__",
+        "category": "method",
+        "doc": "Implements modulo operator (x % y) for objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__mod__"
+    },
+    {
+        "name": "__pow__",
+        "category": "method",
+        "doc": "Implements exponentiation (x ** y or pow(x, y)).",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__pow__"
+    },
+    {
+        "name": "__neg__",
+        "category": "method",
+        "doc": "Implements unary negation (-x) for objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__neg__"
+    },
+    {
+        "name": "__pos__",
+        "category": "method",
+        "doc": "Implements unary positive (+x) for objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__pos__"
+    },
+    {
+        "name": "__abs__",
+        "category": "method",
+        "doc": "Implements built-in abs(x) for objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__abs__"
+    },
+    {
+        "name": "__bool__",
+        "category": "method",
+        "doc": "Implements truth value testing for objects (bool(x)).",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__bool__"
+    },
+    {
+        "name": "__copy__",
+        "category": "method",
+        "doc": "Implements shallow copy support (used by copy.copy()).",
+        "link": "https://https://docs.python.org/3/library/copy.html#copy.copy"
+    },
+    {
+        "name": "__deepcopy__",
+        "category": "method",
+        "doc": "Implements deep copy support (used by copy.deepcopy()).",
+        "link": "https://https://docs.python.org/3/library/copy.html#copy.deepcopy"
+    },
+    {
+        "name": "__sizeof__",
+        "category": "method",
+        "doc": "Returns size of object in bytes, used by sys.getsizeof().",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__sizeof__"
+    },
+    {
+        "name": "__mro__",
+        "category": "variable",
+        "doc": "Tuple of classes that are considered when using method resolution order (MRO).",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__mro__"
+    },
+    {
+        "name": "__bytes__",
+        "category": "method",
+        "doc": "Called by the built-in bytes() to compute a byte-string representation of an object.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__bytes__"
+    },
+    {
+        "name": "__format__",
+        "category": "method",
+        "doc": "Called by the format() built-in (and format string syntax) to produce a formatted string representation of the object.",
+        "link": "https://peps.python.org/pep-3101/#custom-format-specification-for-new‐types"
+    },
+    {
+        "name": "__abs__",
+        "category": "method",
+        "doc": "Implements the built-in abs() function for objects (return the absolute value).",
+        "link": "https://docs.python.org/3/library/functions.html#abs"
+    },
+
+    {
+        "name": "__complex__",
+        "category": "method",
+        "doc": "Implements conversion to a complex number; called by built-in complex() when appropriate.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__complex__"
+    },
+    {
+        "name": "__int__",
+        "category": "method",
+        "doc": "Implements conversion to an integer; called by built-in int() when appropriate.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__int__"
+    },
+    {
+        "name": "__float__",
+        "category": "method",
+        "doc": "Implements conversion to a float; called by built-in float() when appropriate.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__float__"
+    },
+    {
+        "name": "__round__",
+        "category": "method",
+        "doc": "Implements the built-in round() function for objects, with optional ndigits parameter.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__round__"
+    },
+    {
+        "name": "__index__",
+        "category": "method",
+        "doc": "Called to implement operator index; for objects usable as indices (e.g., in slicing, built-ins requiring integer index).",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__index__"
+    },
+    {
+        "name": "__hash__",
+        "category": "method",
+        "doc": "Implements built-in hash(), returning hash value for the object; used in dictionary keys, sets, etc.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__hash__"
+    },
+    {
+        "name": "__getattr__",
+        "category": "method",
+        "doc": "Called when attribute access fails (attribute not found) to allow custom behavior.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__getattr__"
+    },
+    {
+        "name": "__setattr__",
+        "category": "method",
+        "doc": "Called when an attribute assignment is about to happen; allows interception of attribute setting.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__setattr__"
+    },
+    {
+        "name": "__delattr__",
+        "category": "method",
+        "doc": "Called when an attribute deletion is about to happen; allows interception of attribute deletion.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__delattr__"
+    },
+    {
+        "name": "__getattribute__",
+        "category": "method",
+        "doc": "Called unconditionally for attribute access (even when attribute exists); lowest-level attribute access hook.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__getattribute__"
+    },
+    {
+        "name": "__dir__",
+        "category": "method",
+        "doc": "Called by the built-in dir() to list attributes of an object; can be overridden to customize introspection.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__dir__"
+    },
+    {
+        "name": "__ge__",
+        "category": "method",
+        "doc": "Implements the “greater-than or equal” (>=) comparison between two objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__ge__"
+    },
+    {
+        "name": "__gt__",
+        "category": "method",
+        "doc": "Implements the “greater-than” (>) comparison between two objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__gt__"
+    },
+    {
+        "name": "__ne__",
+        "category": "method",
+        "doc": "Implements the “not equal” (!=) comparison between two objects; by default calls __eq__ and negates.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__ne__"
+    },
+    {
+        "name": "__radd__",
+        "category": "method",
+        "doc": "Implements reversed addition (y + x when x doesn’t support __add__), for objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__radd__"
+    },
+    {
+        "name": "__rand__",
+        "category": "method",
+        "doc": "Implements reversed bit-wise AND (&) operation, for objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__rand__"
+    },
+    {
+        "name": "__ior__",
+        "category": "method",
+        "doc": "Implements in-place bit-wise OR (|=) operation for objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__ior__"
+    },
+    {
+        "name": "__imul__",
+        "category": "method",
+        "doc": "Implements in-place multiplication (*=) operation for objects.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__imul__"
+    },
+    {
+        "name": "__bool__",
+        "category": "method",
+        "doc": "Called to determine truth value of the object; used when converting to bool or in if/while contexts.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#object.__bool__"
+    },
+    {
+        "name": "__copy__",
+        "category": "method",
+        "doc": "Implements shallow copy behavior, used by copy.copy().",
+        "link": "https://docs.python.org/3/library/copy.html#copy.copy"
+    },
+    {
+        "name": "__reduce_ex__",
+        "category": "method",
+        "doc": "Implements pickling support; provides control over serialization behavior (called by pickle module).",
+        "link": "https://docs.python.org/3/library/pickle.html#object.__reduce_ex__"
+    },
+    {
+        "name": "__reduce__",
+        "category": "method",
+        "doc": "Implements pickling support; called by pickle to serialize an object (fallback to __reduce_ex__).",
+        "link": "https://docs.python.org/3/library/pickle.html#object.__reduce__"
+    },
+    {
+        "name": "__slots__",
+        "category": "variable",
+        "doc": "Class variable defining static list of allowed instance attributes, used to avoid per-instance __dict__ overhead.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#slots"
+    },
+    {
+        "name": "__annotations__",
+        "category": "variable",
+        "doc": "Dictionary containing variable annotations (PEP 484) for functions, classes, and modules.",
+        "link": "https://docs.python.org/3/reference/datamodel.html#annotations"
+    },
+    {
+        "name": "__orig_bases__",
+        "category": "variable",
+        "doc": "Tuple of original bases for a generic class before substitution of type arguments (typing module).",
+        "link": "https://docs.python.org/3/library/types.html#types.get_original_bases"
+    },
+    {
+        "name": "__getnewargs__",
+        "category": "method",
+        "doc": "Supports pickling of new style classes; returns arguments for object reconstruction.",
+        "link": "https://docs.python.org/3/library/pickle.html#object.__getnewargs__"
+    }
+]
