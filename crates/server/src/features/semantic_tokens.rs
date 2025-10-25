@@ -92,10 +92,16 @@ impl SemanticTokensProvider {
         self.documents.get_document(&uri, |doc| {
             let ast = doc.ast()?;
             let symbol_table = doc.symbol_table()?;
+            let tree = doc.tree()?;
             let text = doc.text();
 
             let mut raw_tokens = Vec::new();
+
+            // Collect AST-based semantic tokens (identifiers)
             self.collect_tokens_from_node(ast, symbol_table, symbol_table.root_scope, &text, &mut raw_tokens);
+
+            // Collect keyword tokens from tree-sitter CST
+            self.collect_keyword_tokens(tree.root_node(), &text, &mut raw_tokens);
 
             let filtered_tokens: Vec<_> = raw_tokens
                 .into_iter()
@@ -131,10 +137,13 @@ impl SemanticTokensProvider {
         self.documents.get_document(uri, |doc| {
             let ast = doc.ast()?;
             let symbol_table = doc.symbol_table()?;
+            let tree = doc.tree()?;
             let text = doc.text();
 
             let mut raw_tokens = Vec::new();
+
             self.collect_tokens_from_node(ast, symbol_table, symbol_table.root_scope, &text, &mut raw_tokens);
+            self.collect_keyword_tokens(tree.root_node(), &text, &mut raw_tokens);
 
             raw_tokens.sort_by_key(|t| (t.line, t.character));
 
@@ -403,14 +412,87 @@ impl SemanticTokensProvider {
         }
     }
 
+    /// Walk tree-sitter CST and collect keyword tokens
+    fn collect_keyword_tokens(&self, node: tree_sitter::Node, _text: &str, raw_tokens: &mut Vec<RawToken>) {
+        if self.is_keyword_node(node.kind()) {
+            let start_position = node.start_position();
+            let line = start_position.row as u32;
+            let character = start_position.column as u32;
+            let length = (node.end_byte() - node.start_byte()) as u32;
+
+            let keyword_type = SUPPORTED_TYPES
+                .iter()
+                .position(|t| *t == SemanticTokenType::KEYWORD)
+                .unwrap_or(0) as u32;
+
+            raw_tokens.push(RawToken { line, character, length, token_type: keyword_type, modifiers: 0 });
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            self.collect_keyword_tokens(child, _text, raw_tokens);
+        }
+    }
+
+    /// Check if a node kind represents a Python keyword
+    fn is_keyword_node(&self, kind: &str) -> bool {
+        matches!(
+            kind,
+            "def"
+                | "class"
+                | "if"
+                | "elif"
+                | "else"
+                | "for"
+                | "while"
+                | "try"
+                | "except"
+                | "finally"
+                | "with"
+                | "as"
+                | "import"
+                | "from"
+                | "return"
+                | "yield"
+                | "break"
+                | "continue"
+                | "pass"
+                | "del"
+                | "global"
+                | "nonlocal"
+                | "lambda"
+                | "and"
+                | "or"
+                | "not"
+                | "in"
+                | "is"
+                | "async"
+                | "await"
+                | "raise"
+                | "assert"
+                | "match"
+                | "case"
+        )
+    }
+
     /// Add a token for an identifier
     fn add_token(
-        name: &str, line: usize, col: usize, token_type: u32, modifiers: u32, _text: &str,
+        name: &str, line: usize, col: usize, token_type: u32, modifiers: u32, text: &str,
         raw_tokens: &mut Vec<RawToken>,
     ) {
         let lsp_line = (line as u32).saturating_sub(1);
-        let lsp_col = (col as u32).saturating_sub(1);
+        let mut lsp_col = (col as u32).saturating_sub(1);
         let length = name.encode_utf16().count() as u32;
+
+        if line > 0 {
+            let lines: Vec<&str> = text.lines().collect();
+            if let Some(line_text) = lines.get(line - 1) {
+                let search_start = (col.saturating_sub(1)).min(line_text.len());
+                if let Some(pos) = line_text[search_start..].find(name) {
+                    lsp_col = (search_start + pos) as u32;
+                }
+            }
+        }
 
         raw_tokens.push(RawToken { line: lsp_line, character: lsp_col, length, token_type, modifiers });
     }
@@ -634,8 +716,13 @@ mod tests {
             .position(|t| *t == SemanticTokenType::FUNCTION)
             .unwrap() as u32;
 
-        assert_eq!(tokens[0].token_type, func_type_idx, "Expected FUNCTION token type");
-        assert_ne!(tokens[0].token_modifiers_bitset, 0, "Expected DEFINITION modifier");
+        let func_token = tokens.iter().find(|t| t.token_type == func_type_idx);
+        assert!(func_token.is_some(), "Expected FUNCTION token");
+        assert_ne!(
+            func_token.unwrap().token_modifiers_bitset,
+            0,
+            "Expected DEFINITION modifier"
+        );
     }
 
     #[test]
@@ -657,7 +744,8 @@ mod tests {
             .position(|t| *t == SemanticTokenType::CLASS)
             .unwrap() as u32;
 
-        assert_eq!(tokens[0].token_type, class_type_idx, "Expected CLASS token type");
+        let class_token = tokens.iter().find(|t| t.token_type == class_type_idx);
+        assert!(class_token.is_some(), "Expected CLASS token");
     }
 
     #[test]
@@ -681,10 +769,17 @@ greet()"#;
             .position(|t| *t == SemanticTokenType::FUNCTION)
             .unwrap() as u32;
 
-        assert_eq!(tokens[0].token_type, func_type_idx);
-        assert_eq!(tokens[1].token_type, func_type_idx);
-        assert_ne!(tokens[0].token_modifiers_bitset, 0, "Definition should have modifier");
-        assert_eq!(tokens[1].token_modifiers_bitset, 0, "Usage should not have modifier");
+        let func_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == func_type_idx).collect();
+
+        assert!(func_tokens.len() >= 2, "Expected at least 2 FUNCTION tokens");
+        assert_ne!(
+            func_tokens[0].token_modifiers_bitset, 0,
+            "Definition should have modifier"
+        );
+        assert_eq!(
+            func_tokens[1].token_modifiers_bitset, 0,
+            "Usage should not have modifier"
+        );
     }
 
     #[test]
@@ -1026,5 +1121,151 @@ sys_info = system.version
             .unwrap() as u32;
         let property_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == property_type_idx).collect();
         assert!(property_tokens.len() >= 3, "Expected tokens for path, join, version");
+    }
+
+    #[test]
+    fn test_def_keyword_vs_function_name() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = SemanticTokensProvider::new(documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "def greet():\n    pass";
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let tokens = provider.generate_tokens(&uri).unwrap();
+
+        let keyword_type_idx = SUPPORTED_TYPES
+            .iter()
+            .position(|t| *t == SemanticTokenType::KEYWORD)
+            .unwrap() as u32;
+        let function_type_idx = SUPPORTED_TYPES
+            .iter()
+            .position(|t| *t == SemanticTokenType::FUNCTION)
+            .unwrap() as u32;
+
+        let def_token = tokens.iter().find(|t| t.delta_line == 0 && t.delta_start == 0);
+        assert!(def_token.is_some(), "Expected token for 'def' keyword");
+        assert_eq!(
+            def_token.unwrap().token_type,
+            keyword_type_idx,
+            "Expected 'def' to have KEYWORD token type"
+        );
+
+        let greet_token = tokens.iter().find(|t| t.token_type == function_type_idx);
+        assert!(greet_token.is_some(), "Expected token for 'greet' function name");
+        assert_eq!(
+            greet_token.unwrap().token_type,
+            function_type_idx,
+            "Expected 'greet' to have FUNCTION token type"
+        );
+
+        assert_ne!(
+            keyword_type_idx, function_type_idx,
+            "'def' and 'greet' must have different token types"
+        );
+    }
+
+    #[test]
+    fn test_class_keyword_vs_class_name() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = SemanticTokensProvider::new(documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "class Calculator:\n    pass";
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let tokens = provider.generate_tokens(&uri).unwrap();
+
+        let keyword_type_idx = SUPPORTED_TYPES
+            .iter()
+            .position(|t| *t == SemanticTokenType::KEYWORD)
+            .unwrap() as u32;
+        let class_type_idx = SUPPORTED_TYPES
+            .iter()
+            .position(|t| *t == SemanticTokenType::CLASS)
+            .unwrap() as u32;
+
+        let class_keyword_token = tokens.iter().find(|t| t.delta_line == 0 && t.delta_start == 0);
+        assert!(class_keyword_token.is_some(), "Expected token for 'class' keyword");
+        assert_eq!(
+            class_keyword_token.unwrap().token_type,
+            keyword_type_idx,
+            "Expected 'class' to have KEYWORD token type"
+        );
+
+        let calculator_token = tokens.iter().find(|t| t.token_type == class_type_idx);
+        assert!(calculator_token.is_some(), "Expected token for 'Calculator' class name");
+        assert_eq!(
+            calculator_token.unwrap().token_type,
+            class_type_idx,
+            "Expected 'Calculator' to have CLASS token type"
+        );
+
+        assert_ne!(
+            keyword_type_idx, class_type_idx,
+            "'class' and 'Calculator' must have different token types"
+        );
+    }
+
+    #[test]
+    fn test_import_keywords_vs_module_names() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = SemanticTokensProvider::new(documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "import os\nfrom math import sqrt";
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let tokens = provider.generate_tokens(&uri).unwrap();
+
+        let keyword_type_idx = SUPPORTED_TYPES
+            .iter()
+            .position(|t| *t == SemanticTokenType::KEYWORD)
+            .unwrap() as u32;
+        let namespace_type_idx = SUPPORTED_TYPES
+            .iter()
+            .position(|t| *t == SemanticTokenType::NAMESPACE)
+            .unwrap() as u32;
+
+        // Count keyword tokens (import, from)
+        let keyword_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == keyword_type_idx).collect();
+        assert!(
+            keyword_tokens.len() >= 3,
+            "Expected at least 3 keyword tokens (import, from, import)"
+        );
+
+        let namespace_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == namespace_type_idx).collect();
+        assert!(
+            namespace_tokens.len() >= 2,
+            "Expected at least 2 namespace tokens (os, sqrt)"
+        );
+
+        assert_ne!(
+            keyword_type_idx, namespace_type_idx,
+            "Keywords and module names must have different token types"
+        );
+    }
+
+    #[test]
+    fn test_multiple_keywords_in_statement() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = SemanticTokensProvider::new(documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "if x in range(10):\n    pass";
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let tokens = provider.generate_tokens(&uri).unwrap();
+
+        let keyword_type_idx = SUPPORTED_TYPES
+            .iter()
+            .position(|t| *t == SemanticTokenType::KEYWORD)
+            .unwrap() as u32;
+
+        let keyword_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == keyword_type_idx).collect();
+        assert!(
+            keyword_tokens.len() >= 3,
+            "Expected at least 3 keyword tokens (if, in, pass)"
+        );
     }
 }

@@ -944,4 +944,190 @@ mod tests {
                 .is_none()
         );
     }
+
+    #[test]
+    fn test_attribute_node() {
+        let source = "obj.field".to_string();
+        let mut resolver = NameResolver::new(source);
+        let ast = AstNode::Attribute {
+            object: Box::new(AstNode::Identifier { name: "obj".to_string(), line: 1, col: 1 }),
+            attribute: "field".to_string(),
+            line: 1,
+            col: 1,
+        };
+
+        resolver.resolve(&ast).unwrap();
+    }
+
+    #[test]
+    fn test_named_expr() {
+        let source = "(x := 42)".to_string();
+        let mut resolver = NameResolver::new(source);
+        let ast = AstNode::NamedExpr {
+            target: "x".to_string(),
+            value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(42), line: 1, col: 6 }),
+            line: 1,
+            col: 2,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        let symbol = resolver.lookup("x");
+        assert!(symbol.is_some());
+        assert_eq!(symbol.unwrap().kind, SymbolKind::Variable);
+    }
+
+    #[test]
+    fn test_binary_op() {
+        let source = "x + y".to_string();
+        let mut resolver = NameResolver::new(source);
+        let ast = AstNode::BinaryOp {
+            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 1 }),
+            op: crate::BinaryOperator::Add,
+            right: Box::new(AstNode::Identifier { name: "y".to_string(), line: 1, col: 5 }),
+            line: 1,
+            col: 3,
+        };
+
+        resolver.resolve(&ast).unwrap();
+    }
+
+    #[test]
+    fn test_unary_op() {
+        let source = "-x".to_string();
+        let mut resolver = NameResolver::new(source);
+        let ast = AstNode::UnaryOp {
+            op: crate::UnaryOperator::Minus,
+            operand: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 2 }),
+            line: 1,
+            col: 1,
+        };
+
+        resolver.resolve(&ast).unwrap();
+    }
+
+    #[test]
+    fn test_compare() {
+        let source = "x < y".to_string();
+        let mut resolver = NameResolver::new(source);
+        let ast = AstNode::Compare {
+            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 1 }),
+            ops: vec![crate::CompareOperator::Lt],
+            comparators: vec![AstNode::Identifier { name: "y".to_string(), line: 1, col: 5 }],
+            line: 1,
+            col: 3,
+        };
+
+        resolver.resolve(&ast).unwrap();
+    }
+
+    #[test]
+    fn test_subscript() {
+        let source = "arr[0]".to_string();
+        let mut resolver = NameResolver::new(source);
+        let ast = AstNode::Subscript {
+            value: Box::new(AstNode::Identifier { name: "arr".to_string(), line: 1, col: 1 }),
+            slice: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(0), line: 1, col: 5 }),
+            line: 1,
+            col: 4,
+        };
+
+        resolver.resolve(&ast).unwrap();
+    }
+
+    #[test]
+    fn test_list_comprehension() {
+        let source = "[x for x in items]".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::ListComp {
+            element: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 2 }),
+            generators: vec![crate::Comprehension {
+                target: "x".to_string(),
+                iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 13 },
+                ifs: vec![],
+            }],
+            line: 1,
+            col: 1,
+        };
+
+        resolver.resolve(&ast).unwrap();
+    }
+
+    #[test]
+    fn test_dict_comprehension() {
+        let source = "{k: v for k, v in items}".to_string();
+        let mut resolver = NameResolver::new(source);
+        let ast = AstNode::DictComp {
+            key: Box::new(AstNode::Identifier { name: "k".to_string(), line: 1, col: 2 }),
+            value: Box::new(AstNode::Identifier { name: "v".to_string(), line: 1, col: 5 }),
+            generators: vec![crate::Comprehension {
+                target: "k".to_string(),
+                iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 19 },
+                ifs: vec![],
+            }],
+            line: 1,
+            col: 1,
+        };
+
+        resolver.resolve(&ast).unwrap();
+    }
+
+    #[test]
+    fn test_set_comprehension() {
+        let source = "{x for x in items}".to_string();
+        let mut resolver = NameResolver::new(source);
+        let ast = AstNode::SetComp {
+            element: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 2 }),
+            generators: vec![crate::Comprehension {
+                target: "x".to_string(),
+                iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 13 },
+                ifs: vec![],
+            }],
+            line: 1,
+            col: 1,
+        };
+
+        resolver.resolve(&ast).unwrap();
+    }
+
+    #[test]
+    fn test_generator_expression() {
+        let source = "(x for x in items)".to_string();
+        let mut resolver = NameResolver::new(source);
+        let ast = AstNode::GeneratorExp {
+            element: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 2 }),
+            generators: vec![crate::Comprehension {
+                target: "x".to_string(),
+                iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 13 },
+                ifs: vec![],
+            }],
+            line: 1,
+            col: 1,
+        };
+
+        resolver.resolve(&ast).unwrap();
+    }
+
+    #[test]
+    fn test_match_statement() {
+        let source = "match x:\n    case 1:\n        pass".to_string();
+        let mut resolver = NameResolver::new(source);
+        let ast = AstNode::Match {
+            subject: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 7 }),
+            cases: vec![crate::MatchCase {
+                pattern: crate::Pattern::MatchValue(AstNode::Literal {
+                    value: crate::LiteralValue::Integer(1),
+                    line: 2,
+                    col: 10,
+                }),
+                guard: None,
+                body: vec![AstNode::Pass { line: 3, col: 9 }],
+            }],
+            line: 1,
+            col: 1,
+        };
+
+        resolver.resolve(&ast).unwrap();
+    }
 }

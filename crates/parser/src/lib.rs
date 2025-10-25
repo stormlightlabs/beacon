@@ -2633,4 +2633,346 @@ count: int = 0"#;
             _ => panic!("Expected module"),
         }
     }
+
+    #[test]
+    fn test_if_statement() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "if x > 0:\n    y = 1";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::If { test, body, .. } => {
+                        assert!(matches!(test.as_ref(), AstNode::Compare { .. }));
+                        assert_eq!(body.len(), 1);
+                    }
+                    _ => panic!("Expected If node"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_if_elif_else() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "if x > 0:\n    y = 1\nelif x < 0:\n    y = -1\nelse:\n    y = 0";
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => {
+                assert!(matches!(body[0], AstNode::If { .. }));
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_for_loop() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "for x in items:\n    print(x)";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::For { target, iter, body, .. } => {
+                    assert_eq!(target, "x");
+                    assert!(matches!(iter.as_ref(), AstNode::Identifier { .. }));
+                    assert_eq!(body.len(), 1);
+                }
+                _ => panic!("Expected For node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_for_loop_with_else() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "for x in items:\n    print(x)\nelse:\n    print('done')";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::For { else_body, .. } => {
+                    assert!(else_body.is_some());
+                }
+                _ => panic!("Expected For node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_while_loop() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "while x > 0:\n    x -= 1";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => {
+                assert_eq!(body.len(), 1);
+                assert!(matches!(body[0], AstNode::While { .. }));
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_try_except() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "try:\n    x = 1\nexcept ValueError:\n    x = 0";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Try { body, handlers, .. } => {
+                    assert_eq!(body.len(), 1);
+                    assert_eq!(handlers.len(), 1);
+                }
+                _ => panic!("Expected Try node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_try_except_finally() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "try:\n    x = 1\nexcept:\n    x = 0\nfinally:\n    cleanup()";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => {
+                assert!(matches!(body[0], AstNode::Try { .. }));
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_with_statement() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "with open('file') as f:\n    data = f.read()";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => {
+                assert!(matches!(body[0], AstNode::With { .. }));
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_list_comprehension_ast() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "result = [x * 2 for x in items if x > 0]";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => match value.as_ref() {
+                    AstNode::ListComp { generators, .. } => {
+                        assert_eq!(generators.len(), 1);
+                        assert_eq!(generators[0].ifs.len(), 1);
+                    }
+                    _ => panic!("Expected ListComp"),
+                },
+                _ => panic!("Expected Assignment"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_dict_comprehension_ast() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "result = {k: v for k, v in items}";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => {
+                    assert!(matches!(value.as_ref(), AstNode::DictComp { .. }));
+                }
+                _ => panic!("Expected Assignment"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_set_comprehension_ast() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "result = {x for x in items}";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => {
+                    assert!(matches!(value.as_ref(), AstNode::SetComp { .. }));
+                }
+                _ => panic!("Expected Assignment"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_generator_expression_ast() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "result = (x for x in items)";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => {
+                    assert!(matches!(value.as_ref(), AstNode::GeneratorExp { .. }));
+                }
+                _ => panic!("Expected Assignment"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_lambda_expression() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "f = lambda x: x * 2";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => {
+                assert_eq!(body.len(), 1);
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_walrus_operator() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "if (n := len(items)) > 0:\n    print(n)";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => {
+                assert!(matches!(body[0], AstNode::If { .. }));
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_binary_operators() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "result = x + y * z";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => {
+                    assert!(matches!(value.as_ref(), AstNode::BinaryOp { .. }));
+                }
+                _ => panic!("Expected Assignment"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_unary_operators() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "result = -x";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => {
+                    assert!(matches!(value.as_ref(), AstNode::UnaryOp { .. }));
+                }
+                _ => panic!("Expected Assignment"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_comparison_operators() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "result = x < y";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => {
+                    assert!(matches!(value.as_ref(), AstNode::Compare { .. }));
+                }
+                _ => panic!("Expected Assignment"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_subscript_access() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "item = arr[0]";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => {
+                    assert!(matches!(value.as_ref(), AstNode::Subscript { .. }));
+                }
+                _ => panic!("Expected Assignment"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_match_statement() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "match value:\n    case 1:\n        print('one')";
+        let parsed = parser.parse(source).unwrap();
+        let _ = parser.to_ast(&parsed);
+    }
+
+    #[test]
+    fn test_pass_statement() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "def foo():\n    pass";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::FunctionDef { body, .. } => {
+                    assert!(matches!(body[0], AstNode::Pass { .. }));
+                }
+                _ => panic!("Expected FunctionDef"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_break_continue() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "for x in items:\n    if x < 0:\n        continue\n    if x > 10:\n        break";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::For { body, .. } => {
+                    assert!(body.iter().any(|node| matches!(node, AstNode::If { .. })));
+                }
+                _ => panic!("Expected For node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
 }

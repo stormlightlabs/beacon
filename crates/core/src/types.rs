@@ -519,4 +519,135 @@ mod tests {
         assert_eq!(TypeCtor::List.kind(), Kind::arity(1));
         assert_eq!(TypeCtor::Dict.kind(), Kind::arity(2));
     }
+
+    #[test]
+    fn test_kind_display() {
+        assert_eq!(Kind::Star.to_string(), "*");
+        assert_eq!(
+            Kind::Arrow(Box::new(Kind::Star), Box::new(Kind::Star)).to_string(),
+            "* -> *"
+        );
+        assert_eq!(Kind::arity(2).to_string(), "* -> * -> *");
+    }
+
+    #[test]
+    fn test_type_var_display_with_hint() {
+        let tv_no_hint = TypeVar::new(5);
+        let tv_with_hint = TypeVar::named(5, "alpha");
+
+        assert_eq!(tv_no_hint.to_string(), "'t5");
+        assert_eq!(tv_with_hint.to_string(), "'alpha5");
+    }
+
+    #[test]
+    fn test_type_constructor_display() {
+        assert_eq!(TypeCtor::Int.to_string(), "int");
+        assert_eq!(TypeCtor::Float.to_string(), "float");
+        assert_eq!(TypeCtor::String.to_string(), "str");
+        assert_eq!(TypeCtor::Bool.to_string(), "bool");
+        assert_eq!(TypeCtor::NoneType.to_string(), "None");
+        assert_eq!(TypeCtor::Any.to_string(), "Any");
+        assert_eq!(TypeCtor::Never.to_string(), "Never");
+        assert_eq!(TypeCtor::Class("MyClass".to_string()).to_string(), "MyClass");
+        assert_eq!(TypeCtor::Module("os".to_string()).to_string(), "module<os>");
+    }
+
+    #[test]
+    fn test_complex_type_app_display() {
+        let nested_list = Type::list(Type::list(Type::int()));
+        assert_eq!(nested_list.to_string(), "list[list[int]]");
+
+        let dict_str_list = Type::dict(Type::string(), Type::list(Type::int()));
+        assert_eq!(dict_str_list.to_string(), "dict[str, list[int]]");
+    }
+
+    #[test]
+    fn test_function_type_display() {
+        let no_args = Type::fun(vec![], Type::int());
+        assert_eq!(no_args.to_string(), "() -> int");
+
+        let one_arg = Type::fun(vec![Type::string()], Type::bool());
+        assert_eq!(one_arg.to_string(), "str -> bool");
+
+        let multi_args = Type::fun(vec![Type::int(), Type::string(), Type::bool()], Type::none());
+        assert_eq!(multi_args.to_string(), "(int, str, bool) -> None");
+    }
+
+    #[test]
+    fn test_forall_display() {
+        let tv1 = TypeVar::new(0);
+        let tv2 = TypeVar::new(1);
+
+        let simple_forall = Type::ForAll(vec![tv1.clone()], Box::new(Type::Var(tv1.clone())));
+        assert_eq!(simple_forall.to_string(), "∀'t0. 't0");
+
+        let multi_forall = Type::ForAll(
+            vec![tv1.clone(), tv2.clone()],
+            Box::new(Type::fun(vec![Type::Var(tv1)], Type::Var(tv2))),
+        );
+        assert_eq!(multi_forall.to_string(), "∀'t0 't1. 't0 -> 't1");
+    }
+
+    #[test]
+    fn test_union_display() {
+        let simple_union = Type::union(vec![Type::int(), Type::string()]);
+        assert_eq!(simple_union.to_string(), "int | str");
+
+        let multi_union = Type::union(vec![Type::int(), Type::string(), Type::bool(), Type::none()]);
+        let display_str = multi_union.to_string();
+        assert!(display_str.contains("int"));
+        assert!(display_str.contains("str"));
+        assert!(display_str.contains("bool"));
+        assert!(display_str.contains("None"));
+    }
+
+    #[test]
+    fn test_record_display() {
+        let simple_record = Type::Record(
+            vec![("x".to_string(), Type::int()), ("y".to_string(), Type::string())],
+            None,
+        );
+        assert_eq!(simple_record.to_string(), "{ x: int, y: str }");
+
+        let row_var = TypeVar::new(0);
+        let record_with_row = Type::Record(vec![("x".to_string(), Type::int())], Some(row_var));
+        assert_eq!(record_with_row.to_string(), "{ x: int | 't0 }");
+
+        let empty_record = Type::Record(vec![], None);
+        assert_eq!(empty_record.to_string(), "{  }");
+    }
+
+    #[test]
+    fn test_type_scheme_display() {
+        let tv = TypeVar::new(0);
+
+        let mono_scheme = TypeScheme::mono(Type::int());
+        assert_eq!(mono_scheme.to_string(), "int");
+
+        let poly_scheme = TypeScheme::new(vec![tv.clone()], Type::fun(vec![Type::Var(tv.clone())], Type::Var(tv)));
+        assert_eq!(poly_scheme.to_string(), "∀'t0. 't0 -> 't0");
+    }
+
+    #[test]
+    fn test_set_type_display() {
+        let set_int = Type::App(Box::new(Type::Con(TypeCtor::Set)), Box::new(Type::int()));
+        assert_eq!(set_int.to_string(), "set[int]");
+
+        let set_str = Type::App(Box::new(Type::Con(TypeCtor::Set)), Box::new(Type::string()));
+        assert_eq!(set_str.to_string(), "set[str]");
+
+        let nested_set = Type::App(Box::new(Type::Con(TypeCtor::Set)), Box::new(Type::list(Type::bool())));
+        assert_eq!(nested_set.to_string(), "set[list[bool]]");
+    }
+
+    #[test]
+    fn test_generic_type_app_display() {
+        let tv = TypeVar::new(0);
+        let generic_app = Type::App(Box::new(Type::Var(tv)), Box::new(Type::int()));
+        assert_eq!(generic_app.to_string(), "('t0 int)");
+
+        let fun_ctor = Type::Con(TypeCtor::Function);
+        let fun_app = Type::App(Box::new(fun_ctor), Box::new(Type::string()));
+        assert_eq!(fun_app.to_string(), "(function str)");
+    }
 }

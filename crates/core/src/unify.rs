@@ -228,7 +228,6 @@ mod tests {
         let tv = TypeVar::new(0);
         let t = Type::int();
         let subst = Unifier::unify(&Type::Var(tv.clone()), &t).unwrap();
-
         assert_eq!(subst.get(&tv), Some(&Type::int()));
         assert_eq!(subst.apply(&Type::Var(tv)), Type::int());
     }
@@ -259,25 +258,81 @@ mod tests {
         let tv = TypeVar::new(0);
         let t1 = Type::list(Type::Var(tv.clone()));
         let t2 = Type::list(Type::int());
-
         let subst = Unifier::unify(&t1, &t2).unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::int()));
     }
 
-    // #[test]
-    // fn test_occurs_check() {
-    //     let tv = TypeVar::new(0);
-    //     let recursive_type = Type::list(Type::Var(tv.clone()));
+    #[test]
+    fn test_occurs_check_basic() {
+        let tv = TypeVar::new(0);
+        let recursive_type = Type::list(Type::Var(tv.clone()));
+        let result = Unifier::unify(&Type::Var(tv.clone()), &recursive_type);
+        assert!(result.is_err());
+    }
 
-    //     let result = Unifier::unify(&Type::Var(tv.clone()), &recursive_type);
-    //     assert!(matches!(result.err(), Some(TypeError::OccursCheckFailed(_, _).into())));
-    // }
+    #[test]
+    fn test_occurs_check_in_nested_app() {
+        let tv = TypeVar::new(0);
+        let nested = Type::list(Type::list(Type::Var(tv.clone())));
+        let result = Unifier::unify(&Type::Var(tv.clone()), &nested);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_occurs_check_in_function_args() {
+        let tv = TypeVar::new(0);
+        let fun_type = Type::fun(vec![Type::Var(tv.clone())], Type::int());
+        let result = Unifier::unify(&Type::Var(tv.clone()), &fun_type);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_occurs_check_in_function_return() {
+        let tv = TypeVar::new(0);
+        let fun_type = Type::fun(vec![Type::int()], Type::Var(tv.clone()));
+        let result = Unifier::unify(&Type::Var(tv.clone()), &fun_type);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_occurs_check_in_union() {
+        let tv = TypeVar::new(0);
+        let union = Type::union(vec![Type::int(), Type::Var(tv.clone())]);
+        let result = Unifier::unify(&Type::Var(tv.clone()), &union);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_occurs_check_in_record_fields() {
+        let tv = TypeVar::new(0);
+        let record = Type::Record(vec![("x".to_string(), Type::Var(tv.clone()))], None);
+        let result = Unifier::unify(&Type::Var(tv.clone()), &record);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_occurs_check_in_record_row_var() {
+        let tv = TypeVar::new(0);
+        let record = Type::Record(vec![("x".to_string(), Type::int())], Some(tv.clone()));
+        let result = Unifier::unify(&Type::Var(tv.clone()), &record);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_occurs_check_does_not_trigger_for_different_vars() {
+        let tv1 = TypeVar::new(0);
+        let tv2 = TypeVar::new(1);
+        let list_type = Type::list(Type::Var(tv2.clone()));
+        let result = Unifier::unify(&Type::Var(tv1.clone()), &list_type);
+        assert!(result.is_ok());
+        let subst = result.unwrap();
+        assert_eq!(subst.get(&tv1), Some(&Type::list(Type::Var(tv2))));
+    }
 
     #[test]
     fn test_unify_union_types() {
         let union1 = Type::union(vec![Type::int(), Type::string()]);
         let union2 = Type::union(vec![Type::string(), Type::int()]);
-
         let subst = Unifier::unify(&union1, &union2).unwrap();
         assert!(subst.is_empty());
     }
