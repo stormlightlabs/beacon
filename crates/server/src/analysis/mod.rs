@@ -19,26 +19,27 @@ use crate::config::Config;
 use crate::document::DocumentManager;
 use crate::utils;
 use beacon_core::{
-    Type, TypeVar, TypeVarGen,
+    Subst, Type, TypeScheme, TypeVar, TypeVarGen, Unifier,
     errors::{AnalysisError, Result},
 };
 use beacon_parser::{AstNode, LiteralValue, SymbolTable};
 use lsp_types::Position;
 use rustc_hash::FxHashMap;
+use type_env::TypeEnvironment;
 use url::Url;
 
 /// Orchestrates type analysis for documents
 pub struct Analyzer {
     _config: Config,
     cache: CacheManager,
-    type_var_gen: TypeVarGen,
+    _type_var_gen: TypeVarGen,
     documents: DocumentManager,
 }
 
 impl Analyzer {
     /// Create a new analyzer with the given configuration
     pub fn new(config: Config, documents: DocumentManager) -> Self {
-        Self { _config: config, cache: CacheManager::new(), type_var_gen: TypeVarGen::new(), documents }
+        Self { _config: config, cache: CacheManager::new(), _type_var_gen: TypeVarGen::new(), documents }
     }
 
     /// Analyze a document and return inferred types
@@ -88,74 +89,201 @@ impl Analyzer {
 
     /// Generate constraints from an AST
     ///
-    /// TODO: Implement Algorithm W constraint generation: see ROADMAP.md "Constraint Generation (Algorithm)" section
-    fn generate_constraints(&mut self, ast: &AstNode, _symbol_table: &SymbolTable) -> Result<ConstraintSet> {
+    /// Implements Algorithm W constraint generation with type environment threading
+    fn generate_constraints(&mut self, ast: &AstNode, symbol_table: &SymbolTable) -> Result<ConstraintSet> {
         let mut constraints = Vec::new();
+        let mut env = TypeEnvironment::from_symbol_table(symbol_table, ast);
 
-        // TODO: Walk AST and generate constraints based on node type
-        self.visit_node(ast, &mut constraints)?;
+        Self::visit_node_with_env(ast, &mut env, &mut constraints)?;
 
         Ok(ConstraintSet { constraints })
     }
 
-    /// Visit an AST node and generate constraints
+    /// Visit an AST node and generate constraints with type environment
     ///
-    /// TODO: Implement for all AST node types per ROADMAP
-    fn visit_node(&mut self, node: &AstNode, _constraints: &mut Vec<Constraint>) -> Result<Type> {
+    /// Implements constraint generation for core Python constructs
+    fn visit_node_with_env(
+        node: &AstNode, env: &mut TypeEnvironment, constraints: &mut Vec<Constraint>,
+    ) -> Result<Type> {
         match node {
-            // TODO: Generate constraints for module body
-            AstNode::Module { body: _, .. } => Ok(Type::Con(beacon_core::TypeCtor::Module("".into()))),
-            // TODO: Generate function type constraints
-            // - Fresh type vars for parameters
-            // - Generate constraints from body
-            // - Generalize if non-expansive
-            AstNode::FunctionDef { .. } => Ok(Type::Var(self.type_var_gen.fresh())),
-            // TODO: Generate class type constraints
-            // - Create nominal type
-            // - Generate constraints from methods
-            AstNode::ClassDef { .. } => Ok(Type::Con(beacon_core::TypeCtor::Class("".into()))),
-            // TODO: Generate assignment constraints
-            // - Infer RHS type
-            // - Generalize if non-expansive
-            AstNode::Assignment { .. } => Ok(Type::Var(self.type_var_gen.fresh())),
-            AstNode::AnnotatedAssignment { .. } => Ok(Type::Var(self.type_var_gen.fresh())),
-            // TODO: Generate call constraints
-            // - Function must have arrow type
-            // - Unify parameter types with arguments
-            AstNode::Call { .. } => Ok(Type::Var(self.type_var_gen.fresh())),
-            // TODO: Look up in environment/symbol table
-            // - Instantiate polytype
-            AstNode::Identifier { .. } => Ok(Type::Var(self.type_var_gen.fresh())),
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    Self::visit_node_with_env(stmt, env, constraints)?;
+                }
+                Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
+            }
+            AstNode::FunctionDef { name, args, return_type, body, .. } => {
+                let param_types: Vec<Type> = args
+                    .iter()
+                    .map(|param| {
+                        param
+                            .type_annotation
+                            .as_ref()
+                            .map(|ann| env.parse_annotation_or_any(ann))
+                            .unwrap_or_else(|| Type::Var(env.fresh_var()))
+                    })
+                    .collect();
+
+                let ret_type = return_type
+                    .as_ref()
+                    .map(|ann| env.parse_annotation_or_any(ann))
+                    .unwrap_or_else(|| Type::Var(env.fresh_var()));
+
+                let fn_type = Type::fun(param_types.clone(), ret_type.clone());
+
+                let mut body_env = env.clone();
+                for (param, param_type) in args.iter().zip(param_types.iter()) {
+                    body_env.bind(param.name.clone(), TypeScheme::mono(param_type.clone()));
+                }
+
+                let mut body_ty = Type::none();
+                for stmt in body {
+                    body_ty = Self::visit_node_with_env(stmt, &mut body_env, constraints)?;
+                }
+
+                constraints.push(Constraint::Equal(body_ty, ret_type));
+                env.bind(name.clone(), TypeScheme::mono(fn_type.clone()));
+
+                Ok(fn_type)
+            }
+
+            AstNode::ClassDef { name, body, .. } => {
+                let class_type = Type::Con(beacon_core::TypeCtor::Class(name.clone()));
+                env.bind(name.clone(), TypeScheme::mono(class_type.clone()));
+
+                for stmt in body {
+                    Self::visit_node_with_env(stmt, env, constraints)?;
+                }
+
+                Ok(class_type)
+            }
+
+            AstNode::Assignment { target, value, .. } => {
+                let value_ty = Self::visit_node_with_env(value, env, constraints)?;
+                // TODO: Determine if value is non-expansive for generalization
+                env.bind(target.clone(), TypeScheme::mono(value_ty.clone()));
+                Ok(value_ty)
+            }
+
+            AstNode::AnnotatedAssignment { target, type_annotation, value, .. } => {
+                let annotated_ty = env.parse_annotation_or_any(type_annotation);
+                if let Some(val) = value {
+                    let value_ty = Self::visit_node_with_env(val, env, constraints)?;
+                    constraints.push(Constraint::Equal(value_ty, annotated_ty.clone()));
+                }
+                env.bind(target.clone(), TypeScheme::mono(annotated_ty.clone()));
+                Ok(annotated_ty)
+            }
+
+            AstNode::Call { function, args, .. } => {
+                // TODO: Handle complex call expressions
+                let func_ty = env.lookup(function).unwrap_or_else(|| Type::Var(env.fresh_var()));
+                let mut arg_types = Vec::new();
+                for arg in args {
+                    arg_types.push(Self::visit_node_with_env(arg, env, constraints)?);
+                }
+                let ret_ty = Type::Var(env.fresh_var());
+                constraints.push(Constraint::Call(func_ty, arg_types, ret_ty.clone()));
+                Ok(ret_ty)
+            }
+            AstNode::Identifier { name, .. } => Ok(env.lookup(name).unwrap_or_else(|| Type::Var(env.fresh_var()))),
             AstNode::Literal { value, .. } => Ok(match value {
-                LiteralValue::Integer(_) => Type::Con(beacon_core::TypeCtor::Int),
-                LiteralValue::Float(_) => Type::Con(beacon_core::TypeCtor::Float),
-                LiteralValue::String(_) => Type::Con(beacon_core::TypeCtor::String),
-                LiteralValue::Boolean(_) => Type::Con(beacon_core::TypeCtor::Bool),
-                LiteralValue::None => Type::Con(beacon_core::TypeCtor::NoneType),
+                LiteralValue::Integer(_) => Type::int(),
+                LiteralValue::Float(_) => Type::float(),
+                LiteralValue::String(_) => Type::string(),
+                LiteralValue::Boolean(_) => Type::bool(),
+                LiteralValue::None => Type::none(),
             }),
-            // TODO: Return type constraint
-            AstNode::Return { .. } => Ok(Type::Var(self.type_var_gen.fresh())),
+            AstNode::Return { value, .. } => {
+                if let Some(val) = value {
+                    Self::visit_node_with_env(val, env, constraints)
+                } else {
+                    Ok(Type::none())
+                }
+            }
+            AstNode::Attribute { object, attribute, .. } => {
+                let obj_ty = Self::visit_node_with_env(object, env, constraints)?;
+                let attr_ty = Type::Var(env.fresh_var());
+                constraints.push(Constraint::HasAttr(obj_ty, attribute.clone(), attr_ty.clone()));
+                Ok(attr_ty)
+            }
+            AstNode::BinaryOp { left, right, .. } => {
+                let left_ty = Self::visit_node_with_env(left, env, constraints)?;
+                let right_ty = Self::visit_node_with_env(right, env, constraints)?;
+                // Simplified: assume same type for operands and result
+                constraints.push(Constraint::Equal(left_ty.clone(), right_ty));
+                Ok(left_ty)
+            }
+            AstNode::UnaryOp { operand, .. } => Self::visit_node_with_env(operand, env, constraints),
+            AstNode::If { test, body, elif_parts, else_body, .. } => {
+                Self::visit_node_with_env(test, env, constraints)?;
+                for stmt in body {
+                    Self::visit_node_with_env(stmt, env, constraints)?;
+                }
+                for (elif_test, elif_body) in elif_parts {
+                    Self::visit_node_with_env(elif_test, env, constraints)?;
+                    for stmt in elif_body {
+                        Self::visit_node_with_env(stmt, env, constraints)?;
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        Self::visit_node_with_env(stmt, env, constraints)?;
+                    }
+                }
+                Ok(Type::none())
+            }
             AstNode::Import { .. } | AstNode::ImportFrom { .. } => {
                 Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
             }
-            // TODO: Attribute type checking
-            AstNode::Attribute { object, .. } => self.visit_node(object, _constraints),
-            _ => Ok(Type::Var(self.type_var_gen.fresh())),
+
+            // Default: fresh type variable for unsupported nodes
+            _ => Ok(Type::Var(env.fresh_var())),
         }
+    }
+
+    #[deprecated]
+    fn _visit_node(&mut self, node: &AstNode, _constraints: &mut [Constraint]) -> Result<Type> {
+        let mut env = TypeEnvironment::new();
+        let mut constraints = Vec::new();
+        Self::visit_node_with_env(node, &mut env, &mut constraints)
     }
 
     /// Solve a set of constraints using beacon-core's unification algorithm
     ///
-    /// TODO: Implement unification and constraint solving
-    /// TODO: Implement constraint solving using [`beacon_core::Unifier`]
-    fn solve_constraints(&mut self, _constraints: ConstraintSet) -> Result<Substitution> {
-        Ok(Substitution::empty())
+    /// Solves constraints using Robinson's unification algorithm
+    fn solve_constraints(&mut self, constraint_set: ConstraintSet) -> Result<Substitution> {
+        let mut subst = Subst::empty();
+
+        for constraint in constraint_set.constraints {
+            match constraint {
+                Constraint::Equal(t1, t2) => {
+                    let s = Unifier::unify(&subst.apply(&t1), &subst.apply(&t2))?;
+                    subst = s.compose(subst);
+                }
+
+                Constraint::Call(func_ty, arg_types, ret_ty) => {
+                    let expected_fn_ty = Type::fun(arg_types, ret_ty);
+                    let s = Unifier::unify(&subst.apply(&func_ty), &subst.apply(&expected_fn_ty))?;
+                    subst = s.compose(subst);
+                }
+
+                // HasAttr constraint: object must have attribute
+                // TODO: Implement proper record/structural typing
+                // TODO: use row-polymorphic records
+                Constraint::HasAttr(_obj_ty, _attr_name, _attr_ty) => {
+                    // Simplified: no constraint enforcement yet
+                }
+            }
+        }
+
+        // Convert beacon_core::Subst to Substitution
+        Ok(Substitution { _map: subst.iter().map(|(k, v)| (k.clone(), v.clone())).collect() })
     }
 
     /// Perform static analysis (CFG + data flow) on the AST
     ///
-    /// Builds control flow graphs for each function and runs data flow analyses
-    /// to detect use-before-def, unreachable code, and unused variables.
+    /// Builds control flow graphs for each function and runs data flow analyses to detect use-before-def, unreachable code, and unused variables.
     fn perform_static_analysis(&self, ast: &AstNode, symbol_table: &SymbolTable) -> Option<data_flow::DataFlowResult> {
         // Currently we only analyze function bodies
         // TODO: Extend to module-level analysis
@@ -166,7 +294,6 @@ impl Analyzer {
                         let mut builder = cfg::CfgBuilder::new();
                         builder.build_function(func_body);
                         let cfg = builder.build();
-
                         let analyzer = data_flow::DataFlowAnalyzer::new(&cfg, func_body, symbol_table);
                         return Some(analyzer.analyze());
                     }
@@ -177,7 +304,6 @@ impl Analyzer {
                 let mut builder = cfg::CfgBuilder::new();
                 builder.build_function(body);
                 let cfg = builder.build();
-
                 let analyzer = data_flow::DataFlowAnalyzer::new(&cfg, body, symbol_table);
                 Some(analyzer.analyze())
             }
@@ -571,7 +697,8 @@ mod tests {
         let lit = AstNode::Literal { value: beacon_parser::LiteralValue::Integer(42), line: 1, col: 1 };
 
         let mut constraints = Vec::new();
-        let ty = analyzer.visit_node(&lit, &mut constraints).unwrap();
+        #[allow(deprecated)]
+        let ty = analyzer._visit_node(&lit, &mut constraints).unwrap();
 
         assert!(matches!(ty, Type::Con(beacon_core::TypeCtor::Int)));
     }
