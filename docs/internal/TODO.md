@@ -11,7 +11,7 @@
 
 - Implement rule engine for basic diagnostics
 - Unused imports, variables, undefined names
-- **Files:** `crates/server/src/analysis/linter.rs` (new), `crates/server/src/features/diagnostics.rs`
+- **Files:** `crates/server/src/analysis/linter.rs` (new), `crates/server/src/analysis/rules/mod.rs`, `crates/server/src/features/diagnostics.rs`
 
 #### Hover Documentation
 

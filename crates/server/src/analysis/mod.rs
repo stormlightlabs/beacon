@@ -17,7 +17,7 @@
 //! - Support structural subtyping: check if a type satisfies required methods/attributes
 //! - Enable protocol definitions via `typing.Protocol` or `.pyi` stubs
 //!
-//! 1. Extend `Constraint` enum with `Protocol(Type, ProtocolName, Span)`
+//! 1. Extend [Constraint] enum with `Protocol(Type, ProtocolName, Span)`
 //! 2. Define protocol specifications (method signatures, attribute types)
 //! 3. Implement protocol checking in constraint solver
 //! 4. Handle variance in protocol method signatures
@@ -33,7 +33,9 @@
 pub mod cfg;
 pub mod constraint_gen;
 pub mod data_flow;
+pub mod rules;
 pub mod type_env;
+
 use crate::cache::CacheManager;
 use crate::config::Config;
 use crate::document::DocumentManager;
