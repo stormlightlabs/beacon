@@ -19,22 +19,19 @@ This document outlines the plan for implementing a minimal, working, testable LS
     - Extract all symbols visible in current scope
     - Include variables, functions, classes from symbol table
     - Walk up scope chain for nested contexts
-
-### Part 2
-
 - [ ] Attribute completions (after `.`)
     - Use type inference to get type of left-hand expression
     - Query type's attributes/methods
     - Handle built-in types (str, list, dict methods)
-- [ ] Import completions
-    - Suggest available modules from workspace/stubs
-    - Complete import statement structure
 - [ ] Keyword completions
     - Context-aware keywords (def, class, if, for, etc.)
     - Statement vs expression context
 
-### Part 3
+### Part 2
 
+- [ ] Import completions
+    - Suggest available modules from workspace/stubs
+    - Complete import statement structure
 - [ ] Filtering and ranking
     - Prefix matching against typed text
     - Rank by relevance (scope proximity, usage frequency)
@@ -61,6 +58,8 @@ This document outlines the plan for implementing a minimal, working, testable LS
 **Goal:** Perform whole-workspace static analysis for code correctness, style, and type-hint consistency (semantic diagnostics).
 **Tasks:**
 
+### Part 1
+
 - [ ] Symbol Table & Scope Analysis
     - Build per-module symbol tables with local, nonlocal, and global scope resolution
     - Track variable assignments and usages across control-flow paths
@@ -72,6 +71,9 @@ This document outlines the plan for implementing a minimal, working, testable LS
     - Detect unreachable code and inconsistent return paths
     - Implement simple constant propagation for “always true/false” conditionals
     - Support `try/except/finally` and context managers in CFGs
+
+### Part 2
+
 - [ ] Type Consistency & Type Hint Checking
     - Parse and resolve PEP 484/585 type hints and annotations
     - Validate annotated types against inferred/observed values
@@ -83,7 +85,7 @@ This document outlines the plan for implementing a minimal, working, testable LS
     - Track `None` checks (`if x is not None`)
     - Infer type unions for conditional branches
 
-### Part 2
+### Part 3
 
 - [ ] Diagnostics Integration
     - Emit LSP `textDocument/publishDiagnostics` notifications
@@ -96,7 +98,7 @@ This document outlines the plan for implementing a minimal, working, testable LS
         - Inconsistent symbol exports (`__all__` mismatches)
         - Conflicting stub definitions
 
-### Part 3
+### Part 4
 
 - [ ] Linter & Quality Checks
     - Add rule engine for common static rules:
@@ -123,71 +125,12 @@ This document outlines the plan for implementing a minimal, working, testable LS
 - Works incrementally — updating diagnostics within 100 ms of file edits.
 - Fully integrated with your existing workspace module index and dependency graph.
 
-## Workspace-wide Analysis
+## Stub file support
 
-**Goal:** Coordinate multi-file type checking and navigation
-**Tasks:**
-
-### Part 1
-
-- [x] File discovery and indexing
-    - Scan workspace root for .py files
-    - Watch file system for changes (create/delete/modify)
-    - Maintain index of workspace Python files
-- [x] Module resolution
-    - Convert file paths to module names (src/foo/bar.py → foo.bar)
-    - Reverse: resolve import statements to file paths
-    - Handle package `__init__.py` files
-    - Support configurable source roots
-- [x] Dependency graph
-    - Parse import statements from each file
-    - Build directed graph of module dependencies
-    - Detect strongly connected components (circular imports)
-    - Topological sort for analysis order
-
-- [ ] Stub file support (defer)
-    - Discover .pyi stub files in configured paths
-    - Parse stub files for type signatures
-    - Prefer stubs over source when available
-    - Cache parsed stubs (LRU eviction)
-
-### Part 2
-
-- [ ] Incremental invalidation
-    - When file changes, invalidate dependents
-    - Re-analyze affected modules in dependency order
-    - Avoid re-analyzing unchanged modules
-- [ ] Cross-file operations
-    - Goto-definition across files (follow imports)
-    - Find references across workspace
-    - Workspace symbols (fuzzy search all symbols)
-- [ ] Add integration tests
-
-**Implementation Notes:**
-
-- Current scaffold in `crates/server/src/workspace.rs`
-- File watching: use `notify` crate or LSP file watching
-- Dependency graph: track import edges, detect SCCs with Tarjan's algorithm
-- Memory management: don't load entire workspace into RAM, use LRU caches
-- Parallelization: analyze independent modules in parallel
-- Error handling: graceful degradation when files have syntax errors
-**Files to Modify:**
-- `crates/server/src/workspace.rs`
-- `crates/server/src/document.rs` (integrate with workspace)
-- `crates/server/src/features/goto_definition.rs` (cross-file support)
-- `crates/server/src/features/references.rs` (cross-file support)
-**Acceptance:**
-- Discovers all Python files in workspace
-- Resolves import statements to source files
-- Detects and reports circular dependencies
-- Incremental re-analysis when files change
-- Goto-definition works across files
-- Find references works across workspace
-- Handles workspaces with 1000+ files efficiently
-**Deferred:**
-- Distributed/remote workspaces
-- Partial workspace analysis (analyze subset)
-- Advanced caching strategies (persistent cache across sessions)
+- Discover .pyi stub files in configured paths
+- Parse stub files for type signatures
+- Prefer stubs over source when available
+- Cache parsed stubs (LRU eviction)
 
 ## Hover Documentation
 
@@ -219,3 +162,5 @@ This document outlines the plan for implementing a minimal, working, testable LS
 ## Parking Lot
 
 - Add inheritance awareness (`__init__` in base classes)
+- Partial workspace analysis (analyze subset)
+- Advanced caching strategies (persistent cache across sessions)

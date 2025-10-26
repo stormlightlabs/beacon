@@ -75,8 +75,13 @@ impl WorkspaceIndex {
         self.modules.contains_key(uri)
     }
 
-    fn _iter(&self) -> impl Iterator<Item = (&Url, &ModuleInfo)> {
+    fn iter(&self) -> impl Iterator<Item = (&Url, &ModuleInfo)> {
         self.modules.iter()
+    }
+
+    /// Get all modules as an iterator over (URI, module name) pairs
+    pub fn all_modules(&self) -> impl Iterator<Item = (&Url, &String)> + '_ {
+        self.iter().map(|(uri, info)| (uri, &info.module_name))
     }
 }
 
@@ -84,21 +89,18 @@ impl WorkspaceIndex {
 pub struct Workspace {
     /// Root URI of the workspace
     pub root_uri: Option<Url>,
-
     /// Configuration
     config: Config,
-
     /// Document manager
     documents: DocumentManager,
-
     /// Index of all workspace modules
     index: WorkspaceIndex,
-
     /// Module dependency graph
     dependency_graph: DependencyGraph,
-
     /// Loaded stub files
     _stubs: StubCache,
+    /// Tracks which modules have been analyzed and their versions
+    analyzed_modules: FxHashMap<Url, i32>,
 }
 
 impl Workspace {
@@ -111,17 +113,18 @@ impl Workspace {
             index: WorkspaceIndex::new(),
             dependency_graph: DependencyGraph::new(),
             _stubs: StubCache::new(),
+            analyzed_modules: FxHashMap::default(),
         }
     }
 
     /// Initialize workspace by discovering Python files and stubs
     ///
     /// Scans the workspace for all Python files, builds the module index, and constructs the initial dependency graph.
+    /// TODO: Load stub files from config.stub_paths
     pub fn initialize(&mut self) -> Result<(), WorkspaceError> {
         self.discover_files()?;
         self.build_dependency_graph();
 
-        // TODO: Load stub files from config.stub_paths
         Ok(())
     }
 
@@ -591,11 +594,110 @@ impl Workspace {
             .collect()
     }
 
+    /// Invalidate analysis cache for a document and all its dependents
+    ///
+    /// Returns the list of URIs that need to be re-analyzed (includes the original URI).
+    /// URIs are returned in dependency order (leaf dependencies first).
+    pub fn invalidate_dependents(&mut self, uri: &Url) -> Vec<Url> {
+        let mut to_invalidate = FxHashSet::default();
+        let mut queue = VecDeque::new();
+        queue.push_back(uri.clone());
+        to_invalidate.insert(uri.clone());
+
+        while let Some(current) = queue.pop_front() {
+            self.analyzed_modules.remove(&current);
+
+            if let Some(deps) = self.dependency_graph.get_dependents(&current) {
+                for dep in deps {
+                    if !to_invalidate.contains(dep) {
+                        to_invalidate.insert(dep.clone());
+                        queue.push_back(dep.clone());
+                    }
+                }
+            }
+        }
+
+        let mut invalidated: Vec<Url> = to_invalidate.into_iter().collect();
+        invalidated.sort_by_cached_key(|u| u.to_string());
+        invalidated
+    }
+
+    /// Get a list of modules that need re-analysis in dependency order
+    ///
+    /// Returns URIs sorted so that dependencies are analyzed before dependents.
+    /// Only includes modules that have been previously analyzed but are now invalidated.
+    pub fn modules_to_reanalyze(&self, invalidated: &[Url]) -> Vec<Url> {
+        let invalidated_set: FxHashSet<_> = invalidated.iter().cloned().collect();
+        let full_order = self.analysis_order();
+
+        let mut result = Vec::new();
+        for group in full_order {
+            for uri in group {
+                if invalidated_set.contains(&uri) {
+                    result.push(uri);
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Mark a module as analyzed with the given version
+    pub fn mark_analyzed(&mut self, uri: &Url, version: i32) {
+        self.analyzed_modules.insert(uri.clone(), version);
+    }
+
+    /// Check if a module has been analyzed
+    pub fn is_analyzed(&self, uri: &Url) -> bool {
+        self.analyzed_modules.contains_key(uri)
+    }
+
+    /// Load a workspace file that is not currently open
+    ///
+    /// Reads the file from disk, parses it, and returns the parse result without opening it in the document manager.
+    /// This is useful for analyzing workspace files on-demand.
+    pub fn load_workspace_file(&self, uri: &Url) -> Option<crate::parser::ParseResult> {
+        if uri.scheme() != "file" {
+            return None;
+        }
+
+        let path = std::path::PathBuf::from(uri.path());
+        let text = std::fs::read_to_string(path).ok()?;
+
+        let mut parser = crate::parser::LspParser::new().ok()?;
+        parser.parse(&text).ok()
+    }
+
+    /// Re-analyze affected modules in dependency order
+    ///
+    /// Takes a list of invalidated URIs and re-analyzes them in the correct order and skips unchanged files to avoid unnecessary work.
+    /// Returns the number of modules successfully analyzed.
+    pub fn reanalyze_affected(&mut self, invalidated: &[Url], analyzer: &mut crate::analysis::Analyzer) -> usize {
+        let to_analyze = self.modules_to_reanalyze(invalidated);
+        let mut analyzed_count = 0;
+
+        for uri in to_analyze {
+            let version = self.documents.get_document(&uri, |doc| doc.version).unwrap_or(0);
+
+            if let Ok(_result) = analyzer.analyze(&uri) {
+                self.mark_analyzed(&uri, version);
+                analyzed_count += 1;
+            }
+        }
+
+        analyzed_count
+    }
+
     /// Load stub file for a module
     ///
     /// TODO: Implement .pyi loading and parsing
     pub fn _load_stub(&mut self, _module_name: &str) -> Option<StubFile> {
         None
+    }
+
+    /// Get all indexed files in the workspace
+    pub fn all_indexed_files(&self) -> Vec<Url> {
+        self.index.all_modules().map(|(uri, _)| uri.clone()).collect()
     }
 
     /// Get configuration
@@ -636,8 +738,7 @@ impl DependencyGraph {
 
     /// Remove all edges from a module
     ///
-    /// Called when a module is deleted or being re-analyzed.
-    /// Also cleans up reverse edges.
+    /// Called when a module is deleted or being re-analyzed and also cleans up reverse edges.
     fn rm_edges(&mut self, from: &Url) {
         if let Some(targets) = self.edges.remove(from) {
             for target in targets {
@@ -650,7 +751,6 @@ impl DependencyGraph {
             }
         }
 
-        // Also remove any reverse edges pointing to this module
         if let Some(sources) = self.reverse_edges.remove(from) {
             for source in sources {
                 if let Some(edges) = self.edges.get_mut(&source) {
@@ -845,11 +945,11 @@ impl StubCache {
 /// Parsed stub file (.pyi)
 ///
 /// TODO: Define structure for stub file contents
+/// TODO: Define proper structure for exported types/signatures
 #[derive(Debug, Clone)]
 pub struct StubFile {
     /// Module name
     pub _module: String,
-    // TODO: Define proper structure for exported types/signatures
 }
 
 /// Workspace errors

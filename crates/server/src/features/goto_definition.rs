@@ -3,19 +3,23 @@
 //! Navigates to the definition of symbols (variables, functions, classes, imports).
 
 use crate::document::DocumentManager;
+use crate::workspace::Workspace;
 use crate::{parser, utils};
 use lsp_types::{GotoDefinitionParams, GotoDefinitionResponse, Location, Position};
 use ropey::Rope;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use tree_sitter::Node;
 use url::Url;
 
 pub struct GotoDefinitionProvider {
     documents: DocumentManager,
+    workspace: Arc<RwLock<Workspace>>,
 }
 
 impl GotoDefinitionProvider {
-    pub fn new(documents: DocumentManager) -> Self {
-        Self { documents }
+    pub fn new(documents: DocumentManager, workspace: Arc<RwLock<Workspace>>) -> Self {
+        Self { documents, workspace }
     }
 
     /// Find the definition of the symbol at a position
@@ -24,8 +28,38 @@ impl GotoDefinitionProvider {
     pub fn goto_definition(&self, params: GotoDefinitionParams) -> Option<GotoDefinitionResponse> {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
-        let definition_location = self.find_definition(&uri, position)?;
-        Some(GotoDefinitionResponse::Scalar(definition_location))
+
+        if let Some(location) = self.find_definition(&uri, position) {
+            return Some(GotoDefinitionResponse::Scalar(location));
+        }
+
+        let is_import = self.documents.get_document(&uri, |doc| {
+            let tree = doc.tree()?;
+            let text = doc.text();
+            let p = parser::LspParser::new().ok()?;
+            let node = p.node_at_position(tree, &text, position)?;
+
+            let mut current = node;
+            while let Some(parent) = current.parent() {
+                if matches!(parent.kind(), "import_statement" | "import_from_statement") {
+                    return Some(true);
+                }
+                current = parent;
+            }
+
+            Some(false)
+        });
+
+        if is_import == Some(Some(true)) {
+            let cross_file_location = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(async { self.find_cross_file_definition(&uri, position).await })
+            });
+
+            return cross_file_location.map(GotoDefinitionResponse::Scalar);
+        }
+
+        None
     }
 
     /// Find the definition location for a symbol at a position by looking up the identifier at the
@@ -140,15 +174,77 @@ impl GotoDefinitionProvider {
         None
     }
 
-    /// TODO: Handle cross-file definitions (imports)
-    pub fn _find_cross_file_definition(&self, _uri: &Url, _position: Position) -> Option<Location> {
-        None
+    /// Find cross-file definitions by following imports
+    ///
+    /// Detects import statements and resolves them to their target files.
+    /// Handles both `import foo` and `from foo import bar` cases.
+    pub async fn find_cross_file_definition(&self, uri: &Url, position: Position) -> Option<Location> {
+        let (module_name, is_relative) = self.documents.get_document(uri, |doc| {
+            let tree = doc.tree()?;
+            let text = doc.text();
+            let p = parser::LspParser::new().ok()?;
+            let node = p.node_at_position(tree, &text, position)?;
+
+            if node.kind() != "identifier" && node.kind() != "dotted_name" {
+                return None;
+            }
+
+            let mut current = node;
+            while let Some(parent) = current.parent() {
+                if parent.kind() == "import_statement" {
+                    let name = parent
+                        .child_by_field_name("name")
+                        .and_then(|n| n.utf8_text(text.as_bytes()).ok())?
+                        .to_string();
+                    let is_rel = name.starts_with('.');
+                    return Some((name, is_rel));
+                } else if parent.kind() == "import_from_statement" {
+                    let name = parent
+                        .child_by_field_name("module_name")
+                        .and_then(|n| n.utf8_text(text.as_bytes()).ok())?
+                        .to_string();
+                    let is_rel = name.starts_with('.');
+                    return Some((name, is_rel));
+                }
+                current = parent;
+            }
+
+            None
+        })??;
+
+        let workspace = self.workspace.read().await;
+
+        let target_uri = if is_relative {
+            let from_module = workspace.uri_to_module_name(uri)?;
+            let leading_dots = module_name.chars().take_while(|&c| c == '.').count();
+            let rest = &module_name[leading_dots..];
+            workspace.resolve_relative_import(&from_module, rest, leading_dots)?
+        } else {
+            workspace.resolve_import(&module_name)?
+        };
+
+        let range = if self.documents.has_document(&target_uri) {
+            self.documents.get_document(&target_uri, |doc| {
+                let tree = doc.tree()?;
+                let text = doc.text();
+                Some(utils::tree_sitter_range_to_lsp_range(&text, tree.root_node().range()))
+            })?
+        } else {
+            let parse_result = workspace.load_workspace_file(&target_uri)?;
+            let root_text = parse_result.rope.to_string();
+            Some(utils::tree_sitter_range_to_lsp_range(
+                &root_text,
+                parse_result.tree.root_node().range(),
+            ))
+        }?;
+
+        Some(Location { uri: target_uri, range })
     }
 
     /// TODO: Implement type definition lookup
+    /// Use type inference to get type of expression
+    /// Navigate to the definition of that type (class, protocol, etc.)
     pub fn _goto_type_definition(&self, _uri: &Url, _position: Position) -> Option<Location> {
-        // Use type inference to get type of expression
-        // Navigate to the definition of that type (class, protocol, etc.)
         None
     }
 
@@ -161,11 +257,14 @@ impl GotoDefinitionProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use std::str::FromStr;
 
     fn create_test_provider() -> (GotoDefinitionProvider, Url) {
         let documents = DocumentManager::new().unwrap();
-        let provider = GotoDefinitionProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let provider = GotoDefinitionProvider::new(documents.clone(), workspace);
         let uri = Url::from_str("file:///test.py").unwrap();
         (provider, uri)
     }
@@ -177,7 +276,9 @@ mod tests {
     #[test]
     fn test_provider_creation() {
         let documents = DocumentManager::new().unwrap();
-        let _provider = GotoDefinitionProvider::new(documents);
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let _provider = GotoDefinitionProvider::new(documents, workspace);
     }
 
     #[test]

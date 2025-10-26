@@ -3,35 +3,39 @@
 //! Locates all references to a symbol across the workspace with scope-aware matching.
 
 use crate::utils;
+use crate::workspace::Workspace;
 use crate::{document::DocumentManager, parser};
 use beacon_parser::{Symbol, SymbolTable};
 use lsp_types::{Location, Position, Range, ReferenceParams};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use url::Url;
 
 pub struct ReferencesProvider {
     documents: DocumentManager,
+    workspace: Arc<RwLock<Workspace>>,
 }
 
 impl ReferencesProvider {
-    pub fn new(documents: DocumentManager) -> Self {
-        Self { documents }
+    pub fn new(documents: DocumentManager, workspace: Arc<RwLock<Workspace>>) -> Self {
+        Self { documents, workspace }
     }
 
     /// Find all references to the symbol at a position
     ///
     /// Uses scope-aware matching to ensure shadowed variables are handled correctly.
-    pub fn find_references(&self, params: ReferenceParams) -> Vec<Location> {
+    /// Searches both open documents and workspace files.
+    pub async fn find_references(&self, params: ReferenceParams) -> Vec<Location> {
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
         let include_declaration = params.context.include_declaration;
-
         let (target_symbol, symbol_name) = match self.resolve_symbol_at_position(&uri, position) {
             Some(result) => result,
             None => return Vec::new(),
         };
 
         let mut locations = self.find_references_in_document(&uri, &symbol_name, &target_symbol, include_declaration);
-
+        let workspace = self.workspace.read().await;
         for document_uri in self.documents.all_documents() {
             if document_uri != uri {
                 let other_refs = self.find_references_in_document(&document_uri, &symbol_name, &target_symbol, false);
@@ -39,7 +43,38 @@ impl ReferencesProvider {
             }
         }
 
+        let dependents = workspace.get_dependents(&uri);
+        for dependent_uri in dependents {
+            if !self.documents.has_document(&dependent_uri) {
+                if let Some(refs) =
+                    self.find_references_in_workspace_file(&dependent_uri, &symbol_name, &target_symbol, &workspace)
+                {
+                    locations.extend(refs);
+                }
+            }
+        }
+
         locations
+    }
+
+    /// Find references in a workspace file that is not currently open
+    fn find_references_in_workspace_file(
+        &self, uri: &Url, symbol_name: &str, target_symbol: &Symbol, workspace: &Workspace,
+    ) -> Option<Vec<Location>> {
+        let parse_result = workspace.load_workspace_file(uri)?;
+        let text = parse_result.rope.to_string();
+        let mut locations = Vec::new();
+        Self::collect_references_from_tree(
+            parse_result.tree.root_node(),
+            symbol_name,
+            target_symbol,
+            &parse_result.symbol_table,
+            &text,
+            uri,
+            &mut locations,
+        );
+
+        Some(locations)
     }
 
     /// Resolve the symbol at the cursor position
@@ -155,12 +190,15 @@ impl ReferencesProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use lsp_types::ReferenceContext;
     use std::str::FromStr;
 
     fn create_test_provider() -> (ReferencesProvider, Url) {
         let documents = DocumentManager::new().unwrap();
-        let provider = ReferencesProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let provider = ReferencesProvider::new(documents.clone(), workspace);
         let uri = Url::from_str("file:///test.py").unwrap();
         (provider, uri)
     }
@@ -175,11 +213,13 @@ mod tests {
     #[test]
     fn test_provider_creation() {
         let documents = DocumentManager::new().unwrap();
-        let _provider = ReferencesProvider::new(documents);
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let _provider = ReferencesProvider::new(documents, workspace);
     }
 
-    #[test]
-    fn test_find_variable_references() {
+    #[tokio::test]
+    async fn test_find_variable_references() {
         let (provider, uri) = create_test_provider();
         let source = r#"x = 42
 y = x + 1
@@ -196,7 +236,7 @@ print(x)"#;
             context: ReferenceContext { include_declaration: false },
         };
 
-        let locations = provider.find_references(params);
+        let locations = provider.find_references(params).await;
 
         assert_eq!(locations.len(), 2, "Expected 2 references to 'x'");
         assert_eq!(locations[0].range.start.line, 1);
@@ -205,8 +245,8 @@ print(x)"#;
         assert_eq!(locations[1].range.start.character, 6);
     }
 
-    #[test]
-    fn test_find_references_with_declaration() {
+    #[tokio::test]
+    async fn test_find_references_with_declaration() {
         let (provider, uri) = create_test_provider();
         let source = r#"x = 42
 y = x + 1"#;
@@ -222,15 +262,15 @@ y = x + 1"#;
             context: ReferenceContext { include_declaration: true },
         };
 
-        let locations = provider.find_references(params);
+        let locations = provider.find_references(params).await;
 
         assert_eq!(locations.len(), 2, "Expected declaration + 1 reference");
         assert!(locations.iter().any(|loc| loc.range.start.line == 0));
         assert!(locations.iter().any(|loc| loc.range.start.line == 1));
     }
 
-    #[test]
-    fn test_find_function_references() {
+    #[tokio::test]
+    async fn test_find_function_references() {
         let (provider, uri) = create_test_provider();
         let source = r#"def hello():
     pass
@@ -249,13 +289,13 @@ hello()"#;
             context: ReferenceContext { include_declaration: false },
         };
 
-        let locations = provider.find_references(params);
+        let locations = provider.find_references(params).await;
 
         assert!(!locations.is_empty(), "Should find function call references");
     }
 
-    #[test]
-    fn test_shadowing_different_scopes() {
+    #[tokio::test]
+    async fn test_shadowing_different_scopes() {
         let (provider, uri) = create_test_provider();
         let source = r#"x = 10
 
@@ -276,14 +316,14 @@ print(x)"#;
             context: ReferenceContext { include_declaration: false },
         };
 
-        let locations = provider.find_references(params);
+        let locations = provider.find_references(params).await;
 
         assert_eq!(locations.len(), 1, "Should only find outer scope references");
         assert_eq!(locations[0].range.start.line, 6);
     }
 
-    #[test]
-    fn test_nested_scope_references() {
+    #[tokio::test]
+    async fn test_nested_scope_references() {
         let (provider, uri) = create_test_provider();
         let source = r#"def outer():
     y = 5
@@ -303,13 +343,13 @@ print(x)"#;
             context: ReferenceContext { include_declaration: false },
         };
 
-        let locations = provider.find_references(params);
+        let locations = provider.find_references(params).await;
 
         assert_eq!(locations.len(), 2, "Should find references in nested scope");
     }
 
-    #[test]
-    fn test_no_references_found() {
+    #[tokio::test]
+    async fn test_no_references_found() {
         let (provider, uri) = create_test_provider();
         let source = r#"x = 42
 y = 10"#;
@@ -325,13 +365,13 @@ y = 10"#;
             context: ReferenceContext { include_declaration: false },
         };
 
-        let locations = provider.find_references(params);
+        let locations = provider.find_references(params).await;
 
         assert_eq!(locations.len(), 0, "Should find no references");
     }
 
-    #[test]
-    fn test_not_on_identifier() {
+    #[tokio::test]
+    async fn test_not_on_identifier() {
         let (provider, uri) = create_test_provider();
         let source = "x = 42";
         open_test_document(&provider, &uri, source);
@@ -346,13 +386,13 @@ y = 10"#;
             context: ReferenceContext { include_declaration: false },
         };
 
-        let locations = provider.find_references(params);
+        let locations = provider.find_references(params).await;
 
         assert_eq!(locations.len(), 0, "Should return empty when not on identifier");
     }
 
-    #[test]
-    fn test_undefined_symbol() {
+    #[tokio::test]
+    async fn test_undefined_symbol() {
         let (provider, uri) = create_test_provider();
         let source = "x = undefined_var";
         open_test_document(&provider, &uri, source);
@@ -367,13 +407,13 @@ y = 10"#;
             context: ReferenceContext { include_declaration: false },
         };
 
-        let locations = provider.find_references(params);
+        let locations = provider.find_references(params).await;
 
         assert_eq!(locations.len(), 0, "Should return empty for undefined symbol");
     }
 
-    #[test]
-    fn test_reference_in_function_call_arguments() {
+    #[tokio::test]
+    async fn test_reference_in_function_call_arguments() {
         let (provider, uri) = create_test_provider();
         let source = r#"data = [1, 2, 3]
 result = len(data)
@@ -390,15 +430,15 @@ print(data)"#;
             context: ReferenceContext { include_declaration: false },
         };
 
-        let locations = provider.find_references(params);
+        let locations = provider.find_references(params).await;
 
         assert_eq!(locations.len(), 2, "Should find references in function arguments");
         assert_eq!(locations[0].range.start.line, 1);
         assert_eq!(locations[1].range.start.line, 2);
     }
 
-    #[test]
-    fn test_reference_in_assignment_value() {
+    #[tokio::test]
+    async fn test_reference_in_assignment_value() {
         let (provider, uri) = create_test_provider();
         let source = r#"x = 10
 y = x
@@ -415,7 +455,7 @@ z = x + y"#;
             context: ReferenceContext { include_declaration: false },
         };
 
-        let locations = provider.find_references(params);
+        let locations = provider.find_references(params).await;
 
         assert_eq!(locations.len(), 2, "Should find all references in assignments");
     }

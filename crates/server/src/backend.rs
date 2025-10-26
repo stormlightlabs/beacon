@@ -6,8 +6,7 @@
 use crate::config::Config;
 use crate::document::DocumentManager;
 use crate::workspace::Workspace;
-use crate::{analysis::Analyzer, interpreter};
-use crate::{cache, features::*};
+use crate::{analysis, cache, features::*, interpreter};
 use lsp_types::{
     CodeActionProviderCapability, CompletionOptions, HoverProviderCapability, InitializeParams, InitializeResult,
     InlayHintServerCapabilities, OneOf, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
@@ -29,7 +28,7 @@ pub struct Backend {
     /// Document manager (shared across threads)
     documents: Arc<DocumentManager>,
     /// Type analyzer (shared and mutable)
-    analyzer: Arc<RwLock<Analyzer>>,
+    analyzer: Arc<RwLock<analysis::Analyzer>>,
     /// Workspace manager
     workspace: Arc<RwLock<Workspace>>,
     /// Feature providers
@@ -59,21 +58,21 @@ struct Features {
 impl Features {
     fn new(
         documents: DocumentManager, interpreter_path: Option<std::path::PathBuf>,
-        introspection_cache: crate::cache::IntrospectionCache,
+        introspection_cache: cache::IntrospectionCache, workspace: Arc<RwLock<Workspace>>,
     ) -> Self {
         Self {
             diagnostics: DiagnosticProvider::new(documents.clone()),
             hover: HoverProvider::with_introspection(documents.clone(), interpreter_path, introspection_cache),
             completion: CompletionProvider::new(documents.clone()),
-            goto_definition: GotoDefinitionProvider::new(documents.clone()),
-            references: ReferencesProvider::new(documents.clone()),
+            goto_definition: GotoDefinitionProvider::new(documents.clone(), workspace.clone()),
+            references: ReferencesProvider::new(documents.clone(), workspace.clone()),
             inlay_hints: InlayHintsProvider::new(documents.clone()),
             code_actions: CodeActionsProvider::new(documents.clone()),
             semantic_tokens: SemanticTokensProvider::new(documents.clone()),
             document_symbols: DocumentSymbolsProvider::new(documents.clone()),
             document_highlight: DocumentHighlightProvider::new(documents.clone()),
             rename: RenameProvider::new(documents.clone()),
-            workspace_symbols: WorkspaceSymbolsProvider::new(documents),
+            workspace_symbols: WorkspaceSymbolsProvider::new(documents, workspace),
         }
     }
 }
@@ -82,7 +81,10 @@ impl Backend {
     pub fn new(client: Client) -> Self {
         let config = Config::default();
         let documents = Arc::new(DocumentManager::new().expect("Failed to create document manager"));
-        let analyzer = Arc::new(RwLock::new(Analyzer::new(config.clone(), (*documents).clone())));
+        let analyzer = Arc::new(RwLock::new(analysis::Analyzer::new(
+            config.clone(),
+            (*documents).clone(),
+        )));
         let workspace = Arc::new(RwLock::new(Workspace::new(None, config, (*documents).clone())));
 
         let interpreter_path = interpreter::find_python_interpreter(None);
@@ -92,6 +94,7 @@ impl Backend {
             (*documents).clone(),
             interpreter_path.clone(),
             introspection_cache,
+            workspace.clone(),
         ));
 
         Self { client, documents, analyzer, workspace, features, interpreter_path }
@@ -159,7 +162,6 @@ impl LanguageServer for Backend {
             .log_message(MessageType::INFO, "Beacon LSP server initialized")
             .await;
 
-        // Initialize workspace scanning in background
         let mut workspace = self.workspace.write().await;
         let client = self.client.clone();
 
@@ -207,14 +209,26 @@ impl LanguageServer for Backend {
             Ok(_) => {
                 let mut analyzer = self.analyzer.write().await;
                 analyzer.invalidate(&uri);
-                drop(analyzer);
 
-                // Update workspace dependency graph
                 let mut workspace = self.workspace.write().await;
-                let _dependents = workspace.update_dependencies(&uri);
-                drop(workspace);
+                workspace.update_dependencies(&uri);
 
-                // TODO: Invalidate and re-analyze dependents in future iterations
+                let invalidated = workspace.invalidate_dependents(&uri);
+                let reanalyzed_count = workspace.reanalyze_affected(&invalidated, &mut analyzer);
+
+                self.client
+                    .log_message(
+                        MessageType::INFO,
+                        format!(
+                            "Reanalyzed {} module(s) after change to {}",
+                            reanalyzed_count,
+                            uri.path()
+                        ),
+                    )
+                    .await;
+
+                drop(workspace);
+                drop(analyzer);
 
                 self.publish_diagnostics(uri).await;
             }
@@ -250,7 +264,7 @@ impl LanguageServer for Backend {
     }
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
-        Ok(Some(self.features.references.find_references(params)))
+        Ok(Some(self.features.references.find_references(params).await))
     }
 
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
@@ -717,7 +731,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_workspace_symbol() {
         let service = create_backend();
         let backend = service.inner();

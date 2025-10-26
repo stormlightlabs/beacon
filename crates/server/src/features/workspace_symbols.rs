@@ -3,27 +3,31 @@
 //! Searches for symbols across all documents in the workspace and supports fuzzy matching and returns symbol locations for quick navigation.
 
 use crate::document::DocumentManager;
+use crate::workspace::Workspace;
 use beacon_parser::{AstNode, SymbolKind, SymbolTable};
 use lsp_types::{
     Location, Position, Range, SymbolInformation, SymbolKind as LspSymbolKind, SymbolTag, Url, WorkspaceSymbol,
     WorkspaceSymbolParams,
 };
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Workspace symbols provider
 ///
 /// Implements workspace-wide symbol search with fuzzy matching for quick navigation to any symbol in the workspace.
 pub struct WorkspaceSymbolsProvider {
     documents: DocumentManager,
+    workspace: Arc<RwLock<Workspace>>,
 }
 
 impl WorkspaceSymbolsProvider {
-    pub fn new(documents: DocumentManager) -> Self {
-        Self { documents }
+    pub fn new(documents: DocumentManager, workspace: Arc<RwLock<Workspace>>) -> Self {
+        Self { documents, workspace }
     }
 
     /// Search for symbols across the workspace
     ///
-    /// Returns symbols matching the query from all open documents using case-insensitive substring matching.
+    /// Returns symbols matching the query from all workspace files using fuzzy matching.
     pub fn workspace_symbol(&self, params: WorkspaceSymbolParams) -> Option<Vec<SymbolInformation>> {
         let query = params.query.to_lowercase();
         let mut results = Vec::new();
@@ -38,7 +42,48 @@ impl WorkspaceSymbolsProvider {
             });
         }
 
-        if results.is_empty() { None } else { Some(results) }
+        let workspace_uris = tokio::runtime::Handle::try_current()
+            .ok()
+            .and_then(|_| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        let workspace = self.workspace.read().await;
+                        Some(workspace.all_indexed_files())
+                    })
+                })
+            })
+            .unwrap_or_default();
+
+        for uri in workspace_uris {
+            if !self.documents.has_document(&uri) {
+                if let Ok(_handle) = tokio::runtime::Handle::try_current() {
+                    let workspace = tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current().block_on(async { self.workspace.read().await })
+                    });
+
+                    if let Some(parse_result) = workspace.load_workspace_file(&uri) {
+                        Self::collect_matching_symbols(
+                            &uri,
+                            &parse_result.ast,
+                            &parse_result.symbol_table,
+                            &query,
+                            &mut results,
+                        );
+                    }
+                }
+            }
+        }
+
+        if query.is_empty() || results.is_empty() {
+            if results.is_empty() { None } else { Some(results) }
+        } else {
+            results.sort_by_cached_key(|sym| {
+                let score = Self::fuzzy_match_score(&sym.name.to_lowercase(), &query);
+                -(score as i32)
+            });
+
+            Some(results)
+        }
     }
 
     /// Resolve a workspace symbol to fill in location details
@@ -178,23 +223,72 @@ impl WorkspaceSymbolsProvider {
     fn symbol_tags(is_deprecated: bool) -> Option<Vec<SymbolTag>> {
         if is_deprecated { Some(vec![SymbolTag::DEPRECATED]) } else { None }
     }
+
+    /// Compute fuzzy match score between a symbol name and query
+    ///
+    /// Returns a higher score for better matches.
+    /// Scoring prioritizes:
+    /// - Exact matches (highest)
+    /// - Prefix matches
+    /// - Consecutive character matches
+    /// - Any subsequence matches (lowest)
+    fn fuzzy_match_score(name: &str, query: &str) -> usize {
+        if query.is_empty() {
+            return 100;
+        }
+
+        if name == query {
+            return 1000;
+        }
+
+        if name.starts_with(query) {
+            return 500;
+        }
+
+        if name.contains(query) {
+            return 300;
+        }
+
+        let mut query_chars = query.chars().peekable();
+        let mut matched = 0;
+        let mut consecutive = 0;
+        let mut max_consecutive = 0;
+
+        for ch in name.chars() {
+            if Some(&ch) == query_chars.peek() {
+                query_chars.next();
+                matched += 1;
+                consecutive += 1;
+                max_consecutive = max_consecutive.max(consecutive);
+            } else {
+                consecutive = 0;
+            }
+        }
+
+        if matched == query.len() { 100 + max_consecutive * 10 } else { 0 }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use std::str::FromStr;
 
     #[test]
     fn test_provider_creation() {
         let documents = DocumentManager::new().unwrap();
-        let _provider = WorkspaceSymbolsProvider::new(documents);
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let _provider = WorkspaceSymbolsProvider::new(documents, workspace);
     }
 
     #[test]
     fn test_workspace_symbol_empty_workspace() {
         let documents = DocumentManager::new().unwrap();
-        let provider = WorkspaceSymbolsProvider::new(documents);
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let provider = WorkspaceSymbolsProvider::new(documents, workspace);
 
         let params = WorkspaceSymbolParams {
             query: "test".to_string(),
@@ -209,7 +303,9 @@ mod tests {
     #[test]
     fn test_workspace_symbol_find_function() {
         let documents = DocumentManager::new().unwrap();
-        let provider = WorkspaceSymbolsProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"def hello():
@@ -240,7 +336,9 @@ def world():
     #[test]
     fn test_workspace_symbol_find_class() {
         let documents = DocumentManager::new().unwrap();
-        let provider = WorkspaceSymbolsProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"class MyClass:
@@ -266,7 +364,9 @@ def world():
     #[test]
     fn test_workspace_symbol_find_variable() {
         let documents = DocumentManager::new().unwrap();
-        let provider = WorkspaceSymbolsProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "my_variable = 42";
@@ -291,7 +391,9 @@ def world():
     #[test]
     fn test_workspace_symbol_case_insensitive() {
         let documents = DocumentManager::new().unwrap();
-        let provider = WorkspaceSymbolsProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "def HelloWorld():\n    pass";
@@ -315,7 +417,9 @@ def world():
     #[test]
     fn test_workspace_symbol_partial_match() {
         let documents = DocumentManager::new().unwrap();
-        let provider = WorkspaceSymbolsProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "def calculate_sum():\n    pass";
@@ -339,7 +443,9 @@ def world():
     #[test]
     fn test_workspace_symbol_empty_query() {
         let documents = DocumentManager::new().unwrap();
-        let provider = WorkspaceSymbolsProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"def func1():
@@ -359,7 +465,6 @@ def func2():
         let result = provider.workspace_symbol(params);
         assert!(result.is_some());
 
-        // Empty query should return all symbols
         let symbols = result.unwrap();
         assert!(symbols.len() >= 2);
     }
@@ -367,7 +472,9 @@ def func2():
     #[test]
     fn test_workspace_symbol_multiple_documents() {
         let documents = DocumentManager::new().unwrap();
-        let provider = WorkspaceSymbolsProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri1 = Url::from_str("file:///file1.py").unwrap();
         let uri2 = Url::from_str("file:///file2.py").unwrap();
@@ -400,7 +507,9 @@ def func2():
     #[test]
     fn test_workspace_symbol_no_match() {
         let documents = DocumentManager::new().unwrap();
-        let provider = WorkspaceSymbolsProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "def hello():\n    pass";
@@ -420,7 +529,9 @@ def func2():
     #[test]
     fn test_workspace_symbol_nested_function() {
         let documents = DocumentManager::new().unwrap();
-        let provider = WorkspaceSymbolsProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"class MyClass:
@@ -470,7 +581,9 @@ def func2():
     #[test]
     fn test_symbol_resolve() {
         let documents = DocumentManager::new().unwrap();
-        let provider = WorkspaceSymbolsProvider::new(documents);
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let provider = WorkspaceSymbolsProvider::new(documents, workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let location = Location {
@@ -494,7 +607,9 @@ def func2():
     #[test]
     fn test_workspace_symbol_location_range() {
         let documents = DocumentManager::new().unwrap();
-        let provider = WorkspaceSymbolsProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "def hello():\n    pass";
@@ -523,8 +638,9 @@ def func2():
     #[test]
     fn test_collect_matching_symbols_module() {
         let documents = DocumentManager::new().unwrap();
-        let provider = WorkspaceSymbolsProvider::new(documents.clone());
-
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"x = 1
 y = 2
