@@ -165,39 +165,7 @@ pub struct SymbolTable {
 impl SymbolTable {
     /// Creates new instance of [SymbolTable] & injects builtin dunder variables into root scope
     pub fn new() -> Self {
-        let root_id = ScopeId(0);
-        let mut scopes = HashMap::new();
-        let mut root_symbols = FxHashMap::default();
-
-        for &dunder_name in BUILTIN_DUNDERS {
-            root_symbols.insert(
-                dunder_name.to_string(),
-                Symbol {
-                    name: dunder_name.to_string(),
-                    kind: SymbolKind::BuiltinVar,
-                    line: 0,
-                    col: 0,
-                    scope_id: root_id,
-                    docstring: None,
-                    references: Vec::new(),
-                },
-            );
-        }
-
-        scopes.insert(
-            root_id,
-            Scope {
-                id: root_id,
-                kind: ScopeKind::Module,
-                parent: None,
-                symbols: root_symbols,
-                children: Vec::new(),
-                start_byte: 0,
-                end_byte: usize::MAX,
-            },
-        );
-
-        Self { scopes, root_scope: root_id, next_scope_id: 1 }
+        Self::default()
     }
 
     /// Create a new scope as a child of the given parent with position information
@@ -423,6 +391,44 @@ impl SymbolTable {
     }
 }
 
+impl Default for SymbolTable {
+    fn default() -> Self {
+        let root_id = ScopeId(0);
+        let mut scopes = HashMap::new();
+        let mut root_symbols = FxHashMap::default();
+
+        for &dunder_name in BUILTIN_DUNDERS {
+            root_symbols.insert(
+                dunder_name.to_string(),
+                Symbol {
+                    name: dunder_name.to_string(),
+                    kind: SymbolKind::BuiltinVar,
+                    line: 0,
+                    col: 0,
+                    scope_id: root_id,
+                    docstring: None,
+                    references: Vec::new(),
+                },
+            );
+        }
+
+        scopes.insert(
+            root_id,
+            Scope {
+                id: root_id,
+                kind: ScopeKind::Module,
+                parent: None,
+                symbols: root_symbols,
+                children: Vec::new(),
+                start_byte: 0,
+                end_byte: usize::MAX,
+            },
+        );
+
+        Self { scopes, root_scope: root_id, next_scope_id: 1 }
+    }
+}
+
 /// Name resolution context for traversing the AST
 pub struct NameResolver {
     pub symbol_table: SymbolTable,
@@ -432,10 +438,7 @@ pub struct NameResolver {
 
 impl NameResolver {
     pub fn new(source: String) -> Self {
-        let symbol_table = SymbolTable::new();
-        let root_scope = symbol_table.root_scope;
-
-        Self { symbol_table, current_scope: root_scope, source }
+        Self { source, ..Default::default() }
     }
 
     /// Convert line and column (1-indexed) to byte offset
@@ -1117,15 +1120,11 @@ impl NameResolver {
     }
 }
 
-impl Default for SymbolTable {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Default for NameResolver {
     fn default() -> Self {
-        Self::new(String::new())
+        let symbol_table = SymbolTable::new();
+        let root_scope = symbol_table.root_scope;
+        Self { symbol_table, current_scope: root_scope, source: String::new() }
     }
 }
 
