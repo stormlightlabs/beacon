@@ -1,14 +1,82 @@
 # Beacon LSP Implementation Plan
 
+## Overview
+
 This document contains tactical implementation tasks and detailed breakdowns for LSP features.
 
 For strategic roadmap and architectural context, see [ROADMAP.md](./ROADMAP.md).
 
-**Focus:**
+### Focus
 
 1. Get basic LSP infrastructure working first
 2. Layer on the full Hindley-Milner type inference system
 3. Implementation-level details that support ROADMAP milestones
+
+### Implementation Order
+
+#### Complete constraint generation coverage
+
+- Ensure all Python constructs generate constraints
+- Handle edge cases (comprehensions, decorators, async/await)
+- **Files:** `crates/server/src/analysis/mod.rs`
+
+#### Static Analysis Part 1: Linter & Quality Checks
+
+- Implement rule engine for basic diagnostics
+- Unused imports, variables, undefined names
+- **Files:** `crates/server/src/analysis/linter.rs` (new), `crates/server/src/features/diagnostics.rs`
+
+#### Hover Documentation
+
+- Show inferred types at cursor position (uses type_map from #1)
+- Display docstrings for symbols
+- Basic type signature formatting
+- **Files:** `crates/server/src/features/hover.rs`
+
+#### Completions Part 1: Attribute & Import completions
+
+- Attribute completions after `.` (uses type inference)
+- Import completions from workspace
+- **Files:** `crates/server/src/features/completion.rs`
+
+#### Completions Part 2: Filtering, ranking, cross-file
+
+- Prefix matching, relevance ranking
+- Cross-file symbol completions
+- **Files:** `crates/server/src/features/completion.rs`
+
+#### Advanced flow-sensitive narrowing with full CFG integration
+
+- Create `TypeFlowAnalyzer` for tracking types across CFG blocks
+- Implement forward dataflow analysis with join point merging
+- Fixpoint iteration for loop-carried narrowing
+- **Files:** `crates/server/src/analysis/type_flow.rs` (new), integrate with `mod.rs`
+
+#### Module/Package Documentation on Hover
+
+- Introspect installed packages
+- Show module-level docs
+- **Files:** `crates/server/src/features/hover.rs`, `crates/server/src/introspection.rs` (new)
+
+#### Static Analysis Part 2: Incremental Re-analysis
+
+- Cache CFGs, symbol tables, diagnostics per module
+- Recompute only changed scopes
+- **Files:** `crates/server/src/analysis/cache.rs` (new), `crates/server/src/analysis/mod.rs`
+
+#### Cross-File Diagnostics
+
+- Circular imports, missing modules
+- Dependency graph validation
+- **Files:** `crates/server/src/workspace/graph.rs`, `crates/server/src/features/diagnostics.rs`
+
+### Parking Lot (Future Phases)
+
+- Annotation coverage checks
+- Advanced caching strategies (persistent cache)
+- Snippet completions
+- Document formatting
+- Inheritance awareness
 
 ## Completions
 
@@ -121,10 +189,6 @@ Advanced features and optimizations for future consideration.
     - Warn when functions lack type hints or have incomplete annotations
     - Configurable per TypeCheckingMode (strict, balanced, minimal)
     - Compare inferred types with declared annotations
-- Build type_map for hover and type-at-position queries
-    - Walk AST after constraint solving
-    - Apply final substitution to get concrete types for each node
-    - Track node IDs during constraint generation
 - Advanced flow-sensitive narrowing with full CFG integration
     - Create `TypeFlowAnalyzer` for tracking types across CFG blocks
     - Implement forward dataflow analysis with join point merging

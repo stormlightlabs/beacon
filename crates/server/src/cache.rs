@@ -244,8 +244,7 @@ impl IntrospectionCache {
             }
 
             let entries: Vec<_> = cache.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-            let json = serde_json::to_string_pretty(&entries)
-                .map_err(std::io::Error::other)?;
+            let json = serde_json::to_string_pretty(&entries).map_err(std::io::Error::other)?;
             std::fs::write(file, json)?;
             debug!(
                 "Saved {} introspection cache entries to {}",
@@ -286,6 +285,10 @@ impl Default for IntrospectionCache {
 /// Main cache manager coordinating all caches
 ///
 /// Provides a unified interface for caching all analysis artifacts.
+/// TODO: Add more specialized caches:
+/// - Symbol resolution cache
+/// - Module import cache
+/// - Stub file cache
 pub struct CacheManager {
     /// Type inference cache
     pub type_cache: TypeCache,
@@ -295,10 +298,6 @@ pub struct CacheManager {
 
     /// Python introspection cache (persistent)
     pub introspection_cache: IntrospectionCache,
-    // TODO: Add more specialized caches:
-    // - Symbol resolution cache
-    // - Module import cache
-    // - Stub file cache
 }
 
 impl CacheManager {
@@ -330,15 +329,15 @@ impl CacheManager {
     }
 
     /// Invalidate all caches for a document
+    /// TODO: Invalidate other caches
     pub fn invalidate_document(&self, uri: &Url) {
         self.type_cache.invalidate_document(uri);
-        // TODO: Invalidate other caches
     }
 
     /// Clear all caches
+    /// TODO: Clear other caches
     pub fn clear_all(&self) {
         self.type_cache.clear();
-        // TODO: Clear other caches
     }
 
     /// Get aggregate cache statistics

@@ -28,18 +28,56 @@ use rustc_hash::FxHashMap;
 use type_env::TypeEnvironment;
 use url::Url;
 
+struct ConstraintResult(ConstraintSet, FxHashMap<usize, Type>, FxHashMap<(usize, usize), usize>);
+
+/// Context for tracking node information during constraint generation
+struct ConstraintGenContext {
+    constraints: Vec<Constraint>,
+    node_counter: usize,
+    type_map: FxHashMap<usize, Type>,
+    position_map: FxHashMap<(usize, usize), usize>,
+}
+
+impl ConstraintGenContext {
+    fn new() -> Self {
+        Self {
+            constraints: Vec::new(),
+            node_counter: 0,
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+        }
+    }
+
+    /// Record a type for a node at a specific position, returning the node ID
+    fn record_type(&mut self, line: usize, col: usize, ty: Type) -> usize {
+        let node_id = self.node_counter;
+        self.node_counter += 1;
+        self.type_map.insert(node_id, ty);
+        self.position_map.insert((line, col), node_id);
+        node_id
+    }
+}
+
 /// Orchestrates type analysis for documents
 pub struct Analyzer {
     _config: Config,
     cache: CacheManager,
     _type_var_gen: TypeVarGen,
     documents: DocumentManager,
+    /// Map from document URI to position maps for type-at-position queries
+    position_maps: FxHashMap<Url, FxHashMap<(usize, usize), usize>>,
 }
 
 impl Analyzer {
     /// Create a new analyzer with the given configuration
     pub fn new(config: Config, documents: DocumentManager) -> Self {
-        Self { _config: config, cache: CacheManager::new(), _type_var_gen: TypeVarGen::new(), documents }
+        Self {
+            _config: config,
+            cache: CacheManager::new(),
+            _type_var_gen: TypeVarGen::new(),
+            documents,
+            position_maps: FxHashMap::default(),
+        }
     }
 
     /// Analyze a document and return inferred types
@@ -57,15 +95,16 @@ impl Analyzer {
             None => return Err(AnalysisError::DocumentNotFound(uri.clone()).into()),
         };
 
-        let constraints = self.generate_constraints(&ast, &symbol_table)?;
+        let ConstraintResult(constraints, mut type_map, position_map) =
+            self.generate_constraints(&ast, &symbol_table)?;
 
-        let (_substitution, type_errors) = self.solve_constraints(constraints)?;
+        let (substitution, type_errors) = self.solve_constraints(constraints)?;
 
-        // TODO: Build type_map by walking AST after solving
-        // This map is needed for hover information and type-at-position queries.
-        // For each AST node, apply the final substitution to get the concrete type.
-        // Track node IDs during constraint generation to enable lookup.
-        let type_map = FxHashMap::default();
+        for (_node_id, ty) in type_map.iter_mut() {
+            *ty = substitution.apply(ty);
+        }
+
+        self.position_maps.insert(uri.clone(), position_map);
 
         let static_analysis = self.perform_static_analysis(&ast, &symbol_table);
         Ok(AnalysisResult { uri: uri.clone(), version, type_map, type_errors, static_analysis })
@@ -73,41 +112,55 @@ impl Analyzer {
 
     /// Get the inferred type at a specific position
     ///
-    /// TODO: Implement position-to-node lookup and type retrieval
-    /// TODO: Convert position to node_id and check cache
-    /// TODO: Look up type for node at position
-    pub fn type_at_position(&mut self, uri: &Url, _position: Position) -> Result<Option<Type>> {
-        let _result = self.analyze(uri)?;
+    /// Analyzes the document and looks up the type at the specified position.
+    /// Returns None if no type information is available at that position.
+    pub fn type_at_position(&mut self, uri: &Url, position: Position) -> Result<Option<Type>> {
+        let result = self.analyze(uri)?;
+        let line = (position.line + 1) as usize;
+        let col = (position.character + 1) as usize;
+
+        let position_map = self.position_maps.get(uri);
+        if let Some(pos_map) = position_map {
+            if let Some(node_id) = pos_map.get(&(line, col)) {
+                return Ok(result.type_map.get(node_id).cloned());
+            }
+        }
+
         Ok(None)
     }
 
     /// Invalidate cached analysis for a document
     pub fn invalidate(&mut self, uri: &Url) {
         self.cache.invalidate_document(uri);
+        self.position_maps.remove(uri);
     }
 
     /// Generate constraints from an AST
     ///
-    /// Implements Algorithm W constraint generation with type environment threading
-    fn generate_constraints(&mut self, ast: &AstNode, symbol_table: &SymbolTable) -> Result<ConstraintSet> {
-        let mut constraints = Vec::new();
+    /// Implements Algorithm W constraint generation with type environment threading.
+    /// Returns constraints, type_map, and position_map for type-at-position queries.
+    fn generate_constraints(&mut self, ast: &AstNode, symbol_table: &SymbolTable) -> Result<ConstraintResult> {
+        let mut ctx = ConstraintGenContext::new();
         let mut env = TypeEnvironment::from_symbol_table(symbol_table, ast);
 
-        Self::visit_node_with_env(ast, &mut env, &mut constraints)?;
+        Self::visit_node_with_env(ast, &mut env, &mut ctx)?;
 
-        Ok(ConstraintSet { constraints })
+        Ok(ConstraintResult(
+            ConstraintSet { constraints: ctx.constraints },
+            ctx.type_map,
+            ctx.position_map,
+        ))
     }
 
     /// Visit an AST node and generate constraints with type environment
     ///
-    /// Implements constraint generation for core Python constructs
-    fn visit_node_with_env(
-        node: &AstNode, env: &mut TypeEnvironment, constraints: &mut Vec<Constraint>,
-    ) -> Result<Type> {
+    /// Implements constraint generation for core Python constructs.
+    /// Records type information in the context for type-at-position queries.
+    fn visit_node_with_env(node: &AstNode, env: &mut TypeEnvironment, ctx: &mut ConstraintGenContext) -> Result<Type> {
         match node {
             AstNode::Module { body, .. } => {
                 for stmt in body {
-                    Self::visit_node_with_env(stmt, env, constraints)?;
+                    Self::visit_node_with_env(stmt, env, ctx)?;
                 }
                 Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
             }
@@ -137,42 +190,47 @@ impl Analyzer {
 
                 let mut body_ty = Type::none();
                 for stmt in body {
-                    body_ty = Self::visit_node_with_env(stmt, &mut body_env, constraints)?;
+                    body_ty = Self::visit_node_with_env(stmt, &mut body_env, ctx)?;
                 }
 
                 let span = Span::new(*line, *col);
-                constraints.push(Constraint::Equal(body_ty, ret_type, span));
+                ctx.constraints.push(Constraint::Equal(body_ty, ret_type, span));
                 env.bind(name.clone(), TypeScheme::mono(fn_type.clone()));
 
+                ctx.record_type(*line, *col, fn_type.clone());
                 Ok(fn_type)
             }
 
-            AstNode::ClassDef { name, body, .. } => {
+            AstNode::ClassDef { name, body, line, col, .. } => {
                 let class_type = Type::Con(beacon_core::TypeCtor::Class(name.clone()));
                 env.bind(name.clone(), TypeScheme::mono(class_type.clone()));
 
                 for stmt in body {
-                    Self::visit_node_with_env(stmt, env, constraints)?;
+                    Self::visit_node_with_env(stmt, env, ctx)?;
                 }
 
+                ctx.record_type(*line, *col, class_type.clone());
                 Ok(class_type)
             }
 
-            AstNode::Assignment { target, value, .. } => {
-                let value_ty = Self::visit_node_with_env(value, env, constraints)?;
+            AstNode::Assignment { target, value, line, col } => {
+                let value_ty = Self::visit_node_with_env(value, env, ctx)?;
                 // TODO: Determine if value is non-expansive for generalization
                 env.bind(target.clone(), TypeScheme::mono(value_ty.clone()));
+                ctx.record_type(*line, *col, value_ty.clone());
                 Ok(value_ty)
             }
 
             AstNode::AnnotatedAssignment { target, type_annotation, value, line, col } => {
                 let annotated_ty = env.parse_annotation_or_any(type_annotation);
                 if let Some(val) = value {
-                    let value_ty = Self::visit_node_with_env(val, env, constraints)?;
+                    let value_ty = Self::visit_node_with_env(val, env, ctx)?;
                     let span = Span::new(*line, *col);
-                    constraints.push(Constraint::Equal(value_ty, annotated_ty.clone(), span));
+                    ctx.constraints
+                        .push(Constraint::Equal(value_ty, annotated_ty.clone(), span));
                 }
                 env.bind(target.clone(), TypeScheme::mono(annotated_ty.clone()));
+                ctx.record_type(*line, *col, annotated_ty.clone());
                 Ok(annotated_ty)
             }
 
@@ -181,45 +239,60 @@ impl Analyzer {
                 let func_ty = env.lookup(function).unwrap_or_else(|| Type::Var(env.fresh_var()));
                 let mut arg_types = Vec::new();
                 for arg in args {
-                    arg_types.push(Self::visit_node_with_env(arg, env, constraints)?);
+                    arg_types.push(Self::visit_node_with_env(arg, env, ctx)?);
                 }
                 let ret_ty = Type::Var(env.fresh_var());
                 let span = Span::new(*line, *col);
-                constraints.push(Constraint::Call(func_ty, arg_types, ret_ty.clone(), span));
+                ctx.constraints
+                    .push(Constraint::Call(func_ty, arg_types, ret_ty.clone(), span));
+                ctx.record_type(*line, *col, ret_ty.clone());
                 Ok(ret_ty)
             }
-            AstNode::Identifier { name, .. } => Ok(env.lookup(name).unwrap_or_else(|| Type::Var(env.fresh_var()))),
-            AstNode::Literal { value, .. } => Ok(match value {
-                LiteralValue::Integer(_) => Type::int(),
-                LiteralValue::Float(_) => Type::float(),
-                LiteralValue::String(_) => Type::string(),
-                LiteralValue::Boolean(_) => Type::bool(),
-                LiteralValue::None => Type::none(),
-            }),
-            AstNode::Return { value, .. } => {
-                if let Some(val) = value {
-                    Self::visit_node_with_env(val, env, constraints)
-                } else {
-                    Ok(Type::none())
-                }
+            AstNode::Identifier { name, line, col } => {
+                let ty = env.lookup(name).unwrap_or_else(|| Type::Var(env.fresh_var()));
+                ctx.record_type(*line, *col, ty.clone());
+                Ok(ty)
+            }
+            AstNode::Literal { value, line, col } => {
+                let ty = match value {
+                    LiteralValue::Integer(_) => Type::int(),
+                    LiteralValue::Float(_) => Type::float(),
+                    LiteralValue::String(_) => Type::string(),
+                    LiteralValue::Boolean(_) => Type::bool(),
+                    LiteralValue::None => Type::none(),
+                };
+                ctx.record_type(*line, *col, ty.clone());
+                Ok(ty)
+            }
+            AstNode::Return { value, line, col } => {
+                let ty = if let Some(val) = value { Self::visit_node_with_env(val, env, ctx)? } else { Type::none() };
+                ctx.record_type(*line, *col, ty.clone());
+                Ok(ty)
             }
             AstNode::Attribute { object, attribute, line, col } => {
-                let obj_ty = Self::visit_node_with_env(object, env, constraints)?;
+                let obj_ty = Self::visit_node_with_env(object, env, ctx)?;
                 let attr_ty = Type::Var(env.fresh_var());
                 let span = Span::new(*line, *col);
-                constraints.push(Constraint::HasAttr(obj_ty, attribute.clone(), attr_ty.clone(), span));
+                ctx.constraints
+                    .push(Constraint::HasAttr(obj_ty, attribute.clone(), attr_ty.clone(), span));
+                ctx.record_type(*line, *col, attr_ty.clone());
                 Ok(attr_ty)
             }
             AstNode::BinaryOp { left, right, line, col, .. } => {
-                let left_ty = Self::visit_node_with_env(left, env, constraints)?;
-                let right_ty = Self::visit_node_with_env(right, env, constraints)?;
+                let left_ty = Self::visit_node_with_env(left, env, ctx)?;
+                let right_ty = Self::visit_node_with_env(right, env, ctx)?;
                 let span = Span::new(*line, *col);
-                constraints.push(Constraint::Equal(left_ty.clone(), right_ty, span));
+                ctx.constraints.push(Constraint::Equal(left_ty.clone(), right_ty, span));
+                ctx.record_type(*line, *col, left_ty.clone());
                 Ok(left_ty)
             }
-            AstNode::UnaryOp { operand, .. } => Self::visit_node_with_env(operand, env, constraints),
+            AstNode::UnaryOp { operand, line, col, .. } => {
+                let ty = Self::visit_node_with_env(operand, env, ctx)?;
+                ctx.record_type(*line, *col, ty.clone());
+                Ok(ty)
+            }
             AstNode::If { test, body, elif_parts, else_body, .. } => {
-                Self::visit_node_with_env(test, env, constraints)?;
+                Self::visit_node_with_env(test, env, ctx)?;
 
                 let (narrowed_var, narrowed_type) = Self::detect_type_guard(test, &mut env.clone());
 
@@ -229,18 +302,18 @@ impl Analyzer {
                 }
 
                 for stmt in body {
-                    Self::visit_node_with_env(stmt, &mut true_env, constraints)?;
+                    Self::visit_node_with_env(stmt, &mut true_env, ctx)?;
                 }
 
                 for (elif_test, elif_body) in elif_parts {
-                    Self::visit_node_with_env(elif_test, env, constraints)?;
+                    Self::visit_node_with_env(elif_test, env, ctx)?;
                     for stmt in elif_body {
-                        Self::visit_node_with_env(stmt, env, constraints)?;
+                        Self::visit_node_with_env(stmt, env, ctx)?;
                     }
                 }
                 if let Some(else_stmts) = else_body {
                     for stmt in else_stmts {
-                        Self::visit_node_with_env(stmt, env, constraints)?;
+                        Self::visit_node_with_env(stmt, env, ctx)?;
                     }
                 }
                 Ok(Type::none())
@@ -256,8 +329,8 @@ impl Analyzer {
     #[deprecated]
     fn _visit_node(&mut self, node: &AstNode, _constraints: &mut [Constraint]) -> Result<Type> {
         let mut env = TypeEnvironment::new();
-        let mut constraints = Vec::new();
-        Self::visit_node_with_env(node, &mut env, &mut constraints)
+        let mut ctx = ConstraintGenContext::new();
+        Self::visit_node_with_env(node, &mut env, &mut ctx)
     }
 
     /// Solve a set of constraints using beacon-core's unification algorithm
@@ -309,8 +382,8 @@ impl Analyzer {
     /// Perform static analysis (CFG + data flow) on the AST
     ///
     /// Builds control flow graphs for each function and runs data flow analyses to detect use-before-def, unreachable code, and unused variables.
+    /// TODO: Extend to module-level analysis
     fn perform_static_analysis(&self, ast: &AstNode, symbol_table: &SymbolTable) -> Option<data_flow::DataFlowResult> {
-        // TODO: Extend to module-level analysis
         match ast {
             AstNode::Module { body, .. } => {
                 for stmt in body {
@@ -804,9 +877,31 @@ impl Substitution {
         Self { _map: FxHashMap::default() }
     }
 
-    /// TODO: Implement substitution application (apply substitution to a type)
-    pub fn _apply(&self, _ty: &Type) -> Type {
-        todo!()
+    /// Apply substitution to a type, replacing type variables with their substituted types
+    pub fn apply(&self, ty: &Type) -> Type {
+        match ty {
+            Type::Var(tv) => self._map.get(tv).cloned().unwrap_or_else(|| ty.clone()),
+            Type::Con(_) => ty.clone(),
+            Type::App(t1, t2) => {
+                let t1_sub = Box::new(self.apply(t1));
+                let t2_sub = Box::new(self.apply(t2));
+                Type::App(t1_sub, t2_sub)
+            }
+            Type::Fun(args, ret) => {
+                let args_sub = args.iter().map(|t| self.apply(t)).collect();
+                let ret_sub = Box::new(self.apply(ret));
+                Type::Fun(args_sub, ret_sub)
+            }
+            Type::ForAll(vars, body) => Type::ForAll(vars.clone(), Box::new(self.apply(body))),
+            Type::Union(types) => {
+                let substituted = types.iter().map(|t| self.apply(t)).collect();
+                Type::Union(substituted)
+            }
+            Type::Record(fields, row_var) => {
+                let fields_sub = fields.iter().map(|(name, ty)| (name.clone(), self.apply(ty))).collect();
+                Type::Record(fields_sub, row_var.clone())
+            }
+        }
     }
 
     /// TODO: Implement substitution composition
@@ -1084,5 +1179,198 @@ def process(x: str | None):
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Analysis should succeed with truthiness narrowing");
+    }
+
+    #[test]
+    fn test_substitution_apply_type_var() {
+        let mut map = FxHashMap::default();
+        let tv1 = TypeVar::new(1);
+        let tv2 = TypeVar::new(2);
+        map.insert(tv1.clone(), Type::int());
+        let subst = Substitution { _map: map };
+
+        let result = subst.apply(&Type::Var(tv1));
+        assert!(matches!(result, Type::Con(beacon_core::TypeCtor::Int)));
+
+        let result2 = subst.apply(&Type::Var(tv2));
+        assert!(matches!(result2, Type::Var(_)));
+    }
+
+    #[test]
+    fn test_substitution_apply_function() {
+        let mut map = FxHashMap::default();
+        let tv = TypeVar::new(1);
+        map.insert(tv.clone(), Type::int());
+        let subst = Substitution { _map: map };
+
+        let fn_type = Type::fun(vec![Type::Var(tv)], Type::string());
+        let result = subst.apply(&fn_type);
+
+        match result {
+            Type::Fun(args, _ret) => {
+                assert_eq!(args.len(), 1);
+                assert!(matches!(args[0], Type::Con(beacon_core::TypeCtor::Int)));
+            }
+            _ => panic!("Expected function type"),
+        }
+    }
+
+    #[test]
+    fn test_substitution_apply_union() {
+        let mut map = FxHashMap::default();
+        let tv = TypeVar::new(1);
+        map.insert(tv.clone(), Type::int());
+        let subst = Substitution { _map: map };
+
+        let union_type = Type::Union(vec![Type::Var(tv), Type::string()]);
+        let result = subst.apply(&union_type);
+
+        match result {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(matches!(types[0], Type::Con(beacon_core::TypeCtor::Int)));
+                assert!(matches!(types[1], Type::Con(beacon_core::TypeCtor::String)));
+            }
+            _ => panic!("Expected union type"),
+        }
+    }
+
+    #[test]
+    fn test_substitution_apply_record() {
+        let mut map = FxHashMap::default();
+        let tv = TypeVar::new(1);
+        map.insert(tv.clone(), Type::int());
+        let subst = Substitution { _map: map };
+
+        let record_type = Type::Record(vec![("x".to_string(), Type::Var(tv))], None);
+        let result = subst.apply(&record_type);
+
+        match result {
+            Type::Record(fields, _) => {
+                assert_eq!(fields.len(), 1);
+                assert_eq!(fields[0].0, "x");
+                assert!(matches!(fields[0].1, Type::Con(beacon_core::TypeCtor::Int)));
+            }
+            _ => panic!("Expected record type"),
+        }
+    }
+
+    #[test]
+    fn test_type_at_position_simple() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+x = 42
+y = "hello"
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let pos = Position { line: 1, character: 4 };
+        let result = analyzer.type_at_position(&uri, pos);
+
+        assert!(result.is_ok(), "type_at_position should succeed");
+    }
+
+    #[test]
+    fn test_type_at_position_identifier() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+x = 42
+print(x)
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let pos = Position { line: 1, character: 0 };
+        let result = analyzer.type_at_position(&uri, pos);
+
+        assert!(result.is_ok(), "type_at_position should succeed");
+    }
+
+    #[test]
+    fn test_type_map_populated() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+x = 42
+y = 3.14
+z = "hello"
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri).unwrap();
+
+        assert!(!result.type_map.is_empty(), "Type map should be populated");
+
+        let has_int = result
+            .type_map
+            .values()
+            .any(|t| matches!(t, Type::Con(beacon_core::TypeCtor::Int)));
+        let has_float = result
+            .type_map
+            .values()
+            .any(|t| matches!(t, Type::Con(beacon_core::TypeCtor::Float)));
+        let has_string = result
+            .type_map
+            .values()
+            .any(|t| matches!(t, Type::Con(beacon_core::TypeCtor::String)));
+
+        assert!(has_int, "Type map should contain int type");
+        assert!(has_float, "Type map should contain float type");
+        assert!(has_string, "Type map should contain string type");
+    }
+
+    #[test]
+    fn test_position_map_invalidation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "x = 42";
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let _ = analyzer.analyze(&uri);
+        assert!(
+            analyzer.position_maps.contains_key(&uri),
+            "Position map should be stored"
+        );
+
+        analyzer.invalidate(&uri);
+        assert!(
+            !analyzer.position_maps.contains_key(&uri),
+            "Position map should be removed"
+        );
+    }
+
+    #[test]
+    fn test_constraint_gen_context() {
+        let mut ctx = ConstraintGenContext::new();
+
+        assert_eq!(ctx.node_counter, 0);
+        assert!(ctx.type_map.is_empty());
+        assert!(ctx.position_map.is_empty());
+
+        let node_id = ctx.record_type(1, 5, Type::int());
+        assert_eq!(node_id, 0);
+        assert_eq!(ctx.node_counter, 1);
+        assert_eq!(ctx.type_map.len(), 1);
+        assert_eq!(ctx.position_map.len(), 1);
+        assert_eq!(ctx.position_map.get(&(1, 5)), Some(&0));
+
+        let node_id2 = ctx.record_type(2, 3, Type::string());
+        assert_eq!(node_id2, 1);
+        assert_eq!(ctx.node_counter, 2);
+        assert_eq!(ctx.type_map.len(), 2);
+        assert_eq!(ctx.position_map.len(), 2);
     }
 }
