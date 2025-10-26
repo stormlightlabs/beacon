@@ -538,7 +538,8 @@ impl SemanticTokensProvider {
             | AstNode::Match { line, col, .. }
             | AstNode::Pass { line, col }
             | AstNode::Break { line, col }
-            | AstNode::Continue { line, col } => (*line, *col),
+            | AstNode::Continue { line, col }
+            | AstNode::Raise { line, col, .. } => (*line, *col),
         }
     }
 

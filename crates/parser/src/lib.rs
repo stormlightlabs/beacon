@@ -6,7 +6,10 @@ pub mod resolve;
 pub mod rst;
 
 pub use highlight::PythonHighlighter;
-pub use resolve::{BUILTIN_DUNDERS, MAGIC_METHODS, NameResolver, ScopeId, ScopeKind, Symbol, SymbolKind, SymbolTable};
+pub use resolve::{
+    BUILTIN_DUNDERS, MAGIC_METHODS, NameResolver, ReferenceKind, ScopeId, ScopeKind, Symbol, SymbolKind,
+    SymbolReference, SymbolTable,
+};
 
 /// Python parser using [`tree_sitter`]
 pub struct PythonParser {
@@ -243,6 +246,12 @@ pub enum AstNode {
     },
     /// Continue statement
     Continue {
+        line: usize,
+        col: usize,
+    },
+    /// Raise statement
+    Raise {
+        exc: Option<Box<AstNode>>,
         line: usize,
         col: usize,
     },

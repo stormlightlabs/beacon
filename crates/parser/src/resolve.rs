@@ -99,6 +99,21 @@ impl SymbolKind {
     }
 }
 
+/// Kind of reference to a symbol
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceKind {
+    Read,
+    Write,
+}
+
+/// A reference to a symbol at a specific location
+#[derive(Debug, Clone)]
+pub struct SymbolReference {
+    pub line: usize,
+    pub col: usize,
+    pub kind: ReferenceKind,
+}
+
 /// Information about a symbol definition
 #[derive(Debug, Clone)]
 pub struct Symbol {
@@ -108,6 +123,8 @@ pub struct Symbol {
     pub col: usize,
     pub scope_id: ScopeId,
     pub docstring: Option<String>,
+    /// References to this symbol (reads and writes)
+    pub references: Vec<SymbolReference>,
 }
 
 /// Unique identifier for scopes
@@ -162,6 +179,7 @@ impl SymbolTable {
                     col: 0,
                     scope_id: root_id,
                     docstring: None,
+                    references: Vec::new(),
                 },
             );
         }
@@ -279,6 +297,101 @@ impl SymbolTable {
 
         Some(scope_id)
     }
+
+    /// Add a reference to a symbol
+    ///
+    /// Looks up the symbol from the given scope and adds a reference to it.
+    /// Returns true if the symbol was found and the reference was added.
+    pub fn add_reference(
+        &mut self, name: &str, from_scope: ScopeId, line: usize, col: usize, kind: ReferenceKind,
+    ) -> bool {
+        let mut current_scope = from_scope;
+
+        while let Some(scope) = self.scopes.get(&current_scope) {
+            let scope_id = scope.id;
+
+            if scope.symbols.contains_key(name) {
+                if let Some(scope_mut) = self.scopes.get_mut(&scope_id) {
+                    if let Some(symbol) = scope_mut.symbols.get_mut(name) {
+                        symbol.references.push(SymbolReference { line, col, kind });
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            match scope.parent {
+                Some(parent_id) => current_scope = parent_id,
+                None => break,
+            }
+        }
+
+        false
+    }
+
+    /// Find all symbols that shadow symbols in parent scopes
+    ///
+    /// Returns a list of (child_symbol, parent_symbol) pairs where child_symbol shadows parent_symbol.
+    pub fn find_shadowed_symbols(&self) -> Vec<(&Symbol, &Symbol)> {
+        let mut shadowed = Vec::new();
+
+        for scope in self.scopes.values() {
+            if let Some(parent_id) = scope.parent {
+                for (name, child_symbol) in &scope.symbols {
+                    if child_symbol.kind == SymbolKind::BuiltinVar || child_symbol.kind == SymbolKind::Parameter {
+                        continue;
+                    }
+
+                    if let Some(parent_symbol) = self.lookup_symbol(name, parent_id) {
+                        if parent_symbol.kind != SymbolKind::BuiltinVar {
+                            shadowed.push((child_symbol, parent_symbol));
+                        }
+                    }
+                }
+            }
+        }
+
+        shadowed
+    }
+
+    /// Find all symbols that have no read references
+    ///
+    /// Returns symbols that are defined but never read. Filters out:
+    /// - Builtins
+    /// - Names starting with underscore (convention for unused)
+    /// - Parameters (often intentionally unused)
+    /// - Class and function definitions (their "use" is being defined)
+    pub fn find_unused_symbols(&self) -> Vec<&Symbol> {
+        let mut unused = Vec::new();
+
+        for scope in self.scopes.values() {
+            for symbol in scope.symbols.values() {
+                if symbol.kind == SymbolKind::BuiltinVar {
+                    continue;
+                }
+
+                if symbol.name.starts_with('_') {
+                    continue;
+                }
+
+                if symbol.kind == SymbolKind::Parameter {
+                    continue;
+                }
+
+                if symbol.kind == SymbolKind::Class || symbol.kind == SymbolKind::Function {
+                    continue;
+                }
+
+                let has_read = symbol.references.iter().any(|r| r.kind == ReferenceKind::Read);
+
+                if !has_read {
+                    unused.push(symbol);
+                }
+            }
+        }
+
+        unused
+    }
 }
 
 /// Name resolution context for traversing the AST
@@ -322,7 +435,191 @@ impl NameResolver {
 
     /// Resolve names in an AST and build the symbol table
     pub fn resolve(&mut self, ast: &AstNode) -> Result<()> {
-        self.visit_node(ast)
+        self.visit_node(ast)?;
+        self.track_references(ast)?;
+        Ok(())
+    }
+
+    /// Second pass: track all symbol references (reads)
+    ///
+    /// This walks the AST again and records references to identifiers.
+    /// We skip recording writes since those are handled during symbol definition.
+    fn track_references(&mut self, node: &AstNode) -> Result<()> {
+        match node {
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    self.track_references(stmt)?;
+                }
+            }
+            AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } => {
+                for stmt in body {
+                    self.track_references(stmt)?;
+                }
+            }
+            AstNode::Assignment { value, .. } => self.track_references(value)?,
+            AstNode::AnnotatedAssignment { value, .. } => {
+                if let Some(val) = value {
+                    self.track_references(val)?;
+                }
+            }
+            AstNode::Call { function, args, line, col } => {
+                let byte_offset = self.line_col_to_byte_offset(*line, *col);
+                let scope = self.symbol_table.find_scope_at_position(byte_offset);
+                self.symbol_table
+                    .add_reference(function, scope, *line, *col, ReferenceKind::Read);
+
+                for arg in args {
+                    self.track_references(arg)?;
+                }
+            }
+            AstNode::Identifier { name, line, col } => {
+                let byte_offset = self.line_col_to_byte_offset(*line, *col);
+                let scope = self.symbol_table.find_scope_at_position(byte_offset);
+                self.symbol_table
+                    .add_reference(name, scope, *line, *col, ReferenceKind::Read);
+            }
+            AstNode::Return { value, .. } => {
+                if let Some(val) = value {
+                    self.track_references(val)?;
+                }
+            }
+            AstNode::Attribute { object, .. } => {
+                self.track_references(object)?;
+            }
+            AstNode::If { test, body, elif_parts, else_body, .. } => {
+                self.track_references(test)?;
+                for stmt in body {
+                    self.track_references(stmt)?;
+                }
+                for (elif_test, elif_body) in elif_parts {
+                    self.track_references(elif_test)?;
+                    for stmt in elif_body {
+                        self.track_references(stmt)?;
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        self.track_references(stmt)?;
+                    }
+                }
+            }
+            AstNode::For { iter, body, else_body, .. } => {
+                self.track_references(iter)?;
+                for stmt in body {
+                    self.track_references(stmt)?;
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        self.track_references(stmt)?;
+                    }
+                }
+            }
+            AstNode::While { test, body, else_body, .. } => {
+                self.track_references(test)?;
+                for stmt in body {
+                    self.track_references(stmt)?;
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        self.track_references(stmt)?;
+                    }
+                }
+            }
+            AstNode::Try { body, handlers, else_body, finally_body, .. } => {
+                for stmt in body {
+                    self.track_references(stmt)?;
+                }
+                for handler in handlers {
+                    for stmt in &handler.body {
+                        self.track_references(stmt)?;
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        self.track_references(stmt)?;
+                    }
+                }
+                if let Some(finally_stmts) = finally_body {
+                    for stmt in finally_stmts {
+                        self.track_references(stmt)?;
+                    }
+                }
+            }
+            AstNode::With { items, body, .. } => {
+                for item in items {
+                    self.track_references(&item.context_expr)?;
+                }
+                for stmt in body {
+                    self.track_references(stmt)?;
+                }
+            }
+            AstNode::ListComp { element, generators, .. }
+            | AstNode::SetComp { element, generators, .. }
+            | AstNode::GeneratorExp { element, generators, .. } => {
+                self.track_references(element)?;
+                for generator in generators {
+                    self.track_references(&generator.iter)?;
+                    for if_clause in &generator.ifs {
+                        self.track_references(if_clause)?;
+                    }
+                }
+            }
+            AstNode::DictComp { key, value, generators, .. } => {
+                self.track_references(key)?;
+                self.track_references(value)?;
+                for generator in generators {
+                    self.track_references(&generator.iter)?;
+                    for if_clause in &generator.ifs {
+                        self.track_references(if_clause)?;
+                    }
+                }
+            }
+            AstNode::NamedExpr { value, .. } => self.track_references(value)?,
+            AstNode::BinaryOp { left, right, .. } => {
+                self.track_references(left)?;
+                self.track_references(right)?;
+            }
+            AstNode::UnaryOp { operand, .. } => {
+                self.track_references(operand)?;
+            }
+            AstNode::Compare { left, comparators, .. } => {
+                self.track_references(left)?;
+                for comp in comparators {
+                    self.track_references(comp)?;
+                }
+            }
+            AstNode::Lambda { body, .. } => {
+                self.track_references(body)?;
+            }
+            AstNode::Subscript { value, slice, .. } => {
+                self.track_references(value)?;
+                self.track_references(slice)?;
+            }
+            AstNode::Match { subject, cases, .. } => {
+                self.track_references(subject)?;
+                for case in cases {
+                    if let Some(guard) = &case.guard {
+                        self.track_references(guard)?;
+                    }
+                    for stmt in &case.body {
+                        self.track_references(stmt)?;
+                    }
+                }
+            }
+            AstNode::Raise { exc, .. } => {
+                if let Some(exception) = exc {
+                    self.track_references(exception)?;
+                }
+            }
+            AstNode::Literal { .. }
+            | AstNode::Pass { .. }
+            | AstNode::Break { .. }
+            | AstNode::Continue { .. }
+            | AstNode::Import { .. }
+            | AstNode::ImportFrom { .. } => {}
+        }
+
+        Ok(())
     }
 
     /// Get the approximate end byte of a node by finding the end of its last line
@@ -407,7 +704,8 @@ impl NameResolver {
             | AstNode::Subscript { line, col, .. }
             | AstNode::Pass { line, col }
             | AstNode::Break { line, col }
-            | AstNode::Continue { line, col } => {
+            | AstNode::Continue { line, col }
+            | AstNode::Raise { line, col, .. } => {
                 let start_byte = self.line_col_to_byte_offset(*line, *col);
                 let mut end_byte = start_byte;
                 for (i, ch) in self.source[start_byte..].chars().enumerate() {
@@ -436,6 +734,7 @@ impl NameResolver {
                     col: *col,
                     scope_id: self.current_scope,
                     docstring: docstring.clone(),
+                    references: Vec::new(),
                 };
                 self.symbol_table.add_symbol(self.current_scope, symbol);
 
@@ -460,6 +759,7 @@ impl NameResolver {
                         col: param.col,
                         scope_id: func_scope,
                         docstring: None,
+                        references: Vec::new(),
                     };
                     self.symbol_table.add_symbol(func_scope, param_symbol);
                 }
@@ -477,6 +777,7 @@ impl NameResolver {
                     col: *col,
                     scope_id: self.current_scope,
                     docstring: docstring.clone(),
+                    references: Vec::new(),
                 };
                 self.symbol_table.add_symbol(self.current_scope, symbol);
 
@@ -509,6 +810,7 @@ impl NameResolver {
                     col: *col,
                     scope_id: self.current_scope,
                     docstring: None,
+                    references: Vec::new(),
                 };
                 self.symbol_table.add_symbol(self.current_scope, symbol);
             }
@@ -522,6 +824,7 @@ impl NameResolver {
                         col: *col,
                         scope_id: self.current_scope,
                         docstring: None,
+                        references: Vec::new(),
                     },
                 );
 
@@ -548,6 +851,7 @@ impl NameResolver {
                     col: *col,
                     scope_id: self.current_scope,
                     docstring: None,
+                    references: Vec::new(),
                 },
             ),
             AstNode::ImportFrom { names, line, col, .. } => {
@@ -561,6 +865,7 @@ impl NameResolver {
                             col: *col + i,
                             scope_id: self.current_scope,
                             docstring: None,
+                            references: Vec::new(),
                         },
                     );
                 }
@@ -593,6 +898,7 @@ impl NameResolver {
                     col: *col,
                     scope_id: self.current_scope,
                     docstring: None,
+                    references: Vec::new(),
                 };
                 self.symbol_table.add_symbol(self.current_scope, symbol);
 
@@ -629,6 +935,7 @@ impl NameResolver {
                             col: handler.col,
                             scope_id: self.current_scope,
                             docstring: None,
+                            references: Vec::new(),
                         };
                         self.symbol_table.add_symbol(self.current_scope, symbol);
                     }
@@ -659,6 +966,7 @@ impl NameResolver {
                             col: 0,
                             scope_id: self.current_scope,
                             docstring: None,
+                            references: Vec::new(),
                         };
                         self.symbol_table.add_symbol(self.current_scope, symbol);
                     }
@@ -697,6 +1005,7 @@ impl NameResolver {
                     col: *col,
                     scope_id: self.current_scope,
                     docstring: None,
+                    references: Vec::new(),
                 };
                 self.symbol_table.add_symbol(self.current_scope, symbol);
             }
@@ -730,6 +1039,7 @@ impl NameResolver {
                         col: param.col,
                         scope_id: lambda_scope,
                         docstring: None,
+                        references: Vec::new(),
                     };
                     self.symbol_table.add_symbol(lambda_scope, param_symbol);
                 }
@@ -752,7 +1062,11 @@ impl NameResolver {
                     }
                 }
             }
-            // TODO: Track Identifier usage
+            AstNode::Raise { exc, .. } => {
+                if let Some(exception) = exc {
+                    self.visit_node(exception)?;
+                }
+            }
             AstNode::Identifier { .. }
             | AstNode::Literal { .. }
             | AstNode::Pass { .. }
@@ -822,6 +1136,7 @@ mod tests {
             col: 1,
             scope_id: table.root_scope,
             docstring: None,
+            references: Vec::new(),
         };
         table.add_symbol(table.root_scope, root_symbol);
 
@@ -832,6 +1147,7 @@ mod tests {
             col: 1,
             scope_id: func_scope,
             docstring: None,
+            references: Vec::new(),
         };
         table.add_symbol(func_scope, func_symbol);
 
@@ -1351,5 +1667,362 @@ mod tests {
         };
 
         resolver.resolve(&ast).unwrap();
+    }
+
+    // === Symbol Tracking and Shadowing Tests ===
+
+    #[test]
+    fn test_find_shadowed_symbols_simple() {
+        let source = "x = 1\ndef foo():\n    x = 2".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::Module {
+            body: vec![
+                AstNode::Assignment {
+                    target: "x".to_string(),
+                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 5 }),
+                    line: 1,
+                    col: 1,
+                },
+                AstNode::FunctionDef {
+                    name: "foo".to_string(),
+                    args: vec![],
+                    body: vec![AstNode::Assignment {
+                        target: "x".to_string(),
+                        value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(2), line: 3, col: 9 }),
+                        line: 3,
+                        col: 5,
+                    }],
+                    line: 2,
+                    col: 1,
+                    docstring: None,
+                    return_type: None,
+                    decorators: Vec::new(),
+                },
+            ],
+            docstring: None,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        let shadowed = resolver.symbol_table.find_shadowed_symbols();
+        assert_eq!(shadowed.len(), 1);
+        assert_eq!(shadowed[0].0.name, "x");
+        assert_eq!(shadowed[0].0.line, 3);
+        assert_eq!(shadowed[0].1.name, "x");
+        assert_eq!(shadowed[0].1.line, 1);
+    }
+
+    #[test]
+    fn test_find_shadowed_symbols_nested() {
+        let source = "x = 1\ndef outer():\n    x = 2\n    def inner():\n        x = 3".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::Module {
+            body: vec![
+                AstNode::Assignment {
+                    target: "x".to_string(),
+                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 5 }),
+                    line: 1,
+                    col: 1,
+                },
+                AstNode::FunctionDef {
+                    name: "outer".to_string(),
+                    args: vec![],
+                    body: vec![
+                        AstNode::Assignment {
+                            target: "x".to_string(),
+                            value: Box::new(AstNode::Literal {
+                                value: crate::LiteralValue::Integer(2),
+                                line: 3,
+                                col: 9,
+                            }),
+                            line: 3,
+                            col: 5,
+                        },
+                        AstNode::FunctionDef {
+                            name: "inner".to_string(),
+                            args: vec![],
+                            body: vec![AstNode::Assignment {
+                                target: "x".to_string(),
+                                value: Box::new(AstNode::Literal {
+                                    value: crate::LiteralValue::Integer(3),
+                                    line: 5,
+                                    col: 13,
+                                }),
+                                line: 5,
+                                col: 9,
+                            }],
+                            line: 4,
+                            col: 5,
+                            docstring: None,
+                            return_type: None,
+                            decorators: Vec::new(),
+                        },
+                    ],
+                    line: 2,
+                    col: 1,
+                    docstring: None,
+                    return_type: None,
+                    decorators: Vec::new(),
+                },
+            ],
+            docstring: None,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        let shadowed = resolver.symbol_table.find_shadowed_symbols();
+        // Should find x in outer shadowing global x, and x in inner shadowing outer x
+        assert!(shadowed.len() >= 2);
+        assert!(shadowed.iter().any(|(child, _)| child.line == 3));
+        assert!(shadowed.iter().any(|(child, _)| child.line == 5));
+    }
+
+    #[test]
+    fn test_find_shadowed_symbols_no_shadowing() {
+        let source = "x = 1\ny = 2".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::Module {
+            body: vec![
+                AstNode::Assignment {
+                    target: "x".to_string(),
+                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 5 }),
+                    line: 1,
+                    col: 1,
+                },
+                AstNode::Assignment {
+                    target: "y".to_string(),
+                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(2), line: 2, col: 5 }),
+                    line: 2,
+                    col: 1,
+                },
+            ],
+            docstring: None,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        let shadowed = resolver.symbol_table.find_shadowed_symbols();
+        assert_eq!(shadowed.len(), 0);
+    }
+
+    #[test]
+    fn test_find_shadowed_symbols_parameters_ignored() {
+        let source = "x = 1\ndef foo(x):\n    pass".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::Module {
+            body: vec![
+                AstNode::Assignment {
+                    target: "x".to_string(),
+                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 5 }),
+                    line: 1,
+                    col: 1,
+                },
+                AstNode::FunctionDef {
+                    name: "foo".to_string(),
+                    args: vec![Parameter {
+                        name: "x".to_string(),
+                        line: 2,
+                        col: 9,
+                        type_annotation: None,
+                        default_value: None,
+                    }],
+                    body: vec![AstNode::Pass { line: 3, col: 5 }],
+                    line: 2,
+                    col: 1,
+                    docstring: None,
+                    return_type: None,
+                    decorators: Vec::new(),
+                },
+            ],
+            docstring: None,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        let shadowed = resolver.symbol_table.find_shadowed_symbols();
+        // Parameters should not be reported as shadowing
+        assert_eq!(shadowed.len(), 0);
+    }
+
+    #[test]
+    fn test_symbol_references_tracking() {
+        let source = "x = 1\ny = x + x".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::Module {
+            body: vec![
+                AstNode::Assignment {
+                    target: "x".to_string(),
+                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 5 }),
+                    line: 1,
+                    col: 1,
+                },
+                AstNode::Assignment {
+                    target: "y".to_string(),
+                    value: Box::new(AstNode::BinaryOp {
+                        left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 2, col: 5 }),
+                        op: crate::BinaryOperator::Add,
+                        right: Box::new(AstNode::Identifier { name: "x".to_string(), line: 2, col: 9 }),
+                        line: 2,
+                        col: 7,
+                    }),
+                    line: 2,
+                    col: 1,
+                },
+            ],
+            docstring: None,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        let x_symbol = resolver.symbol_table.lookup_symbol("x", resolver.symbol_table.root_scope).unwrap();
+        // Should have 2 read references
+        let read_refs = x_symbol.references.iter().filter(|r| r.kind == ReferenceKind::Read).count();
+        assert_eq!(read_refs, 2);
+    }
+
+    #[test]
+    fn test_find_unused_symbols_basic() {
+        let source = "x = 1\ny = 2\nprint(y)".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::Module {
+            body: vec![
+                AstNode::Assignment {
+                    target: "x".to_string(),
+                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 5 }),
+                    line: 1,
+                    col: 1,
+                },
+                AstNode::Assignment {
+                    target: "y".to_string(),
+                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(2), line: 2, col: 5 }),
+                    line: 2,
+                    col: 1,
+                },
+                AstNode::Call {
+                    function: "print".to_string(),
+                    args: vec![AstNode::Identifier { name: "y".to_string(), line: 3, col: 7 }],
+                    line: 3,
+                    col: 1,
+                },
+            ],
+            docstring: None,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        let unused = resolver.symbol_table.find_unused_symbols();
+        assert_eq!(unused.len(), 1);
+        assert_eq!(unused[0].name, "x");
+    }
+
+    #[test]
+    fn test_find_unused_symbols_underscore_prefix() {
+        let source = "_x = 1".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::Module {
+            body: vec![AstNode::Assignment {
+                target: "_x".to_string(),
+                value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 6 }),
+                line: 1,
+                col: 1,
+            }],
+            docstring: None,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        let unused = resolver.symbol_table.find_unused_symbols();
+        // Variables starting with _ should be ignored
+        assert_eq!(unused.len(), 0);
+    }
+
+    #[test]
+    fn test_find_unused_symbols_functions_ignored() {
+        let source = "def foo():\n    pass".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::Module {
+            body: vec![AstNode::FunctionDef {
+                name: "foo".to_string(),
+                args: vec![],
+                body: vec![AstNode::Pass { line: 2, col: 5 }],
+                line: 1,
+                col: 1,
+                docstring: None,
+                return_type: None,
+                decorators: Vec::new(),
+            }],
+            docstring: None,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        let unused = resolver.symbol_table.find_unused_symbols();
+        // Functions should not be reported as unused
+        assert_eq!(unused.len(), 0);
+    }
+
+    #[test]
+    fn test_find_unused_symbols_classes_ignored() {
+        let source = "class MyClass:\n    pass".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::Module {
+            body: vec![AstNode::ClassDef {
+                name: "MyClass".to_string(),
+                body: vec![AstNode::Pass { line: 2, col: 5 }],
+                line: 1,
+                col: 1,
+                docstring: None,
+                decorators: Vec::new(),
+            }],
+            docstring: None,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        let unused = resolver.symbol_table.find_unused_symbols();
+        // Classes should not be reported as unused
+        assert_eq!(unused.len(), 0);
+    }
+
+    #[test]
+    fn test_add_reference_returns_true_on_success() {
+        let mut table = SymbolTable::new();
+        let func_scope = table.create_scope(ScopeKind::Function, table.root_scope, 10, 50);
+
+        let symbol = Symbol {
+            name: "x".to_string(),
+            kind: SymbolKind::Variable,
+            line: 1,
+            col: 1,
+            scope_id: func_scope,
+            docstring: None,
+            references: Vec::new(),
+        };
+        table.add_symbol(func_scope, symbol);
+
+        let result = table.add_reference("x", func_scope, 5, 10, ReferenceKind::Read);
+        assert!(result);
+
+        let x_symbol = table.lookup_symbol("x", func_scope).unwrap();
+        assert_eq!(x_symbol.references.len(), 1);
+        assert_eq!(x_symbol.references[0].kind, ReferenceKind::Read);
+    }
+
+    #[test]
+    fn test_add_reference_returns_false_on_missing_symbol() {
+        let mut table = SymbolTable::new();
+        let func_scope = table.create_scope(ScopeKind::Function, table.root_scope, 10, 50);
+
+        let result = table.add_reference("nonexistent", func_scope, 5, 10, ReferenceKind::Read);
+        assert!(!result);
     }
 }

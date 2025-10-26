@@ -21,9 +21,7 @@ impl DiagnosticProvider {
         Self { documents }
     }
 
-    /// Generate diagnostics for a document
-    ///
-    /// Combines syntax errors, type errors, and other analysis issues.
+    /// Generate diagnostics for a document by combining syntax errors, type errors, and other analysis issues.
     pub fn generate_diagnostics(&self, uri: &Url, analyzer: &mut Analyzer) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
         self.add_parse_errors(uri, &mut diagnostics);
@@ -32,6 +30,7 @@ impl DiagnosticProvider {
         self.add_unsafe_any_warnings(uri, analyzer, &mut diagnostics);
         self.add_annotation_mismatch_warnings(uri, analyzer, &mut diagnostics);
         self.add_dunder_diagnostics(uri, &mut diagnostics);
+        self.add_static_analysis_diagnostics(uri, analyzer, &mut diagnostics);
 
         diagnostics
     }
@@ -275,11 +274,10 @@ impl DiagnosticProvider {
     }
 
     /// Basic validation for magic method signatures
+    /// TODO: Implement more comprehensive signature validation
     fn validate_magic_method_signature(
         &self, name: &str, line: &usize, col: &usize, diagnostics: &mut Vec<Diagnostic>,
     ) {
-        // TODO: Implement more comprehensive signature validation
-        // This is a placeholder for future enhancement; just check common cases for now
         let _ = (name, line, col, diagnostics);
     }
 
@@ -303,6 +301,126 @@ impl DiagnosticProvider {
         }
 
         byte_offset
+    }
+
+    /// Add static analysis diagnostics (use-before-def, unreachable code, unused variables, shadowing)
+    fn add_static_analysis_diagnostics(&self, uri: &Url, analyzer: &mut Analyzer, diagnostics: &mut Vec<Diagnostic>) {
+        let result = match analyzer.analyze(uri) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+
+        let Some(static_analysis) = result.static_analysis else {
+            return;
+        };
+
+        for use_before_def in &static_analysis.use_before_def {
+            let position = Position {
+                line: (use_before_def.line.saturating_sub(1)) as u32,
+                character: (use_before_def.col.saturating_sub(1)) as u32,
+            };
+
+            let range = Range {
+                start: position,
+                end: Position {
+                    line: position.line,
+                    character: position.character + use_before_def.var_name.len() as u32,
+                },
+            };
+
+            diagnostics.push(Diagnostic {
+                range,
+                severity: Some(DiagnosticSeverity::ERROR),
+                code: Some(lsp_types::NumberOrString::String("use-before-def".to_string())),
+                source: Some("beacon".to_string()),
+                message: format!("Variable '{}' used before assignment", use_before_def.var_name),
+                related_information: None,
+                tags: None,
+                data: None,
+                code_description: None,
+            });
+        }
+
+        for unreachable in &static_analysis.unreachable_code {
+            let position = Position {
+                line: (unreachable.line.saturating_sub(1)) as u32,
+                character: (unreachable.col.saturating_sub(1)) as u32,
+            };
+
+            let range =
+                Range { start: position, end: Position { line: position.line, character: position.character + 10 } };
+
+            diagnostics.push(Diagnostic {
+                range,
+                severity: Some(DiagnosticSeverity::WARNING),
+                code: Some(lsp_types::NumberOrString::String("unreachable-code".to_string())),
+                source: Some("beacon".to_string()),
+                message: "Unreachable code detected".to_string(),
+                related_information: None,
+                tags: Some(vec![lsp_types::DiagnosticTag::UNNECESSARY]),
+                data: None,
+                code_description: None,
+            });
+        }
+
+        for unused in &static_analysis.unused_variables {
+            let position = Position {
+                line: (unused.line.saturating_sub(1)) as u32,
+                character: (unused.col.saturating_sub(1)) as u32,
+            };
+
+            let range = Range {
+                start: position,
+                end: Position { line: position.line, character: position.character + unused.var_name.len() as u32 },
+            };
+
+            diagnostics.push(Diagnostic {
+                range,
+                severity: Some(DiagnosticSeverity::HINT),
+                code: Some(lsp_types::NumberOrString::String("unused-variable".to_string())),
+                source: Some("beacon".to_string()),
+                message: format!("Variable '{}' is assigned but never used", unused.var_name),
+                related_information: None,
+                tags: Some(vec![lsp_types::DiagnosticTag::UNNECESSARY]),
+                data: None,
+                code_description: None,
+            });
+        }
+
+        self.documents.get_document(uri, |doc| {
+            if let Some(symbol_table) = doc.symbol_table() {
+                let shadowed = symbol_table.find_shadowed_symbols();
+                for (child_symbol, parent_symbol) in shadowed {
+                    let position = Position {
+                        line: (child_symbol.line.saturating_sub(1)) as u32,
+                        character: (child_symbol.col.saturating_sub(1)) as u32,
+                    };
+
+                    let range = Range {
+                        start: position,
+                        end: Position {
+                            line: position.line,
+                            character: position.character + child_symbol.name.len() as u32,
+                        },
+                    };
+
+                    diagnostics.push(Diagnostic {
+                        range,
+                        severity: Some(DiagnosticSeverity::WARNING),
+                        code: Some(lsp_types::NumberOrString::String("shadowed-variable".to_string())),
+                        source: Some("beacon".to_string()),
+                        message: format!(
+                            "Variable '{}' shadows variable from outer scope (line {})",
+                            child_symbol.name, parent_symbol.line
+                        ),
+                        related_information: None,
+                        tags: None,
+                        data: None,
+                        code_description: None,
+                    });
+                }
+            }
+        });
     }
 }
 

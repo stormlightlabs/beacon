@@ -214,7 +214,8 @@ impl DocumentSymbolsProvider {
             | AstNode::Match { line, col, .. }
             | AstNode::Pass { line, col }
             | AstNode::Break { line, col }
-            | AstNode::Continue { line, col } => {
+            | AstNode::Continue { line, col }
+            | AstNode::Raise { line, col, .. } => {
                 Position { line: (*line).saturating_sub(1) as u32, character: (*col + 10).saturating_sub(1) as u32 }
             }
         }

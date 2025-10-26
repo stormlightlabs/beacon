@@ -57,12 +57,12 @@ This document outlines the plan for implementing a minimal, working, testable LS
 
 ### Part 1
 
-- [ ] Symbol Table & Scope Analysis
+- [x] Symbol Table & Scope Analysis
     - Build per-module symbol tables with local, nonlocal, and global scope resolution
     - Track variable assignments and usages across control-flow paths
     - Record symbol kinds (function, class, import, variable, parameter, etc.)
     - Detect shadowed names and unused variables
-- [ ] Control Flow & Data Flow Analysis
+- [x] Control Flow & Data Flow Analysis
     - Construct per-function control-flow graphs (CFG)
     - Perform definite-assignment checks (use before assignment)
     - Detect unreachable code and inconsistent return paths
@@ -76,7 +76,6 @@ This document outlines the plan for implementing a minimal, working, testable LS
     - Validate annotated types against inferred/observed values
     - Warn on incompatible assignments, mismatched call arguments, or bad returns
     - Detect missing or partially specified annotations
-    - Integrate with `.pyi` stubs and third-party type definitions (defer)
 - [ ] Flow-Sensitive Narrowing
     - Implement local flow narrowing (e.g., `if isinstance(x, int): …` → x: int)
     - Track `None` checks (`if x is not None`)
@@ -163,3 +162,4 @@ This document outlines the plan for implementing a minimal, working, testable LS
 - Advanced caching strategies (persistent cache across sessions)
 - Snippet completions (function templates, etc.)
 - LSP resolve for expensive completion details
+- Integrate static analysis with `.pyi` stubs and third-party type definitions

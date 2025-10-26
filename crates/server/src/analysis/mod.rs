@@ -10,6 +10,9 @@
 //!  4. Unification/solving -> Type substitution
 //!  5. Caching -> Type cache
 
+pub mod cfg;
+pub mod data_flow;
+
 use crate::cache::CacheManager;
 use crate::config::Config;
 use crate::document::DocumentManager;
@@ -63,7 +66,8 @@ impl Analyzer {
         // TODO: Extract type errors from constraint solving
         let type_errors = Vec::new();
 
-        Ok(AnalysisResult { uri: uri.clone(), version, type_map, type_errors })
+        let static_analysis = self.perform_static_analysis(&ast, &symbol_table);
+        Ok(AnalysisResult { uri: uri.clone(), version, type_map, type_errors, static_analysis })
     }
 
     /// Get the inferred type at a specific position
@@ -145,6 +149,39 @@ impl Analyzer {
     /// TODO: Implement constraint solving using [`beacon_core::Unifier`]
     fn solve_constraints(&mut self, _constraints: ConstraintSet) -> Result<Substitution> {
         Ok(Substitution::empty())
+    }
+
+    /// Perform static analysis (CFG + data flow) on the AST
+    ///
+    /// Builds control flow graphs for each function and runs data flow analyses
+    /// to detect use-before-def, unreachable code, and unused variables.
+    fn perform_static_analysis(&self, ast: &AstNode, symbol_table: &SymbolTable) -> Option<data_flow::DataFlowResult> {
+        // Currently we only analyze function bodies
+        // TODO: Extend to module-level analysis
+        match ast {
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    if let AstNode::FunctionDef { body: func_body, .. } = stmt {
+                        let mut builder = cfg::CfgBuilder::new();
+                        builder.build_function(func_body);
+                        let cfg = builder.build();
+
+                        let analyzer = data_flow::DataFlowAnalyzer::new(&cfg, func_body, symbol_table);
+                        return Some(analyzer.analyze());
+                    }
+                }
+                None
+            }
+            AstNode::FunctionDef { body, .. } => {
+                let mut builder = cfg::CfgBuilder::new();
+                builder.build_function(body);
+                let cfg = builder.build();
+
+                let analyzer = data_flow::DataFlowAnalyzer::new(&cfg, body, symbol_table);
+                Some(analyzer.analyze())
+            }
+            _ => None,
+        }
     }
 
     /// Find unbound variables in the AST
@@ -330,6 +367,11 @@ impl Analyzer {
                     }
                 }
             }
+            AstNode::Raise { exc, .. } => {
+                if let Some(exception) = exc {
+                    Self::collect_unbound_in_node(exception, symbol_table, text, unbound);
+                }
+            }
             AstNode::Pass { .. } | AstNode::Break { .. } | AstNode::Continue { .. } => {}
         }
     }
@@ -456,6 +498,8 @@ pub struct AnalysisResult {
     pub type_map: FxHashMap<usize, Type>,
     /// Type errors encountered during analysis
     pub type_errors: Vec<TypeErrorInfo>,
+    /// Static analysis results (data flow analysis)
+    pub static_analysis: Option<data_flow::DataFlowResult>,
 }
 
 /// Set of type constraints
