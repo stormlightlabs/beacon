@@ -30,3 +30,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tree-sitter.workspace = true
 tree-sitter-python.workspace = true
 url = "2.5"
+ignore = "0.4"
+notify = "8.2"
+rayon = "1.11"
