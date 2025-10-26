@@ -221,7 +221,7 @@ impl Analyzer {
             AstNode::If { test, body, elif_parts, else_body, .. } => {
                 Self::visit_node_with_env(test, env, constraints)?;
 
-                let (narrowed_var, narrowed_type) = Self::detect_type_guard(test);
+                let (narrowed_var, narrowed_type) = Self::detect_type_guard(test, &mut env.clone());
 
                 let mut true_env = env.clone();
                 if let (Some(var_name), Some(refined_ty)) = (narrowed_var.as_ref(), narrowed_type.as_ref()) {
@@ -633,8 +633,21 @@ impl Analyzer {
     /// - `isinstance(x, int)` -> (x, int)
     /// - `isinstance(x, str)` -> (x, str)
     /// - `x is None` -> (x, None)
-    /// - `x is not None` -> (x, not None) - TODO: implement Union narrowing
-    fn detect_type_guard(test: &AstNode) -> (Option<String>, Option<Type>) {
+    /// - `x is not None` -> (x, T) where x: Optional[T]
+    /// - `x == None` -> (x, None)
+    /// - `x != None` -> (x, T) where x: Optional[T]
+    /// - `if x:` -> (x, T) where x: Optional[T] (truthiness narrows out None)
+    fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<String>, Option<Type>) {
+        if let AstNode::Identifier { name: var_name, .. } = test {
+            if let Some(current_type) = env.lookup(var_name) {
+                if current_type.is_optional() || matches!(current_type, Type::Union(_)) {
+                    let narrowed = current_type.remove_from_union(&Type::none());
+                    return (Some(var_name.clone()), Some(narrowed));
+                }
+            }
+            return (None, None);
+        }
+
         if let AstNode::Call { function, args, .. } = test {
             if function == "isinstance" && args.len() == 2 {
                 if let AstNode::Identifier { name: var_name, .. } = &args[0] {
@@ -651,15 +664,14 @@ impl Analyzer {
                 if let AstNode::Identifier { name: var_name, .. } = left.as_ref() {
                     if let AstNode::Literal { value: LiteralValue::None, .. } = &comparators[0] {
                         match &ops[0] {
-                            beacon_parser::CompareOperator::Is => {
+                            beacon_parser::CompareOperator::Is | beacon_parser::CompareOperator::Eq => {
                                 return (Some(var_name.clone()), Some(Type::none()));
                             }
-                            beacon_parser::CompareOperator::IsNot => {
-                                // TODO: For "x is not None", we should narrow to non-None type.
-                                // This requires implementing Union type narrowing:
-                                // - If x: Union[T, None], narrow to T in the true branch
-                                // - If x: T (not a Union), keep as T
-                                // This will be implemented when we add full Union type support.
+                            beacon_parser::CompareOperator::IsNot | beacon_parser::CompareOperator::NotEq => {
+                                if let Some(current_type) = env.lookup(var_name) {
+                                    let narrowed = current_type.remove_from_union(&Type::none());
+                                    return (Some(var_name.clone()), Some(narrowed));
+                                }
                                 return (None, None);
                             }
                             _ => {}
@@ -986,5 +998,91 @@ def process(x):
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Analysis should succeed with None check narrowing");
+    }
+
+    #[test]
+    fn test_flow_sensitive_is_not_none() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def process(x: int | None):
+    if x is not None:
+        # In this branch, x is narrowed from Optional[int] to int
+        return x + 1
+    else:
+        return 0
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Analysis should succeed with 'is not None' narrowing");
+    }
+
+    #[test]
+    fn test_flow_sensitive_not_equal_none() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def process(x: str | None):
+    if x != None:
+        # In this branch, x is narrowed from Optional[str] to str
+        return x.upper()
+    else:
+        return ""
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Analysis should succeed with '!= None' narrowing");
+    }
+
+    #[test]
+    fn test_flow_sensitive_equal_none() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def process(x: int | None):
+    if x == None:
+        # In this branch, x is narrowed to None
+        return 0
+    else:
+        # In this branch, x is int
+        return x + 1
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Analysis should succeed with '== None' narrowing");
+    }
+
+    #[test]
+    fn test_flow_sensitive_truthiness() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def process(x: str | None):
+    if x:
+        # In this branch, x is narrowed from Optional[str] to str
+        # because None is falsy
+        return x.upper()
+    else:
+        return ""
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Analysis should succeed with truthiness narrowing");
     }
 }

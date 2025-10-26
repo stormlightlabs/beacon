@@ -133,6 +133,7 @@ dependencies = [
  "notify",
  "once_cell",
  "rayon",
+ "regex",
  "ropey",
  "rustc-hash",
  "serde",

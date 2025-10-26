@@ -29,12 +29,12 @@ impl CodeAsStr for NumberOrString {
 }
 
 pub struct CodeActionsProvider {
-    _documents: DocumentManager,
+    documents: DocumentManager,
 }
 
 impl CodeActionsProvider {
     pub fn new(documents: DocumentManager) -> Self {
-        Self { _documents: documents }
+        Self { documents }
     }
 
     /// Provide code actions for a range
@@ -90,22 +90,133 @@ impl CodeActionsProvider {
         })
     }
 
-    /// Quick fix: Suggest adding Optional for None type errors
-    /// For now, just suggest the action without implementing the edit
-    /// Full implementation would parse the annotation and add Optional[...]
-    /// TODO: Implement edit generation
-    fn suggest_optional(&self, _uri: &Url, diagnostic: &lsp_types::Diagnostic) -> Option<CodeAction> {
-        Some(CodeAction {
-            title: "Add Optional type annotation".to_string(),
-            kind: Some(CodeActionKind::QUICKFIX),
-            diagnostics: Some(vec![diagnostic.clone()]),
-            edit: None,
-            command: None,
-            is_preferred: Some(false),
-            disabled: Some(lsp_types::CodeActionDisabled {
-                reason: "Not yet implemented - add Optional[T] manually".to_string(),
-            }),
-            data: None,
+    /// Quick fix: Add Optional type annotation for None type errors
+    ///
+    /// Handles both function return types and variable annotations:
+    /// - `def f() -> str:` with `return None` → `def f() -> Optional[str]:`
+    /// - `x: str = ...` with `x = None` → `x: Optional[str] = ...`
+    fn suggest_optional(&self, uri: &Url, diagnostic: &lsp_types::Diagnostic) -> Option<CodeAction> {
+        self.documents.get_document(uri, |document| {
+            let source = document.text();
+
+            let line = diagnostic.range.start.line as usize;
+            let lines: Vec<&str> = source.lines().collect();
+
+            if line >= lines.len() {
+                return None;
+            }
+
+            let current_line = lines[line];
+            let mut edits = Vec::new();
+
+            if let Some(return_type_edit) = self.wrap_return_type_with_optional(current_line, line) {
+                edits.push(return_type_edit);
+            } else if let Some(var_type_edit) = self.wrap_variable_type_with_optional(current_line, line) {
+                edits.push(var_type_edit);
+            } else {
+                return Some(CodeAction {
+                    title: "Add Optional type annotation".to_string(),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    diagnostics: Some(vec![diagnostic.clone()]),
+                    edit: None,
+                    command: None,
+                    is_preferred: Some(false),
+                    disabled: Some(lsp_types::CodeActionDisabled {
+                        reason: "Could not locate type annotation to wrap - add Optional[T] manually".to_string(),
+                    }),
+                    data: None,
+                });
+            }
+
+            if !source.contains("from typing import") || !source.contains("Optional") {
+                if let Some(import_edit) = self.add_optional_import(&source) {
+                    edits.insert(0, import_edit);
+                }
+            }
+
+            let mut changes = HashMap::default();
+            changes.insert(uri.clone(), edits);
+
+            Some(CodeAction {
+                title: "Wrap type with Optional".to_string(),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diagnostic.clone()]),
+                edit: Some(WorkspaceEdit { changes: Some(changes), document_changes: None, change_annotations: None }),
+                command: None,
+                is_preferred: Some(true),
+                disabled: None,
+                data: None,
+            })
+        })?
+    }
+
+    /// Find and wrap return type annotation with Optional
+    /// Converts `-> Type:` to `-> Optional[Type]:`
+    /// Match pattern: `-> TypeName:` where TypeName doesn't already contain Optional
+    fn wrap_return_type_with_optional(&self, line: &str, line_num: usize) -> Option<TextEdit> {
+        let pattern = r"->\s*([A-Za-z_][A-Za-z0-9_\[\],\s|]*?)\s*:";
+        let re = regex::Regex::new(pattern).ok()?;
+
+        let captures = re.captures(line)?;
+        let type_name = captures.get(1)?.as_str().trim();
+
+        if type_name.starts_with("Optional") {
+            return None;
+        }
+
+        let full_match = captures.get(0)?;
+        let end_char = full_match.end();
+
+        let arrow_end = line[..end_char].rfind("->")? + 2;
+        let colon_start = line[..end_char].rfind(':')?;
+
+        let start = Position { line: line_num as u32, character: arrow_end as u32 };
+        let end = Position { line: line_num as u32, character: colon_start as u32 };
+
+        Some(TextEdit { range: Range { start, end }, new_text: format!(" Optional[{type_name}]") })
+    }
+
+    /// Find and wrap variable type annotation with Optional
+    /// Converts `x: Type` to `x: Optional[Type]`
+    /// Match pattern: `identifier: TypeName` where TypeName doesn't already contain Optional
+    fn wrap_variable_type_with_optional(&self, line: &str, line_num: usize) -> Option<TextEdit> {
+        let pattern = r"([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([A-Za-z_][A-Za-z0-9_\[\],\s|]*?)(?:\s*[=\n]|$)";
+        let re = regex::Regex::new(pattern).ok()?;
+        let captures = re.captures(line)?;
+        let type_name = captures.get(2)?.as_str().trim();
+
+        if type_name.starts_with("Optional") {
+            return None;
+        }
+
+        let colon_pos = line.find(':')?;
+        let type_start = colon_pos + 1;
+        let type_end = type_start + line[type_start..].find(['=', '\n']).unwrap_or(line[type_start..].len());
+
+        let start = Position { line: line_num as u32, character: type_start as u32 };
+        let end = Position { line: line_num as u32, character: type_end as u32 };
+
+        Some(TextEdit { range: Range { start, end }, new_text: format!(" Optional[{type_name}]") })
+    }
+
+    /// Add `from typing import Optional` at the top of the file
+    /// Strategy: after any existing imports, or at the top of the file
+    fn add_optional_import(&self, source: &str) -> Option<TextEdit> {
+        let lines: Vec<&str> = source.lines().collect();
+        let mut insert_line = 0;
+
+        for (i, line) in lines.iter().enumerate() {
+            if line.trim_start().starts_with("import ") || line.trim_start().starts_with("from ") {
+                insert_line = i + 1;
+            }
+        }
+
+        Some(TextEdit {
+            range: Range {
+                start: Position { line: insert_line as u32, character: 0 },
+                end: Position { line: insert_line as u32, character: 0 },
+            },
+            new_text: "from typing import Optional\n".to_string(),
         })
     }
 

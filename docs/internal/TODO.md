@@ -1,9 +1,14 @@
 # Beacon LSP Implementation Plan
 
-This document outlines the plan for implementing a minimal, working, testable LSP server for Beacon.
+This document contains tactical implementation tasks and detailed breakdowns for LSP features.
+
+For strategic roadmap and architectural context, see [ROADMAP.md](./ROADMAP.md).
+
+**Focus:**
 
 1. Get basic LSP infrastructure working first
-2. Layer on the full Hindley-Milner type inference system.
+2. Layer on the full Hindley-Milner type inference system
+3. Implementation-level details that support ROADMAP milestones
 
 ## Completions
 
@@ -17,7 +22,7 @@ This document outlines the plan for implementing a minimal, working, testable LS
     - Query type's attributes/methods
     - Handle built-in types (str, list, dict methods)
 - [ ] Import completions
-    - Suggest available modules from workspace/stubs
+    - Suggest available modules from workspace
     - Complete import statement structure
 
 ### Part 2
@@ -81,13 +86,6 @@ This document outlines the plan for implementing a minimal, working, testable LS
 - Works incrementally — updating diagnostics within 100 ms of file edits.
 - Fully integrated with your existing workspace module index and dependency graph.
 
-## Stub file support
-
-- Discover .pyi stub files in configured paths
-- Parse stub files for type signatures
-- Prefer stubs over source when available
-- Cache parsed stubs (LRU eviction)
-
 ## Hover Documentation
 
 - Advanced RST rendering (directives, cross-references)
@@ -102,27 +100,23 @@ This document outlines the plan for implementing a minimal, working, testable LS
 - Async introspection (non-blocking hover)
 - Cross-file import resolution
 
-## Code actions (insert annotations, fix types)
+## Document Formatting
 
-## Protocol/structural type checking
-
-## Document formatting
+Basic formatting support for user convenience
 
 - Should conform to PEP8 (similar to black)
-    - Users will likely use other tools
-
-## Improve Error Messaging
-
-- Write "did you mean?" suggestions
+- Users will likely use other tools (black, ruff)
+- Low priority - focus on analysis first
 
 ## Parking Lot
+
+Advanced features and optimizations for future consideration.
 
 - Add inheritance awareness (`__init__` in base classes)
 - Partial workspace analysis (analyze subset)
 - Advanced caching strategies (persistent cache across sessions)
 - Snippet completions (function templates, etc.)
 - LSP resolve for expensive completion details
-- Integrate static analysis with `.pyi` stubs and third-party type definitions
 - Annotation coverage checks (detect missing/partial type annotations)
     - Warn when functions lack type hints or have incomplete annotations
     - Configurable per TypeCheckingMode (strict, balanced, minimal)
@@ -131,9 +125,12 @@ This document outlines the plan for implementing a minimal, working, testable LS
     - Walk AST after constraint solving
     - Apply final substitution to get concrete types for each node
     - Track node IDs during constraint generation
-- Full Union type narrowing for `x is not None` guards
 - Advanced flow-sensitive narrowing with full CFG integration
-- Full implementation of Optional[T] quick fix (currently just suggested)
-- Flow-Sensitive Narrowing
-    - Track `x is not None` (requires Union type narrowing - deferred)
-    - Full CFG integration for complex control flow (deferred)
+    - Create `TypeFlowAnalyzer` for tracking types across CFG blocks
+    - Implement forward dataflow analysis with join point merging
+    - Implement fixpoint iteration for loop-carried narrowing
+    - Add CFG edge metadata for guard conditions
+    - Integrate TypeFlowAnalyzer with main Analyzer
+    - Handle nested conditions and complex control flow patterns
+    - Track type narrowing across loop iterations
+    - Support exception handler narrowing

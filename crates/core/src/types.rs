@@ -408,6 +408,64 @@ impl Type {
         Type::union(vec![t, Type::none()])
     }
 
+    /// Check if this type is Optional[T] (i.e., Union[T, None])
+    ///
+    /// Returns true if the type is a union containing exactly None and one other type.
+    pub fn is_optional(&self) -> bool {
+        match self {
+            Type::Union(types) => types.len() == 2 && types.iter().any(|t| matches!(t, Type::Con(TypeCtor::NoneType))),
+            _ => false,
+        }
+    }
+
+    /// Extract T from Optional[T] (Union[T, None])
+    ///
+    /// Returns Some(T) if this is Optional[T], None otherwise.
+    pub fn unwrap_optional(&self) -> Option<Type> {
+        match self {
+            Type::Union(types) if types.len() == 2 => {
+                let none_idx = types.iter().position(|t| matches!(t, Type::Con(TypeCtor::NoneType)))?;
+                let other_idx = 1 - none_idx;
+                Some(types[other_idx].clone())
+            }
+            _ => None,
+        }
+    }
+
+    /// Remove a type from a union
+    ///
+    /// Returns a new type with the specified type removed from the union.
+    /// If removing the type leaves a single type, returns that type unwrapped.
+    /// If the type is not a union, returns self unchanged.
+    ///
+    /// # Examples
+    /// ```
+    /// use beacon_core::Type;
+    /// let opt_int = Type::optional(Type::int()); // Union[int, None]
+    /// let just_int = opt_int.remove_from_union(&Type::none()); // int
+    /// ```
+    pub fn remove_from_union(&self, to_remove: &Type) -> Type {
+        match self {
+            Type::Union(types) => {
+                let filtered: Vec<Type> = types.iter().filter(|t| *t != to_remove).cloned().collect();
+                if filtered.is_empty() {
+                    Type::never()
+                } else if filtered.len() == 1 {
+                    filtered.into_iter().next().unwrap()
+                } else {
+                    Type::Union(filtered)
+                }
+            }
+            other => {
+                if other == to_remove {
+                    Type::never()
+                } else {
+                    other.clone()
+                }
+            }
+        }
+    }
+
     /// Get all free type variables in this type
     pub fn free_vars(&self) -> FxHashMap<TypeVar, ()> {
         let mut vars = FxHashMap::default();
@@ -986,7 +1044,6 @@ mod tests {
 
         match union {
             Type::Union(types) => {
-                // Check that types are sorted (bool < int < str in Ord)
                 for i in 1..types.len() {
                     assert!(types[i - 1] <= types[i], "Union types should be sorted");
                 }
@@ -1026,6 +1083,76 @@ mod tests {
             }
             _ => panic!("Expected union for optional"),
         }
+    }
+
+    #[test]
+    fn test_is_optional() {
+        let opt = Type::optional(Type::int());
+        assert!(opt.is_optional());
+
+        let not_opt = Type::int();
+        assert!(!not_opt.is_optional());
+
+        let union = Type::union(vec![Type::int(), Type::string()]);
+        assert!(!union.is_optional());
+
+        let triple_union = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        assert!(!triple_union.is_optional());
+    }
+
+    #[test]
+    fn test_unwrap_optional() {
+        let opt_int = Type::optional(Type::int());
+        assert_eq!(opt_int.unwrap_optional(), Some(Type::int()));
+
+        let opt_str = Type::optional(Type::string());
+        assert_eq!(opt_str.unwrap_optional(), Some(Type::string()));
+
+        let not_opt = Type::int();
+        assert_eq!(not_opt.unwrap_optional(), None);
+
+        let union = Type::union(vec![Type::int(), Type::string()]);
+        assert_eq!(union.unwrap_optional(), None);
+    }
+
+    #[test]
+    fn test_remove_from_union_basic() {
+        let opt_int = Type::optional(Type::int());
+        let just_int = opt_int.remove_from_union(&Type::none());
+        assert_eq!(just_int, Type::int());
+    }
+
+    #[test]
+    fn test_remove_from_union_multi() {
+        let union = Type::union(vec![Type::int(), Type::string(), Type::bool()]);
+        let without_str = union.remove_from_union(&Type::string());
+
+        match without_str {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::bool()));
+            }
+            _ => panic!("Expected union type"),
+        }
+    }
+
+    #[test]
+    fn test_remove_from_union_non_union() {
+        let int_type = Type::int();
+        let result = int_type.remove_from_union(&Type::string());
+        assert_eq!(result, Type::int());
+
+        let result2 = int_type.remove_from_union(&Type::int());
+        assert_eq!(result2, Type::never());
+    }
+
+    #[test]
+    fn test_remove_from_union_all_elements() {
+        let union = Type::union(vec![Type::int(), Type::string()]);
+        let without_int = union.remove_from_union(&Type::int());
+        let without_both = without_int.remove_from_union(&Type::string());
+        assert_eq!(without_both, Type::never());
     }
 
     #[test]
