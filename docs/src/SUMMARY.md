@@ -11,6 +11,7 @@
     - [Workspace Services](./lsp/workspace_services.md)
     - [Testing Strategy](./lsp/testing.md)
     - [Current Limitations](./lsp/limitations.md)
+    - [Static Analysis](./lsp/static_analysis.md)
     - [Interpreter](./lsp/python_docs.md)
     - [Next Steps](./lsp/next_steps.md)
 - [Editor Extensions](./extensions/vscode.md)

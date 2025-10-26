@@ -19,6 +19,9 @@ This document outlines the plan for implementing a minimal, working, testable LS
     - Extract all symbols visible in current scope
     - Include variables, functions, classes from symbol table
     - Walk up scope chain for nested contexts
+
+### Part 2
+
 - [ ] Attribute completions (after `.`)
     - Use type inference to get type of left-hand expression
     - Query type's attributes/methods
@@ -27,7 +30,7 @@ This document outlines the plan for implementing a minimal, working, testable LS
     - Context-aware keywords (def, class, if, for, etc.)
     - Statement vs expression context
 
-### Part 2
+### Part 3
 
 - [ ] Import completions
     - Suggest available modules from workspace/stubs
@@ -37,11 +40,11 @@ This document outlines the plan for implementing a minimal, working, testable LS
     - Rank by relevance (scope proximity, usage frequency)
 - [ ] Cross-file symbol completions
 **Implementation Notes:**
-    - Currently returns hardcoded builtins only
-    - Need to parse backwards from cursor to understand context
-    - Type inference integration critical for attribute completions
-    - Start with local scope, then built-ins, then keywords
-    - Consider fuzzy matching for better UX
+- Currently returns hardcoded builtins only
+- Need to parse backwards from cursor to understand context
+- Type inference integration critical for attribute completions
+- Start with local scope, then built-ins, then keywords
+- Consider fuzzy matching for better UX
 **Files to Modify:**
 - `crates/server/src/features/completion.rs`
 **Acceptance:**
@@ -54,47 +57,6 @@ This document outlines the plan for implementing a minimal, working, testable LS
 
 **Goal:** Perform whole-workspace static analysis for code correctness, style, and type-hint consistency (semantic diagnostics).
 **Tasks:**
-
-### Part 1
-
-- [x] Symbol Table & Scope Analysis
-    - Build per-module symbol tables with local, nonlocal, and global scope resolution
-    - Track variable assignments and usages across control-flow paths
-    - Record symbol kinds (function, class, import, variable, parameter, etc.)
-    - Detect shadowed names and unused variables
-- [x] Control Flow & Data Flow Analysis
-    - Construct per-function control-flow graphs (CFG)
-    - Perform definite-assignment checks (use before assignment)
-    - Detect unreachable code and inconsistent return paths
-    - Implement simple constant propagation for “always true/false” conditionals
-    - Support `try/except/finally` and context managers in CFGs
-
-### Part 2
-
-- [ ] Type Consistency & Type Hint Checking
-    - Parse and resolve PEP 484/585 type hints and annotations
-    - Validate annotated types against inferred/observed values
-    - Warn on incompatible assignments, mismatched call arguments, or bad returns
-    - Detect missing or partially specified annotations
-- [ ] Flow-Sensitive Narrowing
-    - Implement local flow narrowing (e.g., `if isinstance(x, int): …` → x: int)
-    - Track `None` checks (`if x is not None`)
-    - Infer type unions for conditional branches
-
-### Part 3
-
-- [ ] Diagnostics Integration
-    - Emit LSP `textDocument/publishDiagnostics` notifications
-    - Include severity, code, and message
-    - Support quick fixes for common issues (e.g., remove unused import)
-- [ ] Cross-File Diagnostics
-    - Use workspace dependency graph to check:
-        - Circular imports
-        - Missing modules
-        - Inconsistent symbol exports (`__all__` mismatches)
-        - Conflicting stub definitions
-
-### Part 4
 
 - [ ] Linter & Quality Checks
     - Add rule engine for common static rules:
@@ -109,6 +71,12 @@ This document outlines the plan for implementing a minimal, working, testable LS
     - Cache CFGs, symbol tables, and diagnostics per module
     - Recompute only changed scopes or dependent modules
     - Maintain last-known diagnostic set for live feedback
+- [ ] Cross-File Diagnostics
+    - Use workspace dependency graph to check:
+        - Circular imports
+        - Missing modules
+        - Inconsistent symbol exports (`__all__` mismatches)
+        - Conflicting stub definitions
 - [ ] Integration Tests
     - Validate accuracy of error positions and messages
     - Verify cross-module invalidation
@@ -163,3 +131,17 @@ This document outlines the plan for implementing a minimal, working, testable LS
 - Snippet completions (function templates, etc.)
 - LSP resolve for expensive completion details
 - Integrate static analysis with `.pyi` stubs and third-party type definitions
+- Annotation coverage checks (detect missing/partial type annotations)
+    - Warn when functions lack type hints or have incomplete annotations
+    - Configurable per TypeCheckingMode (strict, balanced, minimal)
+    - Compare inferred types with declared annotations
+- Build type_map for hover and type-at-position queries
+    - Walk AST after constraint solving
+    - Apply final substitution to get concrete types for each node
+    - Track node IDs during constraint generation
+- Full Union type narrowing for `x is not None` guards
+- Advanced flow-sensitive narrowing with full CFG integration
+- Full implementation of Optional[T] quick fix (currently just suggested)
+- Flow-Sensitive Narrowing
+    - Track `x is not None` (requires Union type narrowing - deferred)
+    - Full CFG integration for complex control flow (deferred)

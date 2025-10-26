@@ -59,14 +59,13 @@ impl Analyzer {
 
         let constraints = self.generate_constraints(&ast, &symbol_table)?;
 
-        // TODO: Implement constraint solving
-        let _substitution = self.solve_constraints(constraints)?;
+        let (_substitution, type_errors) = self.solve_constraints(constraints)?;
 
-        // TODO: Walk AST and apply substitution to build type map for all nodes
+        // TODO: Build type_map by walking AST after solving
+        // This map is needed for hover information and type-at-position queries.
+        // For each AST node, apply the final substitution to get the concrete type.
+        // Track node IDs during constraint generation to enable lookup.
         let type_map = FxHashMap::default();
-
-        // TODO: Extract type errors from constraint solving
-        let type_errors = Vec::new();
 
         let static_analysis = self.perform_static_analysis(&ast, &symbol_table);
         Ok(AnalysisResult { uri: uri.clone(), version, type_map, type_errors, static_analysis })
@@ -112,7 +111,7 @@ impl Analyzer {
                 }
                 Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
             }
-            AstNode::FunctionDef { name, args, return_type, body, .. } => {
+            AstNode::FunctionDef { name, args, return_type, body, line, col, .. } => {
                 let param_types: Vec<Type> = args
                     .iter()
                     .map(|param| {
@@ -141,7 +140,8 @@ impl Analyzer {
                     body_ty = Self::visit_node_with_env(stmt, &mut body_env, constraints)?;
                 }
 
-                constraints.push(Constraint::Equal(body_ty, ret_type));
+                let span = Span::new(*line, *col);
+                constraints.push(Constraint::Equal(body_ty, ret_type, span));
                 env.bind(name.clone(), TypeScheme::mono(fn_type.clone()));
 
                 Ok(fn_type)
@@ -165,17 +165,18 @@ impl Analyzer {
                 Ok(value_ty)
             }
 
-            AstNode::AnnotatedAssignment { target, type_annotation, value, .. } => {
+            AstNode::AnnotatedAssignment { target, type_annotation, value, line, col } => {
                 let annotated_ty = env.parse_annotation_or_any(type_annotation);
                 if let Some(val) = value {
                     let value_ty = Self::visit_node_with_env(val, env, constraints)?;
-                    constraints.push(Constraint::Equal(value_ty, annotated_ty.clone()));
+                    let span = Span::new(*line, *col);
+                    constraints.push(Constraint::Equal(value_ty, annotated_ty.clone(), span));
                 }
                 env.bind(target.clone(), TypeScheme::mono(annotated_ty.clone()));
                 Ok(annotated_ty)
             }
 
-            AstNode::Call { function, args, .. } => {
+            AstNode::Call { function, args, line, col } => {
                 // TODO: Handle complex call expressions
                 let func_ty = env.lookup(function).unwrap_or_else(|| Type::Var(env.fresh_var()));
                 let mut arg_types = Vec::new();
@@ -183,7 +184,8 @@ impl Analyzer {
                     arg_types.push(Self::visit_node_with_env(arg, env, constraints)?);
                 }
                 let ret_ty = Type::Var(env.fresh_var());
-                constraints.push(Constraint::Call(func_ty, arg_types, ret_ty.clone()));
+                let span = Span::new(*line, *col);
+                constraints.push(Constraint::Call(func_ty, arg_types, ret_ty.clone(), span));
                 Ok(ret_ty)
             }
             AstNode::Identifier { name, .. } => Ok(env.lookup(name).unwrap_or_else(|| Type::Var(env.fresh_var()))),
@@ -201,25 +203,35 @@ impl Analyzer {
                     Ok(Type::none())
                 }
             }
-            AstNode::Attribute { object, attribute, .. } => {
+            AstNode::Attribute { object, attribute, line, col } => {
                 let obj_ty = Self::visit_node_with_env(object, env, constraints)?;
                 let attr_ty = Type::Var(env.fresh_var());
-                constraints.push(Constraint::HasAttr(obj_ty, attribute.clone(), attr_ty.clone()));
+                let span = Span::new(*line, *col);
+                constraints.push(Constraint::HasAttr(obj_ty, attribute.clone(), attr_ty.clone(), span));
                 Ok(attr_ty)
             }
-            AstNode::BinaryOp { left, right, .. } => {
+            AstNode::BinaryOp { left, right, line, col, .. } => {
                 let left_ty = Self::visit_node_with_env(left, env, constraints)?;
                 let right_ty = Self::visit_node_with_env(right, env, constraints)?;
-                // Simplified: assume same type for operands and result
-                constraints.push(Constraint::Equal(left_ty.clone(), right_ty));
+                let span = Span::new(*line, *col);
+                constraints.push(Constraint::Equal(left_ty.clone(), right_ty, span));
                 Ok(left_ty)
             }
             AstNode::UnaryOp { operand, .. } => Self::visit_node_with_env(operand, env, constraints),
             AstNode::If { test, body, elif_parts, else_body, .. } => {
                 Self::visit_node_with_env(test, env, constraints)?;
-                for stmt in body {
-                    Self::visit_node_with_env(stmt, env, constraints)?;
+
+                let (narrowed_var, narrowed_type) = Self::detect_type_guard(test);
+
+                let mut true_env = env.clone();
+                if let (Some(var_name), Some(refined_ty)) = (narrowed_var.as_ref(), narrowed_type.as_ref()) {
+                    true_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
                 }
+
+                for stmt in body {
+                    Self::visit_node_with_env(stmt, &mut true_env, constraints)?;
+                }
+
                 for (elif_test, elif_body) in elif_parts {
                     Self::visit_node_with_env(elif_test, env, constraints)?;
                     for stmt in elif_body {
@@ -237,7 +249,6 @@ impl Analyzer {
                 Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
             }
 
-            // Default: fresh type variable for unsupported nodes
             _ => Ok(Type::Var(env.fresh_var())),
         }
     }
@@ -251,41 +262,54 @@ impl Analyzer {
 
     /// Solve a set of constraints using beacon-core's unification algorithm
     ///
-    /// Solves constraints using Robinson's unification algorithm
-    fn solve_constraints(&mut self, constraint_set: ConstraintSet) -> Result<Substitution> {
+    /// Returns a substitution and a list of type errors encountered during solving.
+    /// Errors are accumulated rather than failing fast to provide comprehensive feedback.
+    fn solve_constraints(&mut self, constraint_set: ConstraintSet) -> Result<(Substitution, Vec<TypeErrorInfo>)> {
         let mut subst = Subst::empty();
+        let mut type_errors = Vec::new();
 
         for constraint in constraint_set.constraints {
             match constraint {
-                Constraint::Equal(t1, t2) => {
-                    let s = Unifier::unify(&subst.apply(&t1), &subst.apply(&t2))?;
-                    subst = s.compose(subst);
-                }
+                Constraint::Equal(t1, t2, span) => match Unifier::unify(&subst.apply(&t1), &subst.apply(&t2)) {
+                    Ok(s) => {
+                        subst = s.compose(subst);
+                    }
+                    Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                        type_errors.push(TypeErrorInfo::new(type_err, span));
+                    }
+                    Err(_) => {}
+                },
 
-                Constraint::Call(func_ty, arg_types, ret_ty) => {
+                Constraint::Call(func_ty, arg_types, ret_ty, span) => {
                     let expected_fn_ty = Type::fun(arg_types, ret_ty);
-                    let s = Unifier::unify(&subst.apply(&func_ty), &subst.apply(&expected_fn_ty))?;
-                    subst = s.compose(subst);
+                    match Unifier::unify(&subst.apply(&func_ty), &subst.apply(&expected_fn_ty)) {
+                        Ok(s) => {
+                            subst = s.compose(subst);
+                        }
+                        Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                            type_errors.push(TypeErrorInfo::new(type_err, span));
+                        }
+                        Err(_) => {}
+                    }
                 }
 
                 // HasAttr constraint: object must have attribute
                 // TODO: Implement proper record/structural typing
                 // TODO: use row-polymorphic records
-                Constraint::HasAttr(_obj_ty, _attr_name, _attr_ty) => {
-                    // Simplified: no constraint enforcement yet
-                }
+                Constraint::HasAttr(_obj_ty, _attr_name, _attr_ty, _span) => {}
             }
         }
 
-        // Convert beacon_core::Subst to Substitution
-        Ok(Substitution { _map: subst.iter().map(|(k, v)| (k.clone(), v.clone())).collect() })
+        Ok((
+            Substitution { _map: subst.iter().map(|(k, v)| (k.clone(), v.clone())).collect() },
+            type_errors,
+        ))
     }
 
     /// Perform static analysis (CFG + data flow) on the AST
     ///
     /// Builds control flow graphs for each function and runs data flow analyses to detect use-before-def, unreachable code, and unused variables.
     fn perform_static_analysis(&self, ast: &AstNode, symbol_table: &SymbolTable) -> Option<data_flow::DataFlowResult> {
-        // Currently we only analyze function bodies
         // TODO: Extend to module-level analysis
         match ast {
             AstNode::Module { body, .. } => {
@@ -600,12 +624,73 @@ impl Analyzer {
 
         chars.all(|c| c.is_alphanumeric() || c == '_')
     }
+
+    /// Detect type guard patterns for flow-sensitive type narrowing
+    ///
+    /// Returns (variable_name, refined_type) if a type guard is detected.
+    ///
+    /// Supported patterns:
+    /// - `isinstance(x, int)` -> (x, int)
+    /// - `isinstance(x, str)` -> (x, str)
+    /// - `x is None` -> (x, None)
+    /// - `x is not None` -> (x, not None) - TODO: implement Union narrowing
+    fn detect_type_guard(test: &AstNode) -> (Option<String>, Option<Type>) {
+        if let AstNode::Call { function, args, .. } = test {
+            if function == "isinstance" && args.len() == 2 {
+                if let AstNode::Identifier { name: var_name, .. } = &args[0] {
+                    if let AstNode::Identifier { name: type_name, .. } = &args[1] {
+                        let refined_type = Self::type_name_to_type(type_name);
+                        return (Some(var_name.clone()), Some(refined_type));
+                    }
+                }
+            }
+        }
+
+        if let AstNode::Compare { left, ops, comparators, .. } = test {
+            if ops.len() == 1 && comparators.len() == 1 {
+                if let AstNode::Identifier { name: var_name, .. } = left.as_ref() {
+                    if let AstNode::Literal { value: LiteralValue::None, .. } = &comparators[0] {
+                        match &ops[0] {
+                            beacon_parser::CompareOperator::Is => {
+                                return (Some(var_name.clone()), Some(Type::none()));
+                            }
+                            beacon_parser::CompareOperator::IsNot => {
+                                // TODO: For "x is not None", we should narrow to non-None type.
+                                // This requires implementing Union type narrowing:
+                                // - If x: Union[T, None], narrow to T in the true branch
+                                // - If x: T (not a Union), keep as T
+                                // This will be implemented when we add full Union type support.
+                                return (None, None);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        (None, None)
+    }
+
+    /// Convert a type name string to a Type
+    fn type_name_to_type(name: &str) -> Type {
+        match name {
+            "int" => Type::int(),
+            "str" => Type::string(),
+            "float" => Type::float(),
+            "bool" => Type::bool(),
+            "list" => Type::Con(beacon_core::TypeCtor::List),
+            "dict" => Type::Con(beacon_core::TypeCtor::Dict),
+            "set" => Type::Con(beacon_core::TypeCtor::Set),
+            "tuple" => Type::Con(beacon_core::TypeCtor::Tuple),
+            _ => Type::Var(TypeVarGen::new().fresh()),
+        }
+    }
 }
 
-/// Type error with location information
-#[derive(Debug, Clone)]
-pub struct TypeErrorInfo {
-    pub error: beacon_core::TypeError,
+/// Source code span for tracking positions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
     /// Line number (1-indexed)
     pub line: usize,
     /// Column number (1-indexed)
@@ -613,6 +698,49 @@ pub struct TypeErrorInfo {
     /// Optional end position for range
     pub end_line: Option<usize>,
     pub end_col: Option<usize>,
+}
+
+impl Span {
+    /// Create a new span from a line and column
+    pub fn new(line: usize, col: usize) -> Self {
+        Self { line, col, end_line: None, end_col: None }
+    }
+
+    /// Create a new span with an end position
+    pub fn with_end(line: usize, col: usize, end_line: usize, end_col: usize) -> Self {
+        Self { line, col, end_line: Some(end_line), end_col: Some(end_col) }
+    }
+}
+
+/// Type error with location information
+#[derive(Debug, Clone)]
+pub struct TypeErrorInfo {
+    pub error: beacon_core::TypeError,
+    /// Span where the error occurred
+    pub span: Span,
+}
+
+impl TypeErrorInfo {
+    /// Create a new type error with location
+    pub fn new(error: beacon_core::TypeError, span: Span) -> Self {
+        Self { error, span }
+    }
+
+    pub fn line(&self) -> usize {
+        self.span.line
+    }
+
+    pub fn col(&self) -> usize {
+        self.span.col
+    }
+
+    pub fn end_line(&self) -> Option<usize> {
+        self.span.end_line
+    }
+
+    pub fn end_col(&self) -> Option<usize> {
+        self.span.end_col
+    }
 }
 
 /// Result of analyzing a document
@@ -636,20 +764,20 @@ pub struct ConstraintSet {
     pub constraints: Vec<Constraint>,
 }
 
-/// Type constraint
+/// Type constraint with source position tracking
 ///
-/// TODO: Align with [`beacon_core`] constraint representation
+/// Each constraint variant includes a Span to track where the constraint
+/// originated in the source code, enabling precise error reporting.
 #[derive(Debug, Clone)]
 pub enum Constraint {
     /// Type equality constraint: t1 ~ t2
-    Equal(Type, Type),
+    Equal(Type, Type, Span),
 
     /// HasAttr constraint: τ has attribute "name" : τ'
-    HasAttr(Type, String, Type),
+    HasAttr(Type, String, Type, Span),
 
     /// Call constraint: f(args) -> ret
-    Call(Type, Vec<Type>, Type),
-    // TODO: Add more constraint types per ROADMAP
+    Call(Type, Vec<Type>, Type, Span),
 }
 
 /// Type substitution
@@ -664,9 +792,8 @@ impl Substitution {
         Self { _map: FxHashMap::default() }
     }
 
-    /// TODO: Implement substitution application
+    /// TODO: Implement substitution application (apply substitution to a type)
     pub fn _apply(&self, _ty: &Type) -> Type {
-        // Apply substitution to a type
         todo!()
     }
 
@@ -815,5 +942,49 @@ print(x)
             !unbound.iter().any(|(name, _, _)| name == "y"),
             "y should not be marked as unbound"
         );
+    }
+
+    #[test]
+    fn test_flow_sensitive_isinstance_narrowing() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def process(x):
+    if isinstance(x, int):
+        # In this branch, x should be narrowed to int
+        return x + 1
+    else:
+        # In this branch, x keeps its original type
+        return x
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Analysis should succeed with isinstance narrowing");
+    }
+
+    #[test]
+    fn test_flow_sensitive_none_check() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def process(x):
+    if x is None:
+        # In this branch, x is narrowed to None type
+        return None
+    else:
+        # In this branch, x is not None
+        return x
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Analysis should succeed with None check narrowing");
     }
 }

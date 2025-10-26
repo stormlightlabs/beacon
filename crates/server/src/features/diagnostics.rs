@@ -32,6 +32,14 @@ impl DiagnosticProvider {
         self.add_dunder_diagnostics(uri, &mut diagnostics);
         self.add_static_analysis_diagnostics(uri, analyzer, &mut diagnostics);
 
+        // TODO: Add cross-file diagnostics
+        // This would include:
+        // - Circular import detection
+        // - Missing module errors
+        // - Inconsistent symbol exports (__all__ mismatches)
+        // - Conflicting stub definitions
+        // Requires integration with workspace dependency graph
+
         diagnostics
     }
 
@@ -140,17 +148,16 @@ impl DiagnosticProvider {
         // TODO: Get config mode from analyzer or pass as parameter
         let mode = config::TypeCheckingMode::Balanced;
 
-        // TODO: Extract annotations from AST and compare with inferred types
+        // TODO: Annotation coverage and mismatch detection (deferred to Parking Lot)
         // This requires:
         // 1. Walking the AST to find annotated assignments/parameters
-        // 2. Looking up the inferred type from result.type_map
+        // 2. Looking up the inferred type from result.type_map (needs type_map implementation)
         // 3. Comparing annotation with inference
         // 4. Generating appropriate diagnostic based on mode
+        // 5. Detecting missing/partial annotations for annotation coverage warnings
 
         let _type_map = &result.type_map;
         let _ = mode;
-
-        // TODO: Implement annotation checking when AST includes annotation info
     }
 
     /// Add dunder-specific diagnostics
@@ -463,11 +470,11 @@ fn type_error_to_diagnostic(error_info: &crate::analysis::TypeErrorInfo) -> Diag
     use beacon_core::TypeError;
 
     let start_pos = Position {
-        line: (error_info.line.saturating_sub(1)) as u32,
-        character: (error_info.col.saturating_sub(1)) as u32,
+        line: (error_info.line().saturating_sub(1)) as u32,
+        character: (error_info.col().saturating_sub(1)) as u32,
     };
 
-    let end_pos = match (error_info.end_line, error_info.end_col) {
+    let end_pos = match (error_info.end_line(), error_info.end_col()) {
         (Some(end_line), Some(end_col)) => {
             Position { line: (end_line.saturating_sub(1)) as u32, character: (end_col.saturating_sub(1)) as u32 }
         }
@@ -502,6 +509,7 @@ fn type_error_to_diagnostic(error_info: &crate::analysis::TypeErrorInfo) -> Diag
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::{Span, TypeErrorInfo};
     use beacon_core::{AnalysisError, Type, TypeCtor, TypeError, TypeVar};
     use std::str::FromStr;
 
@@ -522,12 +530,9 @@ mod tests {
 
     #[test]
     fn test_type_error_unification_conversion() {
-        let error_info = crate::analysis::TypeErrorInfo {
+        let error_info = TypeErrorInfo {
             error: TypeError::UnificationError("int".to_string(), "str".to_string()),
-            line: 10,
-            col: 5,
-            end_line: Some(10),
-            end_col: Some(8),
+            span: Span { line: 10, col: 5, end_line: Some(10), end_col: Some(8) },
         };
 
         let diagnostic = type_error_to_diagnostic(&error_info);
@@ -547,12 +552,9 @@ mod tests {
     #[test]
     fn test_type_error_occurs_check_conversion() {
         let tv = TypeVar::new(0);
-        let error_info = crate::analysis::TypeErrorInfo {
+        let error_info = TypeErrorInfo {
             error: TypeError::OccursCheckFailed(tv.clone(), "List['t0]".to_string()),
-            line: 5,
-            col: 10,
-            end_line: None,
-            end_col: None,
+            span: Span { line: 5, col: 10, end_line: None, end_col: None },
         };
 
         let diagnostic = type_error_to_diagnostic(&error_info);
@@ -567,12 +569,9 @@ mod tests {
 
     #[test]
     fn test_type_error_kind_mismatch_conversion() {
-        let error_info = crate::analysis::TypeErrorInfo {
+        let error_info = TypeErrorInfo {
             error: TypeError::KindMismatch { expected: "*".to_string(), found: "* -> *".to_string() },
-            line: 3,
-            col: 1,
-            end_line: Some(3),
-            end_col: Some(10),
+            span: Span { line: 3, col: 1, end_line: Some(3), end_col: Some(10) },
         };
 
         let diagnostic = type_error_to_diagnostic(&error_info);
@@ -677,12 +676,9 @@ def test():
     #[test]
     fn test_type_error_undefined_typevar_conversion() {
         let tv = TypeVar::new(5);
-        let error_info = crate::analysis::TypeErrorInfo {
+        let error_info = TypeErrorInfo {
             error: TypeError::UndefinedTypeVar(tv.clone()),
-            line: 1,
-            col: 1,
-            end_line: None,
-            end_col: None,
+            span: Span { line: 1, col: 1, end_line: None, end_col: None },
         };
 
         let diagnostic = type_error_to_diagnostic(&error_info);
@@ -696,12 +692,9 @@ def test():
 
     #[test]
     fn test_type_error_infinite_type_conversion() {
-        let error_info = crate::analysis::TypeErrorInfo {
+        let error_info = TypeErrorInfo {
             error: TypeError::InfiniteType("recursive type".to_string()),
-            line: 7,
-            col: 3,
-            end_line: Some(7),
-            end_col: Some(15),
+            span: Span { line: 7, col: 3, end_line: Some(7), end_col: Some(15) },
         };
 
         let diagnostic = type_error_to_diagnostic(&error_info);
@@ -859,5 +852,38 @@ class MyClass:
         };
 
         assert!(!DiagnosticProvider::is_name_main_check(&test_expr));
+    }
+
+    #[test]
+    fn test_type_errors_surfaced_in_diagnostics() {
+        use std::str::FromStr;
+
+        let documents = DocumentManager::new().unwrap();
+        let provider = DiagnosticProvider::new(documents.clone());
+        let config = crate::config::Config::default();
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def test():
+    x: int = "hello"
+    return x
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+        let type_errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| {
+                if let Some(lsp_types::NumberOrString::String(code)) = &d.code {
+                    code.starts_with("HM")
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        assert!(!type_errors.is_empty())
     }
 }
