@@ -19,7 +19,6 @@
     - [Hindley–Milner](./learn/hm.md)
     - [Language Server Protocol](./learn/lsp_overview.md)
     - [Tree-sitter](./learn/tree-sitter.md)
-- [PEPs]
     - [PEP8](./learn/pep-8.md)
     - [PEP484 & 585](./learn/pep-484-585.md)
     - [PEP634 - 636](./learn/pep-634-636.md)
