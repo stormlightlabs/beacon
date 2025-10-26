@@ -7,11 +7,13 @@
 //! - Type schemes and generalization
 //! - Value restriction for sound generalization
 
+pub mod annotation_parser;
 pub mod errors;
 pub mod subst;
 pub mod types;
 pub mod unify;
 
+pub use annotation_parser::*;
 pub use errors::*;
 pub use subst::*;
 pub use types::*;

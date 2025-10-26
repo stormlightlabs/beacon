@@ -12,6 +12,7 @@
 
 pub mod cfg;
 pub mod data_flow;
+pub mod type_env;
 
 use crate::cache::CacheManager;
 use crate::config::Config;
