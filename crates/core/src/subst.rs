@@ -206,7 +206,12 @@ impl Substitutable for Vec<Type> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::TypeVar;
+    use crate::{TypeCtor, types::TypeVar};
+
+    #[test]
+    fn test_substitution_empty() {
+        assert_eq!(Subst::empty().map.len(), 0);
+    }
 
     #[test]
     fn test_empty_substitution() {
@@ -393,5 +398,79 @@ mod tests {
         assert!(display.contains("↦"));
         assert!(display.contains("int"));
         assert!(display.contains("str"));
+    }
+
+    #[test]
+    fn test_substitution_apply_type_var() {
+        let mut map = FxHashMap::default();
+        let tv1 = TypeVar::new(1);
+        let tv2 = TypeVar::new(2);
+        map.insert(tv1.clone(), Type::int());
+        let subst = Subst { map };
+
+        let result = subst.apply(&Type::Var(tv1));
+        assert!(matches!(result, Type::Con(TypeCtor::Int)));
+
+        let result2 = subst.apply(&Type::Var(tv2));
+        assert!(matches!(result2, Type::Var(_)));
+    }
+
+    #[test]
+    fn test_substitution_apply_function() {
+        let mut map = FxHashMap::default();
+        let tv = TypeVar::new(1);
+        map.insert(tv.clone(), Type::int());
+        let subst = Subst { map };
+
+        let fn_type = Type::fun(vec![Type::Var(tv)], Type::string());
+        let result = subst.apply(&fn_type);
+
+        match result {
+            Type::Fun(args, _ret) => {
+                assert_eq!(args.len(), 1);
+                assert!(matches!(args[0], Type::Con(TypeCtor::Int)));
+            }
+            _ => panic!("Expected function type"),
+        }
+    }
+
+    #[test]
+    fn test_substitution_apply_union() {
+        let mut map = FxHashMap::default();
+        let tv = TypeVar::new(1);
+        map.insert(tv.clone(), Type::int());
+        let subst = Subst { map };
+
+        let union_type = Type::Union(vec![Type::Var(tv), Type::string()]);
+        let result = subst.apply(&union_type);
+
+        match result {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(matches!(types[0], Type::Con(TypeCtor::Int)));
+                assert!(matches!(types[1], Type::Con(TypeCtor::String)));
+            }
+            _ => panic!("Expected union type"),
+        }
+    }
+
+    #[test]
+    fn test_substitution_apply_record() {
+        let mut map = FxHashMap::default();
+        let tv = TypeVar::new(1);
+        map.insert(tv.clone(), Type::int());
+        let subst = Subst { map };
+
+        let record_type = Type::Record(vec![("x".to_string(), Type::Var(tv))], None);
+        let result = subst.apply(&record_type);
+
+        match result {
+            Type::Record(fields, _) => {
+                assert_eq!(fields.len(), 1);
+                assert_eq!(fields[0].0, "x");
+                assert!(matches!(fields[0].1, Type::Con(TypeCtor::Int)));
+            }
+            _ => panic!("Expected record type"),
+        }
     }
 }

@@ -3,59 +3,95 @@
 //! Coordinates parsing, constraint generation, type inference, and caching.
 //! This is the bridge between the parser, type system, and LSP features.
 //!
-//! [`Analyzer`] manages the flow from source code to inferred types:
+//! [Analyzer] manages the flow from source code to inferred types:
 //!  1. Parsing -> AST
 //!  2. Name resolution -> Symbol table
 //!  3. Constraint generation -> Constraint set
 //!  4. Unification/solving -> Type substitution
 //!  5. Caching -> Type cache
+//!
+//! ## TODO Protocol Constraints
+//!
+//! - Add `Protocol` constraint variant alongside `Equal`, `HasAttr`, and `Call`
+//! - Model Python protocols: Iterator, Iterable, ContextManager, Sized, etc.
+//! - Support structural subtyping: check if a type satisfies required methods/attributes
+//! - Enable protocol definitions via `typing.Protocol` or `.pyi` stubs
+//!
+//! 1. Extend `Constraint` enum with `Protocol(Type, ProtocolName, Span)`
+//! 2. Define protocol specifications (method signatures, attribute types)
+//! 3. Implement protocol checking in constraint solver
+//! 4. Handle variance in protocol method signatures
+//! 5. Support protocol intersection and union
+//!
+//! **Affected Constructs:**
+//! - Iterator protocol: `for` loops, comprehensions, `iter()`, `next()`
+//! - Context manager protocol: `with` statements (`__enter__`, `__exit__`)
+//! - Subscript protocol: indexing (`__getitem__`, `__setitem__`)
+//! - Callable protocol: function calls, decorators
+//! - Sequence/Mapping protocols: collection operations
 
 pub mod cfg;
+pub mod constraint_gen;
 pub mod data_flow;
 pub mod type_env;
-
 use crate::cache::CacheManager;
 use crate::config::Config;
 use crate::document::DocumentManager;
 use crate::utils;
 use beacon_core::{
-    Subst, Type, TypeScheme, TypeVar, TypeVarGen, Unifier,
+    Subst, Type, TypeScheme, TypeVarGen, Unifier,
     errors::{AnalysisError, Result},
 };
 use beacon_parser::{AstNode, LiteralValue, SymbolTable};
+use constraint_gen::{Constraint, ConstraintGenContext, ConstraintResult, ConstraintSet, Span};
 use lsp_types::Position;
 use rustc_hash::FxHashMap;
 use type_env::TypeEnvironment;
 use url::Url;
 
-struct ConstraintResult(ConstraintSet, FxHashMap<usize, Type>, FxHashMap<(usize, usize), usize>);
-
-/// Context for tracking node information during constraint generation
-struct ConstraintGenContext {
-    constraints: Vec<Constraint>,
-    node_counter: usize,
-    type_map: FxHashMap<usize, Type>,
-    position_map: FxHashMap<(usize, usize), usize>,
+/// Type error with location information
+#[derive(Debug, Clone)]
+pub struct TypeErrorInfo {
+    pub error: beacon_core::TypeError,
+    /// Span where the error occurred
+    pub span: Span,
 }
 
-impl ConstraintGenContext {
-    fn new() -> Self {
-        Self {
-            constraints: Vec::new(),
-            node_counter: 0,
-            type_map: FxHashMap::default(),
-            position_map: FxHashMap::default(),
-        }
+impl TypeErrorInfo {
+    /// Create a new type error with location
+    pub fn new(error: beacon_core::TypeError, span: Span) -> Self {
+        Self { error, span }
     }
 
-    /// Record a type for a node at a specific position, returning the node ID
-    fn record_type(&mut self, line: usize, col: usize, ty: Type) -> usize {
-        let node_id = self.node_counter;
-        self.node_counter += 1;
-        self.type_map.insert(node_id, ty);
-        self.position_map.insert((line, col), node_id);
-        node_id
+    pub fn line(&self) -> usize {
+        self.span.line
     }
+
+    pub fn col(&self) -> usize {
+        self.span.col
+    }
+
+    pub fn end_line(&self) -> Option<usize> {
+        self.span.end_line
+    }
+
+    pub fn end_col(&self) -> Option<usize> {
+        self.span.end_col
+    }
+}
+
+/// Result of analyzing a document
+pub struct AnalysisResult {
+    /// Document URI
+    pub uri: Url,
+    /// Document version
+    pub version: i32,
+    /// Map from AST node IDs to inferred types
+    pub type_map: FxHashMap<usize, Type>,
+    /// Type errors encountered during analysis
+    pub type_errors: Vec<TypeErrorInfo>,
+    /// Static analysis results (data flow analysis)
+    pub static_analysis: Option<data_flow::DataFlowResult>,
 }
 
 /// Orchestrates type analysis for documents
@@ -96,7 +132,7 @@ impl Analyzer {
         };
 
         let ConstraintResult(constraints, mut type_map, position_map) =
-            self.generate_constraints(&ast, &symbol_table)?;
+            Self::generate_constraints(&ast, &symbol_table)?;
 
         let (substitution, type_errors) = self.solve_constraints(constraints)?;
 
@@ -139,7 +175,7 @@ impl Analyzer {
     ///
     /// Implements Algorithm W constraint generation with type environment threading.
     /// Returns constraints, type_map, and position_map for type-at-position queries.
-    fn generate_constraints(&mut self, ast: &AstNode, symbol_table: &SymbolTable) -> Result<ConstraintResult> {
+    fn generate_constraints(ast: &AstNode, symbol_table: &SymbolTable) -> Result<ConstraintResult> {
         let mut ctx = ConstraintGenContext::new();
         let mut env = TypeEnvironment::from_symbol_table(symbol_table, ast);
 
@@ -164,7 +200,7 @@ impl Analyzer {
                 }
                 Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
             }
-            AstNode::FunctionDef { name, args, return_type, body, line, col, .. } => {
+            AstNode::FunctionDef { name, args, return_type, body, decorators, line, col, .. } => {
                 let param_types: Vec<Type> = args
                     .iter()
                     .map(|param| {
@@ -195,32 +231,64 @@ impl Analyzer {
 
                 let span = Span::new(*line, *col);
                 ctx.constraints.push(Constraint::Equal(body_ty, ret_type, span));
-                env.bind(name.clone(), TypeScheme::mono(fn_type.clone()));
 
-                ctx.record_type(*line, *col, fn_type.clone());
-                Ok(fn_type)
+                let mut decorated_type = fn_type.clone();
+                for decorator in decorators.iter().rev() {
+                    let decorator_ty = env.lookup(decorator).unwrap_or_else(|| Type::Var(env.fresh_var()));
+                    let result_ty = Type::Var(env.fresh_var());
+
+                    let span = Span::new(*line, *col);
+                    ctx.constraints.push(Constraint::Call(
+                        decorator_ty,
+                        vec![decorated_type],
+                        result_ty.clone(),
+                        span,
+                    ));
+
+                    decorated_type = result_ty;
+                }
+
+                env.bind(name.clone(), TypeScheme::mono(decorated_type.clone()));
+
+                ctx.record_type(*line, *col, decorated_type.clone());
+                Ok(decorated_type)
             }
 
-            AstNode::ClassDef { name, body, line, col, .. } => {
+            AstNode::ClassDef { name, body, decorators, line, col, .. } => {
                 let class_type = Type::Con(beacon_core::TypeCtor::Class(name.clone()));
-                env.bind(name.clone(), TypeScheme::mono(class_type.clone()));
 
                 for stmt in body {
                     Self::visit_node_with_env(stmt, env, ctx)?;
                 }
 
-                ctx.record_type(*line, *col, class_type.clone());
-                Ok(class_type)
-            }
+                let mut decorated_type = class_type.clone();
+                for decorator in decorators.iter().rev() {
+                    let decorator_ty = env.lookup(decorator).unwrap_or_else(|| Type::Var(env.fresh_var()));
+                    let result_ty = Type::Var(env.fresh_var());
+                    let span = Span::new(*line, *col);
 
+                    ctx.constraints.push(Constraint::Call(
+                        decorator_ty,
+                        vec![decorated_type],
+                        result_ty.clone(),
+                        span,
+                    ));
+
+                    decorated_type = result_ty;
+                }
+
+                env.bind(name.clone(), TypeScheme::mono(decorated_type.clone()));
+
+                ctx.record_type(*line, *col, decorated_type.clone());
+                Ok(decorated_type)
+            }
+            // TODO: Determine if value is non-expansive for generalization
             AstNode::Assignment { target, value, line, col } => {
                 let value_ty = Self::visit_node_with_env(value, env, ctx)?;
-                // TODO: Determine if value is non-expansive for generalization
                 env.bind(target.clone(), TypeScheme::mono(value_ty.clone()));
                 ctx.record_type(*line, *col, value_ty.clone());
                 Ok(value_ty)
             }
-
             AstNode::AnnotatedAssignment { target, type_annotation, value, line, col } => {
                 let annotated_ty = env.parse_annotation_or_any(type_annotation);
                 if let Some(val) = value {
@@ -233,9 +301,8 @@ impl Analyzer {
                 ctx.record_type(*line, *col, annotated_ty.clone());
                 Ok(annotated_ty)
             }
-
+            // TODO: Handle complex call expressions
             AstNode::Call { function, args, line, col } => {
-                // TODO: Handle complex call expressions
                 let func_ty = env.lookup(function).unwrap_or_else(|| Type::Var(env.fresh_var()));
                 let mut arg_types = Vec::new();
                 for arg in args {
@@ -321,8 +388,328 @@ impl Analyzer {
             AstNode::Import { .. } | AstNode::ImportFrom { .. } => {
                 Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
             }
+            // TODO: Replace with Protocol constraint when protocol system is implemented
+            AstNode::For { target, iter, body, else_body, line, col } => {
+                let iter_ty = Self::visit_node_with_env(iter, env, ctx)?;
 
-            _ => Ok(Type::Var(env.fresh_var())),
+                let iter_return_ty = Type::Var(env.fresh_var());
+                let span = Span::new(*line, *col);
+                ctx.constraints.push(Constraint::HasAttr(
+                    iter_ty,
+                    "__iter__".to_string(),
+                    iter_return_ty.clone(),
+                    span,
+                ));
+
+                let element_ty = Type::Var(env.fresh_var());
+                env.bind(target.clone(), TypeScheme::mono(element_ty));
+
+                for stmt in body {
+                    Self::visit_node_with_env(stmt, env, ctx)?;
+                }
+
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        Self::visit_node_with_env(stmt, env, ctx)?;
+                    }
+                }
+
+                ctx.record_type(*line, *col, Type::none());
+                Ok(Type::none())
+            }
+
+            AstNode::While { test, body, else_body, line, col } => {
+                Self::visit_node_with_env(test, env, ctx)?;
+
+                for stmt in body {
+                    Self::visit_node_with_env(stmt, env, ctx)?;
+                }
+
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        Self::visit_node_with_env(stmt, env, ctx)?;
+                    }
+                }
+
+                ctx.record_type(*line, *col, Type::none());
+                Ok(Type::none())
+            }
+
+            AstNode::Try { body, handlers, else_body, finally_body, line, col } => {
+                for stmt in body {
+                    Self::visit_node_with_env(stmt, env, ctx)?;
+                }
+
+                for handler in handlers {
+                    let mut handler_env = env.clone();
+
+                    if let Some(ref name) = handler.name {
+                        // TODO: Use proper exception type hierarchy when available
+                        let exc_ty = Type::Var(env.fresh_var());
+                        handler_env.bind(name.clone(), TypeScheme::mono(exc_ty));
+                    }
+
+                    for stmt in &handler.body {
+                        Self::visit_node_with_env(stmt, &mut handler_env, ctx)?;
+                    }
+                }
+
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        Self::visit_node_with_env(stmt, env, ctx)?;
+                    }
+                }
+
+                if let Some(finally_stmts) = finally_body {
+                    for stmt in finally_stmts {
+                        Self::visit_node_with_env(stmt, env, ctx)?;
+                    }
+                }
+
+                ctx.record_type(*line, *col, Type::none());
+                Ok(Type::none())
+            }
+
+            AstNode::Match { subject, cases, line, col } => {
+                Self::visit_node_with_env(subject, env, ctx)?;
+
+                // TODO: Implement pattern matching type narrowing when pattern system is ready
+                for case in cases {
+                    let mut case_env = env.clone();
+
+                    if let Some(ref guard) = case.guard {
+                        Self::visit_node_with_env(guard, &mut case_env, ctx)?;
+                    }
+
+                    for stmt in &case.body {
+                        Self::visit_node_with_env(stmt, &mut case_env, ctx)?;
+                    }
+                }
+
+                ctx.record_type(*line, *col, Type::none());
+                Ok(Type::none())
+            }
+            AstNode::Raise { exc, line, col } => {
+                if let Some(exception) = exc {
+                    Self::visit_node_with_env(exception, env, ctx)?;
+                }
+
+                ctx.record_type(*line, *col, Type::never());
+                Ok(Type::never())
+            }
+
+            AstNode::With { items, body, line, col } => {
+                for item in items {
+                    let context_ty = Self::visit_node_with_env(&item.context_expr, env, ctx)?;
+
+                    // TODO: Replace with Protocol constraint for context manager protocol
+                    let enter_ty = Type::Var(env.fresh_var());
+                    let span = Span::new(*line, *col);
+                    ctx.constraints.push(Constraint::HasAttr(
+                        context_ty.clone(),
+                        "__enter__".to_string(),
+                        enter_ty.clone(),
+                        span,
+                    ));
+
+                    let exit_ty = Type::Var(env.fresh_var());
+                    ctx.constraints
+                        .push(Constraint::HasAttr(context_ty, "__exit__".to_string(), exit_ty, span));
+
+                    if let Some(ref target) = item.optional_vars {
+                        env.bind(target.clone(), TypeScheme::mono(enter_ty));
+                    }
+                }
+
+                for stmt in body {
+                    Self::visit_node_with_env(stmt, env, ctx)?;
+                }
+
+                ctx.record_type(*line, *col, Type::none());
+                Ok(Type::none())
+            }
+
+            AstNode::Lambda { args, body, line, col } => {
+                let param_types: Vec<Type> = args
+                    .iter()
+                    .map(|param| {
+                        param
+                            .type_annotation
+                            .as_ref()
+                            .map(|ann| env.parse_annotation_or_any(ann))
+                            .unwrap_or_else(|| Type::Var(env.fresh_var()))
+                    })
+                    .collect();
+
+                let mut lambda_env = env.clone();
+                for (param, param_type) in args.iter().zip(param_types.iter()) {
+                    lambda_env.bind(param.name.clone(), TypeScheme::mono(param_type.clone()));
+                }
+
+                let body_ty = Self::visit_node_with_env(body, &mut lambda_env, ctx)?;
+                let lambda_ty = Type::fun(param_types, body_ty);
+
+                ctx.record_type(*line, *col, lambda_ty.clone());
+                Ok(lambda_ty)
+            }
+
+            AstNode::Compare { left, comparators, line, col, .. } => {
+                Self::visit_node_with_env(left, env, ctx)?;
+
+                for comp in comparators {
+                    Self::visit_node_with_env(comp, env, ctx)?;
+                }
+
+                ctx.record_type(*line, *col, Type::bool());
+                Ok(Type::bool())
+            }
+            // TODO: Replace with Protocol constraint when subscript protocol is implemented
+            AstNode::Subscript { value, slice, line, col } => {
+                let value_ty = Self::visit_node_with_env(value, env, ctx)?;
+                Self::visit_node_with_env(slice, env, ctx)?;
+
+                let item_ty = Type::Var(env.fresh_var());
+                let span = Span::new(*line, *col);
+                ctx.constraints.push(Constraint::HasAttr(
+                    value_ty,
+                    "__getitem__".to_string(),
+                    item_ty.clone(),
+                    span,
+                ));
+
+                ctx.record_type(*line, *col, item_ty.clone());
+                Ok(item_ty)
+            }
+            AstNode::NamedExpr { target, value, line, col } => {
+                let value_ty = Self::visit_node_with_env(value, env, ctx)?;
+                env.bind(target.clone(), TypeScheme::mono(value_ty.clone()));
+                ctx.record_type(*line, *col, value_ty.clone());
+                Ok(value_ty)
+            }
+            // TODO: Replace with Protocol constraint for iterator protocol
+            AstNode::ListComp { element, generators, line, col } => {
+                let mut comp_env = env.clone();
+
+                for generator in generators {
+                    let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx)?;
+
+                    let iter_return_ty = Type::Var(comp_env.fresh_var());
+                    let span = Span::new(*line, *col);
+                    ctx.constraints.push(Constraint::HasAttr(
+                        iter_ty,
+                        "__iter__".to_string(),
+                        iter_return_ty,
+                        span,
+                    ));
+
+                    let element_ty = Type::Var(comp_env.fresh_var());
+                    comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
+
+                    for if_clause in &generator.ifs {
+                        Self::visit_node_with_env(if_clause, &mut comp_env, ctx)?;
+                    }
+                }
+
+                let elem_ty = Self::visit_node_with_env(element, &mut comp_env, ctx)?;
+                let list_ty = Type::list(elem_ty);
+
+                ctx.record_type(*line, *col, list_ty.clone());
+                Ok(list_ty)
+            }
+
+            AstNode::SetComp { element, generators, line, col } => {
+                let mut comp_env = env.clone();
+
+                for generator in generators {
+                    let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx)?;
+
+                    let iter_return_ty = Type::Var(comp_env.fresh_var());
+                    let span = Span::new(*line, *col);
+                    ctx.constraints.push(Constraint::HasAttr(
+                        iter_ty,
+                        "__iter__".to_string(),
+                        iter_return_ty,
+                        span,
+                    ));
+
+                    let element_ty = Type::Var(comp_env.fresh_var());
+                    comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
+
+                    for if_clause in &generator.ifs {
+                        Self::visit_node_with_env(if_clause, &mut comp_env, ctx)?;
+                    }
+                }
+
+                let elem_ty = Self::visit_node_with_env(element, &mut comp_env, ctx)?;
+                let set_ty = Type::App(Box::new(Type::Con(beacon_core::TypeCtor::Set)), Box::new(elem_ty));
+
+                ctx.record_type(*line, *col, set_ty.clone());
+                Ok(set_ty)
+            }
+
+            AstNode::DictComp { key, value, generators, line, col } => {
+                let mut comp_env = env.clone();
+
+                for generator in generators {
+                    let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx)?;
+
+                    let iter_return_ty = Type::Var(comp_env.fresh_var());
+                    let span = Span::new(*line, *col);
+                    ctx.constraints.push(Constraint::HasAttr(
+                        iter_ty,
+                        "__iter__".to_string(),
+                        iter_return_ty,
+                        span,
+                    ));
+
+                    let element_ty = Type::Var(comp_env.fresh_var());
+                    comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
+
+                    for if_clause in &generator.ifs {
+                        Self::visit_node_with_env(if_clause, &mut comp_env, ctx)?;
+                    }
+                }
+
+                let key_ty = Self::visit_node_with_env(key, &mut comp_env, ctx)?;
+                let val_ty = Self::visit_node_with_env(value, &mut comp_env, ctx)?;
+                let dict_ty = Type::dict(key_ty, val_ty);
+
+                ctx.record_type(*line, *col, dict_ty.clone());
+                Ok(dict_ty)
+            }
+
+            // NOTE: Approximated as iterable[T] rather than proper Generator[T, None, None]
+            // TODO: See ROADMAP.md for Generator[YieldType, SendType, ReturnType] modeling
+            AstNode::GeneratorExp { element, generators, line, col } => {
+                let mut comp_env = env.clone();
+
+                for generator in generators {
+                    let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx)?;
+
+                    let iter_return_ty = Type::Var(comp_env.fresh_var());
+                    let span = Span::new(*line, *col);
+                    ctx.constraints.push(Constraint::HasAttr(
+                        iter_ty,
+                        "__iter__".to_string(),
+                        iter_return_ty,
+                        span,
+                    ));
+
+                    let element_ty = Type::Var(comp_env.fresh_var());
+                    comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
+
+                    for if_clause in &generator.ifs {
+                        Self::visit_node_with_env(if_clause, &mut comp_env, ctx)?;
+                    }
+                }
+
+                let elem_ty = Self::visit_node_with_env(element, &mut comp_env, ctx)?;
+                let generator_ty = Type::list(elem_ty);
+
+                ctx.record_type(*line, *col, generator_ty.clone());
+                Ok(generator_ty)
+            }
+            AstNode::Pass { .. } | AstNode::Break { .. } | AstNode::Continue { .. } => Ok(Type::none()),
         }
     }
 
@@ -337,7 +724,7 @@ impl Analyzer {
     ///
     /// Returns a substitution and a list of type errors encountered during solving.
     /// Errors are accumulated rather than failing fast to provide comprehensive feedback.
-    fn solve_constraints(&mut self, constraint_set: ConstraintSet) -> Result<(Substitution, Vec<TypeErrorInfo>)> {
+    fn solve_constraints(&mut self, constraint_set: ConstraintSet) -> Result<(Subst, Vec<TypeErrorInfo>)> {
         let mut subst = Subst::empty();
         let mut type_errors = Vec::new();
 
@@ -366,17 +753,13 @@ impl Analyzer {
                     }
                 }
 
-                // HasAttr constraint: object must have attribute
-                // TODO: Implement proper record/structural typing
+                // TODO: Implement record/structural typing
                 // TODO: use row-polymorphic records
                 Constraint::HasAttr(_obj_ty, _attr_name, _attr_ty, _span) => {}
             }
         }
 
-        Ok((
-            Substitution { _map: subst.iter().map(|(k, v)| (k.clone(), v.clone())).collect() },
-            type_errors,
-        ))
+        Ok((subst, type_errors))
     }
 
     /// Perform static analysis (CFG + data flow) on the AST
@@ -682,8 +1065,8 @@ impl Analyzer {
         )
     }
 
-    /// Check if a string is a valid Python identifier ([a-zA-Z_][a-zA-Z0-9_]*), filtering out cases
-    /// where the parser created an Identifier node for other syntax.
+    /// Check if a string is a valid Python identifier ([a-zA-Z_][a-zA-Z0-9_]*),
+    /// filtering out cases where the parser created an Identifier node for other syntax.
     fn is_valid_identifier(name: &str) -> bool {
         if name.is_empty() {
             return false;
@@ -773,143 +1156,6 @@ impl Analyzer {
     }
 }
 
-/// Source code span for tracking positions
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Span {
-    /// Line number (1-indexed)
-    pub line: usize,
-    /// Column number (1-indexed)
-    pub col: usize,
-    /// Optional end position for range
-    pub end_line: Option<usize>,
-    pub end_col: Option<usize>,
-}
-
-impl Span {
-    /// Create a new span from a line and column
-    pub fn new(line: usize, col: usize) -> Self {
-        Self { line, col, end_line: None, end_col: None }
-    }
-
-    /// Create a new span with an end position
-    pub fn with_end(line: usize, col: usize, end_line: usize, end_col: usize) -> Self {
-        Self { line, col, end_line: Some(end_line), end_col: Some(end_col) }
-    }
-}
-
-/// Type error with location information
-#[derive(Debug, Clone)]
-pub struct TypeErrorInfo {
-    pub error: beacon_core::TypeError,
-    /// Span where the error occurred
-    pub span: Span,
-}
-
-impl TypeErrorInfo {
-    /// Create a new type error with location
-    pub fn new(error: beacon_core::TypeError, span: Span) -> Self {
-        Self { error, span }
-    }
-
-    pub fn line(&self) -> usize {
-        self.span.line
-    }
-
-    pub fn col(&self) -> usize {
-        self.span.col
-    }
-
-    pub fn end_line(&self) -> Option<usize> {
-        self.span.end_line
-    }
-
-    pub fn end_col(&self) -> Option<usize> {
-        self.span.end_col
-    }
-}
-
-/// Result of analyzing a document
-pub struct AnalysisResult {
-    /// Document URI
-    pub uri: Url,
-    /// Document version
-    pub version: i32,
-    /// Map from AST node IDs to inferred types
-    pub type_map: FxHashMap<usize, Type>,
-    /// Type errors encountered during analysis
-    pub type_errors: Vec<TypeErrorInfo>,
-    /// Static analysis results (data flow analysis)
-    pub static_analysis: Option<data_flow::DataFlowResult>,
-}
-
-/// Set of type constraints
-///
-/// TODO: Use [`beacon_core`] constraint types when available
-pub struct ConstraintSet {
-    pub constraints: Vec<Constraint>,
-}
-
-/// Type constraint with source position tracking
-///
-/// Each constraint variant includes a Span to track where the constraint
-/// originated in the source code, enabling precise error reporting.
-#[derive(Debug, Clone)]
-pub enum Constraint {
-    /// Type equality constraint: t1 ~ t2
-    Equal(Type, Type, Span),
-
-    /// HasAttr constraint: τ has attribute "name" : τ'
-    HasAttr(Type, String, Type, Span),
-
-    /// Call constraint: f(args) -> ret
-    Call(Type, Vec<Type>, Type, Span),
-}
-
-/// Type substitution
-///
-/// TODO: Use [`beacon_core::Subst`] when ready
-pub struct Substitution {
-    _map: FxHashMap<TypeVar, Type>,
-}
-
-impl Substitution {
-    pub fn empty() -> Self {
-        Self { _map: FxHashMap::default() }
-    }
-
-    /// Apply substitution to a type, replacing type variables with their substituted types
-    pub fn apply(&self, ty: &Type) -> Type {
-        match ty {
-            Type::Var(tv) => self._map.get(tv).cloned().unwrap_or_else(|| ty.clone()),
-            Type::Con(_) => ty.clone(),
-            Type::App(t1, t2) => {
-                let t1_sub = Box::new(self.apply(t1));
-                let t2_sub = Box::new(self.apply(t2));
-                Type::App(t1_sub, t2_sub)
-            }
-            Type::Fun(args, ret) => {
-                let args_sub = args.iter().map(|t| self.apply(t)).collect();
-                let ret_sub = Box::new(self.apply(ret));
-                Type::Fun(args_sub, ret_sub)
-            }
-            Type::ForAll(vars, body) => Type::ForAll(vars.clone(), Box::new(self.apply(body))),
-            Type::Union(types) => {
-                let substituted = types.iter().map(|t| self.apply(t)).collect();
-                Type::Union(substituted)
-            }
-            Type::Record(fields, row_var) => {
-                let fields_sub = fields.iter().map(|(name, ty)| (name.clone(), self.apply(ty))).collect();
-                Type::Record(fields_sub, row_var.clone())
-            }
-        }
-    }
-
-    /// TODO: Implement substitution composition
-    pub fn _compose(&self, _other: &Substitution) -> Substitution {
-        todo!()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -929,18 +1175,11 @@ mod tests {
         let mut analyzer = Analyzer::new(config, documents);
 
         let lit = AstNode::Literal { value: beacon_parser::LiteralValue::Integer(42), line: 1, col: 1 };
-
         let mut constraints = Vec::new();
+
         #[allow(deprecated)]
         let ty = analyzer._visit_node(&lit, &mut constraints).unwrap();
-
         assert!(matches!(ty, Type::Con(beacon_core::TypeCtor::Int)));
-    }
-
-    #[test]
-    fn test_substitution_empty() {
-        let subst = Substitution::empty();
-        assert_eq!(subst._map.len(), 0);
     }
 
     #[test]
@@ -1182,80 +1421,6 @@ def process(x: str | None):
     }
 
     #[test]
-    fn test_substitution_apply_type_var() {
-        let mut map = FxHashMap::default();
-        let tv1 = TypeVar::new(1);
-        let tv2 = TypeVar::new(2);
-        map.insert(tv1.clone(), Type::int());
-        let subst = Substitution { _map: map };
-
-        let result = subst.apply(&Type::Var(tv1));
-        assert!(matches!(result, Type::Con(beacon_core::TypeCtor::Int)));
-
-        let result2 = subst.apply(&Type::Var(tv2));
-        assert!(matches!(result2, Type::Var(_)));
-    }
-
-    #[test]
-    fn test_substitution_apply_function() {
-        let mut map = FxHashMap::default();
-        let tv = TypeVar::new(1);
-        map.insert(tv.clone(), Type::int());
-        let subst = Substitution { _map: map };
-
-        let fn_type = Type::fun(vec![Type::Var(tv)], Type::string());
-        let result = subst.apply(&fn_type);
-
-        match result {
-            Type::Fun(args, _ret) => {
-                assert_eq!(args.len(), 1);
-                assert!(matches!(args[0], Type::Con(beacon_core::TypeCtor::Int)));
-            }
-            _ => panic!("Expected function type"),
-        }
-    }
-
-    #[test]
-    fn test_substitution_apply_union() {
-        let mut map = FxHashMap::default();
-        let tv = TypeVar::new(1);
-        map.insert(tv.clone(), Type::int());
-        let subst = Substitution { _map: map };
-
-        let union_type = Type::Union(vec![Type::Var(tv), Type::string()]);
-        let result = subst.apply(&union_type);
-
-        match result {
-            Type::Union(types) => {
-                assert_eq!(types.len(), 2);
-                assert!(matches!(types[0], Type::Con(beacon_core::TypeCtor::Int)));
-                assert!(matches!(types[1], Type::Con(beacon_core::TypeCtor::String)));
-            }
-            _ => panic!("Expected union type"),
-        }
-    }
-
-    #[test]
-    fn test_substitution_apply_record() {
-        let mut map = FxHashMap::default();
-        let tv = TypeVar::new(1);
-        map.insert(tv.clone(), Type::int());
-        let subst = Substitution { _map: map };
-
-        let record_type = Type::Record(vec![("x".to_string(), Type::Var(tv))], None);
-        let result = subst.apply(&record_type);
-
-        match result {
-            Type::Record(fields, _) => {
-                assert_eq!(fields.len(), 1);
-                assert_eq!(fields[0].0, "x");
-                assert!(matches!(fields[0].1, Type::Con(beacon_core::TypeCtor::Int)));
-            }
-            _ => panic!("Expected record type"),
-        }
-    }
-
-    #[test]
     fn test_type_at_position_simple() {
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
@@ -1350,6 +1515,296 @@ z = "hello"
             !analyzer.position_maps.contains_key(&uri),
             "Position map should be removed"
         );
+    }
+
+    #[test]
+    fn test_for_loop_constraint_generation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+for item in [1, 2, 3]:
+    print(item)
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "For loop analysis should succeed");
+    }
+
+    #[test]
+    fn test_while_loop_constraint_generation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+x = 0
+while x < 10:
+    x = x + 1
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "While loop analysis should succeed");
+    }
+
+    #[test]
+    fn test_try_except_constraint_generation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+try:
+    x = 1 / 0
+except Exception as e:
+    print(e)
+finally:
+    print("done")
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Try/except analysis should succeed");
+    }
+
+    #[test]
+    fn test_with_statement_constraint_generation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+with open("file.txt") as f:
+    content = f.read()
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "With statement analysis should succeed");
+    }
+
+    #[test]
+    fn test_lambda_constraint_generation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+f = lambda x: x + 1
+result = f(42)
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Lambda analysis should succeed");
+    }
+
+    #[test]
+    fn test_list_comprehension_constraint_generation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+numbers = [1, 2, 3, 4, 5]
+squares = [x * x for x in numbers]
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "List comprehension analysis should succeed");
+    }
+
+    #[test]
+    fn test_dict_comprehension_constraint_generation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+numbers = [1, 2, 3]
+mapping = {x: x * 2 for x in numbers}
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Dict comprehension analysis should succeed");
+    }
+
+    #[test]
+    fn test_set_comprehension_constraint_generation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+numbers = [1, 2, 2, 3, 3, 3]
+unique = {x for x in numbers}
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Set comprehension analysis should succeed");
+    }
+
+    #[test]
+    fn test_generator_expression_constraint_generation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+numbers = [1, 2, 3]
+gen = (x * 2 for x in numbers)
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Generator expression analysis should succeed");
+    }
+
+    #[test]
+    fn test_compare_expression_constraint_generation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+x = 5
+result = x > 3 and x < 10
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Compare expression analysis should succeed");
+    }
+
+    #[test]
+    fn test_subscript_constraint_generation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+items = [1, 2, 3]
+first = items[0]
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Subscript analysis should succeed");
+    }
+
+    #[test]
+    fn test_walrus_operator_constraint_generation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+if (n := len([1, 2, 3])) > 2:
+    print(n)
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Walrus operator analysis should succeed");
+    }
+
+    #[test]
+    fn test_raise_statement_returns_never() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def fail():
+    raise ValueError("error")
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Raise statement analysis should succeed");
+    }
+
+    #[test]
+    fn test_decorator_constraint_generation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def decorator(func):
+    return func
+
+@decorator
+def greet(name):
+    return "Hello " + name
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Decorator analysis should succeed");
+    }
+
+    #[test]
+    fn test_match_statement_constraint_generation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def describe(x):
+    match x:
+        case 0:
+            return "zero"
+        case _:
+            return "other"
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Match statement analysis should succeed");
+    }
+
+    #[test]
+    fn test_pass_break_continue_statements() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+for i in range(10):
+    if i == 0:
+        continue
+    elif i == 5:
+        break
+    else:
+        pass
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Pass/break/continue analysis should succeed");
     }
 
     #[test]

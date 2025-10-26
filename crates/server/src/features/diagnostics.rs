@@ -509,7 +509,7 @@ fn type_error_to_diagnostic(error_info: &crate::analysis::TypeErrorInfo) -> Diag
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::{Span, TypeErrorInfo};
+    use crate::analysis::{TypeErrorInfo, constraint_gen::Span};
     use beacon_core::{AnalysisError, Type, TypeCtor, TypeError, TypeVar};
     use std::str::FromStr;
 

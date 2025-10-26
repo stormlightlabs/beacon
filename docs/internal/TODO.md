@@ -2,23 +2,10 @@
 
 ## Overview
 
-This document contains tactical implementation tasks and detailed breakdowns for LSP features.
-
-For strategic roadmap and architectural context, see [ROADMAP.md](./ROADMAP.md).
-
-### Focus
-
 1. Get basic LSP infrastructure working first
 2. Layer on the full Hindley-Milner type inference system
-3. Implementation-level details that support ROADMAP milestones
 
 ### Implementation Order
-
-#### Complete constraint generation coverage
-
-- Ensure all Python constructs generate constraints
-- Handle edge cases (comprehensions, decorators, async/await)
-- **Files:** `crates/server/src/analysis/mod.rs`
 
 #### Static Analysis Part 1: Linter & Quality Checks
 
