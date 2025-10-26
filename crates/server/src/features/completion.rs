@@ -4,7 +4,7 @@
 use crate::document::DocumentManager;
 use crate::features::dunders;
 use crate::parser::LspParser;
-use beacon_parser::{BUILTIN_DUNDERS, MAGIC_METHODS, ScopeId};
+use beacon_parser::{BUILTIN_DUNDERS, MAGIC_METHODS, ScopeId, Symbol};
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse, Documentation, MarkupContent, MarkupKind,
     Position,
@@ -33,84 +33,52 @@ struct CompletionContext {
     scope_id: ScopeId,
     /// Whether we're in a class scope
     _in_class: bool,
+    /// Whether we're in a statement context (vs expression context)
+    is_statement_context: bool,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct BuiltinInfo {
+    name: String,
+    description: String,
 }
 
 /// Python builtin functions with their descriptions
-const BUILTINS: &[(&str, &str)] = &[
-    ("print", "Print objects to the text stream"),
-    ("len", "Return the length of an object"),
-    ("range", "Return a sequence of numbers"),
-    ("enumerate", "Return an enumerate object"),
-    ("zip", "Return an iterator of tuples"),
-    ("map", "Apply function to every item of iterable"),
-    ("filter", "Construct iterator from elements which are true"),
-    ("sum", "Return the sum of a 'start' value plus an iterable of numbers"),
-    ("min", "Return the smallest item in an iterable"),
-    ("max", "Return the largest item in an iterable"),
-    ("abs", "Return the absolute value of a number"),
-    ("round", "Round a number to a given precision"),
-    ("int", "Convert to an integer"),
-    ("float", "Convert to a floating point number"),
-    ("str", "Convert to a string"),
-    ("bool", "Convert to a boolean"),
-    ("list", "Create a list object"),
-    ("dict", "Create a dictionary object"),
-    ("set", "Create a set object"),
-    ("tuple", "Create a tuple object"),
-    ("type", "Return the type of an object"),
-    ("isinstance", "Check if object is an instance of a class"),
-    ("hasattr", "Check if object has an attribute"),
-    ("getattr", "Get an attribute from an object"),
-    ("setattr", "Set an attribute on an object"),
-    ("delattr", "Delete an attribute from an object"),
-    ("open", "Open a file and return a file object"),
-    ("input", "Read a string from standard input"),
-    ("sorted", "Return a new sorted list from an iterable"),
-    ("reversed", "Return a reverse iterator"),
-    ("all", "Return True if all elements are true"),
-    ("any", "Return True if any element is true"),
-    ("chr", "Return a string of one character from Unicode"),
-    ("ord", "Return Unicode code point of a character"),
-    ("hex", "Convert integer to hexadecimal string"),
-    ("bin", "Convert integer to binary string"),
-    ("oct", "Convert integer to octal string"),
-    ("callable", "Check if object appears callable"),
-    ("dir", "List of names in the current scope or object attributes"),
-    ("help", "Invoke the built-in help system"),
-    ("id", "Return the identity of an object"),
-    ("format", "Format a value using a format specification"),
-    ("vars", "Return __dict__ attribute of an object"),
-    ("eval", "Evaluate a Python expression"),
-    ("exec", "Execute Python code dynamically"),
-    ("compile", "Compile source into code object"),
-    ("globals", "Return dictionary of current global symbol table"),
-    ("locals", "Return dictionary of current local symbol table"),
-    ("next", "Retrieve next item from iterator"),
-    ("iter", "Return an iterator object"),
-    ("slice", "Return a slice object"),
-    ("super", "Return a proxy object for parent class"),
-    ("property", "Return a property attribute"),
-    ("classmethod", "Transform method into a class method"),
-    ("staticmethod", "Transform method into a static method"),
-    ("bytes", "Return a new bytes object"),
-    ("bytearray", "Return a new bytearray object"),
-    ("memoryview", "Return a memory view object"),
-    ("complex", "Create a complex number"),
-    ("frozenset", "Return a new frozenset object"),
-    ("hash", "Return the hash value of an object"),
-    ("pow", "Return base to the power of exp"),
-    ("divmod", "Return quotient and remainder of division"),
-    ("ascii", "Return a string with non-ASCII escaped"),
-    ("repr", "Return a string representation of an object"),
-];
+const BUILTINS_JSON: &[u8] = include_bytes!("builtins.json");
+
+/// Keyword context - where a keyword can appear
+#[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize)]
+enum KeywordContext {
+    /// Only valid in statement position
+    Statement,
+    /// Only valid in expression position
+    Expression,
+    /// Valid in both contexts
+    Both,
+}
+
+/// Information about a Python keyword
+#[derive(Debug, serde::Deserialize)]
+struct KeywordInfo {
+    name: String,
+    description: String,
+    context: KeywordContext,
+}
+
+/// Python keywords with their descriptions and valid contexts
+const KEYWORDS_JSON: &[u8] = include_bytes!("keywords.json");
 
 pub struct CompletionProvider {
     _documents: DocumentManager,
+    builtins: Vec<BuiltinInfo>,
+    keywords: Vec<KeywordInfo>,
 }
 
 impl CompletionProvider {
     pub fn new(documents: DocumentManager) -> Self {
-        Self { _documents: documents }
+        let keywords = serde_json::from_slice(KEYWORDS_JSON).expect("Invalid keywords.json");
+        let builtins = serde_json::from_slice(BUILTINS_JSON).expect("Invalid builtins.json");
+        Self { _documents: documents, keywords, builtins }
     }
 
     /// Provide completions at a position
@@ -136,7 +104,9 @@ impl CompletionProvider {
 
             match context.context_type {
                 CompletionContextType::Expression => {
-                    Some(self.symbol_completions(symbol_table, context.scope_id, &context.prefix))
+                    let mut completions = self.symbol_completions(symbol_table, context.scope_id, &context.prefix);
+                    completions.extend(self.keyword_completions(context.is_statement_context, &context.prefix));
+                    Some(completions)
                 }
                 CompletionContextType::Import => Some(Vec::new()),
                 CompletionContextType::Attribute => Some(Vec::new()),
@@ -250,8 +220,9 @@ impl CompletionProvider {
         let _in_class = symbol_table.is_in_class_scope(scope_id);
 
         let context_type = Self::detect_context_type(line, char_idx, tree, text, position);
+        let is_statement_context = Self::detect_statement_context(tree, text, position);
 
-        Some(CompletionContext { prefix, context_type, scope_id, _in_class })
+        Some(CompletionContext { prefix, context_type, scope_id, _in_class, is_statement_context })
     }
 
     /// Detect the type of completion context based on surrounding text and tree-sitter nodes
@@ -283,6 +254,80 @@ impl CompletionProvider {
         CompletionContextType::Expression
     }
 
+    /// Detect whether we're in a statement context (vs expression context)
+    ///
+    /// Walks up the tree-sitter AST to determine if the cursor is in a position where a statement is expected
+    /// vs where an expression is expected (inside parentheses, after operators, etc.)
+    fn detect_statement_context(tree: &tree_sitter::Tree, text: &str, position: Position) -> bool {
+        let line_idx = position.line as usize;
+
+        if let Some(line) = text.lines().nth(line_idx) {
+            let char_idx = position.character as usize;
+            let before_cursor = &line[..char_idx.min(line.len())];
+            let trimmed = before_cursor.trim_start();
+
+            if (trimmed.starts_with("if ")
+                || trimmed.starts_with("elif ")
+                || trimmed.starts_with("while ")
+                || trimmed.starts_with("for "))
+                && !trimmed.contains(':')
+            {
+                return false;
+            }
+
+            if trimmed.contains('(') || trimmed.contains('[') || trimmed.contains('{') {
+                let open_parens = trimmed.matches('(').count();
+                let close_parens = trimmed.matches(')').count();
+                if open_parens > close_parens {
+                    return false;
+                }
+            }
+
+            if trimmed.contains('=') && !trimmed.starts_with("def ") && !trimmed.starts_with("class ") {
+                return false;
+            }
+        }
+
+        let parser = LspParser::new().ok();
+        if let Some(p) = parser {
+            if let Some(node) = p.node_at_position(tree, text, position) {
+                let mut current = node;
+
+                while let Some(parent) = current.parent() {
+                    match parent.kind() {
+                        "binary_operator"
+                        | "unary_operator"
+                        | "comparison"
+                        | "boolean_operator"
+                        | "lambda"
+                        | "subscript"
+                        | "call"
+                        | "argument_list"
+                        | "parenthesized_expression"
+                        | "list"
+                        | "tuple"
+                        | "dictionary"
+                        | "set"
+                        | "expression_statement"
+                        | "assignment"
+                        | "if_clause"
+                        | "while_clause"
+                        | "for_clause" => {
+                            return false;
+                        }
+                        "module" | "function_definition" | "class_definition" | "block" | "suite" => {
+                            return true;
+                        }
+                        _ => {}
+                    }
+                    current = parent;
+                }
+            }
+        }
+
+        true
+    }
+
     /// Extract the partial identifier being typed at the cursor position
     ///
     /// Parses backwards from the cursor to find the start of an identifier.
@@ -305,13 +350,20 @@ impl CompletionProvider {
     }
 
     /// Create a completion item for a builtin
-    fn _builtin_completion(&self, name: &str, detail: &str) -> CompletionItem {
+    fn builtin_completion(name: &str, description: &str) -> CompletionItem {
         CompletionItem {
             label: name.to_string(),
             kind: Some(CompletionItemKind::FUNCTION),
-            detail: Some(detail.to_string()),
+            detail: Some("builtin".to_string()),
+            documentation: Some(Documentation::String(description.to_string())),
             ..Default::default()
         }
+    }
+
+    fn completion_item(
+        symbol: &Symbol, kind: CompletionItemKind, detail: Option<String>, documentation: Option<Documentation>,
+    ) -> CompletionItem {
+        CompletionItem { label: symbol.name.clone(), kind: Some(kind), detail, documentation, ..Default::default() }
     }
 
     /// Get completions for symbols visible in the current scope
@@ -349,27 +401,15 @@ impl CompletionProvider {
                 Documentation::MarkupContent(MarkupContent { kind: MarkupKind::Markdown, value: doc.clone() })
             });
 
-            items.push(CompletionItem {
-                label: symbol.name.clone(),
-                kind: Some(kind),
-                detail: Some(detail),
-                documentation,
-                ..Default::default()
-            });
+            items.push(Self::completion_item(symbol, kind, Some(detail), documentation));
         }
 
-        for &(name, description) in BUILTINS {
+        for BuiltinInfo { name, description } in &self.builtins {
             if !prefix.is_empty() && !name.starts_with(prefix) {
                 continue;
             }
 
-            items.push(CompletionItem {
-                label: name.to_string(),
-                kind: Some(CompletionItemKind::FUNCTION),
-                detail: Some("builtin".to_string()),
-                documentation: Some(Documentation::String(description.to_string())),
-                ..Default::default()
-            });
+            items.push(Self::builtin_completion(name, description));
         }
 
         items
@@ -388,9 +428,38 @@ impl CompletionProvider {
         Vec::new()
     }
 
-    /// TODO: Get keyword completions based on context
-    pub fn _keyword_completions(&self, _position: Position) -> Vec<CompletionItem> {
-        Vec::new()
+    /// Get keyword completions based on context by filtering by the prefix being typed.
+    ///
+    /// Returns completion items for Python keywords appropriate to the current context:
+    /// - Statement context: def, class, if, for, while, try, etc.
+    /// - Expression context: lambda, and, or, not, in, is
+    /// - Both contexts: None, True, False
+    fn keyword_completions(&self, is_statement_context: bool, prefix: &str) -> Vec<CompletionItem> {
+        let mut items = Vec::new();
+
+        for keyword in &self.keywords {
+            if !prefix.is_empty() && !keyword.name.starts_with(prefix) {
+                continue;
+            }
+
+            let include = match keyword.context {
+                KeywordContext::Statement => is_statement_context,
+                KeywordContext::Expression => !is_statement_context,
+                KeywordContext::Both => true,
+            };
+
+            if include {
+                items.push(CompletionItem {
+                    label: keyword.name.to_string(),
+                    kind: Some(CompletionItemKind::KEYWORD),
+                    detail: Some("keyword".to_string()),
+                    documentation: Some(Documentation::String(keyword.description.to_string())),
+                    ..Default::default()
+                });
+            }
+        }
+
+        items
     }
 }
 
@@ -402,14 +471,15 @@ mod tests {
 
     #[test]
     fn test_builtin_completion() {
-        let documents = DocumentManager::new().unwrap();
-        let provider = CompletionProvider::new(documents);
-
-        let item = provider._builtin_completion("test", "Test function");
+        let item = CompletionProvider::builtin_completion("test", "Test function");
 
         assert_eq!(item.label, "test");
         assert_eq!(item.kind, Some(CompletionItemKind::FUNCTION));
-        assert_eq!(item.detail, Some("Test function".to_string()));
+
+        match item.documentation {
+            Some(Documentation::String(docs)) => assert_eq!(docs, "Test function".to_string()),
+            Some(_) | None => unreachable!(),
+        }
     }
 
     #[test]
@@ -742,6 +812,246 @@ def my_function():
                 assert!(
                     !items.iter().any(|item| item.label == "AnotherClass"),
                     "Should NOT have 'AnotherClass' (filtered by prefix 'My')"
+                );
+            }
+            _ => panic!("Expected array response"),
+        }
+    }
+
+    #[test]
+    fn test_keyword_completions_statement_context() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = CompletionProvider::new(documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "\n";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                position: Position { line: 0, character: 0 },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+            context: None,
+        };
+
+        let response = provider.completion(params);
+        assert!(response.is_some());
+
+        match response.unwrap() {
+            CompletionResponse::Array(items) => {
+                assert!(items.iter().any(|item| item.label == "def"), "Expected 'def' keyword");
+                assert!(
+                    items.iter().any(|item| item.label == "class"),
+                    "Expected 'class' keyword"
+                );
+                assert!(items.iter().any(|item| item.label == "if"), "Expected 'if' keyword");
+                assert!(items.iter().any(|item| item.label == "for"), "Expected 'for' keyword");
+                assert!(
+                    !items.iter().any(|item| item.label == "lambda"),
+                    "Should NOT have 'lambda' in statement context"
+                );
+            }
+            _ => panic!("Expected array response"),
+        }
+    }
+
+    #[test]
+    fn test_keyword_completions_expression_context() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = CompletionProvider::new(documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "x = (";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                position: Position { line: 0, character: 5 },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+            context: None,
+        };
+
+        let response = provider.completion(params);
+        assert!(response.is_some());
+
+        match response.unwrap() {
+            CompletionResponse::Array(items) => {
+                assert!(
+                    items.iter().any(|item| item.label == "lambda"),
+                    "Expected 'lambda' in expression context"
+                );
+                assert!(
+                    items.iter().any(|item| item.label == "not"),
+                    "Expected 'not' in expression context"
+                );
+                assert!(
+                    !items.iter().any(|item| item.label == "def"),
+                    "Should NOT have 'def' in expression context"
+                );
+                assert!(
+                    !items.iter().any(|item| item.label == "class"),
+                    "Should NOT have 'class' in expression context"
+                );
+            }
+            _ => panic!("Expected array response"),
+        }
+    }
+
+    #[test]
+    fn test_keyword_completions_with_prefix() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = CompletionProvider::new(documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "de";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                position: Position { line: 0, character: 2 },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+            context: None,
+        };
+
+        let response = provider.completion(params);
+        assert!(response.is_some());
+
+        match response.unwrap() {
+            CompletionResponse::Array(items) => {
+                assert!(
+                    items.iter().any(|item| item.label == "def"),
+                    "Expected 'def' with prefix 'de'"
+                );
+                assert!(
+                    items.iter().any(|item| item.label == "del"),
+                    "Expected 'del' with prefix 'de'"
+                );
+                assert!(
+                    !items.iter().any(|item| item.label == "class"),
+                    "Should NOT have 'class' with prefix 'de'"
+                );
+            }
+            _ => panic!("Expected array response"),
+        }
+    }
+
+    #[test]
+    fn test_keyword_completions_literals_always_available() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = CompletionProvider::new(documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "x = ";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                position: Position { line: 0, character: 4 },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+            context: None,
+        };
+
+        let response = provider.completion(params);
+        assert!(response.is_some());
+
+        match response.unwrap() {
+            CompletionResponse::Array(items) => {
+                assert!(items.iter().any(|item| item.label == "None"), "Expected 'None'");
+                assert!(items.iter().any(|item| item.label == "True"), "Expected 'True'");
+                assert!(items.iter().any(|item| item.label == "False"), "Expected 'False'");
+            }
+            _ => panic!("Expected array response"),
+        }
+    }
+
+    #[test]
+    fn test_keyword_completions_not_after_dot() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = CompletionProvider::new(documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "obj.";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                position: Position { line: 0, character: 4 },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+            context: None,
+        };
+
+        let response = provider.completion(params);
+        assert!(response.is_some());
+
+        match response.unwrap() {
+            CompletionResponse::Array(items) => {
+                assert!(
+                    !items.iter().any(|item| item.label == "def"),
+                    "Should NOT have keywords after '.'"
+                );
+                assert!(
+                    !items.iter().any(|item| item.label == "lambda"),
+                    "Should NOT have keywords after '.'"
+                );
+            }
+            _ => panic!("Expected array response"),
+        }
+    }
+
+    #[test]
+    fn test_keyword_completions_logical_operators_in_expression() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = CompletionProvider::new(documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "if x ";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                position: Position { line: 0, character: 5 },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+            context: None,
+        };
+
+        let response = provider.completion(params);
+        assert!(response.is_some());
+
+        match response.unwrap() {
+            CompletionResponse::Array(items) => {
+                assert!(
+                    items.iter().any(|item| item.label == "and"),
+                    "Expected 'and' in condition"
+                );
+                assert!(
+                    items.iter().any(|item| item.label == "or"),
+                    "Expected 'or' in condition"
+                );
+                assert!(
+                    items.iter().any(|item| item.label == "is"),
+                    "Expected 'is' in condition"
+                );
+                assert!(
+                    items.iter().any(|item| item.label == "in"),
+                    "Expected 'in' in condition"
                 );
             }
             _ => panic!("Expected array response"),

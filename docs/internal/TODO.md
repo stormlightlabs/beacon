@@ -12,29 +12,16 @@ This document outlines the plan for implementing a minimal, working, testable LS
 
 ### Part 1
 
-- [ ] Implement context detection
-    - Determine if cursor is in expression, import statement, or attribute access
-    - Identify partial identifier being typed
-- [ ] Symbol table completions
-    - Extract all symbols visible in current scope
-    - Include variables, functions, classes from symbol table
-    - Walk up scope chain for nested contexts
-
-### Part 2
-
 - [ ] Attribute completions (after `.`)
     - Use type inference to get type of left-hand expression
     - Query type's attributes/methods
     - Handle built-in types (str, list, dict methods)
-- [ ] Keyword completions
-    - Context-aware keywords (def, class, if, for, etc.)
-    - Statement vs expression context
-
-### Part 3
-
 - [ ] Import completions
     - Suggest available modules from workspace/stubs
     - Complete import statement structure
+
+### Part 2
+
 - [ ] Filtering and ranking
     - Prefix matching against typed text
     - Rank by relevance (scope proximity, usage frequency)
@@ -58,6 +45,8 @@ This document outlines the plan for implementing a minimal, working, testable LS
 **Goal:** Perform whole-workspace static analysis for code correctness, style, and type-hint consistency (semantic diagnostics).
 **Tasks:**
 
+### Part 1
+
 - [ ] Linter & Quality Checks
     - Add rule engine for common static rules:
         - Unused imports, variables, parameters
@@ -67,6 +56,9 @@ This document outlines the plan for implementing a minimal, working, testable LS
         - Redundant `pass` or empty `except`
     - Provide suppressions (`# type: ignore`, `# noqa`, etc.)
     - Group diagnostics by category (error, warning, hint)
+
+### Part 2
+
 - [ ] Incremental Re-analysis
     - Cache CFGs, symbol tables, and diagnostics per module
     - Recompute only changed scopes or dependent modules
