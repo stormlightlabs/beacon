@@ -281,6 +281,35 @@ impl SymbolTable {
         false
     }
 
+    /// Get all visible symbols from a scope, walking up the scope chain
+    ///
+    /// Collects all symbols that are visible from the given scope, including:
+    /// - Symbols defined in the current scope
+    /// - Symbols from parent scopes (walking up the chain)
+    /// - Only includes the first occurrence of each name (shadowing)
+    ///
+    /// Returns a vector of symbol references sorted by scope proximity (closest first).
+    pub fn get_visible_symbols(&self, from_scope: ScopeId) -> Vec<&Symbol> {
+        let mut symbols = Vec::new();
+        let mut seen_names = std::collections::HashSet::new();
+        let mut current_scope = from_scope;
+
+        while let Some(scope) = self.scopes.get(&current_scope) {
+            for symbol in scope.symbols.values() {
+                if seen_names.insert(&symbol.name) {
+                    symbols.push(symbol);
+                }
+            }
+
+            match scope.parent {
+                Some(parent_id) => current_scope = parent_id,
+                None => break,
+            }
+        }
+
+        symbols
+    }
+
     /// Recursively search for the innermost scope containing byte_offset
     fn find_scope_at_position_recursive(&self, scope_id: ScopeId, byte_offset: usize) -> Option<ScopeId> {
         let scope = self.scopes.get(&scope_id)?;
@@ -1669,8 +1698,6 @@ mod tests {
         resolver.resolve(&ast).unwrap();
     }
 
-    // === Symbol Tracking and Shadowing Tests ===
-
     #[test]
     fn test_find_shadowed_symbols_simple() {
         let source = "x = 1\ndef foo():\n    x = 2".to_string();
@@ -1773,7 +1800,6 @@ mod tests {
         resolver.resolve(&ast).unwrap();
 
         let shadowed = resolver.symbol_table.find_shadowed_symbols();
-        // Should find x in outer shadowing global x, and x in inner shadowing outer x
         assert!(shadowed.len() >= 2);
         assert!(shadowed.iter().any(|(child, _)| child.line == 3));
         assert!(shadowed.iter().any(|(child, _)| child.line == 5));
@@ -1844,7 +1870,6 @@ mod tests {
         resolver.resolve(&ast).unwrap();
 
         let shadowed = resolver.symbol_table.find_shadowed_symbols();
-        // Parameters should not be reported as shadowing
         assert_eq!(shadowed.len(), 0);
     }
 
@@ -1879,9 +1904,16 @@ mod tests {
 
         resolver.resolve(&ast).unwrap();
 
-        let x_symbol = resolver.symbol_table.lookup_symbol("x", resolver.symbol_table.root_scope).unwrap();
-        // Should have 2 read references
-        let read_refs = x_symbol.references.iter().filter(|r| r.kind == ReferenceKind::Read).count();
+        let x_symbol = resolver
+            .symbol_table
+            .lookup_symbol("x", resolver.symbol_table.root_scope)
+            .unwrap();
+
+        let read_refs = x_symbol
+            .references
+            .iter()
+            .filter(|r| r.kind == ReferenceKind::Read)
+            .count();
         assert_eq!(read_refs, 2);
     }
 
@@ -1939,7 +1971,6 @@ mod tests {
         resolver.resolve(&ast).unwrap();
 
         let unused = resolver.symbol_table.find_unused_symbols();
-        // Variables starting with _ should be ignored
         assert_eq!(unused.len(), 0);
     }
 
@@ -1965,7 +1996,6 @@ mod tests {
         resolver.resolve(&ast).unwrap();
 
         let unused = resolver.symbol_table.find_unused_symbols();
-        // Functions should not be reported as unused
         assert_eq!(unused.len(), 0);
     }
 
@@ -1989,7 +2019,6 @@ mod tests {
         resolver.resolve(&ast).unwrap();
 
         let unused = resolver.symbol_table.find_unused_symbols();
-        // Classes should not be reported as unused
         assert_eq!(unused.len(), 0);
     }
 

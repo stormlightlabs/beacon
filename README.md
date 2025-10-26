@@ -19,6 +19,21 @@ Beacon is a Rust implementation of the language server protocol & a hindley-miln
 └── pkg/                # Editor extensions & plugins
 ```
 
+## Completions & Static Analysis
+
+### Smart completions
+
+The `CompletionProvider` looks at the latest document snapshot (text, AST, and symbol tables) to suggest in-scope names, imports, and attribute members the moment you type or hit the `"."` trigger.
+
+### Confident feedback
+
+Beacon’s static analyzer (in `crates/server/src/analysis`) combines [Hindley-Milner](#why-hm-for-python) style inference with control/data-flow passes.
+It flags type mismatches, use-before-def bugs, unreachable code, and unused bindings, then caches the results per file so hovers, squiggles, and inlay hints stay consistent without extra latency.
+
+### Shared insight
+
+Both systems reuse the same analyzer output, so upcoming features like type-filtered completions or richer hover details piggyback on the existing substitution data instead of re-walking files.
+
 ## Development
 
 ### VSCode Extension Setup
@@ -27,7 +42,7 @@ Read more in the extension [package](./pkg/vscode/README.md)
 
 ## Goals
 
-Deliver an **incremental, performant, pragmatic** Hindley–Milner (HM) type inference and checking engine for Python that integrates with modern editor tooling via the Language Server Protocol (LSP).
+Deliver an **incremental, performant, pragmatic** Hindley-Milner (HM) type inference and checking engine for Python that integrates with modern editor tooling via the Language Server Protocol (LSP).
 The system should support Python’s dynamic features thoughtfully, interoperate with `typing` hints, and scale to multi-file projects.
 
 ### Why HM for Python?
