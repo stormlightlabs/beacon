@@ -35,6 +35,7 @@ This document outlines the plan for implementing a minimal, working, testable LS
 - [ ] Filtering and ranking
     - Prefix matching against typed text
     - Rank by relevance (scope proximity, usage frequency)
+- [ ] Cross-file symbol completions
 **Implementation Notes:**
     - Currently returns hardcoded builtins only
     - Need to parse backwards from cursor to understand context
@@ -48,10 +49,6 @@ This document outlines the plan for implementing a minimal, working, testable LS
 - Provides accurate attribute completions after `.`
 - Filters suggestions based on what's typed
 - Includes relevant keywords for context
-**Deferred:**
-- Cross-file symbol completions (requires workspace analysis)
-- Snippet completions (function templates, etc.)
-- LSP resolve for expensive completion details
 
 ## Static Analysis
 
@@ -164,3 +161,5 @@ This document outlines the plan for implementing a minimal, working, testable LS
 - Add inheritance awareness (`__init__` in base classes)
 - Partial workspace analysis (analyze subset)
 - Advanced caching strategies (persistent cache across sessions)
+- Snippet completions (function templates, etc.)
+- LSP resolve for expensive completion details
