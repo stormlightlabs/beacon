@@ -8,10 +8,27 @@ use beacon_core::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Diagnostic severity level for configurable diagnostics
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DiagnosticSeverity {
+    /// Informational message
+    Info,
+    /// Warning message
+    Warning,
+    /// Error message
+    Error,
+}
+
+impl Default for DiagnosticSeverity {
+    fn default() -> Self {
+        Self::Warning
+    }
+}
+
 /// Type checking strictness mode
 ///
 /// Controls how the type checker handles annotation mismatches and inference.
-/// See ROADMAP.md "Annotation Interaction" section for details.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TypeCheckingMode {
@@ -95,8 +112,7 @@ pub struct Config {
 
     /// Maximum depth for Any type propagation before elevating diagnostics
     ///
-    /// Controls how far `Any` can flow through the codebase before
-    /// generating warnings. Higher values are more permissive.
+    /// Controls how far `Any` can flow through the codebase before generating warnings. Higher values are more permissive.
     #[serde(default = "default_max_any_depth")]
     pub max_any_depth: u32,
 
@@ -133,6 +149,34 @@ pub struct Config {
     /// TODO: Gate bleeding-edge features behind this flag
     #[serde(default)]
     pub experimental: bool,
+
+    /// Source roots for module resolution (in addition to workspace root)
+    ///
+    /// TODO: Make this configurable via LSP settings
+    /// For now, we auto-detect workspace root, src/, and lib/
+    #[serde(default)]
+    pub source_roots: Vec<PathBuf>,
+
+    /// Patterns to exclude from workspace scanning
+    ///
+    /// TODO: Make this configurable via LSP settings
+    /// For now, we hardcode common venv patterns
+    #[serde(default)]
+    pub exclude_patterns: Vec<String>,
+
+    /// Diagnostic severity for unresolved imports
+    ///
+    /// TODO: Make this configurable (Info, Warning, Error)
+    /// For now, we default to Warning
+    #[serde(default)]
+    pub unresolved_import_severity: DiagnosticSeverity,
+
+    /// Diagnostic severity for circular imports
+    ///
+    /// TODO: Make this configurable (Info, Warning, Error, or disabled)
+    /// For now, we default to Warning
+    #[serde(default)]
+    pub circular_import_severity: DiagnosticSeverity,
 }
 
 fn default_max_any_depth() -> u32 {
@@ -160,6 +204,10 @@ impl Default for Config {
             enable_caching: default_true(),
             cache_size: default_cache_size(),
             experimental: false,
+            source_roots: Vec::new(),
+            exclude_patterns: Vec::new(),
+            unresolved_import_severity: DiagnosticSeverity::default(),
+            circular_import_severity: DiagnosticSeverity::default(),
         }
     }
 }
@@ -190,7 +238,6 @@ impl Config {
     ///
     /// TODO: Include stdlib typeshed paths based on python_version
     pub fn effective_stub_paths(&self) -> Vec<PathBuf> {
-        
         // TODO: Add typeshed stdlib paths
         // TODO: Add site-packages paths
         self.stub_paths.clone()

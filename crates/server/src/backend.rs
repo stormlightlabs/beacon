@@ -159,7 +159,22 @@ impl LanguageServer for Backend {
             .log_message(MessageType::INFO, "Beacon LSP server initialized")
             .await;
 
-        // TODO: Initialize workspace scanning
+        // Initialize workspace scanning in background
+        let mut workspace = self.workspace.write().await;
+        let client = self.client.clone();
+
+        match workspace.initialize() {
+            Ok(()) => {
+                client
+                    .log_message(MessageType::INFO, "Workspace indexing completed successfully")
+                    .await;
+            }
+            Err(e) => {
+                client
+                    .log_message(MessageType::ERROR, format!("Workspace indexing failed: {e}"))
+                    .await;
+            }
+        }
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -192,8 +207,15 @@ impl LanguageServer for Backend {
             Ok(_) => {
                 let mut analyzer = self.analyzer.write().await;
                 analyzer.invalidate(&uri);
-
                 drop(analyzer);
+
+                // Update workspace dependency graph
+                let mut workspace = self.workspace.write().await;
+                let _dependents = workspace.update_dependencies(&uri);
+                drop(workspace);
+
+                // TODO: Invalidate and re-analyze dependents in future iterations
+
                 self.publish_diagnostics(uri).await;
             }
             Err(e) => {

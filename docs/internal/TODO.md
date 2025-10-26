@@ -130,16 +130,16 @@ This document outlines the plan for implementing a minimal, working, testable LS
 
 ### Part 1
 
-- [ ] File discovery and indexing
+- [x] File discovery and indexing
     - Scan workspace root for .py files
     - Watch file system for changes (create/delete/modify)
     - Maintain index of workspace Python files
-- [ ] Module resolution
+- [x] Module resolution
     - Convert file paths to module names (src/foo/bar.py → foo.bar)
     - Reverse: resolve import statements to file paths
     - Handle package `__init__.py` files
     - Support configurable source roots
-- [ ] Dependency graph
+- [x] Dependency graph
     - Parse import statements from each file
     - Build directed graph of module dependencies
     - Detect strongly connected components (circular imports)
