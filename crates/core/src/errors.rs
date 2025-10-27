@@ -19,6 +19,9 @@ pub enum TypeError {
 
     #[error("Infinite type: {0}")]
     InfiniteType(String),
+
+    #[error("Type {0} does not satisfy protocol {1}")]
+    ProtocolNotSatisfied(String, String),
 }
 
 /// Analysis errors

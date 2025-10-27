@@ -23,58 +23,21 @@ This document tracks the major milestones required to deliver a robust Hindley-M
 - [x] Parser handles with, comprehensions, walrus operator, pattern matching, and decorators.
 - [ ] Parser updates respond to document edits without full reparse (deferred).
 
-## Core Type System
-
-**Goal:** Implement a Hindley-Milner core with row-polymorphic records and a robust substitution system.
-**Tasks:**
-
-- [x] Define type variables, monotypes, polytypes, and higher-kinded constructors.
-- [x] Build substitution composition and occurs-checking unification.
-- [x] Support row-polymorphic records and structural constraints.
-- [x] Model `Any`, `Top`, and `Never` types with gradual semantics.
-- [x] Implement kind checking system with `kind_of()` and `check_well_kinded()`.
-- [x] Add value restriction infrastructure for sound generalization.
-**Implementation Notes:**
-- Generalize only at non-expansive bindings (value restriction implemented).
-- Substitutions apply recursively and idempotently (verified by tests).
-- Kind system prevents ill-formed types like `Int[String]`.
-- Distinct semantics for `Any` (gradual), `Top` (lattice top), `Never` (lattice bottom).
-**Acceptance:**
-- [x] Types, kinding, substitution, and unifier modules compile with thorough unit tests.
-- [x] Row-polymorphic records and unions round-trip through the core representation.
-- [x] Value restriction infrastructure ready for constraint generation integration.
-- [x] Comprehensive module documentation with examples.
-
-## Constraint Generation
-
-**Goal:** Generate constraints for Python expressions that feed the solver with Algorithm W semantics.
-**Tasks:**
-
-- [ ] Cover variables, literals, functions, calls, attributes, indexing, comprehensions, and destructuring.
-- [ ] Represent constraints in an intermediate form consumable by the solver.
-- [ ] Integrate generator output with parser AST nodes and symbol tables.
-- [ ] Emit diagnostics hooks for mismatches and quick fixes.
-**Implementation Notes:**
-- Track scope information for let-generalization.
-- Use iterator protocols for comprehensions and loops.
-**Acceptance:**
-- Constraint generation handles the core Python expression set with tests.
-- Failures produce actionable diagnostics tied to source ranges.
-
 ## Records & Protocols
 
 **Goal:** Support structural typing through row-polymorphic records and protocol entailment.
 **Tasks:**
 
-- [ ] Model attribute reads/writes with `HasAttr`-style constraints.
-- [ ] Encode builtin protocols (`Sized`, iterator protocols) and allow manual authoring.
+- [x] Model attribute reads/writes with `HasAttr`-style constraints.
+- [x] Encode builtin protocols (`Sized`, iterator protocols) and allow manual authoring.
 - [ ] Support object construction via `__init__` and row extension.
 **Implementation Notes:**
 - Reuse index metadata for attribute lookup.
 - Provide gradual fallbacks when protocol information is missing.
 **Acceptance:**
-- Attribute access infers precise types for locals, globals, and instance members.
-- Protocol mismatches surface diagnostics with suggested fixes.
+- [x] Protocol system implemented with Iterator, Iterable, Sized, Sequence, Mapping, ContextManager, Callable.
+- [x] Protocol mismatches surface diagnostics with error codes.
+- [ ] Attribute access infers precise types for locals, globals, and instance members (partial - HasAttr constraint exists but not fully utilized).
 
 ## Typing Interop
 
@@ -96,15 +59,18 @@ This document tracks the major milestones required to deliver a robust Hindley-M
 **Goal:** Deliver first-class support for Python collection protocols.
 **Tasks:**
 
-- [ ] Implement iterator/iterable constraints for `for`, comprehensions, and context managers.
+- [x] Implement iterator/iterable constraints for `for` loops and comprehensions (list, set, dict, generator).
+- [ ] Implement context manager protocol constraints for `with` statements.
 - [ ] Model subscripting and slicing for lists, tuples, dicts, sets, and custom containers.
 - [ ] Provide inlay hints for inferred collection element types.
 **Implementation Notes:**
 - Normalize builtin signatures from stubs to avoid reimplementing shapes manually.
 - Share logic with completion and hover features.
 **Acceptance:**
-- Collection-heavy examples infer element types and show them in hints.
-- Indexing and slicing produce correct constraint shapes.
+- [x] For loops and comprehensions correctly infer element types from iterables (e.g., `for x in [1,2,3]` infers `x: int`).
+- [x] Protocol constraint system extracts element types from `list[T]`, `set[T]`, `dict[K,V]`, `tuple[T]`.
+- [ ] Collection-heavy examples show inferred types in inlay hints.
+- [ ] Indexing and slicing produce correct constraint shapes.
 
 ## Classes & Overloads
 
@@ -274,12 +240,12 @@ This works for basic iteration but loses important generator-specific semantics.
 
 ## Deliverables
 
-- [ ] Tree-sitter parser with CST-to-AST lowering and incremental updates.
-- [ ] Core type system and solver with comprehensive tests.
-- [ ] Constraint generator covering core Python constructs.
-- [ ] Name resolution and symbol indexing for variables, imports, and decorators.
-- [ ] Row-polymorphic records and protocol entailment.
-- [ ] LSP server features: diagnostics, hover, inlay hints, code actions.
+- [x] Tree-sitter parser with CST-to-AST lowering (incremental updates deferred).
+- [x] Core type system and solver with comprehensive tests.
+- [x] Constraint generator covering core Python constructs.
+- [x] Name resolution and symbol indexing for variables, imports, and decorators.
+- [x] Row-polymorphic records and protocol entailment (protocols: Iterator, Iterable, Sized, Sequence, Mapping, ContextManager, Callable).
+- [ ] LSP server features: diagnostics (partial), hover (partial), inlay hints (pending), code actions (pending).
 - [ ] Typing interop with `.pyi` ingestion and mode configuration.
 - [ ] Benchmarks, corpus tests, and fuzzing harness.
 - [ ] Contributor documentation for modes, constraints, and contribution workflow.

@@ -507,6 +507,9 @@ fn type_error_to_diagnostic(error_info: &crate::analysis::TypeErrorInfo) -> Diag
             ("HM004", format!("Kind mismatch: expected {expected}, found {found}"))
         }
         TypeError::InfiniteType(msg) => ("HM005", format!("Infinite type: {msg}")),
+        TypeError::ProtocolNotSatisfied(ty, protocol) => {
+            ("HM006", format!("Type {ty} does not satisfy protocol {protocol}"))
+        }
     };
 
     Diagnostic {

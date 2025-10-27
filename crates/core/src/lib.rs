@@ -9,12 +9,14 @@
 
 pub mod annotation_parser;
 pub mod errors;
+pub mod protocols;
 pub mod subst;
 pub mod types;
 pub mod unify;
 
 pub use annotation_parser::*;
 pub use errors::*;
+pub use protocols::*;
 pub use subst::*;
 pub use types::*;
 pub use unify::*;

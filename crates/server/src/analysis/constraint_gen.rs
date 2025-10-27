@@ -13,6 +13,9 @@ pub enum Constraint {
     HasAttr(Type, String, Type, Span),
     /// Call constraint: f(args) -> ret
     Call(Type, Vec<Type>, Type, Span),
+    /// Protocol constraint: τ satisfies protocol P
+    /// The type parameter is the element type extracted from satisfying the protocol
+    Protocol(Type, beacon_core::ProtocolName, Type, Span),
 }
 
 pub struct ConstraintResult(

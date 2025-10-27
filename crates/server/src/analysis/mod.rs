@@ -391,20 +391,18 @@ impl Analyzer {
             AstNode::Import { .. } | AstNode::ImportFrom { .. } => {
                 Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
             }
-            // TODO: Replace with Protocol constraint when protocol system is implemented
             AstNode::For { target, iter, body, else_body, line, col } => {
                 let iter_ty = Self::visit_node_with_env(iter, env, ctx)?;
 
-                let iter_return_ty = Type::Var(env.fresh_var());
+                let element_ty = Type::Var(env.fresh_var());
                 let span = Span::new(*line, *col);
-                ctx.constraints.push(Constraint::HasAttr(
+                ctx.constraints.push(Constraint::Protocol(
                     iter_ty,
-                    "__iter__".to_string(),
-                    iter_return_ty.clone(),
+                    beacon_core::ProtocolName::Iterable,
+                    element_ty.clone(),
                     span,
                 ));
 
-                let element_ty = Type::Var(env.fresh_var());
                 env.bind(target.clone(), TypeScheme::mono(element_ty));
 
                 for stmt in body {
@@ -589,23 +587,21 @@ impl Analyzer {
                 ctx.record_type(*line, *col, value_ty.clone());
                 Ok(value_ty)
             }
-            // TODO: Replace with Protocol constraint for iterator protocol
             AstNode::ListComp { element, generators, line, col } => {
                 let mut comp_env = env.clone();
 
                 for generator in generators {
                     let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx)?;
 
-                    let iter_return_ty = Type::Var(comp_env.fresh_var());
+                    let element_ty = Type::Var(comp_env.fresh_var());
                     let span = Span::new(*line, *col);
-                    ctx.constraints.push(Constraint::HasAttr(
+                    ctx.constraints.push(Constraint::Protocol(
                         iter_ty,
-                        "__iter__".to_string(),
-                        iter_return_ty,
+                        beacon_core::ProtocolName::Iterable,
+                        element_ty.clone(),
                         span,
                     ));
 
-                    let element_ty = Type::Var(comp_env.fresh_var());
                     comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
 
                     for if_clause in &generator.ifs {
@@ -626,16 +622,15 @@ impl Analyzer {
                 for generator in generators {
                     let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx)?;
 
-                    let iter_return_ty = Type::Var(comp_env.fresh_var());
+                    let element_ty = Type::Var(comp_env.fresh_var());
                     let span = Span::new(*line, *col);
-                    ctx.constraints.push(Constraint::HasAttr(
+                    ctx.constraints.push(Constraint::Protocol(
                         iter_ty,
-                        "__iter__".to_string(),
-                        iter_return_ty,
+                        beacon_core::ProtocolName::Iterable,
+                        element_ty.clone(),
                         span,
                     ));
 
-                    let element_ty = Type::Var(comp_env.fresh_var());
                     comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
 
                     for if_clause in &generator.ifs {
@@ -656,16 +651,15 @@ impl Analyzer {
                 for generator in generators {
                     let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx)?;
 
-                    let iter_return_ty = Type::Var(comp_env.fresh_var());
+                    let element_ty = Type::Var(comp_env.fresh_var());
                     let span = Span::new(*line, *col);
-                    ctx.constraints.push(Constraint::HasAttr(
+                    ctx.constraints.push(Constraint::Protocol(
                         iter_ty,
-                        "__iter__".to_string(),
-                        iter_return_ty,
+                        beacon_core::ProtocolName::Iterable,
+                        element_ty.clone(),
                         span,
                     ));
 
-                    let element_ty = Type::Var(comp_env.fresh_var());
                     comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
 
                     for if_clause in &generator.ifs {
@@ -689,16 +683,15 @@ impl Analyzer {
                 for generator in generators {
                     let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx)?;
 
-                    let iter_return_ty = Type::Var(comp_env.fresh_var());
+                    let element_ty = Type::Var(comp_env.fresh_var());
                     let span = Span::new(*line, *col);
-                    ctx.constraints.push(Constraint::HasAttr(
+                    ctx.constraints.push(Constraint::Protocol(
                         iter_ty,
-                        "__iter__".to_string(),
-                        iter_return_ty,
+                        beacon_core::ProtocolName::Iterable,
+                        element_ty.clone(),
                         span,
                     ));
 
-                    let element_ty = Type::Var(comp_env.fresh_var());
                     comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
 
                     for if_clause in &generator.ifs {
@@ -761,6 +754,39 @@ impl Analyzer {
                 // TODO: Implement record/structural typing
                 // TODO: use row-polymorphic records
                 Constraint::HasAttr(_obj_ty, _attr_name, _attr_ty, _span) => {}
+
+                Constraint::Protocol(obj_ty, protocol_name, elem_ty, span) => {
+                    let applied_obj = subst.apply(&obj_ty);
+
+                    if beacon_core::ProtocolChecker::satisfies(&applied_obj, &protocol_name) {
+                        let extracted_elem = match protocol_name {
+                            beacon_core::ProtocolName::Iterable
+                            | beacon_core::ProtocolName::Iterator
+                            | beacon_core::ProtocolName::Sequence => {
+                                beacon_core::ProtocolChecker::extract_iterable_element(&applied_obj)
+                            }
+                            _ => Type::any(),
+                        };
+
+                        match Unifier::unify(&subst.apply(&elem_ty), &extracted_elem) {
+                            Ok(s) => {
+                                subst = s.compose(subst);
+                            }
+                            Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                                type_errors.push(TypeErrorInfo::new(type_err, span));
+                            }
+                            Err(_) => {}
+                        }
+                    } else {
+                        type_errors.push(TypeErrorInfo::new(
+                            beacon_core::TypeError::ProtocolNotSatisfied(
+                                applied_obj.to_string(),
+                                protocol_name.to_string(),
+                            ),
+                            span,
+                        ));
+                    }
+                }
             }
         }
 
