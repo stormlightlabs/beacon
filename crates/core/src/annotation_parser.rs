@@ -359,7 +359,50 @@ impl Parser {
                     Type::Con(TypeCtor::Function)
                 }
             }
-            _ => Type::Con(TypeCtor::Class(name.to_string())),
+            "Generic" => {
+                if matches!(self.peek(), Some(Token::LBracket)) {
+                    self.advance();
+                    let mut type_params = vec![self.parse_type()?];
+                    while matches!(self.peek(), Some(Token::Comma)) {
+                        self.advance();
+                        type_params.push(self.parse_type()?);
+                    }
+                    self.expect(Token::RBracket)?;
+
+                    let mut result = Type::Con(TypeCtor::Generic);
+                    for param in type_params {
+                        result = Type::App(Box::new(result), Box::new(param));
+                    }
+                    result
+                } else {
+                    Type::Con(TypeCtor::Generic)
+                }
+            }
+            "Protocol" => {
+                if matches!(self.peek(), Some(Token::LBracket)) {
+                    self.advance();
+                    let mut type_params = vec![self.parse_type()?];
+                    while matches!(self.peek(), Some(Token::Comma)) {
+                        self.advance();
+                        type_params.push(self.parse_type()?);
+                    }
+                    self.expect(Token::RBracket)?;
+                    let mut result = Type::Con(TypeCtor::Protocol(None));
+                    for param in type_params {
+                        result = Type::App(Box::new(result), Box::new(param));
+                    }
+                    result
+                } else {
+                    Type::Con(TypeCtor::Protocol(None))
+                }
+            }
+            _ => {
+                if name.len() == 1 && name.chars().next().unwrap().is_uppercase() {
+                    Type::Con(TypeCtor::TypeVariable(name.to_string()))
+                } else {
+                    Type::Con(TypeCtor::Class(name.to_string()))
+                }
+            }
         };
 
         Ok(base_type)
@@ -569,5 +612,107 @@ mod tests {
         let parser = AnnotationParser::new();
         let ty = parser.parse("set[int]").unwrap();
         assert_eq!(ty, Type::App(Box::new(Type::Con(TypeCtor::Set)), Box::new(Type::int())));
+    }
+
+    #[test]
+    fn test_parse_type_variable() {
+        let parser = AnnotationParser::new();
+        let ty = parser.parse("T").unwrap();
+        assert_eq!(ty, Type::Con(TypeCtor::TypeVariable("T".to_string())));
+
+        let ty = parser.parse("U").unwrap();
+        assert_eq!(ty, Type::Con(TypeCtor::TypeVariable("U".to_string())));
+    }
+
+    #[test]
+    fn test_parse_generic() {
+        let parser = AnnotationParser::new();
+        let ty = parser.parse("Generic[T]").unwrap();
+        match ty {
+            Type::App(generic, param) => {
+                assert_eq!(*generic, Type::Con(TypeCtor::Generic));
+                assert_eq!(*param, Type::Con(TypeCtor::TypeVariable("T".to_string())));
+            }
+            _ => panic!("Expected Generic[T] as App(Generic, T)"),
+        }
+
+        let ty = parser.parse("Generic[T, U]").unwrap();
+        match ty {
+            Type::App(outer, param_u) => {
+                assert_eq!(*param_u, Type::Con(TypeCtor::TypeVariable("U".to_string())));
+                match *outer {
+                    Type::App(generic, param_t) => {
+                        assert_eq!(*generic, Type::Con(TypeCtor::Generic));
+                        assert_eq!(*param_t, Type::Con(TypeCtor::TypeVariable("T".to_string())));
+                    }
+                    _ => panic!("Expected App(Generic, T) for inner part"),
+                }
+            }
+            _ => panic!("Expected Generic[T, U] as nested App"),
+        }
+    }
+
+    #[test]
+    fn test_parse_protocol() {
+        let parser = AnnotationParser::new();
+        let ty = parser.parse("Protocol").unwrap();
+        match ty {
+            Type::Con(TypeCtor::Protocol(name)) => {
+                assert!(name.is_none());
+            }
+            _ => panic!("Expected Protocol type"),
+        }
+
+        let ty = parser.parse("Protocol[T]").unwrap();
+        match ty {
+            Type::App(protocol, param) => {
+                match *protocol {
+                    Type::Con(TypeCtor::Protocol(name)) => assert!(name.is_none()),
+                    _ => panic!("Expected Protocol constructor"),
+                }
+                assert_eq!(*param, Type::Con(TypeCtor::TypeVariable("T".to_string())));
+            }
+            _ => panic!("Expected Protocol[T] as App(Protocol, T)"),
+        }
+    }
+
+    #[test]
+    fn test_parse_generic_class() {
+        let parser = AnnotationParser::new();
+        let ty = parser.parse("list[T]").unwrap();
+        match ty {
+            Type::App(ctor, param) => {
+                assert_eq!(*ctor, Type::Con(TypeCtor::List));
+                assert_eq!(*param, Type::Con(TypeCtor::TypeVariable("T".to_string())));
+            }
+            _ => panic!("Expected list[T] type"),
+        }
+
+        let ty = parser.parse("dict[K, V]").unwrap();
+        match ty {
+            Type::App(outer, value) => match outer.as_ref() {
+                Type::App(dict, key) => {
+                    assert_eq!(**dict, Type::Con(TypeCtor::Dict));
+                    assert_eq!(**key, Type::Con(TypeCtor::TypeVariable("K".to_string())));
+                    assert_eq!(*value, Type::Con(TypeCtor::TypeVariable("V".to_string())));
+                }
+                _ => panic!("Expected dict constructor"),
+            },
+            _ => panic!("Expected dict[K, V] type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_callable_with_type_variables() {
+        let parser = AnnotationParser::new();
+        let ty = parser.parse("Callable[[T], T]").unwrap();
+        match ty {
+            Type::Fun(args, ret) => {
+                assert_eq!(args.len(), 1);
+                assert_eq!(args[0], Type::Con(TypeCtor::TypeVariable("T".to_string())));
+                assert_eq!(*ret, Type::Con(TypeCtor::TypeVariable("T".to_string())));
+            }
+            _ => panic!("Expected function type"),
+        }
     }
 }

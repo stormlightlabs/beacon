@@ -44,15 +44,23 @@ This document tracks the major milestones required to deliver a robust Hindley-M
 **Goal:** Ingest Python typing annotations while balancing strictness modes.
 **Tasks:**
 
-- [ ] Parse `Optional`, `Union`, `TypeVar`, `Generic`, and `Protocol` annotations.
+- [x] Parse `Optional`, `Union`, `TypeVar`, `Generic`, and `Protocol` annotations.
+- [x] Implement PEP 561 stub discovery (manual paths, stub packages, inline stubs).
+- [x] Parse `.pyi` stub files and extract type signatures.
+- [ ] Integrate stub lookups into module resolution and constraint generation.
 - [ ] Respect strict, balanced, and loose modes when annotations disagree with inference.
-- [ ] Allow `.pyi` stub ingestion and module cache population.
 **Implementation Notes:**
 - Treat annotations as bounds, not absolute truths, unless running in strict mode.
-- Cache stub results in the index for reuse between analyses.
+- Stub discovery follows PEP 561 resolution order (manual → stub packages → inline → typeshed).
+- StubFile structure stores exports, re-exports, **all** declarations, and partial markers.
+- StubCache uses simple HashMap caching; LRU eviction deferred for future optimization.
 **Acceptance:**
-- Mode selection changes diagnostic severity without breaking inference.
-- Stub ingestion populates the index and unlocks protocol resolution.
+- [x] AnnotationParser handles TypeVar, Generic, Protocol with tests passing.
+- [x] Workspace discovers and indexes stub files following PEP 561.
+- [x] parse_stub_file() extracts function, class, and variable type signatures.
+- [x] Workspace provides get_stub_type() and get_stub_exports() for on-demand stub queries.
+- [ ] Module resolution queries stubs before falling back to inference.
+- [ ] Mode selection changes diagnostic severity without breaking inference.
 
 ## Collections & Iteration
 
@@ -173,9 +181,11 @@ This works for basic iteration but loses important generator-specific semantics.
 - [ ] Slice constraints by strongly connected components.
 - [ ] Cache analysis results on disk and reuse across sessions.
 - [ ] Parallelize independent slices for large projects.
+- [ ] Implement LRU eviction for StubCache (deferred - currently uses simple HashMap).
 **Implementation Notes:**
-- Leverage Tree-sitter byte ranges to limit recomputation.
+- Use Tree-sitter byte ranges to limit recomputation.
 - Track module dependency graphs in the index.
+- StubCache currently uses on-demand loading without eviction; suitable for most workspaces.
 **Acceptance:**
 - Editing a single file recomputes only affected slices.
 - Warm runs complete significantly faster than cold runs.
@@ -246,6 +256,7 @@ This works for basic iteration but loses important generator-specific semantics.
 - [x] Name resolution and symbol indexing for variables, imports, and decorators.
 - [x] Row-polymorphic records and protocol entailment (protocols: Iterator, Iterable, Sized, Sequence, Mapping, ContextManager, Callable).
 - [ ] LSP server features: diagnostics (partial), hover (partial), inlay hints (pending), code actions (pending).
-- [ ] Typing interop with `.pyi` ingestion and mode configuration.
+- [x] Typing interop: TypeVar/Generic/Protocol parsing (partial - stub integration pending).
+- [x] PEP 561 stub discovery and parsing (partial - constraint generation integration pending).
 - [ ] Benchmarks, corpus tests, and fuzzing harness.
 - [ ] Contributor documentation for modes, constraints, and contribution workflow.

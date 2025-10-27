@@ -22,4 +22,5 @@
     - [Tree-sitter](./learn/tree-sitter.md)
     - [PEP8](./learn/pep-8.md)
     - [PEP484 & 585](./learn/pep-484-585.md)
-    - [PEP634 - 636](./learn/pep-634-636.md)
+    - [PEP634 to 636](./learn/pep-634-636.md)
+    - [PEP561](./learn/pep-561-stubs.md)

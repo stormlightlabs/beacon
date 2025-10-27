@@ -183,6 +183,12 @@ pub enum TypeCtor {
     Top,
     /// Bottom of type lattice - subtype of all types (uninhabited)
     Never,
+    /// Type variable (from Generic[T] or bare T in annotations)
+    TypeVariable(String),
+    /// Generic base class (parameters stored via Type::App)
+    Generic,
+    /// Protocol (parameters stored via Type::App, name for named protocols)
+    Protocol(Option<String>),
     Class(String),
     Module(String),
 }
@@ -203,6 +209,15 @@ impl fmt::Display for TypeCtor {
             TypeCtor::Any => write!(f, "Any"),
             TypeCtor::Top => write!(f, "Top"),
             TypeCtor::Never => write!(f, "Never"),
+            TypeCtor::TypeVariable(name) => write!(f, "{name}"),
+            TypeCtor::Generic => write!(f, "Generic"),
+            TypeCtor::Protocol(name) => {
+                if let Some(protocol_name) = name {
+                    write!(f, "Protocol<{protocol_name}>")
+                } else {
+                    write!(f, "Protocol")
+                }
+            }
             TypeCtor::Class(name) => write!(f, "{name}"),
             TypeCtor::Module(name) => write!(f, "module<{name}>"),
         }
@@ -220,7 +235,8 @@ impl TypeCtor {
             | TypeCtor::NoneType
             | TypeCtor::Any
             | TypeCtor::Top
-            | TypeCtor::Never => Kind::Star,
+            | TypeCtor::Never
+            | TypeCtor::TypeVariable(_) => Kind::Star,
             // * -> *
             TypeCtor::List | TypeCtor::Set => Kind::arity(1),
             // * -> * -> *
@@ -229,6 +245,8 @@ impl TypeCtor {
             TypeCtor::Tuple => Kind::Star,
             // * -> * -> * (simplified)
             TypeCtor::Function => Kind::arity(2),
+            // Generic and Protocol are just markers, kind is Star
+            TypeCtor::Generic | TypeCtor::Protocol(_) => Kind::Star,
             TypeCtor::Class(_) | TypeCtor::Module(_) => Kind::Star,
         }
     }
@@ -250,6 +268,9 @@ impl TypeCtor {
                 | TypeCtor::Any
                 | TypeCtor::Top
                 | TypeCtor::Never
+                | TypeCtor::TypeVariable(_)
+                | TypeCtor::Generic
+                | TypeCtor::Protocol(_)
         )
     }
 }

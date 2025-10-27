@@ -8,6 +8,7 @@
 
 use crate::config::Config;
 use crate::document::DocumentManager;
+use beacon_parser::AstNode;
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
@@ -119,11 +120,12 @@ impl Workspace {
 
     /// Initialize workspace by discovering Python files and stubs
     ///
-    /// Scans the workspace for all Python files, builds the module index, and constructs the initial dependency graph.
-    /// TODO: Load stub files from config.stub_paths
+    /// Scans the workspace for all Python files, builds the module index, constructs the initial dependency graph,
+    /// and discovers stub files following PEP 561.
     pub fn initialize(&mut self) -> Result<(), WorkspaceError> {
         self.discover_files()?;
         self.build_dependency_graph();
+        self.discover_stubs();
 
         Ok(())
     }
@@ -688,11 +690,410 @@ impl Workspace {
         analyzed_count
     }
 
-    /// Load stub file for a module
+    /// Load stub file for a module following PEP 561 resolution order
     ///
-    /// TODO: Implement .pyi loading and parsing
-    pub fn _load_stub(&mut self, _module_name: &str) -> Option<StubFile> {
+    /// Resolution order:
+    /// 1. Manual stubs in config.stub_paths
+    /// 2. Stub packages (*-stubs)
+    /// 3. Inline stubs (py.typed packages)
+    /// 4. Typeshed (TODO)
+    pub fn load_stub(&mut self, module_name: &str) -> Option<StubFile> {
+        if let Some(stub) = self.find_manual_stub(module_name) {
+            return Some(stub);
+        }
+
+        if let Some(stub) = self.find_stub_package(module_name) {
+            return Some(stub);
+        }
+
+        if let Some(stub) = self.find_inline_stub(module_name) {
+            return Some(stub);
+        }
+
         None
+    }
+
+    /// Find stub in manual stub paths (config.stub_paths)
+    fn find_manual_stub(&self, module_name: &str) -> Option<StubFile> {
+        for stub_path in &self.config.stub_paths {
+            if let Some(stub) = self.find_stub_in_directory(stub_path, module_name) {
+                return Some(stub);
+            }
+        }
+        None
+    }
+
+    /// Find stub package (*-stubs) for a module
+    fn find_stub_package(&self, module_name: &str) -> Option<StubFile> {
+        let root_path = self.root_uri.as_ref()?.to_file_path().ok()?;
+        let top_level_package = module_name.split('.').next()?;
+        let stub_package_name = format!("{top_level_package}-stubs");
+
+        let stub_package_path = root_path.join(&stub_package_name);
+        if stub_package_path.exists() && stub_package_path.is_dir() {
+            return self.find_stub_in_directory(&stub_package_path, module_name);
+        }
+
+        None
+    }
+
+    /// Find inline stub (py.typed package)
+    fn find_inline_stub(&self, module_name: &str) -> Option<StubFile> {
+        let module_info = self.index.get_by_name(module_name)?;
+        let module_path = PathBuf::from(module_info.uri.path());
+
+        let pyi_path = module_path.with_extension("pyi");
+        if pyi_path.exists() {
+            let is_partial = self.check_if_partial_stub(&module_info.source_root);
+            return Some(StubFile {
+                module: module_name.to_string(),
+                path: pyi_path,
+                exports: FxHashMap::default(),
+                is_partial,
+                reexports: Vec::new(),
+                all_exports: None,
+            });
+        }
+
+        None
+    }
+
+    /// Find stub file in a directory for a given module name
+    fn find_stub_in_directory(&self, directory: &Path, module_name: &str) -> Option<StubFile> {
+        let parts: Vec<&str> = module_name.split('.').collect();
+        let mut path = directory.to_path_buf();
+        for part in &parts[..parts.len() - 1] {
+            path = path.join(part);
+        }
+        path = path.join(format!("{}.pyi", parts.last()?));
+
+        if path.exists() {
+            let is_partial = self.check_if_partial_stub(directory);
+            return Some(StubFile {
+                module: module_name.to_string(),
+                path,
+                exports: FxHashMap::default(),
+                is_partial,
+                reexports: Vec::new(),
+                all_exports: None,
+            });
+        }
+
+        let mut path = directory.to_path_buf();
+        for part in &parts {
+            path = path.join(part);
+        }
+        path = path.join("__init__.pyi");
+
+        if path.exists() {
+            let is_partial = self.check_if_partial_stub(directory);
+            return Some(StubFile {
+                module: module_name.to_string(),
+                path,
+                exports: FxHashMap::default(),
+                is_partial,
+                reexports: Vec::new(),
+                all_exports: None,
+            });
+        }
+
+        None
+    }
+
+    /// Check if a stub directory contains py.typed with "partial" marker
+    fn check_if_partial_stub(&self, directory: &Path) -> bool {
+        let py_typed_path = directory.join("py.typed");
+        if let Ok(contents) = std::fs::read_to_string(&py_typed_path) {
+            contents.trim() == "partial"
+        } else {
+            false
+        }
+    }
+
+    /// Discover all stub files in workspace and populate stub cache  during workspace initialization
+    pub fn discover_stubs(&mut self) {
+        for stub_path in self.config.stub_paths.clone() {
+            self.discover_stubs_in_directory(&stub_path);
+        }
+
+        if let Some(root_uri) = &self.root_uri {
+            if let Ok(root_path) = root_uri.to_file_path() {
+                self.discover_stub_packages(&root_path);
+            }
+        }
+    }
+
+    /// Discover all .pyi files in a directory
+    fn discover_stubs_in_directory(&mut self, directory: &Path) {
+        if !directory.exists() || !directory.is_dir() {
+            return;
+        }
+
+        let walker = ignore::WalkBuilder::new(directory).hidden(false).build();
+
+        for entry in walker.filter_map(|e| e.ok()) {
+            if entry.file_type().is_some_and(|ft| ft.is_file()) {
+                if let Some(ext) = entry.path().extension() {
+                    if ext == "pyi" {
+                        // Convert path to module name and cache it
+                        if let Some(module_name) = self.path_to_module_name_from_base(entry.path(), directory) {
+                            let is_partial = self.check_if_partial_stub(directory);
+                            let stub = StubFile {
+                                module: module_name.clone(),
+                                path: entry.path().to_path_buf(),
+                                exports: FxHashMap::default(),
+                                is_partial,
+                                reexports: Vec::new(),
+                                all_exports: None,
+                            };
+                            self._stubs._cache.insert(module_name, stub);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Discover stub packages (*-stubs) in a directory
+    fn discover_stub_packages(&mut self, directory: &Path) {
+        if !directory.exists() || !directory.is_dir() {
+            return;
+        }
+
+        if let Ok(entries) = std::fs::read_dir(directory) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_dir() {
+                        if let Some(name) = entry.file_name().to_str() {
+                            if name.ends_with("-stubs") {
+                                self.discover_stubs_in_directory(&entry.path());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Convert a file path to a module name relative to a base directory
+    fn path_to_module_name_from_base(&self, path: &Path, base: &Path) -> Option<String> {
+        let relative = path.strip_prefix(base).ok()?;
+        let relative_str = relative.to_str()?;
+        let without_ext = relative_str.strip_suffix(".pyi")?;
+        let module_name = without_ext.replace(std::path::MAIN_SEPARATOR, ".");
+
+        Some(if module_name.ends_with(".__init__") {
+            module_name.strip_suffix(".__init__").unwrap().to_string()
+        } else {
+            module_name
+        })
+    }
+
+    /// Parse a stub file and extract type signatures
+    pub fn parse_stub_file(&self, stub_path: &Path) -> Result<StubFile, WorkspaceError> {
+        let content = std::fs::read_to_string(stub_path)
+            .map_err(|e| WorkspaceError::StubLoadFailed(format!("Failed to read stub file: {e}")))?;
+
+        let mut parser = crate::parser::LspParser::new()
+            .map_err(|e| WorkspaceError::StubLoadFailed(format!("Failed to create parser: {e:?}")))?;
+
+        let parse_result = parser
+            .parse(&content)
+            .map_err(|e| WorkspaceError::StubLoadFailed(format!("Failed to parse stub: {e:?}")))?;
+
+        let mut exports = FxHashMap::default();
+        let mut reexports = Vec::new();
+        let mut all_exports = None;
+
+        self.extract_stub_signatures(&parse_result.ast, &mut exports, &mut reexports, &mut all_exports);
+
+        let module_name = self
+            .path_to_module_name(stub_path)
+            .unwrap_or_else(|| "unknown".to_string());
+        let is_partial = stub_path
+            .parent()
+            .map(|p| self.check_if_partial_stub(p))
+            .unwrap_or(false);
+
+        Ok(
+            StubFile {
+                module: module_name,
+                path: stub_path.to_path_buf(),
+                exports,
+                is_partial,
+                reexports,
+                all_exports,
+            },
+        )
+    }
+
+    /// Extract type signatures from stub AST
+    fn extract_stub_signatures(
+        &self, node: &beacon_parser::AstNode, exports: &mut FxHashMap<String, beacon_core::Type>,
+        reexports: &mut Vec<String>, all_exports: &mut Option<Vec<String>>,
+    ) {
+        match node {
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    self.extract_stub_signatures(stmt, exports, reexports, all_exports);
+                }
+            }
+            AstNode::FunctionDef { name, args: params, return_type, .. } => {
+                let param_types: Vec<beacon_core::Type> = params
+                    .iter()
+                    .filter_map(|p| p.type_annotation.as_ref())
+                    .filter_map(|ann| self.parse_annotation_string(ann))
+                    .collect();
+
+                let ret_type = return_type
+                    .as_ref()
+                    .and_then(|ann| self.parse_annotation_string(ann))
+                    .unwrap_or_else(beacon_core::Type::any);
+
+                let func_type = beacon_core::Type::fun(param_types, ret_type);
+                exports.insert(name.clone(), func_type);
+            }
+            AstNode::ClassDef { name, body, .. } => {
+                exports.insert(
+                    name.clone(),
+                    beacon_core::Type::Con(beacon_core::TypeCtor::Class(name.clone())),
+                );
+
+                for stmt in body {
+                    self.extract_stub_signatures(stmt, exports, reexports, all_exports);
+                }
+            }
+            AstNode::AnnotatedAssignment { target, type_annotation: annotation, .. } => {
+                if let Some(ty) = self.parse_annotation_string(annotation) {
+                    exports.insert(target.clone(), ty);
+                }
+            }
+            AstNode::ImportFrom { module, names, .. } => {
+                for name in names {
+                    reexports.push(format!("{module}.{name}"));
+                }
+            }
+            AstNode::Assignment { target, value, .. } => {
+                if target == "__all__" {
+                    *all_exports = self.extract_all_list(value);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Extract __all__ list from a list literal
+    ///
+    /// TODO: Implement list literal extraction
+    /// We can't easily extract this without more AST details
+    /// Requires adding list literal support to the AST
+    fn extract_all_list(&self, _node: &beacon_parser::AstNode) -> Option<Vec<String>> {
+        None
+    }
+
+    /// Parse an annotation string into a Type
+    fn parse_annotation_string(&self, annotation: &str) -> Option<beacon_core::Type> {
+        let parser = beacon_core::AnnotationParser::new();
+        parser.parse(annotation).ok()
+    }
+
+    /// Get type information for a symbol from stubs
+    ///
+    /// This method integrates stub lookups into the type resolution process.
+    /// It follows PEP 561 resolution order and parses stubs on-demand.
+    pub fn get_stub_type(&mut self, module_name: &str, symbol_name: &str) -> Option<beacon_core::Type> {
+        // Check cache first
+        if let Some(stub) = self._stubs._cache.get(module_name) {
+            return stub.exports.get(symbol_name).cloned();
+        }
+
+        // Load stub following PEP 561
+        if let Some(mut stub) = self.load_stub(module_name) {
+            // Parse the stub to populate exports if empty
+            if stub.exports.is_empty() {
+                if let Ok(parsed) = self.parse_stub_file(&stub.path.clone()) {
+                    stub.exports = parsed.exports;
+                    stub.reexports = parsed.reexports;
+                    stub.all_exports = parsed.all_exports;
+                }
+            }
+
+            let result = stub.exports.get(symbol_name).cloned();
+
+            // Cache the stub
+            self._stubs._cache.insert(module_name.to_string(), stub);
+
+            result
+        } else {
+            None
+        }
+    }
+
+    /// Get all exported symbols from a module's stub
+    pub fn get_stub_exports(&mut self, module_name: &str) -> Option<FxHashMap<String, beacon_core::Type>> {
+        // Check cache first
+        if let Some(stub) = self._stubs._cache.get(module_name) {
+            if !stub.exports.is_empty() {
+                return Some(stub.exports.clone());
+            }
+        }
+
+        // Load and parse stub
+        if let Some(mut stub) = self.load_stub(module_name) {
+            if stub.exports.is_empty() {
+                if let Ok(parsed) = self.parse_stub_file(&stub.path.clone()) {
+                    stub.exports = parsed.exports.clone();
+                    stub.reexports = parsed.reexports;
+                    stub.all_exports = parsed.all_exports;
+
+                    // Cache the parsed stub
+                    self._stubs._cache.insert(module_name.to_string(), stub);
+
+                    return Some(parsed.exports);
+                }
+            } else {
+                return Some(stub.exports.clone());
+            }
+        }
+
+        None
+    }
+
+    /// Check if a module has stub information available
+    pub fn has_stub(&self, module_name: &str) -> bool {
+        // Check cache
+        if self._stubs._cache.contains_key(module_name) {
+            return true;
+        }
+
+        // Check if stub can be found (without loading)
+        // This is a lighter-weight check for the common case
+        for stub_path in &self.config.stub_paths {
+            if self.find_stub_in_directory(stub_path, module_name).is_some() {
+                return true;
+            }
+        }
+
+        // Check for stub package
+        if let Some(root_uri) = &self.root_uri {
+            if let Ok(root_path) = root_uri.to_file_path() {
+                let top_level = module_name.split('.').next().unwrap_or(module_name);
+                let stub_package_path = root_path.join(format!("{top_level}-stubs"));
+                if stub_package_path.exists() {
+                    return true;
+                }
+            }
+        }
+
+        // Check for inline stub
+        if let Some(info) = self.index.get_by_name(module_name) {
+            let pyi_path = PathBuf::from(info.uri.path()).with_extension("pyi");
+            if pyi_path.exists() {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Get all indexed files in the workspace
@@ -943,13 +1344,20 @@ impl StubCache {
 }
 
 /// Parsed stub file (.pyi)
-///
-/// TODO: Define structure for stub file contents
-/// TODO: Define proper structure for exported types/signatures
 #[derive(Debug, Clone)]
 pub struct StubFile {
     /// Module name
-    pub _module: String,
+    pub module: String,
+    /// File path to the stub
+    pub path: PathBuf,
+    /// Exported symbols and their types
+    pub exports: FxHashMap<String, beacon_core::Type>,
+    /// Whether this is a partial stub
+    pub is_partial: bool,
+    /// Re-exported modules (from X import Y as Y)
+    pub reexports: Vec<String>,
+    /// __all__ declaration if present
+    pub all_exports: Option<Vec<String>>,
 }
 
 /// Workspace errors
@@ -1194,5 +1602,77 @@ mod tests {
         assert!(pos_d < pos_c);
         assert!(pos_b < pos_a);
         assert!(pos_c < pos_a);
+    }
+
+    #[test]
+    fn test_stub_file_parsing() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let workspace = Workspace::new(None, config, documents);
+
+        // Create a temporary stub file
+        let mut stub_file = NamedTempFile::new().unwrap();
+        writeln!(
+            stub_file,
+            "def foo(x: int, y: str) -> bool: ...\nclass MyClass: ...\nmy_var: list[int]"
+        )
+        .unwrap();
+        stub_file.flush().unwrap();
+
+        // Parse the stub
+        let result = workspace.parse_stub_file(stub_file.path());
+        assert!(result.is_ok());
+
+        let stub = result.unwrap();
+        assert!(!stub.exports.is_empty());
+
+        // Check that function was extracted
+        assert!(stub.exports.contains_key("foo"));
+        if let Some(ty) = stub.exports.get("foo") {
+            assert!(matches!(ty, beacon_core::Type::Fun(_, _)));
+        }
+
+        // Check that class was extracted
+        assert!(stub.exports.contains_key("MyClass"));
+
+        // Check that variable was extracted
+        assert!(stub.exports.contains_key("my_var"));
+    }
+
+    #[test]
+    fn test_stub_resolution_order() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let workspace = Workspace::new(None, config, documents);
+
+        // Test that has_stub returns false for non-existent module
+        assert!(!workspace.has_stub("nonexistent_module"));
+
+        // Further integration tests would require setting up actual stub files
+        // which is better done in integration tests with a full workspace setup
+    }
+
+    #[test]
+    fn test_annotation_parser_integration() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let workspace = Workspace::new(None, config, documents);
+
+        // Test parse_annotation_string method
+        let ty = workspace.parse_annotation_string("list[int]");
+        assert!(ty.is_some());
+
+        let ty = workspace.parse_annotation_string("dict[str, bool]");
+        assert!(ty.is_some());
+
+        let ty = workspace.parse_annotation_string("Generic[T]");
+        assert!(ty.is_some());
+
+        // Invalid annotation should return None
+        let ty = workspace.parse_annotation_string("invalid[[[");
+        assert!(ty.is_none());
     }
 }

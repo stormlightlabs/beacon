@@ -212,3 +212,21 @@ Basic formatting support for user convenience
     - Handle nested conditions and complex control flow patterns
     - Track type narrowing across loop iterations
     - Support exception handler narrowing
+
+## Stub System
+
+- **StubCache LRU Eviction**
+    - Current: Simple HashMap with on-demand loading
+    - Deferred: LRU eviction policy for memory management
+    - Rationale: Current implementation is sufficient for most workspaces; premature optimization
+    - Files: `crates/server/src/workspace.rs` (StubCache struct)
+
+- **Disk-based Stub Cache Persistence**
+    - Cache parsed stub results across LSP sessions
+    - Invalidate based on file modification times
+    - Deferred until performance profiling shows need
+
+- **Typeshed Integration**
+    - Embed or download typeshed standard library stubs
+    - Currently: Users must provide stub_paths manually
+    - Deferred: Lower priority than user code analysis
