@@ -294,8 +294,8 @@ impl<'a> Linter<'a> {
                 self.visit_node(slice);
             }
             AstNode::Literal { value, line, col } => {
-                if let LiteralValue::String(s) = value {
-                    self.check_fstring_missing_placeholders(s, *line, *col);
+                if let LiteralValue::String { value: s, prefix } = value {
+                    self.check_fstring_missing_placeholders(s, prefix, *line, *col);
                 }
             }
             AstNode::With { items, body, .. } => {
@@ -344,6 +344,11 @@ impl<'a> Linter<'a> {
             }
             AstNode::NamedExpr { value, .. } => {
                 self.visit_node(value);
+            }
+            AstNode::Tuple { elements, .. } => {
+                for element in elements {
+                    self.visit_node(element);
+                }
             }
             AstNode::Identifier { .. } => {}
         }
@@ -442,18 +447,21 @@ impl<'a> Linter<'a> {
     }
 
     /// BEA011: [RuleKind::IfTuple]
-    /// TODO: Implement proper tuple detection when AST supports it
     fn check_if_tuple(&mut self, test: &AstNode, line: usize, col: usize) {
-        if matches!(test, AstNode::Literal { value: LiteralValue::String(_), .. }) {
-            return;
+        if let AstNode::Tuple { .. } = test {
+            self.report(
+                RuleKind::IfTuple,
+                "if condition is a tuple literal - this is always True".to_string(),
+                line,
+                col,
+            );
         }
-        let _ = (test, line, col);
     }
 
     /// BEA013: [RuleKind::FStringMissingPlaceholders]
-    /// TODO: check the actual string prefix from the parser
-    fn check_fstring_missing_placeholders(&mut self, s: &str, line: usize, col: usize) {
-        if (s.starts_with('f') || s.starts_with('F')) && !s.contains('{') {
+    fn check_fstring_missing_placeholders(&mut self, s: &str, prefix: &str, line: usize, col: usize) {
+        let is_fstring = prefix.to_lowercase().contains('f');
+        if is_fstring && !s.contains('{') {
             self.report(
                 RuleKind::FStringMissingPlaceholders,
                 "f-string without any placeholders".to_string(),
@@ -612,9 +620,7 @@ mod tests {
         assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::ImportStarNotPermitted));
     }
 
-    /// FIXME
     #[test]
-    #[ignore = "Parser limitation: bare raise statements are parsed as Identifier nodes"]
     fn test_raise_not_implemented() {
         let source = "raise NotImplemented";
         let diagnostics = lint_source(source);
@@ -695,5 +701,89 @@ except:
         let diagnostics = lint_source(source);
 
         assert!(diagnostics.iter().any(|d| d.rule == RuleKind::ImportShadowedByLoopVar));
+    }
+
+    #[test]
+    fn test_if_tuple() {
+        let source = "if (x,):\n    pass";
+        let diagnostics = lint_source(source);
+
+        assert!(diagnostics.iter().any(|d| d.rule == RuleKind::IfTuple));
+    }
+
+    #[test]
+    fn test_if_tuple_multi_element() {
+        let source = "if (x, y, z):\n    pass";
+        let diagnostics = lint_source(source);
+
+        assert!(diagnostics.iter().any(|d| d.rule == RuleKind::IfTuple));
+    }
+
+    #[test]
+    fn test_if_not_tuple() {
+        let source = "if (x):\n    pass";
+        let diagnostics = lint_source(source);
+
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::IfTuple));
+    }
+
+    #[test]
+    fn test_fstring_missing_placeholders() {
+        let source = "x = f'hello'";
+        let diagnostics = lint_source(source);
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::FStringMissingPlaceholders)
+        );
+    }
+
+    #[test]
+    fn test_fstring_with_placeholders() {
+        let source = "x = f'hello {name}'";
+        let diagnostics = lint_source(source);
+
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::FStringMissingPlaceholders)
+        );
+    }
+
+    #[test]
+    fn test_regular_string_no_warning() {
+        let source = "x = 'hello'";
+        let diagnostics = lint_source(source);
+
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::FStringMissingPlaceholders)
+        );
+    }
+
+    #[test]
+    fn test_uppercase_fstring_missing_placeholders() {
+        let source = "x = F'hello'";
+        let diagnostics = lint_source(source);
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::FStringMissingPlaceholders)
+        );
+    }
+
+    #[test]
+    fn test_raw_fstring_missing_placeholders() {
+        let source = "x = rf'hello'";
+        let diagnostics = lint_source(source);
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::FStringMissingPlaceholders)
+        );
     }
 }

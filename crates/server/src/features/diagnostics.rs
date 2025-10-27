@@ -234,7 +234,7 @@ impl DiagnosticProvider {
 
                 let is_eq_main = ops.iter().any(|op| matches!(op, beacon_parser::CompareOperator::Eq))
                     && comparators.iter().any(|comp| {
-                        matches!(comp, AstNode::Literal { value: beacon_parser::LiteralValue::String(s), .. } if s == "__main__")
+                        matches!(comp, AstNode::Literal { value: beacon_parser::LiteralValue::String{value: s, ..}, .. } if s == "__main__")
                     });
 
                 is_name && is_eq_main
@@ -846,7 +846,7 @@ class MyClass:
             left: Box::new(AstNode::Identifier { name: "__name__".to_string(), line: 1, col: 4 }),
             ops: vec![beacon_parser::CompareOperator::Eq],
             comparators: vec![AstNode::Literal {
-                value: beacon_parser::LiteralValue::String("__main__".to_string()),
+                value: beacon_parser::LiteralValue::String { value: "__main__".to_string(), prefix: String::new() },
                 line: 1,
                 col: 16,
             }],

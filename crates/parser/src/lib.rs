@@ -255,11 +255,17 @@ pub enum AstNode {
         line: usize,
         col: usize,
     },
+    /// Tuple literal: (1, 2, 3) or (x,)
+    Tuple {
+        elements: Vec<AstNode>,
+        line: usize,
+        col: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LiteralValue {
-    String(String),
+    String { value: String, prefix: String },
     Integer(i64),
     Float(f64),
     Boolean(bool),
@@ -629,6 +635,18 @@ impl PythonParser {
             "pass_statement" => Ok(AstNode::Pass { line, col }),
             "break_statement" => Ok(AstNode::Break { line, col }),
             "continue_statement" => Ok(AstNode::Continue { line, col }),
+            "raise_statement" => {
+                let exc = self.extract_raise_value(&node, source)?;
+                Ok(AstNode::Raise { exc: exc.map(Box::new), line, col })
+            }
+            "tuple" | "expression_list" => {
+                let elements = self.extract_tuple_elements(&node, source)?;
+                Ok(AstNode::Tuple { elements, line, col })
+            }
+            "parenthesized_expression" => match node.named_child(0) {
+                Some(child) => self.node_to_ast(child, source),
+                None => Ok(AstNode::Identifier { name: "<empty_parens>".to_string(), line, col }),
+            },
             "boolean_operator" => {
                 let (left, op, right) = self.extract_boolean_op_info(&node, source)?;
                 Ok(AstNode::BinaryOp { left: Box::new(left), op, right: Box::new(right), line, col })
@@ -865,14 +883,24 @@ impl PythonParser {
             "string" => {
                 let mut cursor = node.walk();
                 let mut content = String::new();
+                let mut prefix = String::new();
+
                 for child in node.children(&mut cursor) {
-                    if child.kind() == "string_content" {
+                    if child.kind() == "string_start" {
+                        if let Ok(start_text) = child.utf8_text(source.as_bytes()) {
+                            if let Some(pos) = start_text.find(|c: char| ['\'', '"'].contains(&c)) {
+                                prefix = start_text[..pos].to_string();
+                            }
+                        }
+                    } else if child.kind() == "string_content" {
                         if let Ok(text) = child.utf8_text(source.as_bytes()) {
                             content.push_str(text);
                         }
+                    } else if child.kind() == "interpolation" {
+                        content.push_str("{}");
                     }
                 }
-                Ok(LiteralValue::String(content))
+                Ok(LiteralValue::String { value: content, prefix })
             }
             "integer" => {
                 let value = text
@@ -898,6 +926,26 @@ impl PythonParser {
             Some(value_node) => Ok(Some(self.node_to_ast(value_node, source)?)),
             None => Ok(None),
         }
+    }
+
+    fn extract_raise_value(&self, node: &Node, source: &str) -> Result<Option<AstNode>> {
+        match node.named_child(0) {
+            Some(value_node) => Ok(Some(self.node_to_ast(value_node, source)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn extract_tuple_elements(&self, node: &Node, source: &str) -> Result<Vec<AstNode>> {
+        let mut elements = Vec::new();
+        let mut cursor = node.walk();
+
+        for child in node.children(&mut cursor) {
+            if !child.is_extra() && child.kind() != "(" && child.kind() != ")" && child.kind() != "," {
+                elements.push(self.node_to_ast(child, source)?);
+            }
+        }
+
+        Ok(elements)
     }
 
     fn extract_import_info(&self, node: &Node, source: &str) -> Result<(String, Option<String>)> {
@@ -1763,7 +1811,7 @@ mod tests {
                         assert_eq!(function, "print");
                         assert_eq!(args.len(), 1);
                         match &args[0] {
-                            AstNode::Literal { value: LiteralValue::String(s), .. } => {
+                            AstNode::Literal { value: LiteralValue::String { value: s, .. }, .. } => {
                                 assert_eq!(s, "hello");
                             }
                             _ => panic!("Expected string literal"),
@@ -1838,7 +1886,10 @@ if __name__ == "__main__":
             ("x = True", LiteralValue::Boolean(true)),
             ("x = False", LiteralValue::Boolean(false)),
             ("x = None", LiteralValue::None),
-            ("x = 'hello'", LiteralValue::String("hello".to_string())),
+            (
+                "x = 'hello'",
+                LiteralValue::String { value: "hello".to_string(), prefix: String::new() },
+            ),
         ];
 
         for (source, expected) in test_cases {
@@ -2982,6 +3033,218 @@ count: int = 0"#;
                 _ => panic!("Expected For node"),
             },
             _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_raise_statement_with_exception() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "raise NotImplementedError";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Raise { exc, .. } => {
+                    assert!(exc.is_some());
+                    match exc.as_ref().unwrap().as_ref() {
+                        AstNode::Identifier { name, .. } => {
+                            assert_eq!(name, "NotImplementedError");
+                        }
+                        _ => panic!("Expected Identifier node for exception"),
+                    }
+                }
+                _ => panic!("Expected Raise node, got {:?}", &body[0]),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_raise_statement_bare() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "raise";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Raise { exc, .. } => {
+                    assert!(exc.is_none(), "Expected bare raise with no exception");
+                }
+                _ => panic!("Expected Raise node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_raise_not_implemented() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "raise NotImplemented";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Raise { exc, .. } => {
+                    assert!(exc.is_some());
+                    match exc.as_ref().unwrap().as_ref() {
+                        AstNode::Identifier { name, .. } => {
+                            assert_eq!(name, "NotImplemented");
+                        }
+                        _ => panic!("Expected Identifier node for NotImplemented"),
+                    }
+                }
+                _ => panic!("Expected Raise node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_tuple_with_parens() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "x = (1, 2, 3)";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => match value.as_ref() {
+                    AstNode::Tuple { elements, .. } => {
+                        assert_eq!(elements.len(), 3);
+                        assert!(matches!(
+                            &elements[0],
+                            AstNode::Literal { value: LiteralValue::Integer(1), .. }
+                        ));
+                        assert!(matches!(
+                            &elements[1],
+                            AstNode::Literal { value: LiteralValue::Integer(2), .. }
+                        ));
+                        assert!(matches!(
+                            &elements[2],
+                            AstNode::Literal { value: LiteralValue::Integer(3), .. }
+                        ));
+                    }
+                    _ => panic!("Expected Tuple node"),
+                },
+                _ => panic!("Expected Assignment node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_tuple_without_parens() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "x = 1, 2, 3";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => match value.as_ref() {
+                    AstNode::Tuple { elements, .. } => {
+                        assert_eq!(elements.len(), 3);
+                    }
+                    _ => panic!("Expected Tuple node (expression_list)"),
+                },
+                _ => panic!("Expected Assignment node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_single_element_tuple() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "x = (1,)";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => match value.as_ref() {
+                    AstNode::Tuple { elements, .. } => {
+                        assert_eq!(elements.len(), 1);
+                        assert!(matches!(
+                            &elements[0],
+                            AstNode::Literal { value: LiteralValue::Integer(1), .. }
+                        ));
+                    }
+                    _ => panic!("Expected Tuple node"),
+                },
+                _ => panic!("Expected Assignment node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_parenthesized_expression_not_tuple() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "x = (1)";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => {
+                    assert!(matches!(
+                        value.as_ref(),
+                        AstNode::Literal { value: LiteralValue::Integer(1), .. }
+                    ));
+                }
+                _ => panic!("Expected Assignment node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_tuple_in_if_condition() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "if (x,):\n    pass";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::If { test, .. } => match test.as_ref() {
+                    AstNode::Tuple { elements, .. } => {
+                        assert_eq!(elements.len(), 1);
+                        assert!(matches!(&elements[0], AstNode::Identifier { name, .. } if name == "x"));
+                    }
+                    _ => panic!("Expected Tuple node in if condition"),
+                },
+                _ => panic!("Expected If node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_string_prefix_extraction() {
+        let mut parser = PythonParser::new().unwrap();
+
+        let cases = vec![
+            ("x = 'hello'", ""),
+            ("x = f'hello'", "f"),
+            ("x = r'hello'", "r"),
+            ("x = b'hello'", "b"),
+            ("x = rf'hello'", "rf"),
+            ("x = F'hello'", "F"),
+            ("x = R'hello'", "R"),
+        ];
+
+        for (source, expected_prefix) in cases {
+            let parsed = parser.parse(source).unwrap();
+            match parser.to_ast(&parsed).unwrap() {
+                AstNode::Module { body, .. } => match &body[0] {
+                    AstNode::Assignment { value, .. } => match value.as_ref() {
+                        AstNode::Literal { value: LiteralValue::String { value, prefix }, .. } => {
+                            assert_eq!(prefix, expected_prefix, "Failed for source: {source}");
+                            assert_eq!(value, "hello", "Failed for source: {source}");
+                        }
+                        _ => panic!("Expected String literal, got {value:?}"),
+                    },
+                    _ => panic!("Expected Assignment node"),
+                },
+                _ => panic!("Expected module"),
+            }
         }
     }
 }

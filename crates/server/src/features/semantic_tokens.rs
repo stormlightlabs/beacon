@@ -330,7 +330,7 @@ impl SemanticTokensProvider {
             AstNode::Literal { value, line, col } => {
                 use beacon_parser::LiteralValue;
                 let (token_type, length) = match value {
-                    LiteralValue::String(s) => {
+                    LiteralValue::String { value: s, .. } => {
                         let idx = SUPPORTED_TYPES
                             .iter()
                             .position(|t| *t == SemanticTokenType::STRING)
@@ -509,7 +509,8 @@ impl SemanticTokensProvider {
     fn get_node_position(node: &AstNode) -> (usize, usize) {
         match node {
             AstNode::Module { .. } => (1, 1),
-            AstNode::FunctionDef { line, col, .. }
+            AstNode::Tuple { line, col, .. }
+            | AstNode::FunctionDef { line, col, .. }
             | AstNode::ClassDef { line, col, .. }
             | AstNode::Assignment { line, col, .. }
             | AstNode::AnnotatedAssignment { line, col, .. }

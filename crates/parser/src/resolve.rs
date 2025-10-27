@@ -643,7 +643,8 @@ impl NameResolver {
                     self.track_references(exception)?;
                 }
             }
-            AstNode::Literal { .. }
+            AstNode::Tuple { .. }
+            | AstNode::Literal { .. }
             | AstNode::Pass { .. }
             | AstNode::Break { .. }
             | AstNode::Continue { .. }
@@ -715,7 +716,8 @@ impl NameResolver {
                 }
                 self.source.len()
             }
-            AstNode::Assignment { line, col, .. }
+            AstNode::Tuple { line, col, .. }
+            | AstNode::Assignment { line, col, .. }
             | AstNode::AnnotatedAssignment { line, col, .. }
             | AstNode::Call { line, col, .. }
             | AstNode::Identifier { line, col, .. }
@@ -1099,7 +1101,8 @@ impl NameResolver {
                     self.visit_node(exception)?;
                 }
             }
-            AstNode::Identifier { .. }
+            AstNode::Tuple { .. }
+            | AstNode::Identifier { .. }
             | AstNode::Literal { .. }
             | AstNode::Pass { .. }
             | AstNode::Break { .. }

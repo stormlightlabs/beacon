@@ -192,7 +192,8 @@ impl DocumentSymbolsProvider {
                     Position { line: (*line).saturating_sub(1) as u32, character: (*col + 10).saturating_sub(1) as u32 }
                 }
             }
-            AstNode::Literal { line, col, .. }
+            AstNode::Tuple { line, col, .. }
+            | AstNode::Literal { line, col, .. }
             | AstNode::Identifier { line, col, .. }
             | AstNode::Assignment { line, col, .. }
             | AstNode::AnnotatedAssignment { line, col, .. }

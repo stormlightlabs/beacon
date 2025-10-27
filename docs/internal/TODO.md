@@ -9,7 +9,8 @@
 
 #### Static Analysis Part 1: Linter & Quality Checks
 
-- Implement rule engine for basic diagnostics
+- See [section](#static-analysis)
+- Implement rule engine for basic diagnostics - documented in [lint rules](../src/lsp/lint_rules.md)
 - Unused imports, variables, undefined names
 - **Files:** `crates/server/src/analysis/linter.rs` (new), `crates/server/src/analysis/rules/mod.rs`, `crates/server/src/features/diagnostics.rs`
 
@@ -105,17 +106,59 @@
 **Goal:** Perform whole-workspace static analysis for code correctness, style, and type-hint consistency (semantic diagnostics).
 **Tasks:**
 
-### Part 1
+### Part 1 - Linter & Quality Checks
 
-- [ ] Linter & Quality Checks
-    - Add rule engine for common static rules:
-        - Unused imports, variables, parameters
-        - Undefined variables
-        - Duplicate definitions
-        - Unreachable code
-        - Redundant `pass` or empty `except`
-    - Provide suppressions (`# type: ignore`, `# noqa`, etc.)
-    - Group diagnostics by category (error, warning, hint)
+**Partially Implemented / Need Enhancement:**
+
+- [ ] BEA012: AssertTuple
+    - **TODO:** Requires Assert AST node to be added to parser
+    - **TODO:** Detect tuple literals in assert statements
+- [ ] BEA023: ForwardAnnotationSyntaxError
+    - **TODO:** Use proper Python expression parser for annotation validation
+    - Current implementation only checks bracket matching
+
+**Not Yet Implemented:**
+
+- [ ] BEA004: YieldOutsideFunction
+    - Need to track yield/yield-from in visit_node
+- [ ] BEA009: TwoStarredExpressions
+    - Need to parse starred expressions in assignment targets
+- [ ] BEA010: TooManyExpressionsInStarredAssignment
+    - Need to validate unpacking arity
+- [ ] BEA014: TStringMissingPlaceholders
+    - Template string support needed
+- [ ] BEA015: UnusedImport
+    - Infrastructure in place, needs integration with symbol reference tracking
+- [ ] BEA017: UnusedAnnotation
+    - Check annotated variables without references
+- [ ] BEA018: RedefinedWhileUnused
+    - Track variable reassignments before first use
+- [ ] BEA022: UnusedIndirectAssignment
+    - Check global/nonlocal declarations without reassignment
+- [ ] BEA024: MultiValueRepeatedKeyLiteral
+    - **TODO:** Requires expression evaluation for dict keys (line 340 in linter.rs)
+- [ ] BEA025: PercentFormatInvalidFormat
+    - Validate % format string syntax
+- [ ] BEA029: RedundantPass
+    - **TODO:** Requires separate pass to know if blocks have other content (line 266 in linter.rs)
+
+**Infrastructure Improvements Needed:**
+
+- [ ] Suppression support (`# type: ignore`, `# noqa:`)
+    - Parse inline comments during analysis
+    - Filter diagnostics based on suppressions
+- [ ] Rule configuration
+    - Per-rule enable/disable via config
+    - Severity customization
+- [ ] Symbol table integration
+    - Currently `_symbol_table` field is unused
+    - Leverage for BEA015, BEA017, BEA018, BEA022
+
+**Limitations:**
+
+1. Parser does not have Assert AST node - affects BEA012
+2. Parser represents `from x import *` as empty names array (handled)
+3. No support for starred expressions in assignment targets - affects BEA009, BEA010
 
 ### Part 2
 

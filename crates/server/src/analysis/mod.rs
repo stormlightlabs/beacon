@@ -327,7 +327,7 @@ impl Analyzer {
                 let ty = match value {
                     LiteralValue::Integer(_) => Type::int(),
                     LiteralValue::Float(_) => Type::float(),
-                    LiteralValue::String(_) => Type::string(),
+                    LiteralValue::String { .. } => Type::string(),
                     LiteralValue::Boolean(_) => Type::bool(),
                     LiteralValue::None => Type::none(),
                 };
@@ -712,7 +712,9 @@ impl Analyzer {
                 ctx.record_type(*line, *col, generator_ty.clone());
                 Ok(generator_ty)
             }
-            AstNode::Pass { .. } | AstNode::Break { .. } | AstNode::Continue { .. } => Ok(Type::none()),
+            AstNode::Tuple { .. } | AstNode::Pass { .. } | AstNode::Break { .. } | AstNode::Continue { .. } => {
+                Ok(Type::none())
+            }
         }
     }
 
@@ -982,7 +984,7 @@ impl Analyzer {
                     Self::collect_unbound_in_node(exception, symbol_table, text, unbound);
                 }
             }
-            AstNode::Pass { .. } | AstNode::Break { .. } | AstNode::Continue { .. } => {}
+            AstNode::Tuple { .. } | AstNode::Pass { .. } | AstNode::Break { .. } | AstNode::Continue { .. } => {}
         }
     }
 
