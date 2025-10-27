@@ -1,0 +1,128 @@
+[
+  {
+    "name": "str",
+    "description": "Text sequence type for storing and manipulating strings.",
+    "details": "**Common methods:**\n\n- `upper()` - Convert to uppercase\n- `lower()` - Convert to lowercase\n- `strip()` - Remove leading/trailing whitespace\n- `split(sep)` - Split string into list\n- `join(iterable)` - Join iterable elements\n- `replace(old, new)` - Replace occurrences\n- `startswith(prefix)` - Check prefix\n- `endswith(suffix)` - Check suffix\n- `find(sub)` - Find substring index\n- `format(*args, **kwargs)` - Format string",
+    "doc_link": "https://docs.python.org/3/library/stdtypes.html#str"
+  },
+  {
+    "name": "int",
+    "description": "Integer numeric type with unlimited precision.",
+    "details": "**Common methods:**\n\n- `bit_length()` - Number of bits needed to represent in binary\n- `to_bytes(length, byteorder)` - Convert to bytes\n- `from_bytes(bytes, byteorder)` - Create from bytes",
+    "doc_link": "https://docs.python.org/3/library/stdtypes.html#int"
+  },
+  {
+    "name": "float",
+    "description": "Floating point numeric type (double precision).",
+    "details": "**Common methods:**\n\n- `is_integer()` - Check if value is integral\n- `as_integer_ratio()` - Return (numerator, denominator)\n- `hex()` - Convert to hexadecimal string\n- `fromhex(s)` - Create from hexadecimal string",
+    "doc_link": "https://docs.python.org/3/library/stdtypes.html#float"
+  },
+  {
+    "name": "bool",
+    "description": "Boolean type (subclass of int) with values True and False.",
+    "details": "Values: `True` (1) and `False` (0)\n\nSupports logical operations: `and`, `or`, `not`",
+    "doc_link": "https://docs.python.org/3/library/stdtypes.html#bool"
+  },
+  {
+    "name": "list",
+    "description": "Mutable sequence type for storing ordered collections.",
+    "details": "**Common methods:**\n\n- `append(item)` - Add item to end\n- `extend(iterable)` - Extend with iterable\n- `insert(index, item)` - Insert at position\n- `remove(item)` - Remove first occurrence\n- `pop([index])` - Remove and return item\n- `clear()` - Remove all items\n- `index(item)` - Find item index\n- `count(item)` - Count occurrences\n- `sort(key, reverse)` - Sort in place\n- `reverse()` - Reverse in place\n- `copy()` - Shallow copy",
+    "doc_link": "https://docs.python.org/3/library/stdtypes.html#list"
+  },
+  {
+    "name": "dict",
+    "description": "Mapping type for storing key-value pairs.",
+    "details": "**Common methods:**\n\n- `get(key, default)` - Get value with default\n- `keys()` - Get all keys\n- `values()` - Get all values\n- `items()` - Get (key, value) pairs\n- `pop(key, default)` - Remove and return value\n- `popitem()` - Remove and return (key, value)\n- `clear()` - Remove all items\n- `update(other)` - Update with other dict\n- `setdefault(key, default)` - Get or set default\n- `copy()` - Shallow copy",
+    "doc_link": "https://docs.python.org/3/library/stdtypes.html#dict"
+  },
+  {
+    "name": "tuple",
+    "description": "Immutable sequence type for storing ordered collections.",
+    "details": "**Common methods:**\n\n- `count(item)` - Count occurrences\n- `index(item)` - Find item index\n\nTuples are immutable and hashable, making them suitable for dictionary keys.",
+    "doc_link": "https://docs.python.org/3/library/stdtypes.html#tuple"
+  },
+  {
+    "name": "set",
+    "description": "Unordered collection of unique elements.",
+    "details": "**Common methods:**\n\n- `add(elem)` - Add element\n- `remove(elem)` - Remove element (raises if not found)\n- `discard(elem)` - Remove element (no error)\n- `pop()` - Remove and return arbitrary element\n- `clear()` - Remove all elements\n- `union(other)` - Return union\n- `intersection(other)` - Return intersection\n- `difference(other)` - Return difference\n- `symmetric_difference(other)` - Return symmetric difference\n- `issubset(other)` - Check if subset\n- `issuperset(other)` - Check if superset",
+    "doc_link": "https://docs.python.org/3/library/stdtypes.html#set"
+  },
+  {
+    "name": "frozenset",
+    "description": "Immutable version of set. Hashable and can be used as dict keys.",
+    "details": "**Common methods:**\n\n- `union(other)` - Return union\n- `intersection(other)` - Return intersection\n- `difference(other)` - Return difference\n- `symmetric_difference(other)` - Return symmetric difference\n- `issubset(other)` - Check if subset\n- `issuperset(other)` - Check if superset\n\nUnlike `set`, frozenset is immutable and hashable.",
+    "doc_link": "https://docs.python.org/3/library/stdtypes.html#frozenset"
+  },
+  {
+    "name": "bytes",
+    "description": "Immutable sequence of bytes (integers 0-255).",
+    "details": "**Common methods:**\n\n- `decode(encoding)` - Decode to string\n- `hex()` - Convert to hexadecimal string\n- `fromhex(s)` - Create from hexadecimal string\n- `count(sub)` - Count occurrences\n- `find(sub)` - Find substring\n- `replace(old, new)` - Replace occurrences\n- `split(sep)` - Split into list",
+    "doc_link": "https://docs.python.org/3/library/stdtypes.html#bytes"
+  },
+  {
+    "name": "bytearray",
+    "description": "Mutable sequence of bytes (integers 0-255).",
+    "details": "**Common methods:**\n\n- `append(item)` - Add byte\n- `extend(iterable)` - Extend with bytes\n- `insert(index, item)` - Insert byte\n- `remove(item)` - Remove first occurrence\n- `pop([index])` - Remove and return byte\n- `decode(encoding)` - Decode to string\n- `hex()` - Convert to hexadecimal string",
+    "doc_link": "https://docs.python.org/3/library/stdtypes.html#bytearray"
+  },
+  {
+    "name": "range",
+    "description": "Immutable sequence of numbers, commonly used for looping.",
+    "details": "**Usage:**\n\n- `range(stop)` - 0 to stop-1\n- `range(start, stop)` - start to stop-1\n- `range(start, stop, step)` - start to stop-1 by step\n\n**Common methods:**\n\n- `count(item)` - Count occurrences\n- `index(item)` - Find item index",
+    "doc_link": "https://docs.python.org/3/library/stdtypes.html#range"
+  },
+  {
+    "name": "type",
+    "description": "The type of types. Metaclass for all classes.",
+    "details": "**Usage:**\n\n- `type(object)` - Return the type of object\n- `type(name, bases, dict)` - Create new type dynamically\n\nAll classes are instances of `type`.",
+    "doc_link": "https://docs.python.org/3/library/functions.html#type"
+  },
+  {
+    "name": "object",
+    "description": "Base class for all Python classes.",
+    "details": "The most base type. All classes inherit from `object` by default.\n\nProvides default implementations for `__str__`, `__repr__`, `__hash__`, etc.",
+    "doc_link": "https://docs.python.org/3/library/functions.html#object"
+  },
+  {
+    "name": "None",
+    "description": "The null object. Represents absence of value.",
+    "details": "Type: `NoneType`\n\nSingleton object commonly used to represent 'no value' or 'null'.\nAlways evaluates to `False` in boolean context.",
+    "doc_link": "https://docs.python.org/3/library/constants.html#None"
+  },
+  {
+    "name": "complex",
+    "description": "Complex number type with real and imaginary parts.",
+    "details": "**Properties:**\n\n- `real` - Real part\n- `imag` - Imaginary part\n\n**Common methods:**\n\n- `conjugate()` - Return complex conjugate\n\n**Usage:** `complex(real, imag)` or `3+4j`",
+    "doc_link": "https://docs.python.org/3/library/stdtypes.html#complex"
+  },
+  {
+    "name": "memoryview",
+    "description": "Memory view object for accessing internal data of objects.",
+    "details": "Allows Python code to access internal data buffers without copying.\n\n**Common methods:**\n\n- `tobytes()` - Return data as bytes\n- `tolist()` - Return data as list\n- `release()` - Release underlying buffer",
+    "doc_link": "https://docs.python.org/3/library/stdtypes.html#memoryview"
+  },
+  {
+    "name": "slice",
+    "description": "Slice object representing indices for slicing sequences.",
+    "details": "**Properties:**\n\n- `start` - Start index\n- `stop` - Stop index\n- `step` - Step size\n\n**Usage:** `slice(start, stop, step)` or `[start:stop:step]`",
+    "doc_link": "https://docs.python.org/3/library/functions.html#slice"
+  },
+  {
+    "name": "property",
+    "description": "Descriptor for defining managed attributes with getter/setter methods.",
+    "details": "**Usage:**\n\n```python\n@property\ndef name(self):\n    return self._name\n\n@name.setter\ndef name(self, value):\n    self._name = value\n```",
+    "doc_link": "https://docs.python.org/3/library/functions.html#property"
+  },
+  {
+    "name": "staticmethod",
+    "description": "Decorator for defining static methods (no self/cls parameter).",
+    "details": "**Usage:**\n\n```python\n@staticmethod\ndef my_method(arg1, arg2):\n    pass\n```\n\nStatic methods don't receive implicit first argument.",
+    "doc_link": "https://docs.python.org/3/library/functions.html#staticmethod"
+  },
+  {
+    "name": "classmethod",
+    "description": "Decorator for defining class methods (receives cls as first parameter).",
+    "details": "**Usage:**\n\n```python\n@classmethod\ndef my_method(cls, arg1):\n    pass\n```\n\nClass methods receive the class as first argument.",
+    "doc_link": "https://docs.python.org/3/library/functions.html#classmethod"
+  }
+]

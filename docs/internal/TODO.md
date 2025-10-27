@@ -7,20 +7,6 @@
 
 ### Implementation Order
 
-#### Static Analysis Part 1: Linter & Quality Checks
-
-- See [section](#static-analysis)
-- Implement rule engine for basic diagnostics - documented in [lint rules](../src/lsp/lint_rules.md)
-- Unused imports, variables, undefined names
-- **Files:** `crates/server/src/analysis/linter.rs` (new), `crates/server/src/analysis/rules/mod.rs`, `crates/server/src/features/diagnostics.rs`
-
-#### Hover Documentation
-
-- Show inferred types at cursor position (uses type_map from #1)
-- Display docstrings for symbols
-- Basic type signature formatting
-- **Files:** `crates/server/src/features/hover.rs`
-
 #### Completions Part 1: Attribute & Import completions
 
 - Attribute completions after `.` (uses type inference)
@@ -45,6 +31,13 @@
 - Introspect installed packages
 - Show module-level docs
 - **Files:** `crates/server/src/features/hover.rs`, `crates/server/src/introspection.rs` (new)
+
+#### Static Analysis Part 1: Linter & Quality Checks
+
+- See [section](#static-analysis)
+- Implement rule engine for basic diagnostics - documented in [lint rules](../src/lsp/lint_rules.md)
+- Unused imports, variables, undefined names
+- **Files:** `crates/server/src/analysis/linter.rs` (new), `crates/server/src/analysis/rules/mod.rs`, `crates/server/src/features/diagnostics.rs`
 
 #### Static Analysis Part 2: Incremental Re-analysis
 
@@ -152,7 +145,7 @@
     - Severity customization
 - [ ] Symbol table integration
     - Currently `_symbol_table` field is unused
-    - Leverage for BEA015, BEA017, BEA018, BEA022
+    - For BEA015, BEA017, BEA018, BEA022
 
 **Limitations:**
 
@@ -184,13 +177,6 @@
 - Works incrementally — updating diagnostics within 100 ms of file edits.
 - Fully integrated with your existing workspace module index and dependency graph.
 
-## Hover Documentation
-
-- Advanced RST rendering (directives, cross-references)
-- NumPy/Google docstring style parsing
-- Dynamic docstring generation from type hints
-- Inline documentation for built-in types
-
 ## Module/Package Documentation on Hover
 
 - Make interpreter path configurable via LSP settings
@@ -207,8 +193,6 @@ Basic formatting support for user convenience
 - Low priority - focus on analysis first
 
 ## Parking Lot
-
-Advanced features and optimizations for future consideration.
 
 - Add inheritance awareness (`__init__` in base classes)
 - Partial workspace analysis (analyze subset)

@@ -131,9 +131,7 @@ pub async fn introspect(
     parse_introspection_output(&stdout)
 }
 
-/// Synchronous version of introspect for non-async contexts
-///
-/// Uses [std::process::Command] with a timeout thread.
+/// Synchronous version of introspect for non-async contexts. Uses [std::process::Command] with a timeout thread.
 pub fn introspect_sync(
     interpreter: &Path, module_name: &str, symbol_name: &str,
 ) -> Result<IntrospectionResult, IntrospectionError> {

@@ -4,10 +4,10 @@
 
 use crate::cache::IntrospectionCache;
 use crate::document::DocumentManager;
-use crate::features::dunders;
+use crate::features::{builtin_docs, dunders};
 use crate::parser;
 use crate::{analysis::Analyzer, introspection};
-use beacon_parser::{AstNode, SymbolKind, rst};
+use beacon_parser::{AstNode, SymbolKind, parse_docstring};
 use lsp_types::{Hover, HoverContents, HoverParams, MarkupContent, MarkupKind, Position};
 use std::{ops::Not, path::PathBuf};
 use url::Url;
@@ -67,6 +67,13 @@ impl HoverProvider {
                         }
                     }
 
+                    if builtin_docs::is_builtin_type(identifier_text) {
+                        return Some(Hover {
+                            contents: HoverContents::Markup(self.format_builtin_type_hover(identifier_text)),
+                            range: None,
+                        });
+                    }
+
                     let symbol = symbol_table.lookup_symbol(identifier_text, symbol_table.root_scope)?;
                     let content = match symbol.kind {
                         SymbolKind::Function => {
@@ -100,11 +107,16 @@ impl HoverProvider {
         let mut value = format!("```python\n{signature}\n```\n\n**Function** defined at line {def_line}");
 
         if let Some(doc) = docstring {
-            let rendered = rst::markdown_of(doc);
+            let parsed = parse_docstring(doc);
+            let rendered = parsed.to_markdown();
             if rendered.trim().is_empty().not() {
                 value.push_str("\n\n---\n\n");
                 value.push_str(rendered.trim());
             }
+        } else if let Some(generated) = Self::generate_docstring_from_ast(ast, name) {
+            value.push_str("\n\n---\n\n");
+            value.push_str(&generated);
+            value.push_str("\n\n*(Documentation generated from type annotations)*");
         }
 
         MarkupContent { kind: MarkupKind::Markdown, value }
@@ -117,7 +129,8 @@ impl HoverProvider {
         let mut value = format!("```python\nclass {name}\n```\n\n**Class** defined at line {def_line}");
 
         if let Some(doc) = docstring {
-            let rendered = rst::markdown_of(doc);
+            let parsed = parse_docstring(doc);
+            let rendered = parsed.to_markdown();
             if rendered.trim().is_empty().not() {
                 value.push_str("\n\n---\n\n");
                 value.push_str(rendered.trim());
@@ -172,6 +185,70 @@ impl HoverProvider {
         MarkupContent { kind: MarkupKind::Markdown, value }
     }
 
+    /// Format hover for a built-in type with hybrid documentation approach by first checking
+    /// embedded builtin_docs, then falls back to Python introspection
+    fn format_builtin_type_hover(&self, type_name: &str) -> MarkupContent {
+        if let Some(doc) = builtin_docs::get_builtin_doc(type_name) {
+            let mut value = format!(
+                "```python\n{}\n```\n\n**Built-in Type**\n\n{}",
+                doc.name, doc.description
+            );
+
+            if let Some(ref details) = doc.details {
+                value.push_str("\n\n");
+                value.push_str(details);
+            }
+
+            if let Some(ref link) = doc.doc_link {
+                value.push_str(&format!("\n\n[Python Documentation]({link})"));
+            }
+
+            return MarkupContent { kind: MarkupKind::Markdown, value };
+        }
+
+        if let Some(ref python) = self.interpreter_path {
+            if let Some(cached) = self.introspection_cache.get("builtins", type_name) {
+                let mut value = format!("```python\n{type_name}\n```\n\n**Built-in Type**");
+
+                if !cached.docstring.is_empty() {
+                    let parsed = parse_docstring(&cached.docstring);
+                    let rendered = parsed.to_markdown();
+                    if !rendered.trim().is_empty() {
+                        value.push_str("\n\n---\n\n");
+                        value.push_str(rendered.trim());
+                    }
+                }
+
+                return MarkupContent { kind: MarkupKind::Markdown, value };
+            }
+
+            match introspection::introspect_sync(python, "builtins", type_name) {
+                Ok(result) => {
+                    self.introspection_cache
+                        .insert("builtins".to_string(), type_name.to_string(), result.clone());
+
+                    let mut value = format!("```python\n{type_name}\n```\n\n**Built-in Type**");
+
+                    if !result.docstring.is_empty() {
+                        let parsed = parse_docstring(&result.docstring);
+                        let rendered = parsed.to_markdown();
+                        if !rendered.trim().is_empty() {
+                            value.push_str("\n\n---\n\n");
+                            value.push_str(rendered.trim());
+                        }
+                    }
+
+                    return MarkupContent { kind: MarkupKind::Markdown, value };
+                }
+                Err(e) => {
+                    tracing::warn!("Introspection failed for built-in type {}: {}", type_name, e);
+                }
+            }
+        }
+
+        MarkupContent { kind: MarkupKind::Markdown, value: format!("```python\n{type_name}\n```\n\n**Built-in Type**") }
+    }
+
     fn format_import_hover(&self, name: &str, ast: &AstNode, line: usize) -> MarkupContent {
         if let Some((module, symbol)) = Self::find_import_info(ast, line, name) {
             if let Some(ref python) = self.interpreter_path {
@@ -202,8 +279,6 @@ impl HoverProvider {
     }
 
     /// Find import information from AST
-    ///
-    /// TODO: support import
     fn find_import_info(node: &AstNode, target_line: usize, symbol_name: &str) -> Option<(String, String)> {
         match node {
             AstNode::ImportFrom { module, names, line, .. } if *line == target_line => {
@@ -241,7 +316,8 @@ impl HoverProvider {
         value.push_str(&format!("**Imported from** `{module_name}`\n\n"));
 
         if result.docstring.is_empty().not() {
-            let rendered = rst::markdown_of(&result.docstring);
+            let parsed = parse_docstring(&result.docstring);
+            let rendered = parsed.to_markdown();
             if rendered.trim().is_empty().not() {
                 value.push_str("---\n\n");
                 value.push_str(rendered.trim());
@@ -271,16 +347,54 @@ impl HoverProvider {
         }
     }
 
-    /// Format a type for display in hover
+    /// Generate documentation from type annotations in AST
     ///
-    /// Provides rich formatting with type information
+    /// Extracts parameter type annotations and return type annotations to create basic documentation when no docstring is present.
+    fn generate_docstring_from_ast(node: &AstNode, name: &str) -> Option<String> {
+        match node {
+            AstNode::FunctionDef { name: fn_name, args, return_type, .. } if fn_name == name => {
+                let mut doc_parts = Vec::new();
+                let typed_params: Vec<_> = args.iter().filter(|p| p.type_annotation.is_some()).collect();
+
+                if !typed_params.is_empty() {
+                    doc_parts.push("**Parameters:**\n".to_string());
+                    for param in typed_params {
+                        if let Some(type_ann) = &param.type_annotation {
+                            doc_parts.push(format!("- `{}` ({})", param.name, type_ann));
+                        }
+                    }
+                }
+
+                if let Some(ret_type) = return_type {
+                    if !doc_parts.is_empty() {
+                        doc_parts.push(String::new());
+                    }
+                    doc_parts.push(format!("**Returns:** `{ret_type}`"));
+                }
+
+                if doc_parts.is_empty() { None } else { Some(doc_parts.join("\n")) }
+            }
+            AstNode::Module { body, .. } | AstNode::ClassDef { body, .. } => {
+                for stmt in body {
+                    let generated = Self::generate_docstring_from_ast(stmt, name);
+                    if generated.is_some() {
+                        return generated;
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Provides rich formatting with type information on hover
     fn format_type_hover(&self, ty: &beacon_core::Type) -> MarkupContent {
         let type_str = self.format_type(ty);
         let value = format!("```python\n{type_str}\n```\n\n**Inferred type**");
         MarkupContent { kind: MarkupKind::Markdown, value }
     }
 
-    /// Format a type as a string using Display trait
+    /// Format a type as a string using [std::fmt::Display] trait
     ///
     /// Uses the Display implementation from beacon-core which provides:
     /// - Pretty-printed type syntax (e.g., "list[int]" not "App(List, Int)")

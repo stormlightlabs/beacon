@@ -1,17 +1,19 @@
 use beacon_core::{ParseError, Result};
 use tree_sitter::{Node, Parser, Tree};
 
+pub mod docstring;
 pub mod highlight;
 pub mod resolve;
 pub mod rst;
 
+pub use docstring::{DocstringStyle, ParsedDocstring, parse as parse_docstring};
 pub use highlight::PythonHighlighter;
 pub use resolve::{
     BUILTIN_DUNDERS, MAGIC_METHODS, NameResolver, ReferenceKind, ScopeId, ScopeKind, Symbol, SymbolKind,
     SymbolReference, SymbolTable,
 };
 
-/// Python parser using [`tree_sitter`]
+/// Python parser using [tree_sitter]
 pub struct PythonParser {
     parser: Parser,
 }

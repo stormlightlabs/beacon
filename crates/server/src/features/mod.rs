@@ -14,6 +14,7 @@
 //! - Rename: rename symbols across workspace
 //! - Workspace symbols: search symbols across workspace
 
+pub mod builtin_docs;
 pub mod code_actions;
 pub mod completion;
 pub mod diagnostics;
