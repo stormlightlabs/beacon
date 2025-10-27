@@ -25,6 +25,7 @@ impl DiagnosticProvider {
     pub fn generate_diagnostics(&self, uri: &Url, analyzer: &mut Analyzer) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
         self.add_parse_errors(uri, &mut diagnostics);
+        self.add_linter_diagnostics(uri, &mut diagnostics);
         self.add_unbound_variable_errors(uri, analyzer, &mut diagnostics);
         self.add_type_errors(uri, analyzer, &mut diagnostics);
         self.add_unsafe_any_warnings(uri, analyzer, &mut diagnostics);
@@ -49,6 +50,21 @@ impl DiagnosticProvider {
             if let Some(parse_result) = &doc.parse_result {
                 for error in &parse_result.errors {
                     diagnostics.push(parse_error_to_diagnostic(error));
+                }
+            }
+        });
+    }
+
+    /// Add linter diagnostics
+    fn add_linter_diagnostics(&self, uri: &Url, diagnostics: &mut Vec<Diagnostic>) {
+        self.documents.get_document(uri, |doc| {
+            if let (Some(ast), Some(symbol_table)) = (doc.ast(), doc.symbol_table()) {
+                let filename = uri.path().to_string();
+                let mut linter = crate::analysis::linter::Linter::new(symbol_table, filename);
+                let linter_diagnostics = linter.analyze(ast);
+
+                for msg in linter_diagnostics {
+                    diagnostics.push((&msg).into());
                 }
             }
         });

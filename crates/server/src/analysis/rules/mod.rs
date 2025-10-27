@@ -6,21 +6,64 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum RuleKind {
-    UnusedImport,
+    /// BEA001
     UndefinedName,
-    UnusedVariable,
+    /// BEA002
     DuplicateArgument,
-    RedefinedWhileUnused,
-    ImportStarNotPermitted,
-    ImportStarUsed,
+    /// BEA003
     ReturnOutsideFunction,
+    /// BEA004
     YieldOutsideFunction,
+    /// BEA005
     BreakOutsideLoop,
+    /// BEA006
     ContinueOutsideLoop,
+    /// BEA007 & BEA027
     DefaultExceptNotLast,
+    /// BEA008
     RaiseNotImplemented,
+    /// BEA009
+    TwoStarredExpressions,
+    /// BEA010
+    TooManyExpressionsInStarredAssignment,
+    /// BEA011
+    IfTuple,
+    /// BEA012
+    AssertTuple,
+    /// BEA013
     FStringMissingPlaceholders,
+    /// BEA014
+    TStringMissingPlaceholders,
+    /// BEA015
+    UnusedImport,
+    /// BEA016
+    UnusedVariable,
+    /// BEA017
+    UnusedAnnotation,
+    /// BEA018
+    RedefinedWhileUnused,
+    /// BEA019
+    ImportShadowedByLoopVar,
+    //// BEA020
+    ImportStarNotPermitted,
+    /// BEA021
+    ImportStarUsed,
+    /// BEA022
+    UnusedIndirectAssignment,
+    /// BEA023
+    ForwardAnnotationSyntaxError,
+    /// BEA024
+    MultiValueRepeatedKeyLiteral,
+    /// BEA025
     PercentFormatInvalidFormat,
+    /// BEA026
+    IsLiteral,
+    /// BEA028
+    UnreachableCode,
+    /// BEA029
+    RedundantPass,
+    /// BEA030
+    EmptyExcept,
     Unknown,
 }
 
@@ -61,13 +104,21 @@ impl From<&DiagnosticMessage> for Diagnostic {
                 end: Position::new(msg.line.saturating_sub(1) as u32, msg.col as u32 + 1),
             },
             severity: Some(match msg.rule {
-                RuleKind::UndefinedName | RuleKind::DuplicateArgument | RuleKind::ReturnOutsideFunction => {
-                    DiagnosticSeverity::ERROR
-                }
+                RuleKind::UndefinedName
+                | RuleKind::DuplicateArgument
+                | RuleKind::ReturnOutsideFunction
+                | RuleKind::YieldOutsideFunction
+                | RuleKind::BreakOutsideLoop
+                | RuleKind::ContinueOutsideLoop
+                | RuleKind::TwoStarredExpressions
+                | RuleKind::TooManyExpressionsInStarredAssignment
+                | RuleKind::ImportStarNotPermitted
+                | RuleKind::ForwardAnnotationSyntaxError => DiagnosticSeverity::ERROR,
+                RuleKind::RedundantPass => DiagnosticSeverity::HINT,
                 _ => DiagnosticSeverity::WARNING,
             }),
             message: msg.message.clone(),
-            source: Some("python-lsp-rule-engine".into()),
+            source: Some("beacon-linter".into()),
             ..Default::default()
         }
     }
@@ -83,23 +134,205 @@ impl RuleEngine {
     pub fn new() -> Self {
         let rules = vec![
             Rule {
-                kind: RuleKind::UnusedImport,
-                name: "Unused Import",
-                description: "Detect imports that are never used",
-                default_severity: RuleSeverity::Warning,
-                enabled: true,
-            },
-            Rule {
                 kind: RuleKind::UndefinedName,
-                name: "Undefined Name",
-                description: "Detect variables or functions used before definition",
+                name: "UndefinedName",
+                description: "Variable or function used before being defined",
                 default_severity: RuleSeverity::Error,
                 enabled: true,
             },
             Rule {
+                kind: RuleKind::DuplicateArgument,
+                name: "DuplicateArgument",
+                description: "Duplicate parameter names in a function definition",
+                default_severity: RuleSeverity::Error,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::ReturnOutsideFunction,
+                name: "ReturnOutsideFunction",
+                description: "return statement outside of a function or method body",
+                default_severity: RuleSeverity::Error,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::YieldOutsideFunction,
+                name: "YieldOutsideFunction",
+                description: "yield or yield from used outside a function context",
+                default_severity: RuleSeverity::Error,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::BreakOutsideLoop,
+                name: "BreakOutsideLoop",
+                description: "break used outside a for/while loop",
+                default_severity: RuleSeverity::Error,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::ContinueOutsideLoop,
+                name: "ContinueOutsideLoop",
+                description: "continue used outside a for/while loop",
+                default_severity: RuleSeverity::Error,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::DefaultExceptNotLast,
+                name: "DefaultExceptNotLast",
+                description: "A bare except: is not the final exception handler in a try block",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::RaiseNotImplemented,
+                name: "RaiseNotImplemented",
+                description: "Using raise NotImplemented instead of raise NotImplementedError",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::TwoStarredExpressions,
+                name: "TwoStarredExpressions",
+                description: "Two or more * unpacking expressions in assignment",
+                default_severity: RuleSeverity::Error,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::TooManyExpressionsInStarredAssignment,
+                name: "TooManyExpressionsInStarredAssignment",
+                description: "Too many expressions when unpacking into a starred target",
+                default_severity: RuleSeverity::Error,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::IfTuple,
+                name: "IfTuple",
+                description: "A tuple literal used as an if condition - always True",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::AssertTuple,
+                name: "AssertTuple",
+                description: "Assertion always true due to tuple literal",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::FStringMissingPlaceholders,
+                name: "FStringMissingPlaceholders",
+                description: "f-string declared but contains no {} placeholders",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::TStringMissingPlaceholders,
+                name: "TStringMissingPlaceholders",
+                description: "t-string declared but contains no placeholders",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::UnusedImport,
+                name: "UnusedImport",
+                description: "Import is never used within the file",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
                 kind: RuleKind::UnusedVariable,
-                name: "Unused Variable",
-                description: "Detect local variables that are assigned but never used",
+                name: "UnusedVariable",
+                description: "Local variable assigned but never used",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::UnusedAnnotation,
+                name: "UnusedAnnotation",
+                description: "Annotated variable never referenced",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::RedefinedWhileUnused,
+                name: "RedefinedWhileUnused",
+                description: "Variable redefined before original was used",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::ImportShadowedByLoopVar,
+                name: "ImportShadowedByLoopVar",
+                description: "Import name shadowed by a loop variable",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::ImportStarNotPermitted,
+                name: "ImportStarNotPermitted",
+                description: "from module import * used inside a function or class",
+                default_severity: RuleSeverity::Error,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::ImportStarUsed,
+                name: "ImportStarUsed",
+                description: "import * prevents detection of undefined names",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::UnusedIndirectAssignment,
+                name: "UnusedIndirectAssignment",
+                description: "Global or nonlocal declared but never reassigned",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::ForwardAnnotationSyntaxError,
+                name: "ForwardAnnotationSyntaxError",
+                description: "Syntax error in forward type annotation",
+                default_severity: RuleSeverity::Error,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::MultiValueRepeatedKeyLiteral,
+                name: "MultiValueRepeatedKeyLiteral",
+                description: "Dictionary literal repeats key with different values",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::PercentFormatInvalidFormat,
+                name: "PercentFormatInvalidFormat",
+                description: "Invalid % format string",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::IsLiteral,
+                name: "IsLiteral",
+                description: "Comparing constants with is or is not instead of ==/!=",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::UnreachableCode,
+                name: "UnreachableCode",
+                description: "Code after a return, raise, or break is never executed",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::RedundantPass,
+                name: "RedundantPass",
+                description: "pass used in a block that already has content",
+                default_severity: RuleSeverity::Info,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::EmptyExcept,
+                name: "EmptyExcept",
+                description: "except: with no handling code (silent failure)",
                 default_severity: RuleSeverity::Warning,
                 enabled: true,
             },
@@ -109,6 +342,10 @@ impl RuleEngine {
 
     pub fn report(&self, msg: DiagnosticMessage) -> Diagnostic {
         (&msg).into()
+    }
+
+    pub fn get_rule(&self, kind: &RuleKind) -> Option<&Rule> {
+        self.rules.iter().find(|r| r.kind == *kind)
     }
 }
 
@@ -131,7 +368,7 @@ mod tests {
     fn test_rule_engine_initialization() {
         let engine = RuleEngine::new();
         assert!(!engine.rules.is_empty(), "RuleEngine should register rules");
-        assert!(engine.rules.iter().any(|r| r.name == "Unused Import"));
+        assert!(engine.rules.iter().any(|r| r.name == "UnusedImport"));
         assert!(engine.rules.iter().any(|r| r.kind == RuleKind::UndefinedName));
     }
 
@@ -141,7 +378,7 @@ mod tests {
         let diagnostic: lsp_types::Diagnostic = (&msg).into();
 
         assert_eq!(diagnostic.message, "'os' imported but unused");
-        assert_eq!(diagnostic.source.as_deref(), Some("python-lsp-rule-engine"));
+        assert_eq!(diagnostic.source.as_deref(), Some("beacon-linter"));
         assert_eq!(
             diagnostic.range,
             Range { start: Position::new(2, 5), end: Position::new(2, 6) }
@@ -156,7 +393,7 @@ mod tests {
         let diag = engine.report(msg.clone());
 
         assert_eq!(diag.message, msg.message);
-        assert_eq!(diag.source.as_deref(), Some("python-lsp-rule-engine"));
+        assert_eq!(diag.source.as_deref(), Some("beacon-linter"));
     }
 
     #[test]

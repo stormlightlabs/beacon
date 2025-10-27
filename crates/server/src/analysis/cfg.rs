@@ -507,12 +507,16 @@ mod tests {
         builder.build_function(&body);
         let cfg = builder.build();
 
-        // Should have at least entry and exit blocks
         assert!(cfg.blocks.len() >= 2);
 
-        // Should have True and False edges for the if statement
-        let has_true_edge = cfg.blocks.values().any(|b| b.successors.iter().any(|(_, k)| *k == EdgeKind::True));
-        let has_false_edge = cfg.blocks.values().any(|b| b.successors.iter().any(|(_, k)| *k == EdgeKind::False));
+        let has_true_edge = cfg
+            .blocks
+            .values()
+            .any(|b| b.successors.iter().any(|(_, k)| *k == EdgeKind::True));
+        let has_false_edge = cfg
+            .blocks
+            .values()
+            .any(|b| b.successors.iter().any(|(_, k)| *k == EdgeKind::False));
         assert!(has_true_edge);
         assert!(has_false_edge);
     }
@@ -532,9 +536,14 @@ mod tests {
         builder.build_function(&body);
         let cfg = builder.build();
 
-        // Should have both True and False edges
-        let has_true_edge = cfg.blocks.values().any(|b| b.successors.iter().any(|(_, k)| *k == EdgeKind::True));
-        let has_false_edge = cfg.blocks.values().any(|b| b.successors.iter().any(|(_, k)| *k == EdgeKind::False));
+        let has_true_edge = cfg
+            .blocks
+            .values()
+            .any(|b| b.successors.iter().any(|(_, k)| *k == EdgeKind::True));
+        let has_false_edge = cfg
+            .blocks
+            .values()
+            .any(|b| b.successors.iter().any(|(_, k)| *k == EdgeKind::False));
         assert!(has_true_edge);
         assert!(has_false_edge);
     }
@@ -784,13 +793,18 @@ mod tests {
         builder.build_function(&body);
         let cfg = builder.build();
 
-        // Nested if statements should create more blocks than a simple if
-        // At minimum: entry, exit, and blocks for the nested structure
         assert!(cfg.blocks.len() >= 2);
 
-        // Should have multiple True edges (one for each if statement)
-        let true_edge_count = cfg.blocks.values().flat_map(|b| &b.successors).filter(|(_, k)| *k == EdgeKind::True).count();
-        assert!(true_edge_count >= 2, "Expected at least 2 True edges for nested if statements");
+        let true_edge_count = cfg
+            .blocks
+            .values()
+            .flat_map(|b| &b.successors)
+            .filter(|(_, k)| *k == EdgeKind::True)
+            .count();
+        assert!(
+            true_edge_count >= 2,
+            "Expected at least 2 True edges for nested if statements"
+        );
     }
 
     #[test]

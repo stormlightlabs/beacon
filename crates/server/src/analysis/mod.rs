@@ -33,6 +33,7 @@
 pub mod cfg;
 pub mod constraint_gen;
 pub mod data_flow;
+pub mod linter;
 pub mod rules;
 pub mod type_env;
 
