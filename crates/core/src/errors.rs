@@ -22,6 +22,9 @@ pub enum TypeError {
 
     #[error("Type {0} does not satisfy protocol {1}")]
     ProtocolNotSatisfied(String, String),
+
+    #[error("Attribute '{1}' not found on type {0}")]
+    AttributeNotFound(String, String),
 }
 
 /// Analysis errors

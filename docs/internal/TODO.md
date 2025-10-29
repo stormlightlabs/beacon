@@ -1,232 +1,161 @@
 # Beacon LSP Implementation Plan
 
-## Overview
+Implementation details and mod-specific tasks.
 
-1. Get basic LSP infrastructure working first
-2. Layer on the full Hindley-Milner type inference system
+## Part 1: Core Type System Stability
 
-### Implementation Order
+### Fix Class Construction Bug (CRITICAL)
 
-#### Completions Part 1: Attribute & Import completions
+**Blocks:** All LSP features using class metadata
 
-- Attribute completions after `.` (uses type inference)
-- Import completions from workspace
-- **Files:** `crates/server/src/features/completion.rs`
+**Issue:** Classes with `__init__` + other methods fail with `UnificationError("int", "ClassName")`
 
-#### Completions Part 2: Filtering, ranking, cross-file
+**Root Cause:** `Type::fun()` construction during metadata extraction confuses parameter/return types across methods
 
-- Prefix matching, relevance ranking
-- Cross-file symbol completions
-- **Files:** `crates/server/src/features/completion.rs`
-
-#### Advanced flow-sensitive narrowing with full CFG integration
-
-- Create `TypeFlowAnalyzer` for tracking types across CFG blocks
-- Implement forward dataflow analysis with join point merging
-- Fixpoint iteration for loop-carried narrowing
-- **Files:** `crates/server/src/analysis/type_flow.rs` (new), integrate with `mod.rs`
-
-#### Module/Package Documentation on Hover
-
-- Introspect installed packages
-- Show module-level docs
-- **Files:** `crates/server/src/features/hover.rs`, `crates/server/src/introspection.rs` (new)
-
-#### Static Analysis Part 1: Linter & Quality Checks
-
-- See [section](#static-analysis)
-- Implement rule engine for basic diagnostics - documented in [lint rules](../src/lsp/lint_rules.md)
-- Unused imports, variables, undefined names
-- **Files:** `crates/server/src/analysis/linter.rs` (new), `crates/server/src/analysis/rules/mod.rs`, `crates/server/src/features/diagnostics.rs`
-
-#### Static Analysis Part 2: Incremental Re-analysis
-
-- Cache CFGs, symbol tables, diagnostics per module
-- Recompute only changed scopes
-- **Files:** `crates/server/src/analysis/cache.rs` (new), `crates/server/src/analysis/mod.rs`
-
-#### Cross-File Diagnostics
-
-- Circular imports, missing modules
-- Dependency graph validation
-- **Files:** `crates/server/src/workspace/graph.rs`, `crates/server/src/features/diagnostics.rs`
-
-### Parking Lot (Future Phases)
-
-- Annotation coverage checks
-- Advanced caching strategies (persistent cache)
-- Snippet completions
-- Document formatting
-- Inheritance awareness
-
-## Completions
-
-**Goal:** Provide context-aware autocomplete suggestions
 **Tasks:**
 
-### Part 1
+- [ ] Isolate type variable generation for each method
+- [ ] Clone environment before processing each method
+- [ ] Review `Type::fun()` construction and parameter list handling
+- [ ] Fix unification of function types with multiple parameters
 
-- [ ] Attribute completions (after `.`)
-    - Use type inference to get type of left-hand expression
-    - Query type's attributes/methods
-    - Handle built-in types (str, list, dict methods)
-- [ ] Import completions
-    - Suggest available modules from workspace
-    - Complete import statement structure
+**Files:**
 
-### Part 2
+- `crates/server/src/analysis/mod.rs:802-851` (extract_class_metadata)
+- `crates/server/src/analysis/mod.rs:747-814` (Call constraint handler)
 
-- [ ] Filtering and ranking
-    - Prefix matching against typed text
-    - Rank by relevance (scope proximity, usage frequency)
+**Tests:** `test_class_method_access`, `test_simple_class_construction_debug`
+
+### Integrate Stub System
+
+**Blocks:** Stdlib type information, completions for builtin modules
+
+- [ ] Wire `Workspace::get_stub_type()` and `get_stub_exports()` into constraint generation
+- [ ] Query stubs before falling back to inference for imports
+- [ ] Test with stdlib modules (os, sys, pathlib)
+
+**Files:** `crates/server/src/analysis/mod.rs`, `crates/server/src/workspace.rs`
+
+### Complete Collection Protocols
+
+**Blocks:** `with` statement support, subscripting
+
+- [ ] Context manager protocol constraints (`__enter__`, `__exit__`)
+- [ ] Subscripting constraints (`__getitem__`) for lists, tuples, dicts
+- [ ] Test: `with open('file') as f:` infers file type
+- [ ] Test: `lst[0]` where `lst: list[int]` infers `int`
+
+**Files:** `crates/server/src/analysis/mod.rs` (constraint generation)
+
+### Method Call Type Inference
+
+**Blocks:** Accurate completions for method references
+
+- [ ] Infer bound method types when accessing methods
+- [ ] Test: `f = obj.method` tracks that `f` is bound to `obj`
+- [ ] Enable attribute access on builtin types (str, list, dict)
+
+**Files:** `crates/server/src/analysis/mod.rs`
+
+## Part 2: LSP Features
+
+**Dependencies:** Part 1 complete (class bug fix, stub integration)
+
+### Completions
+
+**Files:** `crates/server/src/features/completion.rs`
+
+**Part 1:**
+
+- [ ] Parse backwards from cursor to understand context
+- [ ] Attribute completions after `.` using type inference
+- [ ] Import completions from workspace symbols
+- [ ] Test with user-defined and builtin types
+
+**Part 2:**
+
+- [ ] Prefix matching against typed text
+- [ ] Relevance ranking (scope proximity, usage frequency)
 - [ ] Cross-file symbol completions
-**Implementation Notes:**
-- Currently returns hardcoded builtins only
-- Need to parse backwards from cursor to understand context
-- Type inference integration critical for attribute completions
-- Start with local scope, then built-ins, then keywords
-- Consider fuzzy matching for better UX
-**Files to Modify:**
-- `crates/server/src/features/completion.rs`
-**Acceptance:**
-- Suggests visible symbols at cursor position
-- Provides accurate attribute completions after `.`
-- Filters suggestions based on what's typed
-- Includes relevant keywords for context
+- [ ] Fuzzy matching support
 
-## Static Analysis
+### Hover Improvements
 
-**Goal:** Perform whole-workspace static analysis for code correctness, style, and type-hint consistency (semantic diagnostics).
-**Tasks:**
+**Files:** `crates/server/src/features/hover.rs`, `crates/server/src/introspection.rs` (new)
 
-### Part 1 - Linter & Quality Checks
+- [ ] Display inferred types with docstrings
+- [ ] Show signature help
+- [ ] Module/package documentation from introspection
+- [ ] Make interpreter path configurable
 
-**Partially Implemented / Need Enhancement:**
+### Inlay Hints
 
-- [ ] BEA012: AssertTuple
-    - **TODO:** Requires Assert AST node to be added to parser
-    - **TODO:** Detect tuple literals in assert statements
-- [ ] BEA023: ForwardAnnotationSyntaxError
-    - **TODO:** Use proper Python expression parser for annotation validation
-    - Current implementation only checks bracket matching
+**Files:** `crates/server/src/features/inlay_hints.rs` (new)
 
-**Not Yet Implemented:**
+- [ ] Variable type hints for local variables
+- [ ] Parameter hints in function calls
+- [ ] Return type hints for functions
+- [ ] Configuration options (on/off, verbosity)
 
-- [ ] BEA004: YieldOutsideFunction
-    - Need to track yield/yield-from in visit_node
-- [ ] BEA009: TwoStarredExpressions
-    - Need to parse starred expressions in assignment targets
-- [ ] BEA010: TooManyExpressionsInStarredAssignment
-    - Need to validate unpacking arity
-- [ ] BEA014: TStringMissingPlaceholders
-    - Template string support needed
-- [ ] BEA015: UnusedImport
-    - Infrastructure in place, needs integration with symbol reference tracking
-- [ ] BEA017: UnusedAnnotation
-    - Check annotated variables without references
-- [ ] BEA018: RedefinedWhileUnused
-    - Track variable reassignments before first use
-- [ ] BEA022: UnusedIndirectAssignment
-    - Check global/nonlocal declarations without reassignment
-- [ ] BEA024: MultiValueRepeatedKeyLiteral
-    - **TODO:** Requires expression evaluation for dict keys (line 340 in linter.rs)
-- [ ] BEA025: PercentFormatInvalidFormat
-    - Validate % format string syntax
-- [ ] BEA029: RedundantPass
-    - **TODO:** Requires separate pass to know if blocks have other content (line 266 in linter.rs)
+## Part 3: Infrastructure (Independent - Can Proceed in Parallel)
 
-**Infrastructure Improvements Needed:**
+### Static Analysis & Linting
+
+**Dependencies:** None
+
+**Files:** `crates/server/src/analysis/linter.rs`, `crates/server/src/analysis/rules/mod.rs`, `crates/server/src/features/diagnostics.rs`
+
+See [Linter Rules](#linter-rules) section below for BEA code implementation status.
+
+**Infrastructure:**
 
 - [ ] Suppression support (`# type: ignore`, `# noqa:`)
-    - Parse inline comments during analysis
-    - Filter diagnostics based on suppressions
-- [ ] Rule configuration
-    - Per-rule enable/disable via config
-    - Severity customization
-- [ ] Symbol table integration
-    - Currently `_symbol_table` field is unused
-    - For BEA015, BEA017, BEA018, BEA022
+- [ ] Rule configuration (per-rule enable/disable, severity)
+- [ ] Symbol table integration for unused detection
 
-**Limitations:**
+### Incremental Re-analysis
 
-1. Parser does not have Assert AST node - affects BEA012
-2. Parser represents `from x import *` as empty names array (handled)
-3. No support for starred expressions in assignment targets - affects BEA009, BEA010
+**Files:** `crates/server/src/analysis/cache.rs` (new), `crates/server/src/analysis/mod.rs`
 
-### Part 2
+- [ ] Cache CFGs, symbol tables, diagnostics per module
+- [ ] Recompute only changed scopes
+- [ ] Maintain last-known diagnostic set
+- [ ] Benchmark incremental performance (target: <100ms)
 
-- [ ] Incremental Re-analysis
-    - Cache CFGs, symbol tables, and diagnostics per module
-    - Recompute only changed scopes or dependent modules
-    - Maintain last-known diagnostic set for live feedback
-- [ ] Cross-File Diagnostics
-    - Use workspace dependency graph to check:
-        - Circular imports
-        - Missing modules
-        - Inconsistent symbol exports (`__all__` mismatches)
-        - Conflicting stub definitions
-- [ ] Integration Tests
-    - Validate accuracy of error positions and messages
-    - Verify cross-module invalidation
-    - Benchmark incremental re-analysis performance
+### Cross-File Diagnostics
 
-**Acceptance:**
+**Files:** `crates/server/src/workspace/graph.rs`, `crates/server/src/features/diagnostics.rs`
 
-- Detects and reports **exhaustive categories** of errors and warnings
-- Handles **control-flow-aware** analysis (flow narrowing, dead-code detection).
-- Works incrementally — updating diagnostics within 100 ms of file edits.
-- Fully integrated with your existing workspace module index and dependency graph.
+- [ ] Circular imports detection
+- [ ] Missing modules detection
+- [ ] Inconsistent symbol exports (`__all__` mismatches)
+- [ ] Conflicting stub definitions
 
-## Module/Package Documentation on Hover
+## Linter Rules
 
-- Make interpreter path configurable via LSP settings
-- Support module-level imports (`import os`)
-- Async introspection (non-blocking hover)
-- Cross-file import resolution
+Implementation status for BEA diagnostic codes. See `docs/src/lsp/lint_rules.md` for full rule documentation.
 
-## Document Formatting
+### Needs Parser Support
 
-Basic formatting support for user convenience
+- [ ] BEA012: AssertTuple - Requires Assert AST node
+- [ ] BEA023: ForwardAnnotationSyntaxError - Needs Python expression parser for annotation validation
+- [ ] BEA009: TwoStarredExpressions - Needs starred expression support in assignment targets
+- [ ] BEA010: TooManyExpressionsInStarredAssignment - Validate unpacking arity
 
-- Should conform to PEP8 (similar to black)
-- Users will likely use other tools (black, ruff)
-- Low priority - focus on analysis first
+### Needs Symbol Table Integration
 
-## Parking Lot
+- [ ] BEA015: UnusedImport
+- [ ] BEA017: UnusedAnnotation
+- [ ] BEA018: RedefinedWhileUnused
+- [ ] BEA022: UnusedIndirectAssignment
 
-- Add inheritance awareness (`__init__` in base classes)
-- Partial workspace analysis (analyze subset)
-- Advanced caching strategies (persistent cache across sessions)
-- Snippet completions (function templates, etc.)
-- LSP resolve for expensive completion details
-- Annotation coverage checks (detect missing/partial type annotations)
-    - Warn when functions lack type hints or have incomplete annotations
-    - Configurable per TypeCheckingMode (strict, balanced, minimal)
-    - Compare inferred types with declared annotations
-- Advanced flow-sensitive narrowing with full CFG integration
-    - Create `TypeFlowAnalyzer` for tracking types across CFG blocks
-    - Implement forward dataflow analysis with join point merging
-    - Implement fixpoint iteration for loop-carried narrowing
-    - Add CFG edge metadata for guard conditions
-    - Integrate TypeFlowAnalyzer with main Analyzer
-    - Handle nested conditions and complex control flow patterns
-    - Track type narrowing across loop iterations
-    - Support exception handler narrowing
+### Needs Expression Evaluation
 
-## Stub System
+- [ ] BEA024: MultiValueRepeatedKeyLiteral - Requires dict key evaluation (linter.rs:340)
+- [ ] BEA029: RedundantPass - Requires separate pass (linter.rs:266)
 
-- **StubCache LRU Eviction**
-    - Current: Simple HashMap with on-demand loading
-    - Deferred: LRU eviction policy for memory management
-    - Rationale: Current implementation is sufficient for most workspaces; premature optimization
-    - Files: `crates/server/src/workspace.rs` (StubCache struct)
+### Other
 
-- **Disk-based Stub Cache Persistence**
-    - Cache parsed stub results across LSP sessions
-    - Invalidate based on file modification times
-    - Deferred until performance profiling shows need
-
-- **Typeshed Integration**
-    - Embed or download typeshed standard library stubs
-    - Currently: Users must provide stub_paths manually
-    - Deferred: Lower priority than user code analysis
+- [ ] BEA004: YieldOutsideFunction - Track yield/yield-from in visit_node
+- [ ] BEA014: TStringMissingPlaceholders - Template string support
+- [ ] BEA025: PercentFormatInvalidFormat - Validate % format syntax

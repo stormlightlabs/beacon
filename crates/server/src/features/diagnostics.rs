@@ -510,6 +510,7 @@ fn type_error_to_diagnostic(error_info: &crate::analysis::TypeErrorInfo) -> Diag
         TypeError::ProtocolNotSatisfied(ty, protocol) => {
             ("HM006", format!("Type {ty} does not satisfy protocol {protocol}"))
         }
+        TypeError::AttributeNotFound(ty, attr) => ("HM007", format!("Attribute '{attr}' not found on type {ty}")),
     };
 
     Diagnostic {

@@ -1,3 +1,4 @@
+use super::class_metadata::ClassRegistry;
 use beacon_core::Type;
 use rustc_hash::FxHashMap;
 
@@ -22,15 +23,16 @@ pub struct ConstraintResult(
     pub ConstraintSet,
     pub FxHashMap<usize, Type>,
     pub FxHashMap<(usize, usize), usize>,
+    pub ClassRegistry,
 );
 
 /// Context for tracking node information during constraint generation
-#[derive(Default)]
 pub struct ConstraintGenContext {
     pub constraints: Vec<Constraint>,
     pub node_counter: usize,
     pub type_map: FxHashMap<usize, Type>,
     pub position_map: FxHashMap<(usize, usize), usize>,
+    pub class_registry: ClassRegistry,
 }
 
 impl ConstraintGenContext {
@@ -45,6 +47,18 @@ impl ConstraintGenContext {
         self.type_map.insert(node_id, ty);
         self.position_map.insert((line, col), node_id);
         node_id
+    }
+}
+
+impl Default for ConstraintGenContext {
+    fn default() -> Self {
+        Self {
+            constraints: Vec::new(),
+            node_counter: 0,
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+            class_registry: ClassRegistry::new(),
+        }
     }
 }
 

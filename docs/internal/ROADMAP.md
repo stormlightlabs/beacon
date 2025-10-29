@@ -1,262 +1,143 @@
 # Beacon Roadmap
 
-This document tracks the major milestones required to deliver a robust Hindley-Milner type system for Python together with an incremental LSP server.
+Strategic milestones for delivering a Hindley-Milner type system and LSP server for Python. See TODO.md for implementation details.
 
-## Parser & Tree-sitter
+## Foundation (Complete)
 
-**Goal:** Provide a lossless parser pipeline that feeds incremental AST updates into constraint generation.
-**Tasks:**
+- [x] Tree-sitter parser with CST-to-AST lowering
+- [x] Core type system and solver
+- [x] Constraint generator for Python constructs
+- [x] Name resolution and symbol indexing
+- [x] Row-polymorphic records and protocol entailment
+- [x] Class metadata tracking and attribute resolution
+- [x] Object construction via `__init__`
+- [x] TypeVar/Generic/Protocol parsing
+- [x] PEP 561 stub discovery and parsing
 
-- [x] Bind `tree-sitter-python` and expose the node kinds required for analysis.
-- [x] Implement scope building for modules, classes, functions, and blocks, including import alias tracking.
-- [x] Capture type annotations (parameters, return types, variable annotations) in AST.
-- [x] Build CST-to-AST adapters for `with` statements, comprehensions, walrus operator, pattern matching, and decorators.
-- [ ] Support incremental edits by invalidating AST slices via Tree-sitter edit sessions (deferred).
-**Implementation Notes:**
-- Preserve trivia for diagnostics, ranges, and code actions.
-- Recognize typing syntax (`list[int]`, `Callable`, `Literal`, etc.) during AST lowering.
-- Type annotations are captured and exposed via semantic tokens for syntax highlighting.
-**Acceptance:**
-- [x] Parser captures type annotations from function parameters, return types, and variable declarations.
-- [x] AST records scopes and symbol tables for downstream passes.
-- [x] Semantic tokens provide accurate highlighting for type annotations.
-- [x] Parser handles with, comprehensions, walrus operator, pattern matching, and decorators.
-- [ ] Parser updates respond to document edits without full reparse (deferred).
+## Core Type System Stability (Critical - Blocks LSP Features)
 
-## Records & Protocols
+**Why:** Fix blocking bugs and integrate existing infrastructure before building LSP features.
 
-**Goal:** Support structural typing through row-polymorphic records and protocol entailment.
-**Tasks:**
+### Class Construction Bug Fix
 
-- [x] Model attribute reads/writes with `HasAttr`-style constraints.
-- [x] Encode builtin protocols (`Sized`, iterator protocols) and allow manual authoring.
-- [ ] Support object construction via `__init__` and row extension.
-**Implementation Notes:**
-- Reuse index metadata for attribute lookup.
-- Provide gradual fallbacks when protocol information is missing.
-**Acceptance:**
-- [x] Protocol system implemented with Iterator, Iterable, Sized, Sequence, Mapping, ContextManager, Callable.
-- [x] Protocol mismatches surface diagnostics with error codes.
-- [ ] Attribute access infers precise types for locals, globals, and instance members (partial - HasAttr constraint exists but not fully utilized).
+**Blocks:** All LSP features that use class metadata
 
-## Typing Interop
+- [ ] Fix class construction with multiple methods (UnificationError on classes with `__init__` + other methods)
+- [ ] Infer bound method types for `f = obj.method` patterns
+- [ ] Enable builtin type attribute access (str, list, dict methods)
 
-**Goal:** Ingest Python typing annotations while balancing strictness modes.
-**Tasks:**
+**Known Limitations:** No `__getattr__`/`__getattribute__` support, no inheritance modeling
 
-- [x] Parse `Optional`, `Union`, `TypeVar`, `Generic`, and `Protocol` annotations.
-- [x] Implement PEP 561 stub discovery (manual paths, stub packages, inline stubs).
-- [x] Parse `.pyi` stub files and extract type signatures.
-- [ ] Integrate stub lookups into module resolution and constraint generation.
-- [ ] Respect strict, balanced, and loose modes when annotations disagree with inference.
-**Implementation Notes:**
-- Treat annotations as bounds, not absolute truths, unless running in strict mode.
-- Stub discovery follows PEP 561 resolution order (manual → stub packages → inline → typeshed).
-- StubFile structure stores exports, re-exports, **all** declarations, and partial markers.
-- StubCache uses simple HashMap caching; LRU eviction deferred for future optimization.
-**Acceptance:**
-- [x] AnnotationParser handles TypeVar, Generic, Protocol with tests passing.
-- [x] Workspace discovers and indexes stub files following PEP 561.
-- [x] parse_stub_file() extracts function, class, and variable type signatures.
-- [x] Workspace provides get_stub_type() and get_stub_exports() for on-demand stub queries.
-- [ ] Module resolution queries stubs before falling back to inference.
-- [ ] Mode selection changes diagnostic severity without breaking inference.
+### Stub System Integration
 
-## Collections & Iteration
+**Blocks:** Stdlib type information in completions/hover
 
-**Goal:** Deliver first-class support for Python collection protocols.
-**Tasks:**
+- [ ] Wire stub lookups into constraint generation
+- [ ] Query stubs before falling back to inference
+- [ ] Respect type checking modes (strict/balanced/loose)
 
-- [x] Implement iterator/iterable constraints for `for` loops and comprehensions (list, set, dict, generator).
-- [ ] Implement context manager protocol constraints for `with` statements.
-- [ ] Model subscripting and slicing for lists, tuples, dicts, sets, and custom containers.
-- [ ] Provide inlay hints for inferred collection element types.
-**Implementation Notes:**
-- Normalize builtin signatures from stubs to avoid reimplementing shapes manually.
-- Share logic with completion and hover features.
-**Acceptance:**
-- [x] For loops and comprehensions correctly infer element types from iterables (e.g., `for x in [1,2,3]` infers `x: int`).
-- [x] Protocol constraint system extracts element types from `list[T]`, `set[T]`, `dict[K,V]`, `tuple[T]`.
-- [ ] Collection-heavy examples show inferred types in inlay hints.
-- [ ] Indexing and slicing produce correct constraint shapes.
+### Collection Protocol Completion
 
-## Classes & Overloads
+**Blocks:** `with` statement and subscripting support
 
-**Goal:** Model class semantics, overload resolution, and decorator effects.
-**Tasks:**
+- [ ] Context manager protocol (`__enter__`, `__exit__`)
+- [ ] Subscripting and slicing (`__getitem__`)
+- [ ] Inlay hints for collection element types
 
-- [ ] Resolve overloads by choosing the most specific callable signature.
-- [ ] Handle `@property`, `@staticmethod`, `@classmethod`, and dataclass helpers.
-- [ ] Support metaclass-aware class construction and module type exports.
-**Implementation Notes:**
-- Use decorator stubs to rewrite function types before registration.
-- Ensure overload fallbacks degrade to inferred principal types safely.
-**Acceptance:**
-- Overloaded functions pick consistent signatures for each call site.
-- Decorator application updates hover and diagnostics output.
+## Type System Extensions
 
-## Async & Generators
+**Requires:** Core type system stability complete
 
-**Goal:** Handle async/await and generator semantics end-to-end.
-**Tasks:**
+### Advanced Protocols & Records
 
-- [ ] Infer coroutine return types and `await` result types.
-- [ ] Model generators, `yield`, and `yield from` with proper element and send types.
-- [ ] Wire async constructs into diagnostics and inlay hints.
-**Implementation Notes:**
-- Reuse iterable protocol machinery where possible.
-- Consider gradual fallback when async functions return `Any`.
-**Acceptance:**
-- Async and generator code infers types consistent with Python typing rules.
-- IDE features display results without panics or missing data.
+- [ ] User-defined protocol checking (custom iterators, protocols)
+- [ ] Row extension for class inheritance
+- [ ] Structural record types for duck typing
+- [ ] Protocol intersection and union types
 
-### Proper Generator Type Modeling
+### Overloads & Decorators
 
-Generator expressions and functions are approximated as iterables/lists using existing type infrastructure.
-This works for basic iteration but loses important generator-specific semantics.
+- [ ] Overload resolution for multiple signatures
+- [ ] `@property`, `@staticmethod`, `@classmethod` support
+- [ ] Class-level attributes and class methods
+- [ ] Metaclass-aware construction
 
-#### Requirements for Generator[YieldType, SendType, ReturnType]
+## LSP Features
 
-1. Type System Extensions
-   - Add `Generator` type constructor to `beacon_core::TypeCtor` with arity 3
-   - Add `AsyncGenerator` type constructor for async generators (arity 2)
-   - Add `Coroutine` type constructor for async/await (arity 3)
+**Requires:** Core type system stability (class bug fix, stub integration)
 
-2. Constraint Generation Changes
-   - Detect `yield` statements in function bodies to infer generator functions
-   - Track yield expression types separately from return types
-   - Model `send()` method parameter types for bidirectional communication
-   - Handle `yield from` delegation with proper type propagation
+### Completions
 
-3. Protocol Integration
-   - Implement `Iterator[T]` protocol (provides `__iter__` and `__next__`)
-   - Implement `Generator[Y, S, R]` protocol (extends Iterator with `send`, `throw`, `close`)
-   - Handle covariance/contravariance: yield type is covariant, send type is contravariant
+- [ ] Attribute completions after `.` using type inference
+- [ ] Import completions from workspace
+- [ ] Filtering, ranking, and fuzzy matching
+- [ ] Cross-file symbol completions
 
-4. Semantic Analysis
-   - Distinguish between generator functions (contain `yield`) and regular functions
-   - Infer return type as `Generator[Y, None, R]` for simple generators
-   - Track `StopIteration` value propagation for return statements
-   - Handle `yield from` as generator delegation
+### Hover & Diagnostics
 
-5. Type Checking
-   - Verify `send()` arguments match declared send type
-   - Check that yielded values match yield type
-   - Ensure return values match return type (propagated via StopIteration)
+- [ ] Display inferred types with docstrings and signatures
+- [ ] "Did you mean" suggestions and annotation fixes
+- [ ] Code actions for refactoring (insert annotations, adjust Optional)
 
-#### Tasks
+### Inlay Hints
 
-- [ ] Continue using iterable approximations (current state)
-- [ ] Add Generator type constructor and basic yield detection
-- [ ] Full bidirectional typing with send/throw support
-- [ ] AsyncGenerator and Coroutine types for async/await
+- [ ] Variable type hints
+- [ ] Parameter hints in function calls
+- [ ] Return type hints
+- [ ] Configurable verbosity
 
-#### Testing Strategy
+## Advanced Type Features (Optional)
 
-- Simple generators: `def count() -> Generator[int, None, None]: yield 1`
-- Bidirectional: `def echo() -> Generator[int, int, None]: sent = yield value`
-- Generator delegation: `yield from other_gen()`
-- Async variants: `async def fetch() -> AsyncGenerator[Data, None]`
+### Pattern Matching (PEP 634)
 
-## Pattern Matching
+- [ ] Pattern constraints for mapping, sequence, class, and OR patterns
+- [ ] Exhaustiveness checking and unreachable pattern detection
+- [ ] Quick fixes for missing cases
 
-**Goal:** Support PEP 634 structural pattern matching with useful diagnostics.
-**Tasks:**
+### Async & Generators
 
-- [ ] Generate constraints for mapping, sequence, class, and OR patterns.
-- [ ] Track exhaustiveness and unreachable pattern diagnostics.
-- [ ] Provide quick fixes for missing cases.
-**Implementation Notes:**
-- Reuse record and union infrastructure for pattern coverage.
-- Keep diagnostics resilient when inference degrades to `Any`.
-**Acceptance:**
-- Pattern matching examples infer types and flag missing branches.
-- Exhaustiveness warnings include actionable suggestions.
+**Note:** Currently using iterable approximations (sufficient for basic iteration)
 
-## Incrementality & Caching
+- [ ] `Generator[Y, S, R]`, `AsyncGenerator[Y, S]`, `Coroutine[Y, S, R]` type constructors
+- [ ] Yield detection to distinguish generator functions
+- [ ] Coroutine return types and `await` result types
+- [ ] Bidirectional generator `send()` support
+- [ ] `yield from` delegation
 
-**Goal:** Deliver fast feedback through incremental constraint slicing and caching.
-**Tasks:**
+## Infrastructure (Can Proceed Independently)
 
-- [ ] Slice constraints by strongly connected components.
-- [ ] Cache analysis results on disk and reuse across sessions.
-- [ ] Parallelize independent slices for large projects.
-- [ ] Implement LRU eviction for StubCache (deferred - currently uses simple HashMap).
-**Implementation Notes:**
-- Use Tree-sitter byte ranges to limit recomputation.
-- Track module dependency graphs in the index.
-- StubCache currently uses on-demand loading without eviction; suitable for most workspaces.
-**Acceptance:**
-- Editing a single file recomputes only affected slices.
-- Warm runs complete significantly faster than cold runs.
+### Static Analysis & Linting
 
-## Developer Ergonomics
+- [ ] Linter rule engine (see TODO.md for BEA rule codes)
+- [ ] Symbol reference tracking for unused detection
+- [ ] Suppression support (`# type: ignore`, `# noqa:`)
+- [ ] Per-rule configuration and severity
 
-**Goal:** Provide meaningful diagnostics, code actions, and configuration switches.
-**Tasks:**
+### Incrementality & Caching
 
-- [ ] Expand diagnostics with "did you mean" suggestions and annotation fixes.
-- [ ] Implement code actions for inserting annotations and adjusting Optional usage.
-- [ ] Surface configuration options (`mode`, `pythonVersion`, `stubPaths`, `decoratorStubs`) in the CLI and LSP.
-**Implementation Notes:**
-- Share diagnostic formatting between CLI and LSP outputs.
-- Keep config parsing centralized to avoid diverging defaults.
-**Acceptance:**
-- Diagnostics include actionable fixes in both CLI and editor.
-- Changing config toggles behavior without restarting the server.
+- [ ] Constraint slicing by strongly connected components
+- [ ] Disk cache for analysis results
+- [ ] Parallelization for large projects
+- [ ] StubCache LRU eviction (currently simple HashMap)
 
-## Performance
+### Configuration & Ergonomics
 
-**Goal:** Ensure the server scales to large repositories with predictable resource usage.
-**Tasks:**
+- [ ] Configuration options (`mode`, `pythonVersion`, `stubPaths`, `decoratorStubs`)
+- [ ] Config hot-reload without restart
+- [ ] Contributor documentation
 
-- [ ] Build benchmarks for cold vs warm runs and large module graphs.
-- [ ] Profile memory and CPU hotspots; introduce caching or arenas as needed.
-- [ ] Stress test with fuzzing and random AST generation.
-**Implementation Notes:**
-- Integrate benchmarks into CI gating where feasible.
-- Track regressions with historical benchmark baselines.
-**Acceptance:**
-- Benchmark suite runs automatically and flags regressions.
-- Memory usage remains stable under large project loads.
+### Performance & Testing
 
-## Testing
+- [ ] Benchmarks for cold/warm runs and large projects
+- [ ] Memory and CPU profiling
+- [ ] Golden tests for inference outputs
+- [ ] Property tests for unifier correctness
+- [ ] Corpus harness (compare against MyPy/Pyright)
+- [ ] Fuzzing for parser and solver
 
-**Goal:** Maintain confidence with layered automated testing.
-**Tasks:**
+## Mitigated Risks
 
-- [ ] Add golden tests for inference outputs and diagnostics.
-- [ ] Write property tests for unifier idempotence and substitution application.
-- [ ] Build a corpus harness using real-world snippets compared against MyPy or Pyright.
-- [ ] Integrate targeted fuzzing for parser and solver components.
-**Implementation Notes:**
-- Reuse `crates/test_support` fixtures for both CLI and server tests.
-- Snapshot outputs should stay stable across minor refactors.
-**Acceptance:**
-- Test suites cover happy paths and edge cases called out in the roadmap.
-- CI runs property tests and fuzzers regularly without flakiness.
-
-## Risks & Mitigations
-
-**Goal:** Track high-impact risks and mitigation strategies.
-**Tasks:**
-
-- [ ] Identify dynamic Python features that could erode soundness; gate them behind modes.
-- [ ] Catalog decorator behaviors and allow user-supplied stubs.
-- [ ] Monitor performance cliffs with telemetry from benchmarks.
-**Implementation Notes:**
-- Emit diagnostics when inference widens to `Any`.
-- Encourage community contributions for missing protocol or decorator coverage.
-
-## Deliverables
-
-- [x] Tree-sitter parser with CST-to-AST lowering (incremental updates deferred).
-- [x] Core type system and solver with comprehensive tests.
-- [x] Constraint generator covering core Python constructs.
-- [x] Name resolution and symbol indexing for variables, imports, and decorators.
-- [x] Row-polymorphic records and protocol entailment (protocols: Iterator, Iterable, Sized, Sequence, Mapping, ContextManager, Callable).
-- [ ] LSP server features: diagnostics (partial), hover (partial), inlay hints (pending), code actions (pending).
-- [x] Typing interop: TypeVar/Generic/Protocol parsing (partial - stub integration pending).
-- [x] PEP 561 stub discovery and parsing (partial - constraint generation integration pending).
-- [ ] Benchmarks, corpus tests, and fuzzing harness.
-- [ ] Contributor documentation for modes, constraints, and contribution workflow.
+- **Attribute access soundness:** HasAttr constraints prevent invalid access (HM007)
+- **Constructor safety:** `__init__` validates argument types
+- **Protocol satisfaction:** Protocol constraints detect interface mismatches (HM006)
+- **Graceful degradation:** Type variables and `Any` allow flexible inference
