@@ -43,6 +43,16 @@ impl ClassMetadata {
     pub fn lookup_attribute(&self, attr_name: &str) -> Option<&Type> {
         self.fields.get(attr_name).or_else(|| self.methods.get(attr_name))
     }
+
+    /// Check if an attribute is a method
+    pub fn is_method(&self, attr_name: &str) -> bool {
+        self.methods.contains_key(attr_name)
+    }
+
+    /// Look up a method by name
+    pub fn lookup_method(&self, method_name: &str) -> Option<&Type> {
+        self.methods.get(method_name)
+    }
 }
 
 /// Registry of all class definitions in the analyzed module
@@ -72,6 +82,19 @@ impl ClassRegistry {
     pub fn lookup_attribute(&self, class_name: &str, attr_name: &str) -> Option<&Type> {
         self.get_class(class_name)
             .and_then(|metadata| metadata.lookup_attribute(attr_name))
+    }
+
+    /// Check if an attribute is a method in a class
+    pub fn is_method(&self, class_name: &str, attr_name: &str) -> bool {
+        self.get_class(class_name)
+            .map(|metadata| metadata.is_method(attr_name))
+            .unwrap_or(false)
+    }
+
+    /// Look up a method in a class
+    pub fn lookup_method(&self, class_name: &str, method_name: &str) -> Option<&Type> {
+        self.get_class(class_name)
+            .and_then(|metadata| metadata.lookup_method(method_name))
     }
 }
 

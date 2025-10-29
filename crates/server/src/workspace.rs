@@ -440,7 +440,7 @@ impl Workspace {
     /// Resolve a module import to a file URI
     ///
     /// Resolves an absolute import (e.g., "foo.bar") to a file URI.
-    /// For relative imports, use `resolve_relative_import` instead.
+    /// For relative imports, use [Self::resolve_relative_import] instead.
     ///
     /// Searches:
     /// 1. Workspace index first (fast path)
@@ -953,6 +953,59 @@ impl Workspace {
                 all_exports,
             },
         )
+    }
+
+    /// Extract class metadata from stub AST nodes
+    ///
+    /// Returns a map of class names to their metadata for registration in ClassRegistry.
+    pub fn extract_stub_classes(
+        &self, node: &beacon_parser::AstNode,
+    ) -> FxHashMap<String, crate::analysis::class_metadata::ClassMetadata> {
+        let mut classes = FxHashMap::default();
+        self.extract_classes_recursive(node, &mut classes);
+        classes
+    }
+
+    fn extract_classes_recursive(
+        &self, node: &beacon_parser::AstNode,
+        classes: &mut FxHashMap<String, crate::analysis::class_metadata::ClassMetadata>,
+    ) {
+        match node {
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    self.extract_classes_recursive(stmt, classes);
+                }
+            }
+            AstNode::ClassDef { name, body, .. } => {
+                let mut metadata = crate::analysis::class_metadata::ClassMetadata::new(name.clone());
+
+                for stmt in body {
+                    if let AstNode::FunctionDef { name: method_name, args: params, return_type, .. } = stmt {
+                        let param_types: Vec<beacon_core::Type> = params
+                            .iter()
+                            .filter_map(|p| p.type_annotation.as_ref())
+                            .filter_map(|ann| self.parse_annotation_string(ann))
+                            .collect();
+
+                        let ret_type = return_type
+                            .as_ref()
+                            .and_then(|ann| self.parse_annotation_string(ann))
+                            .unwrap_or_else(beacon_core::Type::any);
+
+                        let func_type = beacon_core::Type::fun(param_types, ret_type);
+
+                        if method_name == "__init__" {
+                            metadata.set_init_type(func_type);
+                        } else {
+                            metadata.add_method(method_name.clone(), func_type);
+                        }
+                    }
+                }
+
+                classes.insert(name.clone(), metadata);
+            }
+            _ => {}
+        }
     }
 
     /// Extract type signatures from stub AST

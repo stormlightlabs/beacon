@@ -2,7 +2,7 @@
 
 Implementation details and mod-specific tasks.
 
-## Part 1: Core Type System Stability
+## Core Type System Stability
 
 ### Future Work
 
@@ -15,17 +15,7 @@ Implementation details and mod-specific tasks.
 - [ ] Integration test: `with open('file') as f:` infers file type (requires _IO stub integration)
 - [ ] Integration test: `lst[0]` where `lst: list[int]` infers `int` (requires full test harness)
 
-### Method Call Type Inference
-
-**Blocks:** Accurate completions for method references
-
-- [ ] Infer bound method types when accessing methods
-- [ ] Test: `f = obj.method` tracks that `f` is bound to `obj`
-- [ ] Enable attribute access on builtin types (str, list, dict)
-
-**Files:** `crates/server/src/analysis/mod.rs`
-
-## Part 2: LSP Features
+## LSP Features
 
 **Dependencies:** Part 1 complete (class bug fix, stub integration)
 
@@ -65,7 +55,7 @@ Implementation details and mod-specific tasks.
 - [ ] Return type hints for functions
 - [ ] Configuration options (on/off, verbosity)
 
-## Part 3: Infrastructure (Independent - Can Proceed in Parallel)
+## Infrastructure (Independent - Can Proceed in Parallel)
 
 ### Static Analysis & Linting
 

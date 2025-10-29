@@ -2,67 +2,9 @@
 
 Strategic milestones for delivering a Hindley-Milner type system and LSP server for Python. See TODO.md for implementation details.
 
-## Foundation (Complete)
-
-- [x] Tree-sitter parser with CST-to-AST lowering
-- [x] Core type system and solver
-- [x] Constraint generator for Python constructs
-- [x] Name resolution and symbol indexing
-- [x] Row-polymorphic records and protocol entailment
-- [x] Class metadata tracking and attribute resolution
-- [x] Object construction via `__init__`
-- [x] TypeVar/Generic/Protocol parsing
-- [x] PEP 561 stub discovery and parsing
-
-## Core Type System Stability (Critical - Blocks LSP Features)
-
-**Why:** Fix blocking bugs and integrate existing infrastructure before building LSP features.
-
-### Class Construction Bug Fix
-
-**Status:** Fixed in commit [current]
-
-- [x] Fix class construction with multiple methods (UnificationError on classes with `__init__` + other methods)
-    - **Solution:** Skip re-processing FunctionDef nodes in ClassDef body visitor to prevent double type variable generation
-    - **Test:** `test_class_construction_multiple_methods` now passing
-- [ ] Infer bound method types for `f = obj.method` patterns
-- [ ] Enable builtin type attribute access (str, list, dict methods)
-
-**Known Limitations:** No `__getattr__`/`__getattribute__` support, no inheritance modeling
-
-### Stub System Integration
-
-**Status:** Complete - Fully operational with concurrent access
-
-- [x] Wire stub lookups into constraint generation
-    - **Implementation:** ImportFrom handler queries stub cache directly using read locks
-    - **Architecture:** Extracted `StubCache` into separate `Arc<RwLock<StubCache>>` shared between workspace and analyzer
-- [x] Query stubs before falling back to inference
-    - **Implementation:** Read locks on stub cache for concurrent, non-blocking access
-    - **Fallback:** Uses type variables when stub unavailable or lock fails
-- [x] Pre-load builtin stubs during workspace initialization
-    - **Implementation:** `builtins.pyi` loaded on workspace init with core types (str, int, float, bool, list, dict, tuple)
-- [ ] Respect type checking modes (strict/balanced/loose)
-
-**Note:** Stub lookup uses read locks for concurrent access during constraint generation, eliminating previous deadlock issues
-
-### Collection Protocol Completion
-
-**Status:** Complete - Core protocols implemented
-
-- [x] Context manager protocol (`__enter__`, `__exit__`)
-    - **Implementation:** With statements generate HasAttr constraints for both methods
-    - **Feature:** Target variable in `as` clause receives type from `__enter__` return
-- [x] Subscripting and slicing (`__getitem__`)
-    - **Implementation:** Subscript expressions generate HasAttr constraint for `__getitem__`
-    - **Feature:** Result type inferred from `__getitem__` signature
-- [x] Builtin stub support for core collections
-    - **Implementation:** list, dict, tuple, set types with proper `__getitem__` signatures
-- [ ] Inlay hints for collection element types (deferred to LSP features phase)
-
 ## Type System Extensions
 
-**Requires:** Core type system stability complete
+**Requires:** Core type system stability
 
 ### Advanced Protocols & Records
 
@@ -80,7 +22,7 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 
 ## LSP Features
 
-**Requires:** Core type system stability (class bug fix, stub integration)
+**Requires:** Core type system stability
 
 ### Completions
 
@@ -101,8 +43,9 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 - [ ] Parameter hints in function calls
 - [ ] Return type hints
 - [ ] Configurable verbosity
+- [ ] Inlay hints for collection element types
 
-## Advanced Type Features (Optional)
+## Advanced Type Features
 
 ### Pattern Matching (PEP 634)
 
@@ -159,6 +102,8 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 - **Graceful degradation:** Type variables and `Any` allow flexible inference
 
 ## Parking Lot
+
+- [ ] Type checking modes (strict/balanced/loose)
 
 **Future Protocol Enhancements:**
 

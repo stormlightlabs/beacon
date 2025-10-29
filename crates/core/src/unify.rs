@@ -78,6 +78,13 @@ impl Unifier {
             (Type::Record(fields1, row1), Type::Record(fields2, row2)) => {
                 Self::unify_records(fields1, row1, fields2, row2)
             }
+            (Type::BoundMethod(receiver1, method1), Type::BoundMethod(receiver2, method2)) => {
+                let s1 = Self::unify_impl(receiver1, receiver2)?;
+                let s2 = Self::unify_impl(&s1.apply(method1), &s1.apply(method2))?;
+                Ok(s2.compose(s1))
+            }
+            (Type::BoundMethod(_, method), fun @ Type::Fun(_, _)) => Self::unify_impl(method, fun),
+            (fun @ Type::Fun(_, _), Type::BoundMethod(_, method)) => Self::unify_impl(fun, method),
             (Type::ForAll(_, _), _) | (_, Type::ForAll(_, _)) => {
                 Err(TypeError::UnificationError("polymorphic type".to_string(), "monomorphic type".to_string()).into())
             }
@@ -118,6 +125,7 @@ impl Unifier {
                 fields.iter().any(|(_, field_type)| Self::occurs_check(tv, field_type))
                     || (row_var.as_ref() == Some(tv))
             }
+            Type::BoundMethod(receiver, method) => Self::occurs_check(tv, receiver) || Self::occurs_check(tv, method),
         }
     }
 
@@ -409,15 +417,6 @@ mod tests {
             panic!("Row variable should be bound to a record");
         }
     }
-
-    // #[test]
-    // fn test_unification_failure() {
-    //     let t1 = Type::int();
-    //     let t2 = Type::string();
-
-    //     let result = Unifier::unify(&t1, &t2);
-    //     assert!(matches!(result, Err(TypeError::UnificationError(_, _))));
-    // }
 
     #[test]
     fn test_unify_many() {

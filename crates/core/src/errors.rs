@@ -47,6 +47,9 @@ pub enum AnalysisError {
 
     #[error("Unification error: {0}")]
     UnificationError(String),
+
+    #[error("IO error: {0}")]
+    IoError(#[from] std::io::Error),
 }
 
 #[derive(thiserror::Error, Debug)]

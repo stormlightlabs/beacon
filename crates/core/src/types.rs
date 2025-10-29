@@ -294,6 +294,11 @@ pub enum Type {
     /// Record types for objects/classes (row polymorphism)
     /// fields, row variable
     Record(Vec<(String, Type)>, Option<TypeVar>),
+    /// Bound method type (receiver_type, method_type)
+    /// Represents a method bound to an instance
+    /// e.g., for `f = obj.method` where obj: MyClass and method: (self, int) -> str
+    /// stores BoundMethod(MyClass, (self, int) -> str)
+    BoundMethod(Box<Type>, Box<Type>),
 }
 
 impl fmt::Display for Type {
@@ -348,6 +353,9 @@ impl fmt::Display for Type {
                     Some(rv) => write!(f, "{{ {} | {} }}", field_strs.join(", "), rv),
                     None => write!(f, "{{ {} }}", field_strs.join(", ")),
                 }
+            }
+            Type::BoundMethod(receiver, method) => {
+                write!(f, "BoundMethod[{receiver}, {method}]")
             }
         }
     }
@@ -523,6 +531,7 @@ impl Type {
             Type::ForAll(_, t) => t.kind_of(),
             Type::Union(_) => Ok(Kind::Star),
             Type::Record(_, _) => Ok(Kind::Star),
+            Type::BoundMethod(_, _) => Ok(Kind::Star),
         }
     }
 
@@ -579,6 +588,10 @@ impl Type {
                         vars.insert(rv.clone(), ());
                     }
                 }
+            }
+            Type::BoundMethod(receiver, method) => {
+                receiver.collect_free_vars(vars, bound);
+                method.collect_free_vars(vars, bound);
             }
         }
     }
