@@ -53,6 +53,8 @@ pub enum AstNode {
     },
     ClassDef {
         name: String,
+        bases: Vec<String>,
+        metaclass: Option<String>,
         body: Vec<AstNode>,
         docstring: Option<String>,
         decorators: Vec<String>,
@@ -506,13 +508,15 @@ impl PythonParser {
             // TODO: extract decorators
             "class_definition" => {
                 let name = self.extract_identifier(&node, source, "name")?;
+                let bases = self.extract_class_bases(&node, source);
+                let metaclass = self.extract_class_metaclass(&node, source);
                 let body = self.extract_class_body(&node, source)?;
                 let decorators = Vec::new();
                 let docstring = node
                     .child_by_field_name("body")
                     .and_then(|body_node| self.extract_docstring(&body_node, source));
 
-                Ok(AstNode::ClassDef { name, body, docstring, decorators, line, col })
+                Ok(AstNode::ClassDef { name, bases, metaclass, body, docstring, decorators, line, col })
             }
             "expression_statement" => {
                 if let Some(child) = node.named_child(0) {
@@ -828,6 +832,48 @@ impl PythonParser {
         }
 
         Ok(body)
+    }
+
+    fn extract_class_bases(&self, node: &Node, source: &str) -> Vec<String> {
+        let mut bases = Vec::new();
+
+        if let Some(arg_list) = node.child_by_field_name("superclasses") {
+            let mut cursor = arg_list.walk();
+            for child in arg_list.children(&mut cursor) {
+                if child.kind() == "keyword_argument" {
+                    continue;
+                }
+                if child.kind() == "identifier" || child.kind() == "attribute" {
+                    if let Ok(base_name) = child.utf8_text(source.as_bytes()) {
+                        bases.push(base_name.to_string());
+                    }
+                }
+            }
+        }
+
+        bases
+    }
+
+    fn extract_class_metaclass(&self, node: &Node, source: &str) -> Option<String> {
+        if let Some(arg_list) = node.child_by_field_name("superclasses") {
+            let mut cursor = arg_list.walk();
+            for child in arg_list.children(&mut cursor) {
+                if child.kind() == "keyword_argument" {
+                    if let Some(name_node) = child.child(0) {
+                        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                            if name == "metaclass" {
+                                if let Some(value_node) = child.child(2) {
+                                    if let Ok(metaclass_name) = value_node.utf8_text(source.as_bytes()) {
+                                        return Some(metaclass_name.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn extract_assignment_target(&self, node: &Node, source: &str) -> Result<String> {

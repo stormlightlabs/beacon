@@ -9,11 +9,16 @@ Implementation details and mod-specific tasks.
 - [ ] Add more comprehensive stdlib stubs (os, sys, pathlib, etc.)
 - [ ] Implement type checking mode awareness (strict/balanced/loose)
 - [ ] Auto-generate stubs from Python runtime introspection
+- [ ] Protocol intersection/union types (Protocol1 & Protocol2)
+- [ ] Overload resolution (@overload decorator)
+- [ ] Method signature compatibility in protocol checking
 
 ---
 
 - [ ] Integration test: `with open('file') as f:` infers file type (requires _IO stub integration)
 - [ ] Integration test: `lst[0]` where `lst: list[int]` infers `int` (requires full test harness)
+- [ ] Integration test: Class inheritance with method override
+- [ ] Integration test: User-defined protocol satisfaction
 
 ## LSP Features
 

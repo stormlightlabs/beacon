@@ -47,6 +47,8 @@ pub enum ProtocolName {
     ContextManager,
     /// Callable protocol: __call__(...) -> T
     Callable,
+    /// User-defined protocol with the given name
+    UserDefined(String),
 }
 
 impl std::fmt::Display for ProtocolName {
@@ -59,6 +61,7 @@ impl std::fmt::Display for ProtocolName {
             ProtocolName::Mapping => write!(f, "Mapping"),
             ProtocolName::ContextManager => write!(f, "ContextManager"),
             ProtocolName::Callable => write!(f, "Callable"),
+            ProtocolName::UserDefined(name) => write!(f, "{name}"),
         }
     }
 }
@@ -146,6 +149,9 @@ impl ProtocolDef {
                     return_type: Type::any(),
                 }],
             },
+            ProtocolName::UserDefined(name) => {
+                Self { name: ProtocolName::UserDefined(name.clone()), required_methods: vec![] }
+            }
         }
     }
 
@@ -171,8 +177,6 @@ impl ProtocolChecker {
     /// TODO: Extend to handle user-defined types via record/class inspection
     /// TODO: Extract element types from generic protocols
     pub fn satisfies(ty: &Type, protocol: &ProtocolName) -> bool {
-        use crate::TypeCtor;
-
         match (ty, protocol) {
             (Type::App(ctor, _), ProtocolName::Iterable) => {
                 matches!(

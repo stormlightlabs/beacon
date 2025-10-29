@@ -434,6 +434,8 @@ print(x)"#;
         let ast = AstNode::Module {
             body: vec![AstNode::ClassDef {
                 name: "MyClass".to_string(),
+                metaclass: None,
+                bases: Vec::new(),
                 body: vec![AstNode::FunctionDef {
                     name: "method".to_string(),
                     args: vec![],

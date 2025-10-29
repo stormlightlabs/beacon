@@ -4,25 +4,21 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 
 ## Type System Extensions
 
-**Requires:** Core type system stability
-
 ### Advanced Protocols & Records
 
-- [ ] User-defined protocol checking (custom iterators, protocols)
-- [ ] Row extension for class inheritance
-- [ ] Structural record types for duck typing
+- [x] User-defined protocol checking (custom iterators, protocols)
+- [x] Row extension for class inheritance
+- [x] Structural record types for duck typing
 - [ ] Protocol intersection and union types
 
 ### Overloads & Decorators
 
 - [ ] Overload resolution for multiple signatures
-- [ ] `@property`, `@staticmethod`, `@classmethod` support
-- [ ] Class-level attributes and class methods
-- [ ] Metaclass-aware construction
+- [x] `@property`, `@staticmethod`, `@classmethod` support
+- [x] Class-level attributes and class methods
+- [x] Metaclass-aware construction
 
 ## LSP Features
-
-**Requires:** Core type system stability
 
 ### Completions
 
@@ -97,17 +93,22 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 ## Mitigated Risks
 
 - **Attribute access soundness:** HasAttr constraints prevent invalid access (HM007)
-- **Constructor safety:** `__init__` validates argument types
+    - Now includes inheritance chain checking via `lookup_attribute_with_inheritance`
+- **Constructor safety:** `__init__` and `__new__` validate argument types
+    - `__new__` checked before `__init__` for metaclass-aware construction
 - **Protocol satisfaction:** Protocol constraints detect interface mismatches (HM006)
+    - Extended to user-defined protocols via structural checking
 - **Graceful degradation:** Type variables and `Any` allow flexible inference
+- **Decorator typing:** @property, @staticmethod, @classmethod properly transform method signatures
+- **Inheritance support:** Row polymorphism enables structural subtyping with method overrides
 
 ## Parking Lot
 
 - [ ] Type checking modes (strict/balanced/loose)
+- [ ] Overload resolution for multiple signatures (@overload decorator)
 
 **Future Protocol Enhancements:**
 
-- Additional builtin protocols (Sized, Container, Callable, etc.)
-- User-defined Protocol classes from typing.Protocol
-- Protocol intersection and union types
+- Protocol intersection and union types (Protocol1 & Protocol2, Protocol1 | Protocol2)
 - Variance in protocol method signatures
+- Method signature compatibility checking (currently name-only)

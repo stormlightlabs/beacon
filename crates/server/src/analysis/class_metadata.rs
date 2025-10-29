@@ -16,12 +16,45 @@ pub struct ClassMetadata {
     /// The type signature of __init__ if present
     /// Parameters include 'self' as first parameter
     pub init_type: Option<Type>,
+
+    /// Whether this class is a Protocol (from typing.Protocol)
+    pub is_protocol: bool,
+
+    /// Properties defined with @property decorator (method name → return type)
+    pub properties: HashMap<String, Type>,
+
+    /// Methods decorated with @classmethod
+    pub classmethods: HashMap<String, Type>,
+
+    /// Methods decorated with @staticmethod
+    pub staticmethods: HashMap<String, Type>,
+
+    /// Custom metaclass if specified (e.g., class Foo(metaclass=Meta))
+    pub metaclass: Option<String>,
+
+    /// The type signature of __new__ if present
+    pub new_type: Option<Type>,
+
+    /// Base classes for inheritance
+    pub base_classes: Vec<String>,
 }
 
 impl ClassMetadata {
     /// Create new class metadata with the given name
     pub fn new(name: String) -> Self {
-        Self { name, fields: HashMap::new(), methods: HashMap::new(), init_type: None }
+        Self {
+            name,
+            fields: HashMap::new(),
+            methods: HashMap::new(),
+            init_type: None,
+            is_protocol: false,
+            properties: HashMap::new(),
+            classmethods: HashMap::new(),
+            staticmethods: HashMap::new(),
+            metaclass: None,
+            new_type: None,
+            base_classes: Vec::new(),
+        }
     }
 
     /// Add a field with its type
@@ -40,18 +73,100 @@ impl ClassMetadata {
     }
 
     /// Look up a field or method by name
+    /// Priority: properties > fields > classmethods > staticmethods > methods
     pub fn lookup_attribute(&self, attr_name: &str) -> Option<&Type> {
-        self.fields.get(attr_name).or_else(|| self.methods.get(attr_name))
+        self.properties
+            .get(attr_name)
+            .or_else(|| self.fields.get(attr_name))
+            .or_else(|| self.classmethods.get(attr_name))
+            .or_else(|| self.staticmethods.get(attr_name))
+            .or_else(|| self.methods.get(attr_name))
     }
 
     /// Check if an attribute is a method
     pub fn is_method(&self, attr_name: &str) -> bool {
         self.methods.contains_key(attr_name)
+            || self.classmethods.contains_key(attr_name)
+            || self.staticmethods.contains_key(attr_name)
     }
 
     /// Look up a method by name
     pub fn lookup_method(&self, method_name: &str) -> Option<&Type> {
-        self.methods.get(method_name)
+        self.classmethods
+            .get(method_name)
+            .or_else(|| self.staticmethods.get(method_name))
+            .or_else(|| self.methods.get(method_name))
+    }
+
+    /// Mark this class as a Protocol
+    pub fn set_protocol(&mut self, is_protocol: bool) {
+        self.is_protocol = is_protocol;
+    }
+
+    /// Add a property (from @property decorator)
+    pub fn add_property(&mut self, name: String, return_type: Type) {
+        self.properties.insert(name, return_type);
+    }
+
+    /// Add a classmethod (from @classmethod decorator)
+    pub fn add_classmethod(&mut self, name: String, method_type: Type) {
+        self.classmethods.insert(name, method_type);
+    }
+
+    /// Add a staticmethod (from @staticmethod decorator)
+    pub fn add_staticmethod(&mut self, name: String, method_type: Type) {
+        self.staticmethods.insert(name, method_type);
+    }
+
+    /// Set the custom metaclass
+    pub fn set_metaclass(&mut self, metaclass: String) {
+        self.metaclass = Some(metaclass);
+    }
+
+    /// Set the __new__ method type
+    pub fn set_new_type(&mut self, new_type: Type) {
+        self.new_type = Some(new_type);
+    }
+
+    /// Add a base class
+    pub fn add_base_class(&mut self, base: String) {
+        self.base_classes.push(base);
+    }
+
+    /// Get all required method signatures for protocol checking
+    /// Returns (method_name, method_type) pairs for all methods in this protocol
+    pub fn get_protocol_methods(&self) -> Vec<(&str, &Type)> {
+        self.methods.iter().map(|(name, ty)| (name.as_str(), ty)).collect()
+    }
+
+    /// Build a structural record type from this class's fields and methods
+    ///
+    /// Creates a record type like: { field1: T1, field2: T2, method1: (Self, Args) -> R, ... }
+    /// This enables structural subtyping via row polymorphism.
+    pub fn to_record_type(&self) -> Type {
+        let mut fields_vec = Vec::new();
+
+        for (name, ty) in &self.properties {
+            fields_vec.push((name.clone(), ty.clone()));
+        }
+
+        for (name, ty) in &self.fields {
+            fields_vec.push((name.clone(), ty.clone()));
+        }
+
+        for (name, ty) in &self.methods {
+            fields_vec.push((name.clone(), ty.clone()));
+        }
+        for (name, ty) in &self.classmethods {
+            fields_vec.push((name.clone(), ty.clone()));
+        }
+        for (name, ty) in &self.staticmethods {
+            fields_vec.push((name.clone(), ty.clone()));
+        }
+
+        fields_vec.sort_by(|a, b| a.0.cmp(&b.0));
+
+        Type::Record(fields_vec, None)
     }
 }
 
@@ -95,6 +210,54 @@ impl ClassRegistry {
     pub fn lookup_method(&self, class_name: &str, method_name: &str) -> Option<&Type> {
         self.get_class(class_name)
             .and_then(|metadata| metadata.lookup_method(method_name))
+    }
+
+    /// Build a structural record type for a class including inherited members
+    ///
+    /// Uses row polymorphism to represent inheritance:
+    /// - Base class: { x: int, foo: () -> str }
+    /// - Derived class: { x: int, foo: () -> str, y: float, bar: () -> bool }
+    ///
+    /// The derived class record extends the base class record with additional fields.
+    pub fn class_to_record(&self, class_name: &str) -> Option<Type> {
+        let metadata = self.get_class(class_name)?;
+        let mut all_fields = HashMap::new();
+
+        for base_name in &metadata.base_classes {
+            if let Some(Type::Record(base_fields, _)) = self.class_to_record(base_name) {
+                for (name, ty) in base_fields {
+                    all_fields.insert(name, ty);
+                }
+            }
+        }
+
+        if let Type::Record(own_fields, _) = metadata.to_record_type() {
+            for (name, ty) in own_fields {
+                all_fields.insert(name, ty);
+            }
+        }
+
+        let mut fields_vec: Vec<(String, Type)> = all_fields.into_iter().collect();
+        fields_vec.sort_by(|a, b| a.0.cmp(&b.0));
+
+        Some(Type::Record(fields_vec, None))
+    }
+
+    /// Look up an attribute in a class, checking base classes if needed
+    pub fn lookup_attribute_with_inheritance(&self, class_name: &str, attr_name: &str) -> Option<Type> {
+        if let Some(ty) = self.lookup_attribute(class_name, attr_name) {
+            return Some(ty.clone());
+        }
+
+        if let Some(metadata) = self.get_class(class_name) {
+            for base_name in &metadata.base_classes {
+                if let Some(ty) = self.lookup_attribute_with_inheritance(base_name, attr_name) {
+                    return Some(ty);
+                }
+            }
+        }
+
+        None
     }
 }
 

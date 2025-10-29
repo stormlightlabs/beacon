@@ -1596,6 +1596,8 @@ mod tests {
         let ast = AstNode::Module {
             body: vec![AstNode::ClassDef {
                 name: "MyClass".to_string(),
+                metaclass: None,
+                bases: Vec::new(),
                 body: vec![AstNode::FunctionDef {
                     name: "method".to_string(),
                     args: vec![Parameter {
@@ -2009,6 +2011,8 @@ mod tests {
         let ast = AstNode::Module {
             body: vec![AstNode::ClassDef {
                 name: "MyClass".to_string(),
+                metaclass: None,
+                bases: Vec::new(),
                 body: vec![AstNode::Pass { line: 2, col: 5 }],
                 line: 1,
                 col: 1,

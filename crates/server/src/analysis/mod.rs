@@ -22,6 +22,7 @@ use crate::config::Config;
 use crate::document::DocumentManager;
 use crate::utils;
 use crate::{analysis::class_metadata::ClassRegistry, cache::CacheManager};
+use beacon_core::TypeCtor;
 use beacon_core::{
     Subst, Type, TypeScheme, TypeVarGen, Unifier,
     errors::{AnalysisError, Result},
@@ -184,10 +185,24 @@ impl Analyzer {
                     Self::extract_stub_classes_into_registry(stmt, class_registry);
                 }
             }
-            AstNode::ClassDef { name, body, .. } => {
+            AstNode::ClassDef { name, bases, metaclass, body, .. } => {
                 let mut metadata = class_metadata::ClassMetadata::new(name.clone());
+                let is_protocol = bases
+                    .iter()
+                    .any(|base| base == "Protocol" || base.ends_with(".Protocol") || base == "typing.Protocol");
+                metadata.set_protocol(is_protocol);
+
+                for base in bases {
+                    metadata.add_base_class(base.clone());
+                }
+
+                if let Some(meta) = metaclass {
+                    metadata.set_metaclass(meta.clone());
+                }
+
                 for stmt in body {
-                    if let AstNode::FunctionDef { name: method_name, args: params, return_type, .. } = stmt {
+                    if let AstNode::FunctionDef { name: method_name, args: params, return_type, decorators, .. } = stmt
+                    {
                         let param_types: Vec<beacon_core::Type> = params
                             .iter()
                             .filter_map(|p| p.type_annotation.as_ref())
@@ -199,12 +214,29 @@ impl Analyzer {
                             .and_then(|ann| Self::parse_type_annotation(ann))
                             .unwrap_or_else(beacon_core::Type::any);
 
-                        let func_type = beacon_core::Type::fun(param_types, ret_type);
+                        let has_property = decorators.iter().any(|d| d == "property");
+                        let has_staticmethod = decorators.iter().any(|d| d == "staticmethod");
+                        let has_classmethod = decorators.iter().any(|d| d == "classmethod");
 
                         if method_name == "__init__" {
+                            let func_type = beacon_core::Type::fun(param_types, ret_type);
                             metadata.set_init_type(func_type);
+                        } else if method_name == "__new__" {
+                            let func_type = beacon_core::Type::fun(param_types, ret_type);
+                            metadata.set_new_type(func_type);
+                        } else if has_property {
+                            metadata.add_property(method_name.clone(), ret_type);
+                        } else if has_staticmethod {
+                            let static_param_types: Vec<beacon_core::Type> = if !param_types.is_empty() {
+                                param_types.iter().skip(1).cloned().collect()
+                            } else {
+                                param_types
+                            };
+                            metadata.add_staticmethod(method_name.clone(), Type::fun(static_param_types, ret_type));
+                        } else if has_classmethod {
+                            metadata.add_classmethod(method_name.clone(), Type::fun(param_types, ret_type));
                         } else {
-                            metadata.add_method(method_name.clone(), func_type);
+                            metadata.add_method(method_name.clone(), Type::fun(param_types, ret_type));
                         }
                     }
                 }
@@ -231,26 +263,24 @@ impl Analyzer {
         if let Some(idx) = annotation.find('[') {
             let base = &annotation[..idx];
             let base_type = match base {
-                "list" => beacon_core::Type::Con(beacon_core::TypeCtor::List),
-                "dict" => beacon_core::Type::Con(beacon_core::TypeCtor::Dict),
-                "set" => beacon_core::Type::Con(beacon_core::TypeCtor::Set),
-                "tuple" => beacon_core::Type::Con(beacon_core::TypeCtor::Tuple),
-                _ => beacon_core::Type::Con(beacon_core::TypeCtor::Class(base.to_string())),
+                "list" => beacon_core::Type::Con(TypeCtor::List),
+                "dict" => beacon_core::Type::Con(TypeCtor::Dict),
+                "set" => beacon_core::Type::Con(TypeCtor::Set),
+                "tuple" => beacon_core::Type::Con(TypeCtor::Tuple),
+                _ => beacon_core::Type::Con(TypeCtor::Class(base.to_string())),
             };
             // TODO: Parse and apply generic parameters properly
             return Some(base_type);
         }
 
         match annotation {
-            "int" => Some(beacon_core::Type::Con(beacon_core::TypeCtor::Int)),
-            "float" => Some(beacon_core::Type::Con(beacon_core::TypeCtor::Float)),
-            "str" => Some(beacon_core::Type::Con(beacon_core::TypeCtor::String)),
-            "bool" => Some(beacon_core::Type::Con(beacon_core::TypeCtor::Bool)),
-            "None" => Some(beacon_core::Type::Con(beacon_core::TypeCtor::NoneType)),
-            "NoneType" => Some(beacon_core::Type::Con(beacon_core::TypeCtor::NoneType)),
-            _ => Some(beacon_core::Type::Con(beacon_core::TypeCtor::Class(
-                annotation.to_string(),
-            ))),
+            "int" => Some(beacon_core::Type::Con(TypeCtor::Int)),
+            "float" => Some(beacon_core::Type::Con(TypeCtor::Float)),
+            "str" => Some(beacon_core::Type::Con(TypeCtor::String)),
+            "bool" => Some(beacon_core::Type::Con(TypeCtor::Bool)),
+            "None" => Some(beacon_core::Type::Con(TypeCtor::NoneType)),
+            "NoneType" => Some(beacon_core::Type::Con(TypeCtor::NoneType)),
+            _ => Some(beacon_core::Type::Con(TypeCtor::Class(annotation.to_string()))),
         }
     }
 
@@ -306,7 +336,7 @@ impl Analyzer {
                 for stmt in body {
                     Self::visit_node_with_env(stmt, env, ctx, stub_cache)?;
                 }
-                Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
+                Ok(Type::Con(TypeCtor::Module("".into())))
             }
             AstNode::FunctionDef { name, args, return_type, body, decorators, line, col, .. } => {
                 let param_types: Vec<Type> = args
@@ -363,7 +393,7 @@ impl Analyzer {
             }
 
             AstNode::ClassDef { name, body, decorators, line, col, .. } => {
-                let class_type = Type::Con(beacon_core::TypeCtor::Class(name.clone()));
+                let class_type = Type::Con(TypeCtor::Class(name.clone()));
                 let metadata = Self::extract_class_metadata(name, body, env);
                 ctx.class_registry.register_class(name.clone(), metadata);
 
@@ -521,7 +551,7 @@ impl Analyzer {
             }
             AstNode::Import { module, alias, line, col } => {
                 let module_name = alias.as_ref().unwrap_or(module);
-                let module_type = Type::Con(beacon_core::TypeCtor::Module(module.clone()));
+                let module_type = Type::Con(TypeCtor::Module(module.clone()));
                 env.bind(module_name.clone(), TypeScheme::mono(module_type.clone()));
                 ctx.record_type(*line, *col, module_type.clone());
                 Ok(module_type)
@@ -548,7 +578,7 @@ impl Analyzer {
                         env.bind(name.clone(), TypeScheme::mono(ty));
                     }
                 }
-                let module_type = Type::Con(beacon_core::TypeCtor::Module(module.clone()));
+                let module_type = Type::Con(TypeCtor::Module(module.clone()));
                 ctx.record_type(*line, *col, module_type.clone());
                 Ok(module_type)
             }
@@ -781,7 +811,7 @@ impl Analyzer {
                 }
 
                 let elem_ty = Self::visit_node_with_env(element, &mut comp_env, ctx, stub_cache)?;
-                let set_ty = Type::App(Box::new(Type::Con(beacon_core::TypeCtor::Set)), Box::new(elem_ty));
+                let set_ty = Type::App(Box::new(Type::Con(TypeCtor::Set)), Box::new(elem_ty));
 
                 ctx.record_type(*line, *col, set_ty.clone());
                 Ok(set_ty)
@@ -859,6 +889,42 @@ impl Analyzer {
         Self::visit_node_with_env(node, &mut env, &mut ctx, None)
     }
 
+    /// Check if a type satisfies a user-defined protocol
+    ///
+    /// Checks structural conformance by verifying that the type has all required methods with compatible signatures.
+    fn check_user_defined_protocol(
+        ty: &Type, protocol_name: &str, class_registry: &class_metadata::ClassRegistry,
+    ) -> bool {
+        let protocol_meta = match class_registry.get_class(protocol_name) {
+            Some(meta) if meta.is_protocol => meta,
+            _ => return false,
+        };
+
+        let required_methods = protocol_meta.get_protocol_methods();
+        if required_methods.is_empty() {
+            return true;
+        }
+
+        match ty {
+            Type::Con(TypeCtor::Class(class_name)) => {
+                if let Some(class_meta) = class_registry.get_class(class_name) {
+                    for (method_name, _method_type) in required_methods {
+                        if class_meta.lookup_method(method_name).is_none() {
+                            return false;
+                        }
+                        // TODO: Check method signature compatibility (parameter types, return type)
+                        // For now, we just check that the method exists
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
+            Type::Con(TypeCtor::Any) => true,
+            _ => false,
+        }
+    }
+
     /// Solve a set of constraints using beacon-core's unification algorithm
     /// Returns a substitution and a list of type errors encountered during solving.
     /// Errors are accumulated rather than failing fast to provide comprehensive feedback.
@@ -882,14 +948,13 @@ impl Analyzer {
                 Constraint::Call(func_ty, arg_types, ret_ty, span) => {
                     let applied_func = subst.apply(&func_ty);
 
-                    if let Type::Con(beacon_core::TypeCtor::Class(class_name)) = &applied_func {
+                    if let Type::Con(TypeCtor::Class(class_name)) = &applied_func {
                         if let Some(metadata) = class_registry.get_class(class_name) {
-                            if let Some(init_ty) = &metadata.init_type {
-                                if let Type::Fun(params, _) = init_ty {
-                                    let init_params: Vec<Type> = params.iter().skip(1).cloned().collect();
-
-                                    if init_params.len() == arg_types.len() {
-                                        for (provided_arg, expected_param) in arg_types.iter().zip(init_params.iter()) {
+                            if let Some(ctor_ty) = metadata.new_type.as_ref().or(metadata.init_type.as_ref()) {
+                                if let Type::Fun(params, _) = ctor_ty {
+                                    let ctor_params: Vec<Type> = params.iter().skip(1).cloned().collect();
+                                    if ctor_params.len() == arg_types.len() {
+                                        for (provided_arg, expected_param) in arg_types.iter().zip(ctor_params.iter()) {
                                             match Unifier::unify(
                                                 &subst.apply(provided_arg),
                                                 &subst.apply(expected_param),
@@ -991,8 +1056,10 @@ impl Analyzer {
                     let applied_obj = subst.apply(&obj_ty);
 
                     match &applied_obj {
-                        Type::Con(beacon_core::TypeCtor::Class(class_name)) => {
-                            if let Some(resolved_attr_ty) = class_registry.lookup_attribute(class_name, &attr_name) {
+                        Type::Con(TypeCtor::Class(class_name)) => {
+                            if let Some(resolved_attr_ty) =
+                                class_registry.lookup_attribute_with_inheritance(class_name, &attr_name)
+                            {
                                 let final_type = if class_registry.is_method(class_name, &attr_name) {
                                     Type::BoundMethod(Box::new(applied_obj.clone()), Box::new(resolved_attr_ty.clone()))
                                 } else {
@@ -1020,15 +1087,15 @@ impl Analyzer {
                         }
                         Type::Con(type_ctor) => {
                             let class_name = match type_ctor {
-                                beacon_core::TypeCtor::String => Some("str"),
-                                beacon_core::TypeCtor::Int => Some("int"),
-                                beacon_core::TypeCtor::Float => Some("float"),
-                                beacon_core::TypeCtor::Bool => Some("bool"),
-                                beacon_core::TypeCtor::List => Some("list"),
-                                beacon_core::TypeCtor::Dict => Some("dict"),
-                                beacon_core::TypeCtor::Set => Some("set"),
-                                beacon_core::TypeCtor::Tuple => Some("tuple"),
-                                beacon_core::TypeCtor::Any => {
+                                TypeCtor::String => Some("str"),
+                                TypeCtor::Int => Some("int"),
+                                TypeCtor::Float => Some("float"),
+                                TypeCtor::Bool => Some("bool"),
+                                TypeCtor::List => Some("list"),
+                                TypeCtor::Dict => Some("dict"),
+                                TypeCtor::Set => Some("set"),
+                                TypeCtor::Tuple => Some("tuple"),
+                                TypeCtor::Any => {
                                     if let Ok(s) = Unifier::unify(&subst.apply(&attr_ty), &Type::any()) {
                                         subst = s.compose(subst);
                                     }
@@ -1081,8 +1148,14 @@ impl Analyzer {
 
                 Constraint::Protocol(obj_ty, protocol_name, elem_ty, span) => {
                     let applied_obj = subst.apply(&obj_ty);
+                    let satisfies = match &protocol_name {
+                        beacon_core::ProtocolName::UserDefined(proto_name) => {
+                            Self::check_user_defined_protocol(&applied_obj, proto_name, class_registry)
+                        }
+                        _ => beacon_core::ProtocolChecker::satisfies(&applied_obj, &protocol_name),
+                    };
 
-                    if beacon_core::ProtocolChecker::satisfies(&applied_obj, &protocol_name) {
+                    if satisfies {
                         let extracted_elem = match protocol_name {
                             beacon_core::ProtocolName::Iterable
                             | beacon_core::ProtocolName::Iterator
@@ -1132,7 +1205,10 @@ impl Analyzer {
         let mut metadata = class_metadata::ClassMetadata::new(name.to_string());
 
         for stmt in body {
-            if let AstNode::FunctionDef { name: method_name, args, return_type, body: method_body, .. } = stmt {
+            if let AstNode::FunctionDef {
+                name: method_name, args, return_type, body: method_body, decorators, ..
+            } = stmt
+            {
                 let param_types: Vec<Type> = args
                     .iter()
                     .map(|param| {
@@ -1149,16 +1225,32 @@ impl Analyzer {
                     .map(|ann| env.parse_annotation_or_any(ann))
                     .unwrap_or_else(|| Type::Var(env.fresh_var()));
 
-                let method_type = Type::fun(param_types.clone(), ret_type);
+                let has_property = decorators.iter().any(|d| d == "property");
+                let has_staticmethod = decorators.iter().any(|d| d == "staticmethod");
+                let has_classmethod = decorators.iter().any(|d| d == "classmethod");
 
                 if method_name == "__init__" {
+                    let method_type = Type::fun(param_types.clone(), ret_type);
                     metadata.set_init_type(method_type);
 
                     for body_stmt in method_body {
                         Self::extract_field_assignments(body_stmt, &mut metadata, env);
                     }
+                } else if method_name == "__new__" {
+                    metadata.set_new_type(Type::fun(param_types.clone(), ret_type));
+                } else if has_property {
+                    metadata.add_property(method_name.clone(), ret_type);
+                } else if has_staticmethod {
+                    let static_param_types: Vec<Type> = if !param_types.is_empty() {
+                        param_types.iter().skip(1).cloned().collect()
+                    } else {
+                        param_types.clone()
+                    };
+                    metadata.add_staticmethod(method_name.clone(), Type::fun(static_param_types, ret_type));
+                } else if has_classmethod {
+                    metadata.add_classmethod(method_name.clone(), Type::fun(param_types.clone(), ret_type));
                 } else {
-                    metadata.add_method(method_name.clone(), method_type);
+                    metadata.add_method(method_name.clone(), Type::fun(param_types.clone(), ret_type));
                 }
             }
         }
@@ -1619,10 +1711,10 @@ impl Analyzer {
             "str" => Type::string(),
             "float" => Type::float(),
             "bool" => Type::bool(),
-            "list" => Type::Con(beacon_core::TypeCtor::List),
-            "dict" => Type::Con(beacon_core::TypeCtor::Dict),
-            "set" => Type::Con(beacon_core::TypeCtor::Set),
-            "tuple" => Type::Con(beacon_core::TypeCtor::Tuple),
+            "list" => Type::Con(TypeCtor::List),
+            "dict" => Type::Con(TypeCtor::Dict),
+            "set" => Type::Con(TypeCtor::Set),
+            "tuple" => Type::Con(TypeCtor::Tuple),
             _ => Type::Var(TypeVarGen::new().fresh()),
         }
     }
@@ -1651,7 +1743,7 @@ mod tests {
 
         #[allow(deprecated)]
         let ty = analyzer._visit_node(&lit, &mut constraints).unwrap();
-        assert!(matches!(ty, Type::Con(beacon_core::TypeCtor::Int)));
+        assert!(matches!(ty, Type::Con(TypeCtor::Int)));
     }
 
     #[test]
@@ -1948,18 +2040,15 @@ z = "hello"
 
         assert!(!result.type_map.is_empty(), "Type map should be populated");
 
-        let has_int = result
-            .type_map
-            .values()
-            .any(|t| matches!(t, Type::Con(beacon_core::TypeCtor::Int)));
+        let has_int = result.type_map.values().any(|t| matches!(t, Type::Con(TypeCtor::Int)));
         let has_float = result
             .type_map
             .values()
-            .any(|t| matches!(t, Type::Con(beacon_core::TypeCtor::Float)));
+            .any(|t| matches!(t, Type::Con(TypeCtor::Float)));
         let has_string = result
             .type_map
             .values()
-            .any(|t| matches!(t, Type::Con(beacon_core::TypeCtor::String)));
+            .any(|t| matches!(t, Type::Con(TypeCtor::String)));
 
         assert!(has_int, "Type map should contain int type");
         assert!(has_float, "Type map should contain float type");
