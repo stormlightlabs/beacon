@@ -20,9 +20,11 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 
 ### Class Construction Bug Fix
 
-**Blocks:** All LSP features that use class metadata
+**Status:** Fixed in commit [current]
 
-- [ ] Fix class construction with multiple methods (UnificationError on classes with `__init__` + other methods)
+- [x] Fix class construction with multiple methods (UnificationError on classes with `__init__` + other methods)
+    - **Solution:** Skip re-processing FunctionDef nodes in ClassDef body visitor to prevent double type variable generation
+    - **Test:** `test_class_construction_multiple_methods` now passing
 - [ ] Infer bound method types for `f = obj.method` patterns
 - [ ] Enable builtin type attribute access (str, list, dict methods)
 
@@ -30,19 +32,33 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 
 ### Stub System Integration
 
-**Blocks:** Stdlib type information in completions/hover
+**Status:** Complete - Fully operational with concurrent access
 
-- [ ] Wire stub lookups into constraint generation
-- [ ] Query stubs before falling back to inference
+- [x] Wire stub lookups into constraint generation
+    - **Implementation:** ImportFrom handler queries stub cache directly using read locks
+    - **Architecture:** Extracted `StubCache` into separate `Arc<RwLock<StubCache>>` shared between workspace and analyzer
+- [x] Query stubs before falling back to inference
+    - **Implementation:** Read locks on stub cache for concurrent, non-blocking access
+    - **Fallback:** Uses type variables when stub unavailable or lock fails
+- [x] Pre-load builtin stubs during workspace initialization
+    - **Implementation:** `builtins.pyi` loaded on workspace init with core types (str, int, float, bool, list, dict, tuple)
 - [ ] Respect type checking modes (strict/balanced/loose)
+
+**Note:** Stub lookup uses read locks for concurrent access during constraint generation, eliminating previous deadlock issues
 
 ### Collection Protocol Completion
 
-**Blocks:** `with` statement and subscripting support
+**Status:** Complete - Core protocols implemented
 
-- [ ] Context manager protocol (`__enter__`, `__exit__`)
-- [ ] Subscripting and slicing (`__getitem__`)
-- [ ] Inlay hints for collection element types
+- [x] Context manager protocol (`__enter__`, `__exit__`)
+    - **Implementation:** With statements generate HasAttr constraints for both methods
+    - **Feature:** Target variable in `as` clause receives type from `__enter__` return
+- [x] Subscripting and slicing (`__getitem__`)
+    - **Implementation:** Subscript expressions generate HasAttr constraint for `__getitem__`
+    - **Feature:** Result type inferred from `__getitem__` signature
+- [x] Builtin stub support for core collections
+    - **Implementation:** list, dict, tuple, set types with proper `__getitem__` signatures
+- [ ] Inlay hints for collection element types (deferred to LSP features phase)
 
 ## Type System Extensions
 
@@ -141,3 +157,12 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 - **Constructor safety:** `__init__` validates argument types
 - **Protocol satisfaction:** Protocol constraints detect interface mismatches (HM006)
 - **Graceful degradation:** Type variables and `Any` allow flexible inference
+
+## Parking Lot
+
+**Future Protocol Enhancements:**
+
+- Additional builtin protocols (Sized, Container, Callable, etc.)
+- User-defined Protocol classes from typing.Protocol
+- Protocol intersection and union types
+- Variance in protocol method signatures

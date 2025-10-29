@@ -81,11 +81,13 @@ impl Backend {
     pub fn new(client: Client) -> Self {
         let config = Config::default();
         let documents = Arc::new(DocumentManager::new().expect("Failed to create document manager"));
-        let analyzer = Arc::new(RwLock::new(analysis::Analyzer::new(
-            config.clone(),
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), (*documents).clone())));
+
+        let analyzer = Arc::new(RwLock::new(analysis::Analyzer::with_workspace(
+            config,
             (*documents).clone(),
+            workspace.clone(),
         )));
-        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, (*documents).clone())));
 
         let interpreter_path = interpreter::find_python_interpreter(None);
         let introspection_cache = cache::IntrospectionCache::new(None);

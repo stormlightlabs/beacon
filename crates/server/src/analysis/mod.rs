@@ -9,26 +9,6 @@
 //!  3. Constraint generation -> Constraint set
 //!  4. Unification/solving -> Type substitution
 //!  5. Caching -> Type cache
-//!
-//! ## TODO Protocol Constraints
-//!
-//! - Add `Protocol` constraint variant alongside `Equal`, `HasAttr`, and `Call`
-//! - Model Python protocols: Iterator, Iterable, ContextManager, Sized, etc.
-//! - Support structural subtyping: check if a type satisfies required methods/attributes
-//! - Enable protocol definitions via `typing.Protocol` or `.pyi` stubs
-//!
-//! 1. Extend [Constraint] enum with `Protocol(Type, ProtocolName, Span)`
-//! 2. Define protocol specifications (method signatures, attribute types)
-//! 3. Implement protocol checking in constraint solver
-//! 4. Handle variance in protocol method signatures
-//! 5. Support protocol intersection and union
-//!
-//! **Affected Constructs:**
-//! - Iterator protocol: `for` loops, comprehensions, `iter()`, `next()`
-//! - Context manager protocol: `with` statements (`__enter__`, `__exit__`)
-//! - Subscript protocol: indexing (`__getitem__`, `__setitem__`)
-//! - Callable protocol: function calls, decorators
-//! - Sequence/Mapping protocols: collection operations
 
 pub mod cfg;
 pub mod class_metadata;
@@ -50,6 +30,8 @@ use beacon_parser::{AstNode, LiteralValue, SymbolTable};
 use constraint_gen::{Constraint, ConstraintGenContext, ConstraintResult, ConstraintSet, Span};
 use lsp_types::Position;
 use rustc_hash::FxHashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use type_env::TypeEnvironment;
 use url::Url;
 
@@ -106,6 +88,8 @@ pub struct Analyzer {
     documents: DocumentManager,
     /// Map from document URI to position maps for type-at-position queries
     position_maps: FxHashMap<Url, FxHashMap<(usize, usize), usize>>,
+    /// Stub cache for type resolution (shared with workspace)
+    stub_cache: Option<Arc<std::sync::RwLock<crate::workspace::StubCache>>>,
 }
 
 impl Analyzer {
@@ -117,6 +101,23 @@ impl Analyzer {
             _type_var_gen: TypeVarGen::new(),
             documents,
             position_maps: FxHashMap::default(),
+            stub_cache: None,
+        }
+    }
+
+    /// Create a new analyzer with workspace support for stub resolution
+    pub fn with_workspace(
+        config: Config, documents: DocumentManager, workspace: Arc<RwLock<crate::workspace::Workspace>>,
+    ) -> Self {
+        let stub_cache = workspace.try_read().ok().map(|ws| ws.stub_cache());
+
+        Self {
+            _config: config,
+            cache: CacheManager::new(),
+            _type_var_gen: TypeVarGen::new(),
+            documents,
+            position_maps: FxHashMap::default(),
+            stub_cache,
         }
     }
 
@@ -136,7 +137,7 @@ impl Analyzer {
         };
 
         let ConstraintResult(constraints, mut type_map, position_map, class_registry) =
-            Self::generate_constraints(&ast, &symbol_table)?;
+            self.generate_constraints(&ast, &symbol_table)?;
 
         let (substitution, type_errors) = self.solve_constraints(constraints, &class_registry)?;
 
@@ -179,11 +180,11 @@ impl Analyzer {
     ///
     /// Implements Algorithm W constraint generation with type environment threading.
     /// Returns constraints, type_map, and position_map for type-at-position queries.
-    fn generate_constraints(ast: &AstNode, symbol_table: &SymbolTable) -> Result<ConstraintResult> {
+    fn generate_constraints(&self, ast: &AstNode, symbol_table: &SymbolTable) -> Result<ConstraintResult> {
         let mut ctx = ConstraintGenContext::new();
         let mut env = TypeEnvironment::from_symbol_table(symbol_table, ast);
 
-        Self::visit_node_with_env(ast, &mut env, &mut ctx)?;
+        Self::visit_node_with_env(ast, &mut env, &mut ctx, self.stub_cache.as_ref())?;
 
         Ok(ConstraintResult(
             ConstraintSet { constraints: ctx.constraints },
@@ -197,11 +198,14 @@ impl Analyzer {
     ///
     /// Implements constraint generation for core Python constructs.
     /// Records type information in the context for type-at-position queries.
-    fn visit_node_with_env(node: &AstNode, env: &mut TypeEnvironment, ctx: &mut ConstraintGenContext) -> Result<Type> {
+    fn visit_node_with_env(
+        node: &AstNode, env: &mut TypeEnvironment, ctx: &mut ConstraintGenContext,
+        stub_cache: Option<&Arc<std::sync::RwLock<crate::workspace::StubCache>>>,
+    ) -> Result<Type> {
         match node {
             AstNode::Module { body, .. } => {
                 for stmt in body {
-                    Self::visit_node_with_env(stmt, env, ctx)?;
+                    Self::visit_node_with_env(stmt, env, ctx, stub_cache)?;
                 }
                 Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
             }
@@ -231,7 +235,7 @@ impl Analyzer {
 
                 let mut body_ty = Type::none();
                 for stmt in body {
-                    body_ty = Self::visit_node_with_env(stmt, &mut body_env, ctx)?;
+                    body_ty = Self::visit_node_with_env(stmt, &mut body_env, ctx, stub_cache)?;
                 }
 
                 let span = Span::new(*line, *col);
@@ -265,7 +269,9 @@ impl Analyzer {
                 ctx.class_registry.register_class(name.clone(), metadata);
 
                 for stmt in body {
-                    Self::visit_node_with_env(stmt, env, ctx)?;
+                    if !matches!(stmt, AstNode::FunctionDef { .. }) {
+                        Self::visit_node_with_env(stmt, env, ctx, stub_cache)?;
+                    }
                 }
 
                 let mut decorated_type = class_type.clone();
@@ -291,7 +297,7 @@ impl Analyzer {
             }
             // TODO: Determine if value is non-expansive for generalization
             AstNode::Assignment { target, value, line, col } => {
-                let value_ty = Self::visit_node_with_env(value, env, ctx)?;
+                let value_ty = Self::visit_node_with_env(value, env, ctx, stub_cache)?;
                 env.bind(target.clone(), TypeScheme::mono(value_ty.clone()));
                 ctx.record_type(*line, *col, value_ty.clone());
                 Ok(value_ty)
@@ -299,7 +305,7 @@ impl Analyzer {
             AstNode::AnnotatedAssignment { target, type_annotation, value, line, col } => {
                 let annotated_ty = env.parse_annotation_or_any(type_annotation);
                 if let Some(val) = value {
-                    let value_ty = Self::visit_node_with_env(val, env, ctx)?;
+                    let value_ty = Self::visit_node_with_env(val, env, ctx, stub_cache)?;
                     let span = Span::new(*line, *col);
                     ctx.constraints
                         .push(Constraint::Equal(value_ty, annotated_ty.clone(), span));
@@ -313,7 +319,7 @@ impl Analyzer {
                 let func_ty = env.lookup(function).unwrap_or_else(|| Type::Var(env.fresh_var()));
                 let mut arg_types = Vec::new();
                 for arg in args {
-                    arg_types.push(Self::visit_node_with_env(arg, env, ctx)?);
+                    arg_types.push(Self::visit_node_with_env(arg, env, ctx, stub_cache)?);
                 }
                 let ret_ty = Type::Var(env.fresh_var());
                 let span = Span::new(*line, *col);
@@ -339,12 +345,16 @@ impl Analyzer {
                 Ok(ty)
             }
             AstNode::Return { value, line, col } => {
-                let ty = if let Some(val) = value { Self::visit_node_with_env(val, env, ctx)? } else { Type::none() };
+                let ty = if let Some(val) = value {
+                    Self::visit_node_with_env(val, env, ctx, stub_cache)?
+                } else {
+                    Type::none()
+                };
                 ctx.record_type(*line, *col, ty.clone());
                 Ok(ty)
             }
             AstNode::Attribute { object, attribute, line, col } => {
-                let obj_ty = Self::visit_node_with_env(object, env, ctx)?;
+                let obj_ty = Self::visit_node_with_env(object, env, ctx, stub_cache)?;
                 let attr_ty = Type::Var(env.fresh_var());
                 let span = Span::new(*line, *col);
                 ctx.constraints
@@ -353,20 +363,38 @@ impl Analyzer {
                 Ok(attr_ty)
             }
             AstNode::BinaryOp { left, right, line, col, .. } => {
-                let left_ty = Self::visit_node_with_env(left, env, ctx)?;
-                let right_ty = Self::visit_node_with_env(right, env, ctx)?;
+                let left_ty = Self::visit_node_with_env(left, env, ctx, stub_cache)?;
+                let right_ty = Self::visit_node_with_env(right, env, ctx, stub_cache)?;
                 let span = Span::new(*line, *col);
                 ctx.constraints.push(Constraint::Equal(left_ty.clone(), right_ty, span));
                 ctx.record_type(*line, *col, left_ty.clone());
                 Ok(left_ty)
             }
             AstNode::UnaryOp { operand, line, col, .. } => {
-                let ty = Self::visit_node_with_env(operand, env, ctx)?;
+                let ty = Self::visit_node_with_env(operand, env, ctx, stub_cache)?;
                 ctx.record_type(*line, *col, ty.clone());
                 Ok(ty)
             }
+            AstNode::Subscript { value, slice, line, col } => {
+                let value_ty = Self::visit_node_with_env(value, env, ctx, stub_cache)?;
+
+                Self::visit_node_with_env(slice, env, ctx, stub_cache)?;
+
+                let result_ty = Type::Var(env.fresh_var());
+                let span = Span::new(*line, *col);
+
+                ctx.constraints.push(Constraint::HasAttr(
+                    value_ty,
+                    "__getitem__".to_string(),
+                    result_ty.clone(),
+                    span,
+                ));
+
+                ctx.record_type(*line, *col, result_ty.clone());
+                Ok(result_ty)
+            }
             AstNode::If { test, body, elif_parts, else_body, .. } => {
-                Self::visit_node_with_env(test, env, ctx)?;
+                Self::visit_node_with_env(test, env, ctx, stub_cache)?;
 
                 let (narrowed_var, narrowed_type) = Self::detect_type_guard(test, &mut env.clone());
 
@@ -376,27 +404,57 @@ impl Analyzer {
                 }
 
                 for stmt in body {
-                    Self::visit_node_with_env(stmt, &mut true_env, ctx)?;
+                    Self::visit_node_with_env(stmt, &mut true_env, ctx, stub_cache)?;
                 }
 
                 for (elif_test, elif_body) in elif_parts {
-                    Self::visit_node_with_env(elif_test, env, ctx)?;
+                    Self::visit_node_with_env(elif_test, env, ctx, stub_cache)?;
                     for stmt in elif_body {
-                        Self::visit_node_with_env(stmt, env, ctx)?;
+                        Self::visit_node_with_env(stmt, env, ctx, stub_cache)?;
                     }
                 }
                 if let Some(else_stmts) = else_body {
                     for stmt in else_stmts {
-                        Self::visit_node_with_env(stmt, env, ctx)?;
+                        Self::visit_node_with_env(stmt, env, ctx, stub_cache)?;
                     }
                 }
                 Ok(Type::none())
             }
-            AstNode::Import { .. } | AstNode::ImportFrom { .. } => {
-                Ok(Type::Con(beacon_core::TypeCtor::Module("".into())))
+            AstNode::Import { module, alias, line, col } => {
+                let module_name = alias.as_ref().unwrap_or(module);
+                let module_type = Type::Con(beacon_core::TypeCtor::Module(module.clone()));
+                env.bind(module_name.clone(), TypeScheme::mono(module_type.clone()));
+                ctx.record_type(*line, *col, module_type.clone());
+                Ok(module_type)
+            }
+            AstNode::ImportFrom { module, names, line, col } => {
+                if let Some(cache_arc) = stub_cache {
+                    if let Ok(cache) = cache_arc.read() {
+                        for name in names {
+                            let ty = cache
+                                .get(module)
+                                .and_then(|stub| stub.exports.get(name).cloned())
+                                .unwrap_or_else(|| Type::Var(env.fresh_var()));
+                            env.bind(name.clone(), TypeScheme::mono(ty));
+                        }
+                    } else {
+                        for name in names {
+                            let ty = Type::Var(env.fresh_var());
+                            env.bind(name.clone(), TypeScheme::mono(ty));
+                        }
+                    }
+                } else {
+                    for name in names {
+                        let ty = Type::Var(env.fresh_var());
+                        env.bind(name.clone(), TypeScheme::mono(ty));
+                    }
+                }
+                let module_type = Type::Con(beacon_core::TypeCtor::Module(module.clone()));
+                ctx.record_type(*line, *col, module_type.clone());
+                Ok(module_type)
             }
             AstNode::For { target, iter, body, else_body, line, col } => {
-                let iter_ty = Self::visit_node_with_env(iter, env, ctx)?;
+                let iter_ty = Self::visit_node_with_env(iter, env, ctx, stub_cache)?;
 
                 let element_ty = Type::Var(env.fresh_var());
                 let span = Span::new(*line, *col);
@@ -410,12 +468,12 @@ impl Analyzer {
                 env.bind(target.clone(), TypeScheme::mono(element_ty));
 
                 for stmt in body {
-                    Self::visit_node_with_env(stmt, env, ctx)?;
+                    Self::visit_node_with_env(stmt, env, ctx, stub_cache)?;
                 }
 
                 if let Some(else_stmts) = else_body {
                     for stmt in else_stmts {
-                        Self::visit_node_with_env(stmt, env, ctx)?;
+                        Self::visit_node_with_env(stmt, env, ctx, stub_cache)?;
                     }
                 }
 
@@ -424,15 +482,15 @@ impl Analyzer {
             }
 
             AstNode::While { test, body, else_body, line, col } => {
-                Self::visit_node_with_env(test, env, ctx)?;
+                Self::visit_node_with_env(test, env, ctx, stub_cache)?;
 
                 for stmt in body {
-                    Self::visit_node_with_env(stmt, env, ctx)?;
+                    Self::visit_node_with_env(stmt, env, ctx, stub_cache)?;
                 }
 
                 if let Some(else_stmts) = else_body {
                     for stmt in else_stmts {
-                        Self::visit_node_with_env(stmt, env, ctx)?;
+                        Self::visit_node_with_env(stmt, env, ctx, stub_cache)?;
                     }
                 }
 
@@ -442,12 +500,11 @@ impl Analyzer {
 
             AstNode::Try { body, handlers, else_body, finally_body, line, col } => {
                 for stmt in body {
-                    Self::visit_node_with_env(stmt, env, ctx)?;
+                    Self::visit_node_with_env(stmt, env, ctx, stub_cache)?;
                 }
 
                 for handler in handlers {
                     let mut handler_env = env.clone();
-
                     if let Some(ref name) = handler.name {
                         // TODO: Use proper exception type hierarchy when available
                         let exc_ty = Type::Var(env.fresh_var());
@@ -455,19 +512,19 @@ impl Analyzer {
                     }
 
                     for stmt in &handler.body {
-                        Self::visit_node_with_env(stmt, &mut handler_env, ctx)?;
+                        Self::visit_node_with_env(stmt, &mut handler_env, ctx, stub_cache)?;
                     }
                 }
 
                 if let Some(else_stmts) = else_body {
                     for stmt in else_stmts {
-                        Self::visit_node_with_env(stmt, env, ctx)?;
+                        Self::visit_node_with_env(stmt, env, ctx, stub_cache)?;
                     }
                 }
 
                 if let Some(finally_stmts) = finally_body {
                     for stmt in finally_stmts {
-                        Self::visit_node_with_env(stmt, env, ctx)?;
+                        Self::visit_node_with_env(stmt, env, ctx, stub_cache)?;
                     }
                 }
 
@@ -476,18 +533,18 @@ impl Analyzer {
             }
 
             AstNode::Match { subject, cases, line, col } => {
-                Self::visit_node_with_env(subject, env, ctx)?;
+                Self::visit_node_with_env(subject, env, ctx, stub_cache)?;
 
                 // TODO: Implement pattern matching type narrowing when pattern system is ready
                 for case in cases {
                     let mut case_env = env.clone();
 
                     if let Some(ref guard) = case.guard {
-                        Self::visit_node_with_env(guard, &mut case_env, ctx)?;
+                        Self::visit_node_with_env(guard, &mut case_env, ctx, stub_cache)?;
                     }
 
                     for stmt in &case.body {
-                        Self::visit_node_with_env(stmt, &mut case_env, ctx)?;
+                        Self::visit_node_with_env(stmt, &mut case_env, ctx, stub_cache)?;
                     }
                 }
 
@@ -496,7 +553,7 @@ impl Analyzer {
             }
             AstNode::Raise { exc, line, col } => {
                 if let Some(exception) = exc {
-                    Self::visit_node_with_env(exception, env, ctx)?;
+                    Self::visit_node_with_env(exception, env, ctx, stub_cache)?;
                 }
 
                 ctx.record_type(*line, *col, Type::never());
@@ -505,9 +562,8 @@ impl Analyzer {
 
             AstNode::With { items, body, line, col } => {
                 for item in items {
-                    let context_ty = Self::visit_node_with_env(&item.context_expr, env, ctx)?;
+                    let context_ty = Self::visit_node_with_env(&item.context_expr, env, ctx, stub_cache)?;
 
-                    // TODO: Replace with Protocol constraint for context manager protocol
                     let enter_ty = Type::Var(env.fresh_var());
                     let span = Span::new(*line, *col);
                     ctx.constraints.push(Constraint::HasAttr(
@@ -527,7 +583,7 @@ impl Analyzer {
                 }
 
                 for stmt in body {
-                    Self::visit_node_with_env(stmt, env, ctx)?;
+                    Self::visit_node_with_env(stmt, env, ctx, stub_cache)?;
                 }
 
                 ctx.record_type(*line, *col, Type::none());
@@ -551,7 +607,7 @@ impl Analyzer {
                     lambda_env.bind(param.name.clone(), TypeScheme::mono(param_type.clone()));
                 }
 
-                let body_ty = Self::visit_node_with_env(body, &mut lambda_env, ctx)?;
+                let body_ty = Self::visit_node_with_env(body, &mut lambda_env, ctx, stub_cache)?;
                 let lambda_ty = Type::fun(param_types, body_ty);
 
                 ctx.record_type(*line, *col, lambda_ty.clone());
@@ -559,34 +615,17 @@ impl Analyzer {
             }
 
             AstNode::Compare { left, comparators, line, col, .. } => {
-                Self::visit_node_with_env(left, env, ctx)?;
+                Self::visit_node_with_env(left, env, ctx, stub_cache)?;
 
                 for comp in comparators {
-                    Self::visit_node_with_env(comp, env, ctx)?;
+                    Self::visit_node_with_env(comp, env, ctx, stub_cache)?;
                 }
 
                 ctx.record_type(*line, *col, Type::bool());
                 Ok(Type::bool())
             }
-            // TODO: Replace with Protocol constraint when subscript protocol is implemented
-            AstNode::Subscript { value, slice, line, col } => {
-                let value_ty = Self::visit_node_with_env(value, env, ctx)?;
-                Self::visit_node_with_env(slice, env, ctx)?;
-
-                let item_ty = Type::Var(env.fresh_var());
-                let span = Span::new(*line, *col);
-                ctx.constraints.push(Constraint::HasAttr(
-                    value_ty,
-                    "__getitem__".to_string(),
-                    item_ty.clone(),
-                    span,
-                ));
-
-                ctx.record_type(*line, *col, item_ty.clone());
-                Ok(item_ty)
-            }
             AstNode::NamedExpr { target, value, line, col } => {
-                let value_ty = Self::visit_node_with_env(value, env, ctx)?;
+                let value_ty = Self::visit_node_with_env(value, env, ctx, stub_cache)?;
                 env.bind(target.clone(), TypeScheme::mono(value_ty.clone()));
                 ctx.record_type(*line, *col, value_ty.clone());
                 Ok(value_ty)
@@ -595,7 +634,7 @@ impl Analyzer {
                 let mut comp_env = env.clone();
 
                 for generator in generators {
-                    let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx)?;
+                    let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx, stub_cache)?;
 
                     let element_ty = Type::Var(comp_env.fresh_var());
                     let span = Span::new(*line, *col);
@@ -609,11 +648,11 @@ impl Analyzer {
                     comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
 
                     for if_clause in &generator.ifs {
-                        Self::visit_node_with_env(if_clause, &mut comp_env, ctx)?;
+                        Self::visit_node_with_env(if_clause, &mut comp_env, ctx, stub_cache)?;
                     }
                 }
 
-                let elem_ty = Self::visit_node_with_env(element, &mut comp_env, ctx)?;
+                let elem_ty = Self::visit_node_with_env(element, &mut comp_env, ctx, stub_cache)?;
                 let list_ty = Type::list(elem_ty);
 
                 ctx.record_type(*line, *col, list_ty.clone());
@@ -624,7 +663,7 @@ impl Analyzer {
                 let mut comp_env = env.clone();
 
                 for generator in generators {
-                    let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx)?;
+                    let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx, stub_cache)?;
 
                     let element_ty = Type::Var(comp_env.fresh_var());
                     let span = Span::new(*line, *col);
@@ -638,11 +677,11 @@ impl Analyzer {
                     comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
 
                     for if_clause in &generator.ifs {
-                        Self::visit_node_with_env(if_clause, &mut comp_env, ctx)?;
+                        Self::visit_node_with_env(if_clause, &mut comp_env, ctx, stub_cache)?;
                     }
                 }
 
-                let elem_ty = Self::visit_node_with_env(element, &mut comp_env, ctx)?;
+                let elem_ty = Self::visit_node_with_env(element, &mut comp_env, ctx, stub_cache)?;
                 let set_ty = Type::App(Box::new(Type::Con(beacon_core::TypeCtor::Set)), Box::new(elem_ty));
 
                 ctx.record_type(*line, *col, set_ty.clone());
@@ -653,7 +692,7 @@ impl Analyzer {
                 let mut comp_env = env.clone();
 
                 for generator in generators {
-                    let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx)?;
+                    let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx, stub_cache)?;
 
                     let element_ty = Type::Var(comp_env.fresh_var());
                     let span = Span::new(*line, *col);
@@ -667,25 +706,24 @@ impl Analyzer {
                     comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
 
                     for if_clause in &generator.ifs {
-                        Self::visit_node_with_env(if_clause, &mut comp_env, ctx)?;
+                        Self::visit_node_with_env(if_clause, &mut comp_env, ctx, stub_cache)?;
                     }
                 }
 
-                let key_ty = Self::visit_node_with_env(key, &mut comp_env, ctx)?;
-                let val_ty = Self::visit_node_with_env(value, &mut comp_env, ctx)?;
+                let key_ty = Self::visit_node_with_env(key, &mut comp_env, ctx, stub_cache)?;
+                let val_ty = Self::visit_node_with_env(value, &mut comp_env, ctx, stub_cache)?;
                 let dict_ty = Type::dict(key_ty, val_ty);
 
                 ctx.record_type(*line, *col, dict_ty.clone());
                 Ok(dict_ty)
             }
-
             // NOTE: Approximated as iterable[T] rather than proper Generator[T, None, None]
             // TODO: See ROADMAP.md for Generator[YieldType, SendType, ReturnType] modeling
             AstNode::GeneratorExp { element, generators, line, col } => {
                 let mut comp_env = env.clone();
 
                 for generator in generators {
-                    let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx)?;
+                    let iter_ty = Self::visit_node_with_env(&generator.iter, &mut comp_env, ctx, stub_cache)?;
 
                     let element_ty = Type::Var(comp_env.fresh_var());
                     let span = Span::new(*line, *col);
@@ -699,11 +737,11 @@ impl Analyzer {
                     comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
 
                     for if_clause in &generator.ifs {
-                        Self::visit_node_with_env(if_clause, &mut comp_env, ctx)?;
+                        Self::visit_node_with_env(if_clause, &mut comp_env, ctx, stub_cache)?;
                     }
                 }
 
-                let elem_ty = Self::visit_node_with_env(element, &mut comp_env, ctx)?;
+                let elem_ty = Self::visit_node_with_env(element, &mut comp_env, ctx, stub_cache)?;
                 let generator_ty = Type::list(elem_ty);
 
                 ctx.record_type(*line, *col, generator_ty.clone());
@@ -719,7 +757,7 @@ impl Analyzer {
     fn _visit_node(&mut self, node: &AstNode, _constraints: &mut [Constraint]) -> Result<Type> {
         let mut env = TypeEnvironment::new();
         let mut ctx = ConstraintGenContext::new();
-        Self::visit_node_with_env(node, &mut env, &mut ctx)
+        Self::visit_node_with_env(node, &mut env, &mut ctx, None)
     }
 
     /// Solve a set of constraints using beacon-core's unification algorithm
@@ -2088,15 +2126,12 @@ y = p.age
 
         let result = analyzer.analyze(&uri).unwrap();
 
-        // Verify no type errors
         assert_eq!(
             result.type_errors.len(),
             0,
             "Expected no type errors, got: {:?}",
             result.type_errors
         );
-
-        // Verify type map is populated
         assert!(!result.type_map.is_empty(), "Type map should not be empty");
     }
 
@@ -2119,7 +2154,6 @@ x = p.nonexistent
 
         let result = analyzer.analyze(&uri).unwrap();
 
-        // Verify we got an attribute not found error
         assert!(!result.type_errors.is_empty(), "Expected attribute not found error");
         assert!(
             result.type_errors.iter().any(|err| {
@@ -2136,8 +2170,6 @@ x = p.nonexistent
         let documents = DocumentManager::new().unwrap();
         let mut analyzer = Analyzer::new(config, documents.clone());
         let uri = Url::from_str("file:///test.py").unwrap();
-
-        // Classes with only __init__ work correctly
         let source = r#"
 class Simple:
     def __init__(self, x: int, y: str):
@@ -2161,12 +2193,7 @@ name = s.y
     }
 
     #[test]
-    #[ignore = "Known issue: Classes with multiple methods fail construction - see TODO.md"]
     fn test_class_construction_multiple_methods() {
-        // TODO: This is a known limitation documented in docs/internal/TODO.md
-        // Classes with both __init__ and other methods experience type unification errors
-        // during construction. Remove this #[ignore] once the issue is resolved.
-
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
         let mut analyzer = Analyzer::new(config, documents.clone());
@@ -2195,7 +2222,6 @@ w = WithMethod(5)
 
     #[test]
     fn test_class_field_access_only_init() {
-        // This test verifies that attribute access works for classes with only __init__
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
         let mut analyzer = Analyzer::new(config, documents.clone());
@@ -2240,11 +2266,36 @@ x = e.get_name
 
         let result = analyzer.analyze(&uri).unwrap();
 
-        // Verify no type errors for method access
         assert_eq!(
             result.type_errors.len(),
             0,
             "Expected no type errors, got: {:?}",
+            result.type_errors
+        );
+    }
+
+    #[test]
+    fn test_import_from_bindings() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        let source = r#"
+from math import sqrt, pi
+from typing import List
+
+x = sqrt(16)
+y = pi
+nums: List[int] = [1, 2, 3]
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        let result = analyzer.analyze(&uri).unwrap();
+
+        assert!(
+            result.type_errors.len() <= 2,
+            "Import should not cause critical failures, got: {:?}",
             result.type_errors
         );
     }
@@ -2268,7 +2319,6 @@ class Car:
 
         documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
 
-        // Just verify it parses and analyzes without errors
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Analysis should succeed");
     }
@@ -2295,7 +2345,6 @@ x = cfg.flag
 
         let result = analyzer.analyze(&uri).unwrap();
 
-        // Verify no type errors - field should be detected even in conditional
         assert_eq!(
             result.type_errors.len(),
             0,

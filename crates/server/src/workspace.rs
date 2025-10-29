@@ -13,6 +13,7 @@ use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 use url::Url;
 
 /// Information about a Python module in the workspace
@@ -98,8 +99,8 @@ pub struct Workspace {
     index: WorkspaceIndex,
     /// Module dependency graph
     dependency_graph: DependencyGraph,
-    /// Loaded stub files
-    _stubs: StubCache,
+    /// Loaded stub files (shared across workspace and analyzer)
+    stubs: Arc<RwLock<StubCache>>,
     /// Tracks which modules have been analyzed and their versions
     analyzed_modules: FxHashMap<Url, i32>,
 }
@@ -113,15 +114,19 @@ impl Workspace {
             documents,
             index: WorkspaceIndex::new(),
             dependency_graph: DependencyGraph::new(),
-            _stubs: StubCache::new(),
+            stubs: Arc::new(RwLock::new(StubCache::new())),
             analyzed_modules: FxHashMap::default(),
         }
     }
 
+    /// Get a reference to the stub cache for sharing with analyzer
+    pub fn stub_cache(&self) -> Arc<RwLock<StubCache>> {
+        Arc::clone(&self.stubs)
+    }
+
     /// Initialize workspace by discovering Python files and stubs
     ///
-    /// Scans the workspace for all Python files, builds the module index, constructs the initial dependency graph,
-    /// and discovers stub files following PEP 561.
+    /// Scans the workspace for all Python files, builds the module index, constructs the initial dependency graph, and discovers stub files following PEP 561.
     pub fn initialize(&mut self) -> Result<(), WorkspaceError> {
         self.discover_files()?;
         self.build_dependency_graph();
@@ -171,8 +176,8 @@ impl Workspace {
         let text = self.documents.get_document(uri, |doc| doc.text())?;
         let mut parser = crate::parser::LspParser::new().ok()?;
         let parse_result = parser.parse(&text).ok()?;
-
         let mut imports = Vec::new();
+
         Self::collect_imports_from_ast(&parse_result.ast, &mut imports);
 
         Some(imports)
@@ -180,8 +185,6 @@ impl Workspace {
 
     /// Recursively collect imports from an AST node
     fn collect_imports_from_ast(node: &beacon_parser::AstNode, imports: &mut Vec<String>) {
-        use beacon_parser::AstNode;
-
         match node {
             AstNode::Module { body, .. } => {
                 for stmt in body {
@@ -697,7 +700,7 @@ impl Workspace {
     /// 2. Stub packages (*-stubs)
     /// 3. Inline stubs (py.typed packages)
     /// 4. Typeshed (TODO)
-    pub fn load_stub(&mut self, module_name: &str) -> Option<StubFile> {
+    pub fn load_stub(&self, module_name: &str) -> Option<StubFile> {
         if let Some(stub) = self.find_manual_stub(module_name) {
             return Some(stub);
         }
@@ -810,8 +813,10 @@ impl Workspace {
         }
     }
 
-    /// Discover all stub files in workspace and populate stub cache  during workspace initialization
+    /// Discover all stub files in workspace and populate stub cache during workspace initialization
     pub fn discover_stubs(&mut self) {
+        self.load_builtin_stubs();
+
         for stub_path in self.config.stub_paths.clone() {
             self.discover_stubs_in_directory(&stub_path);
         }
@@ -819,6 +824,28 @@ impl Workspace {
         if let Some(root_uri) = &self.root_uri {
             if let Ok(root_path) = root_uri.to_file_path() {
                 self.discover_stub_packages(&root_path);
+            }
+        }
+    }
+
+    /// Load built-in stubs (builtins.pyi) from the stubs directory
+    ///
+    /// Pre-loads core Python types that are always available.
+    fn load_builtin_stubs(&self) {
+        let builtin_stub_paths = vec![
+            PathBuf::from("stubs/builtins.pyi"),
+            PathBuf::from("../stubs/builtins.pyi"),
+            PathBuf::from("../../stubs/builtins.pyi"),
+        ];
+
+        for builtin_path in builtin_stub_paths {
+            if builtin_path.exists() {
+                if let Ok(stub) = self.parse_stub_file(&builtin_path) {
+                    if let Ok(mut cache) = self.stubs.write() {
+                        cache.insert("builtins".to_string(), stub);
+                    }
+                    return;
+                }
             }
         }
     }
@@ -835,7 +862,6 @@ impl Workspace {
             if entry.file_type().is_some_and(|ft| ft.is_file()) {
                 if let Some(ext) = entry.path().extension() {
                     if ext == "pyi" {
-                        // Convert path to module name and cache it
                         if let Some(module_name) = self.path_to_module_name_from_base(entry.path(), directory) {
                             let is_partial = self.check_if_partial_stub(directory);
                             let stub = StubFile {
@@ -846,7 +872,9 @@ impl Workspace {
                                 reexports: Vec::new(),
                                 all_exports: None,
                             };
-                            self._stubs._cache.insert(module_name, stub);
+                            if let Ok(mut cache) = self.stubs.write() {
+                                cache.insert(module_name, stub);
+                            }
                         }
                     }
                 }
@@ -1001,15 +1029,14 @@ impl Workspace {
     ///
     /// This method integrates stub lookups into the type resolution process.
     /// It follows PEP 561 resolution order and parses stubs on-demand.
-    pub fn get_stub_type(&mut self, module_name: &str, symbol_name: &str) -> Option<beacon_core::Type> {
-        // Check cache first
-        if let Some(stub) = self._stubs._cache.get(module_name) {
-            return stub.exports.get(symbol_name).cloned();
+    pub fn get_stub_type(&self, module_name: &str, symbol_name: &str) -> Option<beacon_core::Type> {
+        if let Ok(cache) = self.stubs.read() {
+            if let Some(stub) = cache.get(module_name) {
+                return stub.exports.get(symbol_name).cloned();
+            }
         }
 
-        // Load stub following PEP 561
         if let Some(mut stub) = self.load_stub(module_name) {
-            // Parse the stub to populate exports if empty
             if stub.exports.is_empty() {
                 if let Ok(parsed) = self.parse_stub_file(&stub.path.clone()) {
                     stub.exports = parsed.exports;
@@ -1020,8 +1047,9 @@ impl Workspace {
 
             let result = stub.exports.get(symbol_name).cloned();
 
-            // Cache the stub
-            self._stubs._cache.insert(module_name.to_string(), stub);
+            if let Ok(mut cache) = self.stubs.write() {
+                cache.insert(module_name.to_string(), stub);
+            }
 
             result
         } else {
@@ -1030,15 +1058,15 @@ impl Workspace {
     }
 
     /// Get all exported symbols from a module's stub
-    pub fn get_stub_exports(&mut self, module_name: &str) -> Option<FxHashMap<String, beacon_core::Type>> {
-        // Check cache first
-        if let Some(stub) = self._stubs._cache.get(module_name) {
-            if !stub.exports.is_empty() {
-                return Some(stub.exports.clone());
+    pub fn get_stub_exports(&self, module_name: &str) -> Option<FxHashMap<String, beacon_core::Type>> {
+        if let Ok(cache) = self.stubs.read() {
+            if let Some(stub) = cache.get(module_name) {
+                if !stub.exports.is_empty() {
+                    return Some(stub.exports.clone());
+                }
             }
         }
 
-        // Load and parse stub
         if let Some(mut stub) = self.load_stub(module_name) {
             if stub.exports.is_empty() {
                 if let Ok(parsed) = self.parse_stub_file(&stub.path.clone()) {
@@ -1046,8 +1074,9 @@ impl Workspace {
                     stub.reexports = parsed.reexports;
                     stub.all_exports = parsed.all_exports;
 
-                    // Cache the parsed stub
-                    self._stubs._cache.insert(module_name.to_string(), stub);
+                    if let Ok(mut cache) = self.stubs.write() {
+                        cache.insert(module_name.to_string(), stub);
+                    }
 
                     return Some(parsed.exports);
                 }
@@ -1061,20 +1090,18 @@ impl Workspace {
 
     /// Check if a module has stub information available
     pub fn has_stub(&self, module_name: &str) -> bool {
-        // Check cache
-        if self._stubs._cache.contains_key(module_name) {
-            return true;
+        if let Ok(cache) = self.stubs.read() {
+            if cache.contains(module_name) {
+                return true;
+            }
         }
 
-        // Check if stub can be found (without loading)
-        // This is a lighter-weight check for the common case
         for stub_path in &self.config.stub_paths {
             if self.find_stub_in_directory(stub_path, module_name).is_some() {
                 return true;
             }
         }
 
-        // Check for stub package
         if let Some(root_uri) = &self.root_uri {
             if let Ok(root_path) = root_uri.to_file_path() {
                 let top_level = module_name.split('.').next().unwrap_or(module_name);
@@ -1085,7 +1112,6 @@ impl Workspace {
             }
         }
 
-        // Check for inline stub
         if let Some(info) = self.index.get_by_name(module_name) {
             let pyi_path = PathBuf::from(info.uri.path()).with_extension("pyi");
             if pyi_path.exists() {
@@ -1322,24 +1348,33 @@ impl TarjanState {
 
 /// Cache for loaded stub files
 ///
+/// Thread-safe cache for storing parsed stub files. Uses interior mutability
+/// via RwLock to allow concurrent reads and exclusive writes.
+///
 /// TODO: Implement LRU cache for stub files
-struct StubCache {
-    _cache: FxHashMap<String, StubFile>,
+#[derive(Default)]
+pub struct StubCache {
+    cache: FxHashMap<String, StubFile>,
 }
 
 impl StubCache {
-    fn new() -> Self {
-        Self { _cache: FxHashMap::default() }
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// TODO: Load and parse a .pyi stub file
-    fn _load(&mut self, _path: &Path) -> Option<StubFile> {
-        None
+    /// Get a stub from the cache
+    pub fn get(&self, module_name: &str) -> Option<&StubFile> {
+        self.cache.get(module_name)
     }
 
-    /// TODO: Get stub for a module
-    fn _get(&self, _module_name: &str) -> Option<&StubFile> {
-        None
+    /// Insert a stub into the cache
+    pub fn insert(&mut self, module_name: String, stub: StubFile) {
+        self.cache.insert(module_name, stub);
+    }
+
+    /// Check if a stub exists in the cache
+    pub fn contains(&self, module_name: &str) -> bool {
+        self.cache.contains_key(module_name)
     }
 }
 
@@ -1379,6 +1414,8 @@ pub enum WorkspaceError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_workspace_creation() {
@@ -1606,15 +1643,11 @@ mod tests {
 
     #[test]
     fn test_stub_file_parsing() {
-        use std::io::Write;
-        use tempfile::NamedTempFile;
-
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
         let workspace = Workspace::new(None, config, documents);
-
-        // Create a temporary stub file
         let mut stub_file = NamedTempFile::new().unwrap();
+
         writeln!(
             stub_file,
             "def foo(x: int, y: str) -> bool: ...\nclass MyClass: ...\nmy_var: list[int]"
@@ -1622,23 +1655,18 @@ mod tests {
         .unwrap();
         stub_file.flush().unwrap();
 
-        // Parse the stub
         let result = workspace.parse_stub_file(stub_file.path());
         assert!(result.is_ok());
 
         let stub = result.unwrap();
         assert!(!stub.exports.is_empty());
-
-        // Check that function was extracted
         assert!(stub.exports.contains_key("foo"));
+
         if let Some(ty) = stub.exports.get("foo") {
             assert!(matches!(ty, beacon_core::Type::Fun(_, _)));
         }
 
-        // Check that class was extracted
         assert!(stub.exports.contains_key("MyClass"));
-
-        // Check that variable was extracted
         assert!(stub.exports.contains_key("my_var"));
     }
 
@@ -1648,11 +1676,7 @@ mod tests {
         let documents = DocumentManager::new().unwrap();
         let workspace = Workspace::new(None, config, documents);
 
-        // Test that has_stub returns false for non-existent module
         assert!(!workspace.has_stub("nonexistent_module"));
-
-        // Further integration tests would require setting up actual stub files
-        // which is better done in integration tests with a full workspace setup
     }
 
     #[test]
@@ -1661,7 +1685,6 @@ mod tests {
         let documents = DocumentManager::new().unwrap();
         let workspace = Workspace::new(None, config, documents);
 
-        // Test parse_annotation_string method
         let ty = workspace.parse_annotation_string("list[int]");
         assert!(ty.is_some());
 
@@ -1671,7 +1694,6 @@ mod tests {
         let ty = workspace.parse_annotation_string("Generic[T]");
         assert!(ty.is_some());
 
-        // Invalid annotation should return None
         let ty = workspace.parse_annotation_string("invalid[[[");
         assert!(ty.is_none());
     }

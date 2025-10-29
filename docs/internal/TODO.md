@@ -4,48 +4,16 @@ Implementation details and mod-specific tasks.
 
 ## Part 1: Core Type System Stability
 
-### Fix Class Construction Bug (CRITICAL)
+### Future Work
 
-**Blocks:** All LSP features using class metadata
+- [ ] Add more comprehensive stdlib stubs (os, sys, pathlib, etc.)
+- [ ] Implement type checking mode awareness (strict/balanced/loose)
+- [ ] Auto-generate stubs from Python runtime introspection
 
-**Issue:** Classes with `__init__` + other methods fail with `UnificationError("int", "ClassName")`
+---
 
-**Root Cause:** `Type::fun()` construction during metadata extraction confuses parameter/return types across methods
-
-**Tasks:**
-
-- [ ] Isolate type variable generation for each method
-- [ ] Clone environment before processing each method
-- [ ] Review `Type::fun()` construction and parameter list handling
-- [ ] Fix unification of function types with multiple parameters
-
-**Files:**
-
-- `crates/server/src/analysis/mod.rs:802-851` (extract_class_metadata)
-- `crates/server/src/analysis/mod.rs:747-814` (Call constraint handler)
-
-**Tests:** `test_class_method_access`, `test_simple_class_construction_debug`
-
-### Integrate Stub System
-
-**Blocks:** Stdlib type information, completions for builtin modules
-
-- [ ] Wire `Workspace::get_stub_type()` and `get_stub_exports()` into constraint generation
-- [ ] Query stubs before falling back to inference for imports
-- [ ] Test with stdlib modules (os, sys, pathlib)
-
-**Files:** `crates/server/src/analysis/mod.rs`, `crates/server/src/workspace.rs`
-
-### Complete Collection Protocols
-
-**Blocks:** `with` statement support, subscripting
-
-- [ ] Context manager protocol constraints (`__enter__`, `__exit__`)
-- [ ] Subscripting constraints (`__getitem__`) for lists, tuples, dicts
-- [ ] Test: `with open('file') as f:` infers file type
-- [ ] Test: `lst[0]` where `lst: list[int]` infers `int`
-
-**Files:** `crates/server/src/analysis/mod.rs` (constraint generation)
+- [ ] Integration test: `with open('file') as f:` infers file type (requires _IO stub integration)
+- [ ] Integration test: `lst[0]` where `lst: list[int]` infers `int` (requires full test harness)
 
 ### Method Call Type Inference
 
