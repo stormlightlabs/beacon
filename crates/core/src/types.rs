@@ -291,6 +291,9 @@ pub enum Type {
     ForAll(Vec<TypeVar>, Box<Type>),
     /// Union types (for Python's Union[A, B])
     Union(Vec<Type>),
+    /// Intersection types (for Protocol1 & Protocol2)
+    /// A type satisfying Intersection[A, B] must satisfy both A and B
+    Intersection(Vec<Type>),
     /// Record types for objects/classes (row polymorphism)
     /// fields, row variable
     Record(Vec<(String, Type)>, Option<TypeVar>),
@@ -345,6 +348,13 @@ impl fmt::Display for Type {
                     f,
                     "{}",
                     types.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(" | ")
+                )
+            }
+            Type::Intersection(types) => {
+                write!(
+                    f,
+                    "{}",
+                    types.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(" & ")
                 )
             }
             Type::Record(fields, row_var) => {
@@ -430,6 +440,38 @@ impl Type {
         flattened.dedup();
 
         if flattened.len() == 1 { flattened.pop().unwrap() } else { Type::Union(flattened) }
+    }
+
+    /// Create an intersection type, flattening nested intersections, removing duplications, and sorting for canonical form
+    ///
+    /// Intersection types represent values that satisfy multiple type constraints simultaneously.
+    /// For protocols, `Intersection[Protocol1, Protocol2]` means a type must satisfy both protocols.
+    ///
+    /// # Examples
+    /// ```
+    /// use beacon_core::Type;
+    ///
+    /// let proto1 = Type::Con(beacon_core::TypeCtor::Protocol(Some("Iterable".to_string())));
+    /// let proto2 = Type::Con(beacon_core::TypeCtor::Protocol(Some("Sized".to_string())));
+    /// let both = Type::intersection(vec![proto1, proto2]); // Must be both Iterable and Sized
+    /// ```
+    pub fn intersection(mut types: Vec<Type>) -> Self {
+        if types.len() == 1 {
+            return types.pop().unwrap();
+        }
+
+        let mut flattened = Vec::new();
+        for t in types {
+            match t {
+                Type::Intersection(inner) => flattened.extend(inner),
+                other => flattened.push(other),
+            }
+        }
+
+        flattened.sort();
+        flattened.dedup();
+
+        if flattened.len() == 1 { flattened.pop().unwrap() } else { Type::Intersection(flattened) }
     }
 
     /// Create Optional[T] which is Union[T, None]
@@ -530,6 +572,7 @@ impl Type {
             Type::Fun(_, _) => Ok(Kind::Star),
             Type::ForAll(_, t) => t.kind_of(),
             Type::Union(_) => Ok(Kind::Star),
+            Type::Intersection(_) => Ok(Kind::Star),
             Type::Record(_, _) => Ok(Kind::Star),
             Type::BoundMethod(_, _) => Ok(Kind::Star),
         }
@@ -579,6 +622,11 @@ impl Type {
                     t.collect_free_vars(vars, bound);
                 }
             }
+            Type::Intersection(types) => {
+                for t in types {
+                    t.collect_free_vars(vars, bound);
+                }
+            }
             Type::Record(fields, row_var) => {
                 for (_, t) in fields {
                     t.collect_free_vars(vars, bound);
@@ -594,6 +642,106 @@ impl Type {
                 method.collect_free_vars(vars, bound);
             }
         }
+    }
+
+    /// Check if this type is a subtype of another type.
+    ///
+    /// Implements structural subtyping with variance rules:
+    /// - Never is a subtype of all types (bottom type)
+    /// - Top is a supertype of all types (top type)
+    /// - Any is a supertype of all types (gradual typing) but not a universal subtype
+    /// - Function types are contravariant in parameters, covariant in return
+    /// - Type constructors require structural equality
+    /// - Union types: T <: Union[A, B] if T <: A or T <: B
+    /// - Union types: Union[A, B] <: T if both A <: T and B <: T
+    ///
+    /// Note on Any: For gradual typing, Any acts as a supertype (T <: Any for all T), enabling
+    /// flexible parameter types. However, Any is not a subtype of other types, which ensures
+    /// proper variance checking for protocol method signatures.
+    ///
+    /// # Examples
+    /// ```
+    /// use beacon_core::Type;
+    ///
+    /// // Never is subtype of everything
+    /// assert!(Type::never().is_subtype_of(&Type::int()));
+    ///
+    /// // Everything is subtype of Top
+    /// assert!(Type::int().is_subtype_of(&Type::top()));
+    ///
+    /// // Function parameter contravariance
+    /// let f1 = Type::fun(vec![Type::int()], Type::string());
+    /// let f2 = Type::fun(vec![Type::any()], Type::string());
+    /// assert!(f2.is_subtype_of(&f1)); // Can substitute f2 for f1
+    /// ```
+    pub fn is_subtype_of(&self, other: &Type) -> bool {
+        match (self, other) {
+            (Type::Con(TypeCtor::Never), _) => return true,
+            (_, Type::Con(TypeCtor::Top)) | (_, Type::Con(TypeCtor::Any)) => return true,
+            (_, Type::Con(TypeCtor::Never)) => return false,
+            (Type::Con(TypeCtor::Top), _) => return false,
+            (Type::Con(TypeCtor::Any), _) => return false,
+            _ => {}
+        }
+
+        if self == other {
+            return true;
+        }
+
+        match (self, other) {
+            // Union[A, B] <: T if both A <: T and B <: T
+            (Type::Union(xs), _) => return xs.iter().all(|x| x.is_subtype_of(other)),
+            // T <: Union[A, B] if T <: A or T <: B
+            (_, Type::Union(ys)) => return ys.iter().any(|y| self.is_subtype_of(y)),
+            _ => {}
+        }
+
+        match (self, other) {
+            // Intersection[A, B, ...] <: T if ANY component is a subtype of T
+            // Rationale: Intersection is more specific than any of its components
+            (Type::Intersection(xs), _) => return xs.iter().any(|x| x.is_subtype_of(other)),
+            // T <: Intersection[A, B, ...] if T is a subtype of ALL components
+            // Rationale: T must satisfy all requirements in the intersection
+            (_, Type::Intersection(ys)) => return ys.iter().all(|y| self.is_subtype_of(y)),
+            _ => {}
+        }
+
+        if let (Type::Fun(self_params, self_ret), Type::Fun(other_params, other_ret)) = (self, other) {
+            if self_params.len() != other_params.len() {
+                return false;
+            }
+
+            let params_ok = self_params.iter().zip(other_params).all(|(s, o)| o.is_subtype_of(s));
+            if !params_ok {
+                return false;
+            }
+
+            return self_ret.is_subtype_of(other_ret);
+        }
+
+        if let (Type::App(self_ctor, self_arg), Type::App(other_ctor, other_arg)) = (self, other) {
+            return self_ctor.is_subtype_of(other_ctor) && self_arg.is_subtype_of(other_arg);
+        }
+
+        if let (Type::Record(self_fields, _), Type::Record(other_fields, _)) = (self, other) {
+            for (k_other, t_other) in other_fields {
+                match self_fields.iter().find(|(k, _)| k == k_other) {
+                    Some((_, t_self)) if t_self.is_subtype_of(t_other) => continue,
+                    _ => return false,
+                }
+            }
+            return true;
+        }
+
+        if let (Type::BoundMethod(self_recv, self_meth), Type::BoundMethod(other_recv, other_meth)) = (self, other) {
+            return self_recv.is_subtype_of(other_recv) && self_meth.is_subtype_of(other_meth);
+        }
+
+        if let (Type::ForAll(_, self_body), Type::ForAll(_, other_body)) = (self, other) {
+            return self_body.is_subtype_of(other_body);
+        }
+
+        false
     }
 }
 
@@ -1327,5 +1475,263 @@ mod tests {
 
         assert_eq!(scheme1.quantified_vars, scheme2.quantified_vars);
         assert_eq!(scheme1.ty, scheme2.ty);
+    }
+
+    #[test]
+    fn test_subtype_reflexivity() {
+        assert!(Type::int().is_subtype_of(&Type::int()));
+        assert!(Type::string().is_subtype_of(&Type::string()));
+        let list_int = Type::list(Type::int());
+        assert!(list_int.is_subtype_of(&list_int));
+    }
+
+    /// Any acts as a supertype (for gradual typing) but not as a universal subtype
+    /// This enables proper variance checking for protocol method signatures
+    #[test]
+    fn test_subtype_any_as_supertype() {
+        assert!(Type::int().is_subtype_of(&Type::any()));
+        assert!(Type::string().is_subtype_of(&Type::any()));
+        assert!(Type::list(Type::int()).is_subtype_of(&Type::any()));
+        assert!(Type::never().is_subtype_of(&Type::any()));
+
+        assert!(!Type::any().is_subtype_of(&Type::int()));
+        assert!(!Type::any().is_subtype_of(&Type::string()));
+
+        assert!(Type::any().is_subtype_of(&Type::any()));
+        assert!(Type::any().is_subtype_of(&Type::top()));
+    }
+
+    #[test]
+    fn test_subtype_never_is_bottom() {
+        assert!(Type::never().is_subtype_of(&Type::int()));
+        assert!(Type::never().is_subtype_of(&Type::string()));
+        assert!(Type::never().is_subtype_of(&Type::any()));
+        assert!(Type::never().is_subtype_of(&Type::top()));
+
+        assert!(!Type::int().is_subtype_of(&Type::never()));
+        assert!(!Type::string().is_subtype_of(&Type::never()));
+    }
+
+    #[test]
+    fn test_subtype_top_is_top() {
+        assert!(Type::int().is_subtype_of(&Type::top()));
+        assert!(Type::string().is_subtype_of(&Type::top()));
+        assert!(Type::list(Type::int()).is_subtype_of(&Type::top()));
+        assert!(Type::never().is_subtype_of(&Type::top()));
+
+        assert!(!Type::top().is_subtype_of(&Type::int()));
+        assert!(!Type::top().is_subtype_of(&Type::string()));
+    }
+
+    #[test]
+    fn test_subtype_concrete_types_not_related() {
+        assert!(!Type::int().is_subtype_of(&Type::string()));
+        assert!(!Type::string().is_subtype_of(&Type::bool()));
+        assert!(!Type::bool().is_subtype_of(&Type::int()));
+    }
+
+    #[test]
+    fn test_subtype_union_covariance() {
+        let int_or_str = Type::union(vec![Type::int(), Type::string()]);
+
+        assert!(Type::int().is_subtype_of(&int_or_str));
+        assert!(Type::string().is_subtype_of(&int_or_str));
+        assert!(!Type::bool().is_subtype_of(&int_or_str));
+        assert!(!int_or_str.is_subtype_of(&Type::int()));
+
+        let int_str_bool = Type::union(vec![Type::int(), Type::string(), Type::bool()]);
+        assert!(int_or_str.is_subtype_of(&int_str_bool));
+    }
+
+    /// (Any -> str) <: (int -> str)
+    /// A function accepting Any can substitute for one accepting int
+    /// (int -> str) </: (Any -> str)
+    /// A function accepting only int cannot substitute for one accepting Any
+    #[test]
+    fn test_subtype_function_contravariance() {
+        let f_any_str = Type::fun(vec![Type::any()], Type::string());
+        let f_int_str = Type::fun(vec![Type::int()], Type::string());
+
+        assert!(f_any_str.is_subtype_of(&f_int_str));
+        assert!(!f_int_str.is_subtype_of(&f_any_str));
+    }
+
+    #[test]
+    fn test_subtype_function_return_covariance() {
+        let f_int_never = Type::fun(vec![Type::int()], Type::never());
+        let f_int_str = Type::fun(vec![Type::int()], Type::string());
+        assert!(f_int_never.is_subtype_of(&f_int_str));
+
+        let f_int_top = Type::fun(vec![Type::int()], Type::top());
+        assert!(!f_int_top.is_subtype_of(&f_int_str));
+    }
+
+    #[test]
+    fn test_subtype_function_arity_mismatch() {
+        let f_one_arg = Type::fun(vec![Type::int()], Type::string());
+        let f_two_args = Type::fun(vec![Type::int(), Type::int()], Type::string());
+
+        assert!(!f_one_arg.is_subtype_of(&f_two_args));
+        assert!(!f_two_args.is_subtype_of(&f_one_arg));
+    }
+
+    #[test]
+    fn test_subtype_function_complex_variance() {
+        let inner1 = Type::fun(vec![Type::int()], Type::string());
+        let inner2 = Type::fun(vec![Type::any()], Type::string());
+        let outer1 = Type::fun(vec![inner1.clone()], Type::bool());
+        let outer2 = Type::fun(vec![inner2.clone()], Type::bool());
+
+        assert!(inner2.is_subtype_of(&inner1));
+        assert!(!inner1.is_subtype_of(&inner2));
+        assert!(outer1.is_subtype_of(&outer2));
+        assert!(!outer2.is_subtype_of(&outer1));
+    }
+
+    #[test]
+    fn test_subtype_type_application() {
+        let list_int = Type::list(Type::int());
+        let list_str = Type::list(Type::string());
+
+        assert!(list_int.is_subtype_of(&list_int));
+        assert!(!list_int.is_subtype_of(&list_str));
+        assert!(!list_str.is_subtype_of(&list_int));
+    }
+
+    #[test]
+    fn test_subtype_record_structural() {
+        let r1 = Type::Record(
+            vec![("x".to_string(), Type::int()), ("y".to_string(), Type::string())],
+            None,
+        );
+        let r2 = Type::Record(vec![("x".to_string(), Type::int())], None);
+
+        assert!(r1.is_subtype_of(&r2));
+        assert!(!r2.is_subtype_of(&r1));
+    }
+
+    #[test]
+    fn test_subtype_record_field_types() {
+        let r1 = Type::Record(vec![("x".to_string(), Type::int())], None);
+        let r2 = Type::Record(vec![("x".to_string(), Type::string())], None);
+
+        assert!(!r1.is_subtype_of(&r2));
+        assert!(!r2.is_subtype_of(&r1));
+    }
+
+    #[test]
+    fn test_subtype_record_with_top() {
+        let r_int = Type::Record(vec![("x".to_string(), Type::int())], None);
+        let r_top = Type::Record(vec![("x".to_string(), Type::top())], None);
+
+        assert!(r_int.is_subtype_of(&r_top));
+        assert!(!r_top.is_subtype_of(&r_int));
+    }
+
+    #[test]
+    fn test_subtype_bound_method() {
+        let bm1 = Type::BoundMethod(Box::new(Type::int()), Box::new(Type::fun(vec![], Type::string())));
+        let bm2 = Type::BoundMethod(Box::new(Type::int()), Box::new(Type::fun(vec![], Type::string())));
+        let bm3 = Type::BoundMethod(Box::new(Type::string()), Box::new(Type::fun(vec![], Type::string())));
+
+        assert!(bm1.is_subtype_of(&bm2));
+        assert!(!bm1.is_subtype_of(&bm3));
+    }
+
+    #[test]
+    fn test_intersection_normalization_flattens_nested() {
+        let inner = Type::intersection(vec![Type::string(), Type::bool()]);
+        let outer = Type::intersection(vec![Type::int(), inner]);
+
+        match outer {
+            Type::Intersection(types) => {
+                assert_eq!(types.len(), 3);
+                assert!(types.contains(&Type::bool()));
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+            }
+            _ => panic!("Expected intersection type"),
+        }
+    }
+
+    #[test]
+    fn test_intersection_normalization_removes_duplicates() {
+        let intersection = Type::intersection(vec![Type::int(), Type::string(), Type::int(), Type::string()]);
+
+        match intersection {
+            Type::Intersection(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+            }
+            _ => panic!("Expected intersection type"),
+        }
+    }
+
+    #[test]
+    fn test_intersection_normalization_is_sorted() {
+        let intersection = Type::intersection(vec![Type::string(), Type::bool(), Type::int()]);
+
+        match intersection {
+            Type::Intersection(types) => {
+                for i in 1..types.len() {
+                    assert!(types[i - 1] <= types[i], "Intersection types should be sorted");
+                }
+            }
+            _ => panic!("Expected intersection type"),
+        }
+    }
+
+    #[test]
+    fn test_intersection_single_element_unwraps() {
+        let intersection = Type::intersection(vec![Type::int()]);
+        assert_eq!(intersection, Type::int());
+    }
+
+    #[test]
+    fn test_intersection_display() {
+        let intersection = Type::intersection(vec![Type::int(), Type::string()]);
+        let display = intersection.to_string();
+        assert!(display.contains("int"));
+        assert!(display.contains("str"));
+        assert!(display.contains(" & "));
+    }
+
+    /// T <: Intersection[A, B] means T <: A and T <: B
+    #[test]
+    fn test_subtype_intersection_all_must_satisfy() {
+        let intersection = Type::intersection(vec![Type::int(), Type::string()]);
+
+        assert!(!Type::int().is_subtype_of(&intersection));
+        assert!(Type::never().is_subtype_of(&intersection));
+    }
+
+    /// Intersection[A, B] is more specific than either A or B, so it's a subtype of both
+    #[test]
+    fn test_subtype_intersection_to_single_type() {
+        let proto1 = Type::Con(TypeCtor::Protocol(Some("Iterable".to_string())));
+        let proto2 = Type::Con(TypeCtor::Protocol(Some("Sized".to_string())));
+        let intersection = Type::intersection(vec![proto1.clone(), proto2.clone()]);
+
+        assert!(intersection.is_subtype_of(&proto1));
+        assert!(intersection.is_subtype_of(&proto2));
+        assert!(intersection.is_subtype_of(&Type::any()));
+        assert!(intersection.is_subtype_of(&Type::top()));
+    }
+
+    #[test]
+    fn test_subtype_intersection_with_protocols() {
+        let proto1 = Type::Con(TypeCtor::Protocol(Some("Iterable".to_string())));
+        let proto2 = Type::Con(TypeCtor::Protocol(Some("Sized".to_string())));
+        let both = Type::intersection(vec![proto1.clone(), proto2.clone()]);
+
+        assert!(both.is_subtype_of(&proto1));
+        assert!(both.is_subtype_of(&proto2));
+    }
+
+    #[test]
+    fn test_intersection_kind() {
+        let intersection = Type::intersection(vec![Type::int(), Type::string()]);
+        assert_eq!(intersection.kind_of().unwrap(), Kind::Star);
     }
 }

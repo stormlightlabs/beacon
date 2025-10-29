@@ -889,9 +889,25 @@ impl Analyzer {
         Self::visit_node_with_env(node, &mut env, &mut ctx, None)
     }
 
+    /// Convert a Type::Fun to a MethodSignature
+    ///
+    /// Extracts parameters and return type from a function type.
+    /// Returns None if the type is not a function type.
+    fn type_to_method_signature(name: &str, ty: &Type) -> Option<beacon_core::protocols::MethodSignature> {
+        match ty {
+            Type::Fun(params, ret) => Some(beacon_core::protocols::MethodSignature {
+                name: name.to_string(),
+                params: params.clone(),
+                return_type: ret.as_ref().clone(),
+            }),
+            _ => None,
+        }
+    }
+
     /// Check if a type satisfies a user-defined protocol
     ///
     /// Checks structural conformance by verifying that the type has all required methods with compatible signatures.
+    /// Uses full variance checking: contravariant parameters, covariant returns.
     fn check_user_defined_protocol(
         ty: &Type, protocol_name: &str, class_registry: &class_metadata::ClassRegistry,
     ) -> bool {
@@ -908,14 +924,26 @@ impl Analyzer {
         match ty {
             Type::Con(TypeCtor::Class(class_name)) => {
                 if let Some(class_meta) = class_registry.get_class(class_name) {
-                    for (method_name, _method_type) in required_methods {
-                        if class_meta.lookup_method(method_name).is_none() {
-                            return false;
+                    let mut required_sigs = Vec::new();
+                    for (method_name, method_type) in required_methods {
+                        if let Some(sig) = Self::type_to_method_signature(method_name, method_type) {
+                            required_sigs.push(sig);
                         }
-                        // TODO: Check method signature compatibility (parameter types, return type)
-                        // For now, we just check that the method exists
                     }
-                    true
+
+                    let mut available_sigs = Vec::new();
+                    for (method_name, method_type) in class_meta.methods.iter() {
+                        if let Some(sig) = Self::type_to_method_signature(method_name, method_type) {
+                            available_sigs.push((method_name.clone(), sig));
+                        }
+                    }
+
+                    let protocol_def = beacon_core::protocols::ProtocolDef {
+                        name: beacon_core::protocols::ProtocolName::UserDefined(protocol_name.to_string()),
+                        required_methods: required_sigs,
+                    };
+
+                    protocol_def.check_method_signatures(&available_sigs).is_ok()
                 } else {
                     false
                 }

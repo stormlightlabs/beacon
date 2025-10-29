@@ -103,6 +103,7 @@ impl Subst {
                 Type::ForAll(tvs.clone(), Box::new(filtered_subst.apply(t)))
             }
             Type::Union(types) => Type::Union(types.iter().map(|t| self.apply(t)).collect()),
+            Type::Intersection(types) => Type::Intersection(types.iter().map(|t| self.apply(t)).collect()),
             Type::Record(fields, row_var) => {
                 let new_fields: Vec<(String, Type)> =
                     fields.iter().map(|(name, ty)| (name.clone(), self.apply(ty))).collect();

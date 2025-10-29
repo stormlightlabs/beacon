@@ -158,11 +158,81 @@ impl ProtocolDef {
     /// Check if required methods are present (simplified check)
     ///
     /// This is a basic implementation that checks for method names only.
-    /// A full implementation would check signatures, handle inheritance, and verify proper typing relationships.
+    /// For full signature checking with variance, use `check_method_signatures()`.
     pub fn check_method_names(&self, available_methods: &[String]) -> bool {
         self.required_methods
             .iter()
             .all(|req| available_methods.contains(&req.name))
+    }
+
+    /// Check if required methods are present with compatible signatures
+    ///
+    /// Performs full structural subtyping with variance rules:
+    /// - Parameter types: protocol requirements must be subtypes of implementation params (contravariant)
+    /// - Return types: implementation returns must be subtypes of protocol requirements (covariant)
+    ///
+    /// This enables proper protocol satisfaction checking where an implementing class can have:
+    /// - More general parameter types (can accept a wider range of inputs)
+    /// - More specific return types (provides more specific outputs)
+    ///
+    /// # Arguments
+    /// * `available_methods` - Methods available on the type being checked, as (name, signature) pairs
+    ///
+    /// # Returns
+    /// * `Ok(())` if all required methods are present with compatible signatures
+    /// * `Err(String)` with a description of the first incompatibility found
+    ///
+    /// # Examples
+    /// ```
+    /// use beacon_core::{ProtocolDef, ProtocolName, MethodSignature, Type};
+    ///
+    /// let protocol = ProtocolDef::get(&ProtocolName::Sized);
+    /// let available = vec![(
+    ///     "__len__".to_string(),
+    ///     MethodSignature {
+    ///         name: "__len__".to_string(),
+    ///         params: vec![],
+    ///         return_type: Type::int(),
+    ///     }
+    /// )];
+    ///
+    /// assert!(protocol.check_method_signatures(&available).is_ok());
+    /// ```
+    pub fn check_method_signatures(&self, available_methods: &[(String, MethodSignature)]) -> Result<(), String> {
+        for required in &self.required_methods {
+            let found = available_methods.iter().find(|(name, _)| name == &required.name);
+
+            let Some((_, provided)) = found else {
+                return Err(format!("Missing required method '{}'", required.name));
+            };
+
+            if provided.params.len() != required.params.len() {
+                return Err(format!(
+                    "Method '{}' has {} parameters but protocol requires {}",
+                    required.name,
+                    provided.params.len(),
+                    required.params.len()
+                ));
+            }
+
+            for (i, (req_param, prov_param)) in required.params.iter().zip(&provided.params).enumerate() {
+                if !req_param.is_subtype_of(prov_param) {
+                    return Err(format!(
+                        "Method '{}' parameter {} incompatible: expected parameter accepting {}, but found {}",
+                        required.name, i, req_param, prov_param
+                    ));
+                }
+            }
+
+            if !provided.return_type.is_subtype_of(&required.return_type) {
+                return Err(format!(
+                    "Method '{}' return type incompatible: expected {}, but found {}",
+                    required.name, required.return_type, provided.return_type
+                ));
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -347,5 +417,152 @@ mod tests {
         let def = ProtocolDef::get(&ProtocolName::Iterable);
         assert!(def.check_method_names(&["__iter__".to_string()]));
         assert!(!def.check_method_names(&["__len__".to_string()]));
+    }
+
+    #[test]
+    fn test_check_method_signatures_exact_match() {
+        let protocol = ProtocolDef::get(&ProtocolName::Sized);
+        let available = vec![(
+            "__len__".to_string(),
+            MethodSignature { name: "__len__".to_string(), params: vec![], return_type: Type::int() },
+        )];
+
+        assert!(protocol.check_method_signatures(&available).is_ok());
+    }
+
+    #[test]
+    fn test_check_method_signatures_missing_method() {
+        let protocol = ProtocolDef::get(&ProtocolName::Sized);
+        let available = vec![];
+
+        let result = protocol.check_method_signatures(&available);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Missing required method"));
+    }
+
+    #[test]
+    fn test_check_method_signatures_parameter_contravariance() {
+        let protocol = ProtocolDef {
+            name: ProtocolName::UserDefined("Test".to_string()),
+            required_methods: vec![MethodSignature {
+                name: "process".to_string(),
+                params: vec![Type::int()],
+                return_type: Type::string(),
+            }],
+        };
+
+        let available = vec![(
+            "process".to_string(),
+            MethodSignature { name: "process".to_string(), params: vec![Type::any()], return_type: Type::string() },
+        )];
+
+        assert!(protocol.check_method_signatures(&available).is_ok());
+    }
+
+    #[test]
+    fn test_check_method_signatures_parameter_contravariance_invalid() {
+        let protocol = ProtocolDef {
+            name: ProtocolName::UserDefined("Test".to_string()),
+            required_methods: vec![MethodSignature {
+                name: "process".to_string(),
+                params: vec![Type::any()],
+                return_type: Type::string(),
+            }],
+        };
+
+        let available = vec![(
+            "process".to_string(),
+            MethodSignature { name: "process".to_string(), params: vec![Type::int()], return_type: Type::string() },
+        )];
+
+        let result = protocol.check_method_signatures(&available);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("parameter 0 incompatible"));
+    }
+
+    #[test]
+    fn test_check_method_signatures_return_covariance() {
+        let protocol = ProtocolDef {
+            name: ProtocolName::UserDefined("Test".to_string()),
+            required_methods: vec![MethodSignature {
+                name: "get_value".to_string(),
+                params: vec![],
+                return_type: Type::any(),
+            }],
+        };
+
+        let available = vec![(
+            "get_value".to_string(),
+            MethodSignature { name: "get_value".to_string(), params: vec![], return_type: Type::int() },
+        )];
+
+        assert!(protocol.check_method_signatures(&available).is_ok());
+    }
+
+    #[test]
+    fn test_check_method_signatures_return_covariance_invalid() {
+        let protocol = ProtocolDef {
+            name: ProtocolName::UserDefined("Test".to_string()),
+            required_methods: vec![MethodSignature {
+                name: "get_value".to_string(),
+                params: vec![],
+                return_type: Type::int(),
+            }],
+        };
+
+        let available = vec![(
+            "get_value".to_string(),
+            MethodSignature { name: "get_value".to_string(), params: vec![], return_type: Type::any() },
+        )];
+
+        let result = protocol.check_method_signatures(&available);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("return type incompatible"));
+    }
+
+    #[test]
+    fn test_check_method_signatures_arity_mismatch() {
+        let protocol = ProtocolDef {
+            name: ProtocolName::UserDefined("Test".to_string()),
+            required_methods: vec![MethodSignature {
+                name: "method".to_string(),
+                params: vec![Type::int()],
+                return_type: Type::string(),
+            }],
+        };
+
+        let available = vec![(
+            "method".to_string(),
+            MethodSignature {
+                name: "method".to_string(),
+                params: vec![Type::int(), Type::int()],
+                return_type: Type::string(),
+            },
+        )];
+
+        let result = protocol.check_method_signatures(&available);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("parameters but protocol requires"));
+    }
+
+    #[test]
+    fn test_check_method_signatures_multiple_methods() {
+        let protocol = ProtocolDef::get(&ProtocolName::Sequence);
+        let available = vec![
+            (
+                "__getitem__".to_string(),
+                MethodSignature {
+                    name: "__getitem__".to_string(),
+                    params: vec![Type::int()],
+                    return_type: Type::string(),
+                },
+            ),
+            (
+                "__len__".to_string(),
+                MethodSignature { name: "__len__".to_string(), params: vec![], return_type: Type::int() },
+            ),
+        ];
+
+        assert!(protocol.check_method_signatures(&available).is_ok());
     }
 }
