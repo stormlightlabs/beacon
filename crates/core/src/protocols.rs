@@ -242,11 +242,18 @@ pub struct ProtocolChecker;
 impl ProtocolChecker {
     /// Check if a type satisfies a protocol
     ///
-    /// This is a simplified implementation that handles builtin types.
-    ///
-    /// TODO: Extend to handle user-defined types via record/class inspection
-    /// TODO: Extract element types from generic protocols
+    /// Handles builtin types, union types, and intersection types.
+    /// - For union types: T satisfies the protocol if ALL variants satisfy it
+    /// - For intersection types: The type must satisfy ALL protocol requirements
     pub fn satisfies(ty: &Type, protocol: &ProtocolName) -> bool {
+        if let Type::Union(variants) = ty {
+            return variants.iter().all(|variant| Self::satisfies(variant, protocol));
+        }
+
+        if let Type::Intersection(types) = ty {
+            return types.iter().any(|t| Self::satisfies(t, protocol));
+        }
+
         match (ty, protocol) {
             (Type::App(ctor, _), ProtocolName::Iterable) => {
                 matches!(
@@ -268,6 +275,7 @@ impl ProtocolChecker {
             }
             (Type::Con(TypeCtor::String), ProtocolName::Sized) => true,
             (Type::Con(TypeCtor::Any), _) => true,
+            (Type::Con(TypeCtor::Protocol(Some(name))), ProtocolName::UserDefined(proto_name)) => name == proto_name,
             _ => false,
         }
     }
@@ -564,5 +572,42 @@ mod tests {
         ];
 
         assert!(protocol.check_method_signatures(&available).is_ok());
+    }
+
+    #[test]
+    fn test_protocol_satisfies_union_all_variants() {
+        let union = Type::union(vec![Type::list(Type::int()), Type::list(Type::string())]);
+        assert!(ProtocolChecker::satisfies(&union, &ProtocolName::Iterable));
+
+        let mixed_union = Type::union(vec![Type::list(Type::int()), Type::int()]);
+        assert!(!ProtocolChecker::satisfies(&mixed_union, &ProtocolName::Iterable));
+    }
+
+    #[test]
+    fn test_protocol_satisfies_intersection() {
+        let iterable_proto = Type::Con(TypeCtor::Protocol(Some("Iterable".to_string())));
+        let sized_proto = Type::Con(TypeCtor::Protocol(Some("Sized".to_string())));
+        let both = Type::intersection(vec![iterable_proto, sized_proto]);
+
+        assert!(ProtocolChecker::satisfies(
+            &both,
+            &ProtocolName::UserDefined("Iterable".to_string())
+        ));
+
+        assert!(ProtocolChecker::satisfies(
+            &both,
+            &ProtocolName::UserDefined("Sized".to_string())
+        ));
+    }
+
+    /// Intersection[list[int], Sized] - list satisfies both
+    #[test]
+    fn test_protocol_satisfies_intersection_with_concrete_types() {
+        let list_type = Type::list(Type::int());
+        let sized_proto = Type::Con(TypeCtor::Protocol(Some("Sized".to_string())));
+        let intersection = Type::intersection(vec![list_type, sized_proto]);
+
+        assert!(ProtocolChecker::satisfies(&intersection, &ProtocolName::Iterable));
+        assert!(ProtocolChecker::satisfies(&intersection, &ProtocolName::Sized));
     }
 }

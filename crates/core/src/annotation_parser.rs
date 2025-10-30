@@ -6,6 +6,7 @@
 //! - Basic types: int, str, bool, float, None
 //! - Parameterized types: list[int], dict[str, int]
 //! - Union types: Union[int, str], int | str (PEP 604)
+//! - Intersection types: Protocol1 & Protocol2
 //! - Optional: Optional[T] → Union[T, None]
 //! - Callable: Callable[[args...], return]
 //! - Any, Never, Top
@@ -17,6 +18,7 @@
 //!
 //! let parser = AnnotationParser::new();
 //! let ty = parser.parse("list[int]").unwrap();
+//! let intersection = parser.parse("Iterable & Sized").unwrap();
 //! ```
 
 use crate::{Result, Type, TypeCtor, TypeError};
@@ -87,6 +89,8 @@ enum Token {
     Comma,
     /// |
     Pipe,
+    /// &
+    Ampersand,
     /// ...
     Ellipsis,
 }
@@ -131,6 +135,10 @@ impl<'a> Lexer<'a> {
                 }
                 '|' => {
                     tokens.push(Token::Pipe);
+                    self.chars.next();
+                }
+                '&' => {
+                    tokens.push(Token::Ampersand);
                     self.chars.next();
                 }
                 '.' => {
@@ -211,18 +219,38 @@ impl Parser {
     }
 
     /// Parse a type annotation
+    /// Precedence: | (union) < & (intersection)
     fn parse_type(&mut self) -> Result<Type> {
-        let mut ty = self.parse_primary_type()?;
+        let mut ty = self.parse_intersection_type()?;
 
         while matches!(self.peek(), Some(Token::Pipe)) {
             self.advance();
-            let right = self.parse_primary_type()?;
+            let right = self.parse_intersection_type()?;
             ty = match ty {
                 Type::Union(mut types) => {
                     types.push(right);
                     Type::union(types)
                 }
                 _ => Type::union(vec![ty, right]),
+            };
+        }
+
+        Ok(ty)
+    }
+
+    /// Parse intersection types (higher precedence than union)
+    fn parse_intersection_type(&mut self) -> Result<Type> {
+        let mut ty = self.parse_primary_type()?;
+
+        while matches!(self.peek(), Some(Token::Ampersand)) {
+            self.advance();
+            let right = self.parse_primary_type()?;
+            ty = match ty {
+                Type::Intersection(mut types) => {
+                    types.push(right);
+                    Type::intersection(types)
+                }
+                _ => Type::intersection(vec![ty, right]),
             };
         }
 
@@ -286,12 +314,11 @@ impl Parser {
                     Type::App(Box::new(Type::Con(TypeCtor::Set)), Box::new(Type::any()))
                 }
             }
+            // TODO: Handle heterogeneous tuples properly
             "tuple" => {
                 if matches!(self.peek(), Some(Token::LBracket)) {
                     self.advance();
-                    // TODO: Handle heterogeneous tuples properl
                     let element_type = self.parse_type()?;
-
                     while matches!(self.peek(), Some(Token::Comma)) {
                         self.advance();
                         if matches!(self.peek(), Some(Token::RBracket)) {
@@ -713,6 +740,94 @@ mod tests {
                 assert_eq!(*ret, Type::Con(TypeCtor::TypeVariable("T".to_string())));
             }
             _ => panic!("Expected function type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_intersection_basic() {
+        let parser = AnnotationParser::new();
+        let ty = parser.parse("Iterable & Sized").unwrap();
+        match ty {
+            Type::Intersection(types) => {
+                assert_eq!(types.len(), 2);
+                let has_iterable = types
+                    .iter()
+                    .any(|t| matches!(t, Type::Con(TypeCtor::Class(name)) if name == "Iterable"));
+                let has_sized = types
+                    .iter()
+                    .any(|t| matches!(t, Type::Con(TypeCtor::Class(name)) if name == "Sized"));
+                assert!(has_iterable, "Expected Iterable in intersection");
+                assert!(has_sized, "Expected Sized in intersection");
+            }
+            _ => panic!("Expected intersection type, got: {ty:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_intersection_three_types() {
+        let parser = AnnotationParser::new();
+        let ty = parser.parse("A & B & C").unwrap();
+        match ty {
+            Type::Intersection(types) => {
+                assert_eq!(types.len(), 3);
+                let has_a = types
+                    .iter()
+                    .any(|t| matches!(t, Type::Con(TypeCtor::TypeVariable(name)) if name == "A"));
+                let has_b = types
+                    .iter()
+                    .any(|t| matches!(t, Type::Con(TypeCtor::TypeVariable(name)) if name == "B"));
+                let has_c = types
+                    .iter()
+                    .any(|t| matches!(t, Type::Con(TypeCtor::TypeVariable(name)) if name == "C"));
+                assert!(has_a && has_b && has_c, "Expected A, B, C in intersection");
+            }
+            _ => panic!("Expected intersection type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_intersection_precedence() {
+        let parser = AnnotationParser::new();
+        let ty = parser.parse("A & B | C").unwrap();
+        match ty {
+            Type::Union(union_types) => {
+                assert_eq!(union_types.len(), 2);
+                let has_intersection = union_types.iter().any(|t| matches!(t, Type::Intersection(_)));
+                let has_c = union_types
+                    .iter()
+                    .any(|t| matches!(t, Type::Con(TypeCtor::TypeVariable(name)) if name == "C"));
+                assert!(has_intersection, "Expected intersection in union");
+                assert!(has_c, "Expected C in union");
+            }
+            _ => panic!("Expected union type, got: {ty:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_mixed_intersection_union() {
+        let parser = AnnotationParser::new();
+        let ty = parser.parse("(A | B) & (C | D)").unwrap();
+        match ty {
+            Type::Intersection(types) => {
+                assert_eq!(types.len(), 2);
+                let all_unions = types.iter().all(|t| matches!(t, Type::Union(_)));
+                assert!(all_unions, "Expected all intersection components to be unions");
+            }
+            _ => panic!("Expected intersection type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_intersection_with_concrete_types() {
+        let parser = AnnotationParser::new();
+        let ty = parser.parse("int & str").unwrap();
+        match ty {
+            Type::Intersection(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+            }
+            _ => panic!("Expected intersection type"),
         }
     }
 }

@@ -114,9 +114,11 @@ impl Subst {
                 });
                 Type::Record(new_fields, new_row_var)
             }
-            Type::BoundMethod(receiver, method) => {
-                Type::BoundMethod(Box::new(self.apply(receiver)), Box::new(self.apply(method)))
-            }
+            Type::BoundMethod(receiver, method_name, method) => Type::BoundMethod(
+                Box::new(self.apply(receiver)),
+                method_name.into(),
+                Box::new(self.apply(method)),
+            ),
         }
     }
 

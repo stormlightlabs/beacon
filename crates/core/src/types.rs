@@ -297,11 +297,11 @@ pub enum Type {
     /// Record types for objects/classes (row polymorphism)
     /// fields, row variable
     Record(Vec<(String, Type)>, Option<TypeVar>),
-    /// Bound method type (receiver_type, method_type)
-    /// Represents a method bound to an instance
-    /// e.g., for `f = obj.method` where obj: MyClass and method: (self, int) -> str
-    /// stores BoundMethod(MyClass, (self, int) -> str)
-    BoundMethod(Box<Type>, Box<Type>),
+    /// Bound method type (receiver_type, method_name, method_type) represents a method bound to an instance.
+    /// The method name enables overload resolution during function calls
+    ///
+    /// e.g., for `f = obj.method` where obj: MyClass and method: (self, int) -> str stores BoundMethod(MyClass, "method", (self, int) -> str)
+    BoundMethod(Box<Type>, String, Box<Type>),
 }
 
 impl fmt::Display for Type {
@@ -364,8 +364,8 @@ impl fmt::Display for Type {
                     None => write!(f, "{{ {} }}", field_strs.join(", ")),
                 }
             }
-            Type::BoundMethod(receiver, method) => {
-                write!(f, "BoundMethod[{receiver}, {method}]")
+            Type::BoundMethod(receiver, method_name, method) => {
+                write!(f, "BoundMethod[{receiver}, {method_name}, {method}]")
             }
         }
     }
@@ -574,7 +574,7 @@ impl Type {
             Type::Union(_) => Ok(Kind::Star),
             Type::Intersection(_) => Ok(Kind::Star),
             Type::Record(_, _) => Ok(Kind::Star),
-            Type::BoundMethod(_, _) => Ok(Kind::Star),
+            Type::BoundMethod(_, _, _) => Ok(Kind::Star),
         }
     }
 
@@ -637,7 +637,7 @@ impl Type {
                     }
                 }
             }
-            Type::BoundMethod(receiver, method) => {
+            Type::BoundMethod(receiver, _, method) => {
                 receiver.collect_free_vars(vars, bound);
                 method.collect_free_vars(vars, bound);
             }
@@ -733,7 +733,9 @@ impl Type {
             return true;
         }
 
-        if let (Type::BoundMethod(self_recv, self_meth), Type::BoundMethod(other_recv, other_meth)) = (self, other) {
+        if let (Type::BoundMethod(self_recv, _, self_meth), Type::BoundMethod(other_recv, _, other_meth)) =
+            (self, other)
+        {
             return self_recv.is_subtype_of(other_recv) && self_meth.is_subtype_of(other_meth);
         }
 
@@ -811,6 +813,97 @@ impl fmt::Display for TypeScheme {
                 self.ty
             )
         }
+    }
+}
+
+/// Overload set for functions/methods with multiple signatures
+///
+/// Python's `@overload` decorator allows defining multiple type signatures for a single function.
+/// The overload signatures are type-only declarations, and the final (non-decorated) definition
+/// is the implementation.
+///
+/// # Examples
+/// ```python
+/// @overload
+/// def get(key: str) -> str: ...
+///
+/// @overload
+/// def get(key: str, default: str) -> str: ...
+///
+/// def get(key: str, default: str | None = None) -> str:
+///     # Implementation
+///     ...
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverloadSet {
+    /// The overload signatures (from @overload decorators)
+    /// These are tried in order during overload resolution
+    pub signatures: Vec<Type>,
+
+    /// The implementation signature (optional)
+    /// This is the actual function that will be called
+    pub implementation: Option<Type>,
+}
+
+impl OverloadSet {
+    /// Create a new overload set with the given signatures
+    pub fn new(signatures: Vec<Type>) -> Self {
+        Self { signatures, implementation: None }
+    }
+
+    /// Create an overload set with signatures and an implementation
+    pub fn with_implementation(signatures: Vec<Type>, implementation: Type) -> Self {
+        Self { signatures, implementation: Some(implementation) }
+    }
+
+    /// Add an overload signature to this set
+    pub fn add_signature(&mut self, signature: Type) {
+        self.signatures.push(signature);
+    }
+
+    /// Set the implementation signature
+    pub fn set_implementation(&mut self, implementation: Type) {
+        self.implementation = Some(implementation);
+    }
+
+    /// Resolve the best matching overload for the given argument types. This implements Python's overload resolution semantics.
+    ///
+    /// Returns the first signature where all argument types are subtypes of the parameters.
+    ///
+    /// For method overloads, both signatures and arg_types should exclude the self parameter.
+    /// Signatures are typically extracted without self (as self often lacks type annotations).
+    pub fn resolve(&self, arg_types: &[Type]) -> Option<&Type> {
+        for signature in &self.signatures {
+            if let Type::Fun(params, _) = signature {
+                if params.len() != arg_types.len() {
+                    continue;
+                }
+
+                let all_match = arg_types
+                    .iter()
+                    .zip(params.iter())
+                    .all(|(arg, param)| arg.is_subtype_of(param));
+
+                if all_match {
+                    return Some(signature);
+                }
+            }
+        }
+
+        self.implementation.as_ref()
+    }
+}
+
+impl fmt::Display for OverloadSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Overload[")?;
+        for (i, sig) in self.signatures.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{sig}")?;
+        }
+        write!(f, "]")
     }
 }
 
@@ -1630,9 +1723,21 @@ mod tests {
 
     #[test]
     fn test_subtype_bound_method() {
-        let bm1 = Type::BoundMethod(Box::new(Type::int()), Box::new(Type::fun(vec![], Type::string())));
-        let bm2 = Type::BoundMethod(Box::new(Type::int()), Box::new(Type::fun(vec![], Type::string())));
-        let bm3 = Type::BoundMethod(Box::new(Type::string()), Box::new(Type::fun(vec![], Type::string())));
+        let bm1 = Type::BoundMethod(
+            Box::new(Type::int()),
+            "test".to_string(),
+            Box::new(Type::fun(vec![], Type::string())),
+        );
+        let bm2 = Type::BoundMethod(
+            Box::new(Type::int()),
+            "test".to_string(),
+            Box::new(Type::fun(vec![], Type::string())),
+        );
+        let bm3 = Type::BoundMethod(
+            Box::new(Type::string()),
+            "test".to_string(),
+            Box::new(Type::fun(vec![], Type::string())),
+        );
 
         assert!(bm1.is_subtype_of(&bm2));
         assert!(!bm1.is_subtype_of(&bm3));
@@ -1733,5 +1838,99 @@ mod tests {
     fn test_intersection_kind() {
         let intersection = Type::intersection(vec![Type::int(), Type::string()]);
         assert_eq!(intersection.kind_of().unwrap(), Kind::Star);
+    }
+
+    #[test]
+    fn test_overload_set_creation() {
+        let sig1 = Type::fun(vec![Type::int()], Type::string());
+        let sig2 = Type::fun(vec![Type::string()], Type::string());
+        let overload = OverloadSet::new(vec![sig1, sig2]);
+
+        assert_eq!(overload.signatures.len(), 2);
+        assert!(overload.implementation.is_none());
+    }
+
+    #[test]
+    fn test_overload_set_with_implementation() {
+        let sig1 = Type::fun(vec![Type::int()], Type::string());
+        let sig2 = Type::fun(vec![Type::string()], Type::string());
+        let impl_sig = Type::fun(vec![Type::any()], Type::string());
+        let overload = OverloadSet::with_implementation(vec![sig1, sig2], impl_sig.clone());
+
+        assert_eq!(overload.signatures.len(), 2);
+        assert_eq!(overload.implementation, Some(impl_sig));
+    }
+
+    #[test]
+    fn test_overload_resolution_exact_match() {
+        let sig1 = Type::fun(vec![Type::int()], Type::string());
+        let sig2 = Type::fun(vec![Type::string()], Type::bool());
+        let overload = OverloadSet::new(vec![sig1.clone(), sig2]);
+
+        let resolved = overload.resolve(&[Type::int()]);
+        assert_eq!(resolved, Some(&sig1));
+    }
+
+    #[test]
+    fn test_overload_resolution_subtype_match() {
+        let sig1 = Type::fun(vec![Type::any()], Type::string());
+        let sig2 = Type::fun(vec![Type::int()], Type::bool());
+        let overload = OverloadSet::new(vec![sig1.clone(), sig2.clone()]);
+
+        let resolved = overload.resolve(&[Type::int()]);
+        assert_eq!(resolved, Some(&sig1));
+    }
+
+    #[test]
+    fn test_overload_resolution_first_match_wins() {
+        let sig1 = Type::fun(vec![Type::any()], Type::string());
+        let sig2 = Type::fun(vec![Type::int()], Type::bool());
+        let overload = OverloadSet::new(vec![sig1.clone(), sig2]);
+
+        let resolved = overload.resolve(&[Type::int()]);
+        assert_eq!(resolved, Some(&sig1));
+    }
+
+    #[test]
+    fn test_overload_resolution_no_match() {
+        let sig1 = Type::fun(vec![Type::int()], Type::string());
+        let sig2 = Type::fun(vec![Type::string()], Type::bool());
+        let overload = OverloadSet::new(vec![sig1, sig2]);
+
+        let resolved = overload.resolve(&[Type::bool()]);
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn test_overload_resolution_fallback_to_implementation() {
+        let sig1 = Type::fun(vec![Type::int()], Type::string());
+        let impl_sig = Type::fun(vec![Type::any()], Type::string());
+        let mut overload = OverloadSet::new(vec![sig1]);
+        overload.set_implementation(impl_sig.clone());
+
+        let resolved = overload.resolve(&[Type::string()]);
+        assert_eq!(resolved, Some(&impl_sig));
+    }
+
+    #[test]
+    fn test_overload_resolution_arity_mismatch() {
+        let sig1 = Type::fun(vec![Type::int()], Type::string());
+        let sig2 = Type::fun(vec![Type::int(), Type::int()], Type::bool());
+        let overload = OverloadSet::new(vec![sig1, sig2.clone()]);
+
+        let resolved = overload.resolve(&[Type::int(), Type::int()]);
+        assert_eq!(resolved, Some(&sig2));
+    }
+
+    #[test]
+    fn test_overload_display() {
+        let sig1 = Type::fun(vec![Type::int()], Type::string());
+        let sig2 = Type::fun(vec![Type::string()], Type::bool());
+        let overload = OverloadSet::new(vec![sig1, sig2]);
+
+        let display = overload.to_string();
+        assert!(display.contains("Overload["));
+        assert!(display.contains("int"));
+        assert!(display.contains("str"));
     }
 }

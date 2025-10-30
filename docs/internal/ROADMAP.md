@@ -4,20 +4,6 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 
 ## Type System Extensions
 
-### Advanced Protocols & Records
-
-- [x] User-defined protocol checking (custom iterators, protocols)
-- [x] Row extension for class inheritance
-- [x] Structural record types for duck typing
-- [ ] Protocol intersection and union types
-
-### Overloads & Decorators
-
-- [ ] Overload resolution for multiple signatures
-- [x] `@property`, `@staticmethod`, `@classmethod` support
-- [x] Class-level attributes and class methods
-- [x] Metaclass-aware construction
-
 ## LSP Features
 
 ### Completions
@@ -101,14 +87,16 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 - **Graceful degradation:** Type variables and `Any` allow flexible inference
 - **Decorator typing:** @property, @staticmethod, @classmethod properly transform method signatures
 - **Inheritance support:** Row polymorphism enables structural subtyping with method overrides
+- **Protocol composition:** Intersection and union types enable complex protocol requirements
+    - `Type::Intersection` with normalization (flatten, deduplicate, sort)
+    - Proper subtyping semantics for composed protocols
+- **Overload resolution:** Full Python `@overload` semantics with first-match-wins strategy
+    - Method name tracking in `BoundMethod` type for runtime resolution
+    - Automatic self-parameter handling in overload matching
+    - MethodType enum supporting both single and overloaded methods
+- **Variance checking:** Contravariant parameters, covariant return types in protocols
+    - Full signature compatibility validation via `Type::is_subtype_of()`
 
 ## Parking Lot
 
 - [ ] Type checking modes (strict/balanced/loose)
-- [ ] Overload resolution for multiple signatures (@overload decorator)
-
-**Future Protocol Enhancements:**
-
-- Protocol intersection and union types (Protocol1 & Protocol2, Protocol1 | Protocol2)
-- Variance in protocol method signatures
-- Method signature compatibility checking (currently name-only)

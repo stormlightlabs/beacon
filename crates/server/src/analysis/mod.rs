@@ -31,6 +31,7 @@ use beacon_parser::{AstNode, LiteralValue, SymbolTable};
 use constraint_gen::{Constraint, ConstraintGenContext, ConstraintResult, ConstraintSet, Span};
 use lsp_types::Position;
 use rustc_hash::FxHashMap;
+use std::collections::HashMap;
 use std::{path::Path, sync::Arc};
 use tokio::sync::RwLock;
 use type_env::TypeEnvironment;
@@ -65,6 +66,14 @@ impl TypeErrorInfo {
     pub fn end_col(&self) -> Option<usize> {
         self.span.end_col
     }
+}
+
+#[derive(Debug)]
+struct MethodInfo {
+    params: Vec<beacon_core::Type>,
+    return_type: beacon_core::Type,
+    decorators: Vec<String>,
+    is_overload: bool,
 }
 
 /// Result of analyzing a document
@@ -200,50 +209,132 @@ impl Analyzer {
                     metadata.set_metaclass(meta.clone());
                 }
 
-                for stmt in body {
-                    if let AstNode::FunctionDef { name: method_name, args: params, return_type, decorators, .. } = stmt
-                    {
-                        let param_types: Vec<beacon_core::Type> = params
-                            .iter()
-                            .filter_map(|p| p.type_annotation.as_ref())
-                            .filter_map(|ann| Self::parse_type_annotation(ann))
-                            .collect();
-
-                        let ret_type = return_type
-                            .as_ref()
-                            .and_then(|ann| Self::parse_type_annotation(ann))
-                            .unwrap_or_else(beacon_core::Type::any);
-
-                        let has_property = decorators.iter().any(|d| d == "property");
-                        let has_staticmethod = decorators.iter().any(|d| d == "staticmethod");
-                        let has_classmethod = decorators.iter().any(|d| d == "classmethod");
-
-                        if method_name == "__init__" {
-                            let func_type = beacon_core::Type::fun(param_types, ret_type);
-                            metadata.set_init_type(func_type);
-                        } else if method_name == "__new__" {
-                            let func_type = beacon_core::Type::fun(param_types, ret_type);
-                            metadata.set_new_type(func_type);
-                        } else if has_property {
-                            metadata.add_property(method_name.clone(), ret_type);
-                        } else if has_staticmethod {
-                            let static_param_types: Vec<beacon_core::Type> = if !param_types.is_empty() {
-                                param_types.iter().skip(1).cloned().collect()
-                            } else {
-                                param_types
-                            };
-                            metadata.add_staticmethod(method_name.clone(), Type::fun(static_param_types, ret_type));
-                        } else if has_classmethod {
-                            metadata.add_classmethod(method_name.clone(), Type::fun(param_types, ret_type));
-                        } else {
-                            metadata.add_method(method_name.clone(), Type::fun(param_types, ret_type));
-                        }
-                    }
-                }
+                Self::process_class_methods(body, &mut metadata);
 
                 class_registry.register_class(name.clone(), metadata);
             }
             _ => {}
+        }
+    }
+
+    /// Process class methods, grouping overloads together
+    ///
+    /// Handles @overload decorators by collecting multiple signatures for the same method name.
+    /// Functions with @overload are signature declarations only; the function without @overload
+    /// (if present) becomes the implementation signature.
+    fn process_class_methods(body: &[AstNode], metadata: &mut class_metadata::ClassMetadata) {
+        let mut methods_by_name: HashMap<String, Vec<MethodInfo>> = HashMap::new();
+
+        for stmt in body {
+            if let AstNode::FunctionDef { name: method_name, args: params, return_type, decorators, .. } = stmt {
+                let param_types: Vec<beacon_core::Type> = params
+                    .iter()
+                    .filter_map(|p| p.type_annotation.as_ref())
+                    .filter_map(|ann| Self::parse_type_annotation(ann))
+                    .collect();
+
+                let ret_type = return_type
+                    .as_ref()
+                    .and_then(|ann| Self::parse_type_annotation(ann))
+                    .unwrap_or_else(beacon_core::Type::any);
+
+                let is_overload = decorators.iter().any(|d| d == "overload");
+
+                methods_by_name
+                    .entry(method_name.clone())
+                    .or_default()
+                    .push(MethodInfo {
+                        params: param_types,
+                        return_type: ret_type,
+                        decorators: decorators.clone(),
+                        is_overload,
+                    });
+            }
+        }
+
+        for (method_name, method_infos) in methods_by_name {
+            if method_name == "__init__" {
+                if let Some(info) = method_infos.first() {
+                    let func_type = beacon_core::Type::fun(info.params.clone(), info.return_type.clone());
+                    metadata.set_init_type(func_type);
+                }
+                continue;
+            }
+
+            if method_name == "__new__" {
+                if let Some(info) = method_infos.first() {
+                    let func_type = beacon_core::Type::fun(info.params.clone(), info.return_type.clone());
+                    metadata.set_new_type(func_type);
+                }
+                continue;
+            }
+
+            let first_info = &method_infos[0];
+            let has_property = first_info.decorators.iter().any(|d| d == "property");
+            let has_staticmethod = first_info.decorators.iter().any(|d| d == "staticmethod");
+            let has_classmethod = first_info.decorators.iter().any(|d| d == "classmethod");
+
+            if has_property {
+                metadata.add_property(method_name.clone(), first_info.return_type.clone());
+                continue;
+            }
+
+            let has_overloads = method_infos.iter().any(|info| info.is_overload);
+
+            if has_overloads && method_infos.len() > 1 {
+                let mut overload_sigs = Vec::new();
+                let mut implementation = None;
+
+                for info in method_infos {
+                    let mut params = info.params.clone();
+
+                    if has_staticmethod && !params.is_empty() {
+                        params = params.iter().skip(1).cloned().collect();
+                    }
+
+                    let func_type = Type::fun(params, info.return_type.clone());
+
+                    if info.is_overload {
+                        overload_sigs.push(func_type);
+                    } else {
+                        implementation = Some(func_type);
+                    }
+                }
+
+                let overload_set = beacon_core::OverloadSet { signatures: overload_sigs, implementation };
+
+                if has_staticmethod {
+                    if let Some(impl_type) = overload_set.implementation.clone() {
+                        metadata.add_staticmethod(method_name.clone(), impl_type);
+                    } else if let Some(first_sig) = overload_set.signatures.first() {
+                        metadata.add_staticmethod(method_name.clone(), first_sig.clone());
+                    }
+                } else if has_classmethod {
+                    if let Some(impl_type) = overload_set.implementation.clone() {
+                        metadata.add_classmethod(method_name.clone(), impl_type);
+                    } else if let Some(first_sig) = overload_set.signatures.first() {
+                        metadata.add_classmethod(method_name.clone(), first_sig.clone());
+                    }
+                } else {
+                    metadata.add_overloaded_method(method_name.clone(), overload_set);
+                }
+            } else {
+                let mut params = first_info.params.clone();
+
+                if has_staticmethod && !params.is_empty() {
+                    params = params.iter().skip(1).cloned().collect();
+                }
+
+                let func_type = Type::fun(params, first_info.return_type.clone());
+
+                if has_staticmethod {
+                    metadata.add_staticmethod(method_name.clone(), func_type);
+                } else if has_classmethod {
+                    metadata.add_classmethod(method_name.clone(), func_type);
+                } else {
+                    metadata.add_method(method_name.clone(), func_type);
+                }
+            }
         }
     }
 
@@ -933,8 +1024,10 @@ impl Analyzer {
 
                     let mut available_sigs = Vec::new();
                     for (method_name, method_type) in class_meta.methods.iter() {
-                        if let Some(sig) = Self::type_to_method_signature(method_name, method_type) {
-                            available_sigs.push((method_name.clone(), sig));
+                        if let Some(ty) = method_type.primary_type() {
+                            if let Some(sig) = Self::type_to_method_signature(method_name, ty) {
+                                available_sigs.push((method_name.clone(), sig));
+                            }
                         }
                     }
 
@@ -1020,8 +1113,24 @@ impl Analyzer {
                                 }
                             }
                         }
-                    } else if let Type::BoundMethod(_receiver, method) = &applied_func {
-                        if let Type::Fun(params, method_ret) = method.as_ref() {
+                    } else if let Type::BoundMethod(receiver, method_name, method) = &applied_func {
+                        let resolved_method = if let Type::Con(TypeCtor::Class(class_name)) = receiver.as_ref() {
+                            if let Some(metadata) = class_registry.get_class(class_name) {
+                                if let Some(method_type) = metadata.lookup_method_type(method_name) {
+                                    let applied_args: Vec<Type> =
+                                        arg_types.iter().map(|arg| subst.apply(arg)).collect();
+                                    method_type.resolve_for_args(&applied_args).unwrap_or(method.as_ref())
+                                } else {
+                                    method.as_ref()
+                                }
+                            } else {
+                                method.as_ref()
+                            }
+                        } else {
+                            method.as_ref()
+                        };
+
+                        if let Type::Fun(params, method_ret) = resolved_method {
                             let bound_params: Vec<Type> = params.iter().skip(1).cloned().collect();
                             if bound_params.len() == arg_types.len() {
                                 for (provided_arg, expected_param) in arg_types.iter().zip(bound_params.iter()) {
@@ -1089,7 +1198,11 @@ impl Analyzer {
                                 class_registry.lookup_attribute_with_inheritance(class_name, &attr_name)
                             {
                                 let final_type = if class_registry.is_method(class_name, &attr_name) {
-                                    Type::BoundMethod(Box::new(applied_obj.clone()), Box::new(resolved_attr_ty.clone()))
+                                    Type::BoundMethod(
+                                        Box::new(applied_obj.clone()),
+                                        attr_name.clone(),
+                                        Box::new(resolved_attr_ty.clone()),
+                                    )
                                 } else {
                                     resolved_attr_ty.clone()
                                 };
@@ -1138,6 +1251,7 @@ impl Analyzer {
                                     let final_type = if class_registry.is_method(class_name, &attr_name) {
                                         Type::BoundMethod(
                                             Box::new(applied_obj.clone()),
+                                            attr_name.clone(),
                                             Box::new(resolved_attr_ty.clone()),
                                         )
                                     } else {
@@ -2894,7 +3008,10 @@ result = f()
             result.type_errors
         );
 
-        let has_bound_method = result.type_map.values().any(|ty| matches!(ty, Type::BoundMethod(_, _)));
+        let has_bound_method = result
+            .type_map
+            .values()
+            .any(|ty| matches!(ty, Type::BoundMethod(_, _, _)));
 
         assert!(
             has_bound_method,
@@ -2938,7 +3055,10 @@ result = upper_method()
             result.type_errors
         );
 
-        let has_bound_method = result.type_map.values().any(|ty| matches!(ty, Type::BoundMethod(_, _)));
+        let has_bound_method = result
+            .type_map
+            .values()
+            .any(|ty| matches!(ty, Type::BoundMethod(_, _, _)));
 
         assert!(
             has_bound_method,
@@ -2975,7 +3095,7 @@ method = s.upper
         let bound_method_type = result
             .type_map
             .values()
-            .find(|ty| matches!(ty, Type::BoundMethod(_, _)));
+            .find(|ty| matches!(ty, Type::BoundMethod(_, _, _)));
 
         if let Some(ty) = bound_method_type {
             let display = ty.to_string();
@@ -2983,6 +3103,99 @@ method = s.upper
                 display.contains("BoundMethod"),
                 "BoundMethod type should display correctly, got: {display}"
             );
+        }
+    }
+    #[test]
+    fn test_overload_parsing_from_stub() {
+        let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let stub_path = workspace_root.join("stubs/overload_test.pyi");
+        let mut class_registry = ClassRegistry::new();
+
+        let result = Analyzer::load_builtins_into_registry(&stub_path, &mut class_registry);
+        assert!(result.is_ok(), "Failed to load overload test stub: {:?}", result.err());
+
+        let converter_meta = class_registry.get_class("Converter");
+        assert!(converter_meta.is_some(), "Converter class not found in registry");
+
+        let meta = converter_meta.unwrap();
+
+        let convert_method = meta.lookup_method_type("convert");
+        assert!(convert_method.is_some(), "convert method not found");
+
+        if let Some(class_metadata::MethodType::Overloaded(overload_set)) = convert_method {
+            assert_eq!(
+                overload_set.signatures.len(),
+                2,
+                "convert should have 2 overload signatures"
+            );
+            assert!(
+                overload_set.implementation.is_some(),
+                "convert should have an implementation signature"
+            );
+        } else {
+            panic!("convert method should be overloaded");
+        }
+
+        let process_method = meta.lookup_method_type("process");
+        assert!(process_method.is_some(), "process method not found");
+
+        if let Some(class_metadata::MethodType::Overloaded(overload_set)) = process_method {
+            assert_eq!(
+                overload_set.signatures.len(),
+                2,
+                "process should have 2 overload signatures"
+            );
+        } else {
+            panic!("process method should be overloaded");
+        }
+    }
+
+    #[test]
+    fn test_overload_resolution_in_call() {
+        let stub_content = r#"
+from typing import overload
+
+class Calculator:
+    @overload
+    def compute(self, x: int) -> str: ...
+
+    @overload
+    def compute(self, x: str) -> int: ...
+
+    def compute(self, x): ...
+"#;
+
+        let mut parser = crate::parser::LspParser::new().unwrap();
+        let parse_result = parser.parse(stub_content).unwrap();
+
+        let mut class_registry = ClassRegistry::new();
+        Analyzer::extract_stub_classes_into_registry(&parse_result.ast, &mut class_registry);
+
+        let calc_meta = class_registry.get_class("Calculator");
+        assert!(calc_meta.is_some(), "Calculator class should be in registry");
+
+        let meta = calc_meta.unwrap();
+        let compute_method = meta.lookup_method_type("compute");
+
+        if let Some(class_metadata::MethodType::Overloaded(overload_set)) = compute_method {
+            assert_eq!(
+                overload_set.signatures.len(),
+                2,
+                "compute should have 2 overload signatures"
+            );
+
+            let resolved_int = overload_set.resolve(&[Type::Con(TypeCtor::Int)]);
+            assert!(resolved_int.is_some(), "Should resolve overload for int argument");
+
+            let resolved_str = overload_set.resolve(&[Type::Con(TypeCtor::String)]);
+            assert!(resolved_str.is_some(), "Should resolve overload for str argument");
+        } else {
+            panic!("compute method should be overloaded");
         }
     }
 }
