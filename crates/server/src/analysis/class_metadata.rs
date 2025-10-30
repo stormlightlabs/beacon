@@ -470,14 +470,8 @@ mod tests {
 
         let overload_set = OverloadSet {
             signatures: vec![
-                Type::Fun(
-                    vec![Type::Con(TypeCtor::Int)],
-                    Box::new(Type::Con(TypeCtor::String)),
-                ),
-                Type::Fun(
-                    vec![Type::Con(TypeCtor::String)],
-                    Box::new(Type::Con(TypeCtor::Int)),
-                ),
+                Type::Fun(vec![Type::Con(TypeCtor::Int)], Box::new(Type::Con(TypeCtor::String))),
+                Type::Fun(vec![Type::Con(TypeCtor::String)], Box::new(Type::Con(TypeCtor::Int))),
             ],
             implementation: None,
         };
@@ -488,7 +482,11 @@ mod tests {
         assert!(result.is_some(), "Should resolve overload for int argument");
 
         if let Some(Type::Fun(params, ret)) = result {
-            assert_eq!(params.len(), 1, "Should have int parameter (self excluded from signature)");
+            assert_eq!(
+                params.len(),
+                1,
+                "Should have int parameter (self excluded from signature)"
+            );
             assert!(matches!(ret.as_ref(), Type::Con(TypeCtor::String)));
         }
     }

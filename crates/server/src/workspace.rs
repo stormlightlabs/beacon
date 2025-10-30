@@ -4,7 +4,6 @@
 //! - Dependency graph between modules
 //! - Module resolution and imports
 //! - Project-wide type checking
-//! - TODO: Stub file discovery and loading (.pyi files)
 
 use crate::config::Config;
 use crate::document::DocumentManager;
@@ -140,7 +139,6 @@ impl Workspace {
     /// Build the dependency graph by extracting imports from all indexed modules
     ///
     /// Uses [rayon] for parallel processing of files.
-    /// TODO: Report unresolved imports as diagnostics later
     fn build_dependency_graph(&mut self) {
         let uris: Vec<Url> = self.index.modules.keys().cloned().collect();
         let imports: Vec<(Url, Vec<String>)> = uris
@@ -1067,9 +1065,7 @@ impl Workspace {
 
     /// Extract __all__ list from a list literal
     ///
-    /// TODO: Implement list literal extraction
-    /// We can't easily extract this without more AST details
-    /// Requires adding list literal support to the AST
+    /// TODO: Implement extraction by adding list literal support to the AST
     fn extract_all_list(&self, _node: &beacon_parser::AstNode) -> Option<Vec<String>> {
         None
     }
@@ -1408,10 +1404,8 @@ impl TarjanState {
 
 /// Cache for loaded stub files
 ///
-/// Thread-safe cache for storing parsed stub files. Uses interior mutability
-/// via RwLock to allow concurrent reads and exclusive writes.
-///
-/// TODO: Implement LRU cache for stub files
+/// Thread-safe cache for storing parsed stub files.
+/// Uses interior mutability via RwLock to allow concurrent reads and exclusive writes.
 #[derive(Default)]
 pub struct StubCache {
     cache: FxHashMap<String, StubFile>,

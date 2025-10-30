@@ -19,14 +19,14 @@ Implementation details and mod-specific tasks.
 
 ## LSP Features
 
-**Dependencies:** Part 1 complete (class bug fix, stub integration)
-
 ### Completions
 
-- [ ] Prefix matching against typed text
-- [ ] Relevance ranking (scope proximity, usage frequency)
+- [x] Prefix matching against typed text
+- [x] Implement Rocchio algorithm
+- [x] Relevance ranking using rocchio
 - [ ] Cross-file symbol completions
-- [ ] Fuzzy matching support
+- [x] Implement Levenshtein edit distance algorithm & Sorensen-Dice coefficient algorithm
+- [x] Fuzzy matching support using above two
 
 ### Hover Improvements
 
@@ -35,7 +35,6 @@ Implementation details and mod-specific tasks.
 - [ ] Display inferred types with docstrings
 - [ ] Show signature help
 - [ ] Module/package documentation from introspection
-- [ ] Make interpreter path configurable
 
 ### Inlay Hints
 
@@ -44,9 +43,13 @@ Implementation details and mod-specific tasks.
 - [ ] Variable type hints for local variables
 - [ ] Parameter hints in function calls
 - [ ] Return type hints for functions
-- [ ] Configuration options (on/off, verbosity)
 
 ## Infrastructure (Independent - Can Proceed in Parallel)
+
+### Configuration
+
+- [ ] Make interpreter path configurable
+- [ ] on/off, verbosity for inlay hints
 
 ### Static Analysis & Linting
 
@@ -76,6 +79,7 @@ See [Linter Rules](#linter-rules) section below for BEA code implementation stat
 **Files:** `crates/server/src/workspace/graph.rs`, `crates/server/src/features/diagnostics.rs`
 
 - [ ] Circular imports detection
+- [ ] Report unresolved imports
 - [ ] Missing modules detection
 - [ ] Inconsistent symbol exports (`__all__` mismatches)
 - [ ] Conflicting stub definitions
