@@ -81,9 +81,11 @@ impl WorkspaceIndex {
         self.modules.iter()
     }
 
-    /// Get all modules as an iterator over (URI, module name) pairs
-    pub fn all_modules(&self) -> impl Iterator<Item = (&Url, &String)> + '_ {
-        self.iter().map(|(uri, info)| (uri, &info.module_name))
+    /// Get all modules as a vec of (URI, module name) pairs
+    pub fn all_modules(&self) -> Vec<(Url, String)> {
+        self.iter()
+            .map(|(uri, info)| (uri.clone(), info.module_name.clone()))
+            .collect()
     }
 }
 
@@ -1177,7 +1179,12 @@ impl Workspace {
 
     /// Get all indexed files in the workspace
     pub fn all_indexed_files(&self) -> Vec<Url> {
-        self.index.all_modules().map(|(uri, _)| uri.clone()).collect()
+        self.index.all_modules().into_iter().map(|(uri, _)| uri).collect()
+    }
+
+    /// Get all modules as a vec of (URI, module name) pairs
+    pub fn all_modules(&self) -> Vec<(Url, String)> {
+        self.index.all_modules()
     }
 
     /// Get configuration

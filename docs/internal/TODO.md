@@ -23,17 +23,6 @@ Implementation details and mod-specific tasks.
 
 ### Completions
 
-**Files:** `crates/server/src/features/completion.rs`
-
-**Part 1:**
-
-- [ ] Parse backwards from cursor to understand context
-- [ ] Attribute completions after `.` using type inference
-- [ ] Import completions from workspace symbols
-- [ ] Test with user-defined and builtin types
-
-**Part 2:**
-
 - [ ] Prefix matching against typed text
 - [ ] Relevance ranking (scope proximity, usage frequency)
 - [ ] Cross-file symbol completions

@@ -59,11 +59,12 @@ impl Features {
     fn new(
         documents: DocumentManager, interpreter_path: Option<std::path::PathBuf>,
         introspection_cache: cache::IntrospectionCache, workspace: Arc<RwLock<Workspace>>,
+        analyzer: Arc<RwLock<analysis::Analyzer>>,
     ) -> Self {
         Self {
             diagnostics: DiagnosticProvider::new(documents.clone()),
             hover: HoverProvider::with_introspection(documents.clone(), interpreter_path, introspection_cache),
-            completion: CompletionProvider::new(documents.clone()),
+            completion: CompletionProvider::new(documents.clone(), workspace.clone(), analyzer),
             goto_definition: GotoDefinitionProvider::new(documents.clone(), workspace.clone()),
             references: ReferencesProvider::new(documents.clone(), workspace.clone()),
             inlay_hints: InlayHintsProvider::new(documents.clone()),
@@ -97,6 +98,7 @@ impl Backend {
             interpreter_path.clone(),
             introspection_cache,
             workspace.clone(),
+            analyzer.clone(),
         ));
 
         Self { client, documents, analyzer, workspace, features, interpreter_path }
@@ -258,7 +260,7 @@ impl LanguageServer for Backend {
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
-        Ok(self.features.completion.completion(params))
+        Ok(self.features.completion.completion(params).await)
     }
 
     async fn goto_definition(&self, params: GotoDefinitionParams) -> Result<Option<GotoDefinitionResponse>> {

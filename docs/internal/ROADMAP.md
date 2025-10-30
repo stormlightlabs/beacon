@@ -8,8 +8,6 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 
 ### Completions
 
-- [ ] Attribute completions after `.` using type inference
-- [ ] Import completions from workspace
 - [ ] Filtering, ranking, and fuzzy matching
 - [ ] Cross-file symbol completions
 
