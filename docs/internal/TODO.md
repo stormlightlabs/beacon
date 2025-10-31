@@ -17,17 +17,7 @@ Implementation details and mod-specific tasks.
 - [ ] Integration test: Class inheritance with method override
 - [x] Integration test: User-defined protocol satisfaction (covered in existing tests)
 
-## LSP Features
-
-### Inlay Hints
-
-**Files:** `crates/server/src/features/inlay_hints.rs`
-
-- [ ] Variable type hints for local variables
-- [ ] Parameter hints in function calls
-- [ ] Return type hints for functions
-
-## Infrastructure (Independent - Can Proceed in Parallel)
+## Infrastructure
 
 ### Configuration
 

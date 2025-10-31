@@ -21,14 +21,19 @@ Beacon is a Rust implementation of the language server protocol & a hindley-miln
 
 ## Completions & Static Analysis
 
-### Smart completions
+### Completions
 
 The `CompletionProvider` looks at the latest document snapshot (text, AST, and symbol tables) to suggest in-scope names, imports, and attribute members the moment you type or hit the `"."` trigger.
 
-### Confident feedback
+### Feedback
 
-Beacon’s static analyzer (in `crates/server/src/analysis`) combines [Hindley-Milner](#why-hm-for-python) style inference with control/data-flow passes.
-It flags type mismatches, use-before-def bugs, unreachable code, and unused bindings, then caches the results per file so hovers, squiggles, and inlay hints stay consistent without extra latency.
+Beacon's static analyzer (in `crates/server/src/analysis`) combines [Hindley-Milner](#why-hm-for-python) style inference with control/data-flow passes.
+
+**Inlay hints** display inline type information throughout your code:
+
+- Type hints for assignments without explicit annotations
+- Return type hints for functions without return type annotations
+- Parameter name hints in function calls
 
 ### Shared insight
 

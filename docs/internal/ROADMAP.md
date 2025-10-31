@@ -13,11 +13,7 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 
 ### Inlay Hints
 
-- [ ] Variable type hints
-- [ ] Parameter hints in function calls
-- [ ] Return type hints
 - [ ] Configurable verbosity
-- [ ] Inlay hints for collection element types
 
 ## Advanced Type Features
 

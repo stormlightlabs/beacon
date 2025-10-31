@@ -85,6 +85,8 @@ pub struct AnalysisResult {
     pub version: i32,
     /// Map from AST node IDs to inferred types
     pub type_map: FxHashMap<usize, Type>,
+    /// Map from source positions to node IDs
+    pub position_map: FxHashMap<(usize, usize), usize>,
     /// Type errors encountered during analysis
     pub type_errors: Vec<TypeErrorInfo>,
     /// Static analysis results (data flow analysis)
@@ -156,10 +158,10 @@ impl Analyzer {
             *ty = substitution.apply(ty);
         }
 
-        self.position_maps.insert(uri.clone(), position_map);
+        self.position_maps.insert(uri.clone(), position_map.clone());
 
         let static_analysis = self.perform_static_analysis(&ast, &symbol_table);
-        Ok(AnalysisResult { uri: uri.clone(), version, type_map, type_errors, static_analysis })
+        Ok(AnalysisResult { uri: uri.clone(), version, type_map, position_map, type_errors, static_analysis })
     }
 
     /// Get the inferred type at a specific position
