@@ -1,6 +1,6 @@
 use super::constraint_gen::{Constraint, ConstraintGenContext, ConstraintResult, ConstraintSet, Span};
 use super::type_env::TypeEnvironment;
-use super::{class_metadata, loader};
+use super::{class_metadata::ClassMetadata, loader};
 use beacon_core::{Type, TypeScheme, errors::Result};
 use beacon_core::{TypeCtor, TypeVarGen};
 use beacon_parser::{AstNode, LiteralValue, SymbolTable};
@@ -35,8 +35,7 @@ pub fn generate_constraints(
 
 /// Visit an AST node and generate constraints with type environment
 ///
-/// Implements constraint generation for core Python constructs.
-/// Records type information in the context for type-at-position queries.
+/// Implements constraint generation for core Python constructs and records type information in the context for type-at-position queries.
 pub fn visit_node_with_env(
     node: &AstNode, env: &mut TypeEnvironment, ctx: &mut ConstraintGenContext, stub_cache: Option<&TStubCache>,
 ) -> Result<Type> {
@@ -589,15 +588,17 @@ pub fn visit_node_with_env(
 
 /// Extract class metadata from a ClassDef node
 ///
-/// Scans the class body for __init__ method and field assignments to build ClassMetadata.
-/// This metadata is used during HasAttr constraint solving to resolve attribute types.
+/// Scans the class body for __init__ method and field assignments to build [ClassMetadata].
+/// This metadata is used during [Constraint::HasAttr] constraint solving to resolve attribute types.
 ///
 /// TODO: Classes with multiple methods (beyond just __init__) experience type unification errors during construction.
-/// The issue appears to be related to how Type::fun() constructs function types when processing multiple methods with a shared environment.
+///
+/// The issue appears to be related to how [Type::fun()] constructs function types when processing multiple methods with a shared environment.
 /// Type variables or parameter lists may be getting confused between methods.
+///
 /// TODO: Consider cloning env for each method to isolate type variable generation
-fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnvironment) -> class_metadata::ClassMetadata {
-    let mut metadata = class_metadata::ClassMetadata::new(name.to_string());
+fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnvironment) -> ClassMetadata {
+    let mut metadata = ClassMetadata::new(name.to_string());
 
     for stmt in body {
         if let AstNode::FunctionDef { name: method_name, args, return_type, body: method_body, decorators, .. } = stmt {
@@ -652,8 +653,8 @@ fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnvironmen
 
 /// Recursively extract field assignments from statement nodes
 ///
-/// Looks for patterns like `self.field = value` or `self.field: Type = value` and registers the field in ClassMetadata.
-fn extract_field_assignments(stmt: &AstNode, metadata: &mut class_metadata::ClassMetadata, env: &mut TypeEnvironment) {
+/// Looks for patterns like `self.field = value` or `self.field: Type = value` and registers the field in [ClassMetadata].
+fn extract_field_assignments(stmt: &AstNode, metadata: &mut ClassMetadata, env: &mut TypeEnvironment) {
     match stmt {
         AstNode::Assignment { target, .. } => {
             if let Some(field_name) = target.strip_prefix("self.") {
@@ -717,8 +718,6 @@ fn extract_field_assignments(stmt: &AstNode, metadata: &mut class_metadata::Clas
 }
 
 /// Detect type guard patterns for flow-sensitive type narrowing
-///
-/// Returns (variable_name, refined_type) if a type guard is detected.
 ///
 /// Supported patterns:
 /// - `isinstance(x, int)` -> (x, int)

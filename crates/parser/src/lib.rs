@@ -455,12 +455,10 @@ impl PythonParser {
                     match child.kind() {
                         "decorator" => {
                             if let Some(dec_name) = self.extract_decorator_name(&child, source) {
-                                decorators.push(dec_name);
+                                decorators.push(dec_name)
                             }
                         }
-                        "function_definition" | "class_definition" => {
-                            definition_node = Some(child);
-                        }
+                        "function_definition" | "class_definition" => definition_node = Some(child),
                         _ => {}
                     }
                 }
@@ -470,7 +468,7 @@ impl PythonParser {
 
                     match &mut ast {
                         AstNode::FunctionDef { decorators: decs, .. } | AstNode::ClassDef { decorators: decs, .. } => {
-                            *decs = decorators;
+                            *decs = decorators
                         }
                         _ => {}
                     }
@@ -485,7 +483,7 @@ impl PythonParser {
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
                     if !child.is_extra() {
-                        body.push(self.node_to_ast(child, source)?);
+                        body.push(self.node_to_ast(child, source)?)
                     }
                 }
 
@@ -855,24 +853,24 @@ impl PythonParser {
     }
 
     fn extract_class_metaclass(&self, node: &Node, source: &str) -> Option<String> {
-        if let Some(arg_list) = node.child_by_field_name("superclasses") {
-            let mut cursor = arg_list.walk();
-            for child in arg_list.children(&mut cursor) {
-                if child.kind() == "keyword_argument" {
-                    if let Some(name_node) = child.child(0) {
-                        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
-                            if name == "metaclass" {
-                                if let Some(value_node) = child.child(2) {
-                                    if let Ok(metaclass_name) = value_node.utf8_text(source.as_bytes()) {
-                                        return Some(metaclass_name.to_string());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+        let arg_list = node.child_by_field_name("superclasses")?;
+        let mut cursor = arg_list.walk();
+
+        for child in arg_list.children(&mut cursor) {
+            if child.kind() != "keyword_argument" {
+                continue;
             }
+
+            let name_node = child.child(0)?;
+            let name = name_node.utf8_text(source.as_bytes()).ok()?;
+            if name != "metaclass" {
+                continue;
+            }
+
+            let value_node = child.child(2)?;
+            return value_node.utf8_text(source.as_bytes()).ok().map(|s| s.to_string());
         }
+
         None
     }
 
