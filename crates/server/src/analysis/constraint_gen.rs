@@ -1,10 +1,11 @@
 use super::class_metadata::ClassRegistry;
+
 use beacon_core::Type;
 use rustc_hash::FxHashMap;
 
 /// Type constraint with source position tracking
 ///
-/// Each constraint variant includes a Span to track where the constraint
+/// Each constraint variant includes a [Span] to track where the constraint
 /// originated in the source code, enabling precise error reporting.
 #[derive(Debug, Clone)]
 pub enum Constraint {
@@ -17,6 +18,15 @@ pub enum Constraint {
     /// Protocol constraint: τ satisfies protocol P
     /// The type parameter is the element type extracted from satisfying the protocol
     Protocol(Type, beacon_core::ProtocolName, Type, Span),
+    /// Pattern matching constraint: subject type must be compatible with pattern
+    /// Stores bindings extracted from the pattern (variable name -> type)
+    MatchPattern(Type, beacon_parser::Pattern, Vec<(String, Type)>, Span),
+    /// Exhaustiveness constraint: patterns must cover all possible values of subject type
+    /// Stores subject type and all case patterns for checking
+    PatternExhaustive(Type, Vec<beacon_parser::Pattern>, Span),
+    /// Reachability constraint: pattern must be reachable (not subsumed by previous patterns)
+    /// Stores the pattern and all previous patterns in the match statement
+    PatternReachable(beacon_parser::Pattern, Vec<beacon_parser::Pattern>, Span),
 }
 
 pub struct ConstraintResult(
@@ -64,7 +74,7 @@ impl Default for ConstraintGenContext {
 
 /// Set of type constraints
 ///
-/// TODO: Use [beacon_core] constraint types when available
+/// TODO: Replace with [beacon_core] constraint types
 pub struct ConstraintSet {
     pub constraints: Vec<Constraint>,
 }

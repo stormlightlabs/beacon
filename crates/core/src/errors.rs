@@ -25,6 +25,12 @@ pub enum TypeError {
 
     #[error("Attribute '{1}' not found on type {0}")]
     AttributeNotFound(String, String),
+
+    #[error("Match pattern is not exhaustive. Missing coverage for: {0}")]
+    PatternNonExhaustive(String),
+
+    #[error("Pattern is unreachable (subsumed by earlier pattern)")]
+    PatternUnreachable,
 }
 
 /// Analysis errors

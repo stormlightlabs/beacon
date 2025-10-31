@@ -15,9 +15,7 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 
 ### Pattern Matching (PEP 634)
 
-- [ ] Pattern constraints for mapping, sequence, class, and OR patterns
-- [ ] Exhaustiveness checking and unreachable pattern detection
-- [ ] Quick fixes for missing cases
+See [TODO](./TODO.md)
 
 ### Async & Generators
 

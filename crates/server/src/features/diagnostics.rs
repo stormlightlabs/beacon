@@ -1,20 +1,19 @@
 //! Diagnostic generation and publishing
 //!
 //! Converts type errors, parse errors, and other analysis results into LSP diagnostics for display in the editor.
-
-use beacon_core::BeaconError;
-use beacon_parser::{AstNode, MAGIC_METHODS};
-use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
-use url::Url;
-
 use crate::analysis::Analyzer;
 use crate::config;
 use crate::document::DocumentManager;
 use crate::features::completion::algorithms::{FuzzyMatcher, StringSimilarity};
 use crate::parser::{self, ParseError};
 use crate::workspace::Workspace;
+
+use beacon_core::BeaconError;
+use beacon_parser::{AstNode, MAGIC_METHODS};
+use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use url::Url;
 
 pub struct DiagnosticProvider {
     documents: DocumentManager,
@@ -876,6 +875,14 @@ fn type_error_to_diagnostic(error_info: &crate::analysis::TypeErrorInfo) -> Diag
             ("HM006", format!("Type {ty} does not satisfy protocol {protocol}"))
         }
         TypeError::AttributeNotFound(ty, attr) => ("HM007", format!("Attribute '{attr}' not found on type {ty}")),
+        TypeError::PatternNonExhaustive(uncovered) => (
+            "PM001",
+            format!("Pattern match is not exhaustive. Missing coverage for: {uncovered}"),
+        ),
+        TypeError::PatternUnreachable => (
+            "PM002",
+            "This pattern is unreachable (subsumed by an earlier pattern)".to_string(),
+        ),
     };
 
     Diagnostic {

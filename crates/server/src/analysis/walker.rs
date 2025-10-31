@@ -1,6 +1,8 @@
 use super::constraint_gen::{Constraint, ConstraintGenContext, ConstraintResult, ConstraintSet, Span};
+use super::pattern::extract_pattern_bindings;
 use super::type_env::TypeEnvironment;
 use super::{class_metadata::ClassMetadata, loader};
+
 use beacon_core::{Type, TypeScheme, errors::Result};
 use beacon_core::{TypeCtor, TypeVarGen};
 use beacon_parser::{AstNode, LiteralValue, SymbolTable};
@@ -366,11 +368,37 @@ pub fn visit_node_with_env(
         }
 
         AstNode::Match { subject, cases, line, col } => {
-            visit_node_with_env(subject, env, ctx, stub_cache)?;
+            let subject_ty = visit_node_with_env(subject, env, ctx, stub_cache)?;
+            let all_patterns: Vec<beacon_parser::Pattern> = cases.iter().map(|c| c.pattern.clone()).collect();
+            let span = Span::new(*line, *col);
 
-            // TODO: Implement pattern matching type narrowing when pattern system is ready
+            ctx.constraints.push(Constraint::PatternExhaustive(
+                subject_ty.clone(),
+                all_patterns.clone(),
+                span,
+            ));
+
+            let mut previous_patterns = Vec::new();
             for case in cases {
+                ctx.constraints.push(Constraint::PatternReachable(
+                    case.pattern.clone(),
+                    previous_patterns.clone(),
+                    span,
+                ));
+
                 let mut case_env = env.clone();
+                let bindings = extract_pattern_bindings(&case.pattern, &subject_ty, &mut case_env)?;
+
+                ctx.constraints.push(Constraint::MatchPattern(
+                    subject_ty.clone(),
+                    case.pattern.clone(),
+                    bindings.clone(),
+                    span,
+                ));
+
+                for (var_name, var_type) in bindings {
+                    case_env.bind(var_name, beacon_core::TypeScheme::mono(var_type));
+                }
 
                 if let Some(ref guard) = case.guard {
                     visit_node_with_env(guard, &mut case_env, ctx, stub_cache)?;
@@ -379,6 +407,8 @@ pub fn visit_node_with_env(
                 for stmt in &case.body {
                     visit_node_with_env(stmt, &mut case_env, ctx, stub_cache)?;
                 }
+
+                previous_patterns.push(case.pattern.clone());
             }
 
             ctx.record_type(*line, *col, Type::none());
