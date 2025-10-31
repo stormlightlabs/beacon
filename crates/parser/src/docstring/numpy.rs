@@ -155,27 +155,62 @@ fn parse_params(lines: &[&str]) -> Vec<Parameter> {
 
 /// Parse NumPy-style returns section
 fn parse_returns(lines: &[&str]) -> Option<super::Returns> {
-    let non_empty: Vec<&str> = lines.iter().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
-    if non_empty.is_empty() {
+    let entries: Vec<(String, usize)> = lines
+        .iter()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                let indent = line.len() - line.trim_start().len();
+                Some((trimmed.to_string(), indent))
+            }
+        })
+        .collect();
+
+    if entries.is_empty() {
         return None;
     }
 
-    let first = non_empty[0];
-    let (type_info, desc_start) = if let Some(colon_pos) = first.find(':') {
-        let type_str = first[..colon_pos].trim();
-        let desc_start = first[colon_pos + 1..].trim();
-        (
-            if type_str.is_empty() { None } else { Some(type_str.to_string()) },
-            desc_start,
-        )
+    let (first_text, first_indent) = (&entries[0].0, entries[0].1);
+    let mut type_info = None;
+    let mut description_parts: Vec<String> = Vec::new();
+
+    if let Some(colon_pos) = first_text.find(':') {
+        let type_str = first_text[..colon_pos].trim();
+        if !type_str.is_empty() {
+            type_info = Some(type_str.to_string());
+        }
+        let desc_start = first_text[colon_pos + 1..].trim();
+        if !desc_start.is_empty() {
+            description_parts.push(desc_start.to_string());
+        }
     } else {
-        (None, first)
-    };
+        let has_indented_follow_up = entries
+            .get(1)
+            .map(|(_, indent)| *indent > first_indent)
+            .unwrap_or(false);
 
-    let mut description_parts = vec![desc_start];
-    description_parts.extend(non_empty.iter().skip(1).copied());
+        if has_indented_follow_up {
+            type_info = Some(first_text.to_string());
+        } else if !first_text.is_empty() {
+            description_parts.push(first_text.to_string());
+        }
+    }
 
-    Some(Returns { type_info, description: description_parts.join(" ") })
+    for (text, _) in entries.iter().skip(1) {
+        if !text.is_empty() {
+            description_parts.push(text.to_string());
+        }
+    }
+
+    let description = description_parts.join(" ").trim().to_string();
+
+    if type_info.is_none() && description.is_empty() {
+        None
+    } else {
+        Some(Returns { type_info, description })
+    }
 }
 
 /// Parse NumPy-style raises section
@@ -222,4 +257,98 @@ fn parse_raises(lines: &[&str]) -> Vec<RaisesEntry> {
     }
 
     raises
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_returns_with_type_and_description() {
+        let lines = vec!["int : The result value"];
+        let result = parse_returns(&lines);
+
+        assert!(result.is_some());
+        let returns = result.unwrap();
+        assert_eq!(returns.type_info, Some("int".to_string()));
+        assert!(returns.description.contains("The result value"));
+    }
+
+    #[test]
+    fn test_parse_returns_type_with_colon() {
+        let lines = vec!["int : The integer result", "    with more details"];
+        let result = parse_returns(&lines);
+
+        assert!(result.is_some());
+        let returns = result.unwrap();
+        assert_eq!(returns.type_info, Some("int".to_string()));
+        assert!(returns.description.contains("The integer result"));
+        assert!(returns.description.contains("with more details"));
+    }
+
+    #[test]
+    fn test_parse_returns_no_type() {
+        let lines = vec!["Returns the computed value", "after processing"];
+        let result = parse_returns(&lines);
+
+        assert!(result.is_some());
+        let returns = result.unwrap();
+        assert_eq!(returns.type_info, None);
+        assert!(returns.description.contains("Returns the computed value"));
+        assert!(returns.description.contains("after processing"));
+    }
+
+    #[test]
+    fn test_parse_returns_empty() {
+        let lines: Vec<&str> = vec![];
+        let result = parse_returns(&lines);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_returns_whitespace_only() {
+        let lines = vec!["   ", "  ", ""];
+        let result = parse_returns(&lines);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_returns_complex_type() {
+        let lines = vec!["list[dict[str, int]]", "    A list of dictionaries"];
+        let result = parse_returns(&lines);
+
+        assert!(result.is_some());
+        let returns = result.unwrap();
+        assert_eq!(returns.type_info, Some("list[dict[str, int]]".to_string()));
+        assert_eq!(returns.description, "A list of dictionaries");
+    }
+
+    #[test]
+    fn test_parse_returns_multiline_description() {
+        let lines = vec![
+            "str",
+            "    First line of description",
+            "    Second line",
+            "    Third line",
+        ];
+        let result = parse_returns(&lines);
+
+        assert!(result.is_some());
+        let returns = result.unwrap();
+        assert_eq!(returns.type_info, Some("str".to_string()));
+        assert!(returns.description.contains("First line"));
+        assert!(returns.description.contains("Second line"));
+        assert!(returns.description.contains("Third line"));
+    }
+
+    #[test]
+    fn test_parse_returns_empty_type_with_colon() {
+        let lines = vec![": Description without type"];
+        let result = parse_returns(&lines);
+
+        assert!(result.is_some());
+        let returns = result.unwrap();
+        assert_eq!(returns.type_info, None);
+        assert_eq!(returns.description, "Description without type");
+    }
 }

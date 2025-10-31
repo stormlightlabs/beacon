@@ -937,4 +937,134 @@ p = Person("Alice")"#;
 
         let _formatted = provider.format_type(&app);
     }
+
+    #[test]
+    fn test_find_symbol_docstring_function() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents.clone());
+
+        let uri = Url::from_str("file:///test_doc.py").unwrap();
+        let source = r#"def calculate(x):
+    """Calculate a value."""
+    return x * 2
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = provider.find_symbol_docstring("calculate", beacon_parser::SymbolKind::Function);
+
+        assert!(result.is_some());
+        let docstring = result.unwrap();
+        assert_eq!(docstring, "Calculate a value.");
+    }
+
+    #[test]
+    fn test_find_symbol_docstring_class() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents.clone());
+
+        let uri = Url::from_str("file:///test_class.py").unwrap();
+        let source = r#"class Calculator:
+    """A calculator class."""
+    pass
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = provider.find_symbol_docstring("Calculator", beacon_parser::SymbolKind::Class);
+
+        assert!(result.is_some());
+        let docstring = result.unwrap();
+        assert_eq!(docstring, "A calculator class.");
+    }
+
+    #[test]
+    fn test_find_symbol_docstring_not_found() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents.clone());
+
+        let uri = Url::from_str("file:///test_missing.py").unwrap();
+        let source = r#"def other_function():
+    pass
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = provider.find_symbol_docstring("nonexistent", beacon_parser::SymbolKind::Function);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_symbol_docstring_wrong_kind() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents.clone());
+
+        let uri = Url::from_str("file:///test_wrong_kind.py").unwrap();
+        let source = r#"def my_func():
+    """A function."""
+    pass
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = provider.find_symbol_docstring("my_func", beacon_parser::SymbolKind::Class);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_symbol_docstring_no_docstring() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents.clone());
+
+        let uri = Url::from_str("file:///test_no_doc.py").unwrap();
+        let source = r#"def no_doc_func():
+    pass
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = provider.find_symbol_docstring("no_doc_func", beacon_parser::SymbolKind::Function);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_symbol_docstring_multiple_documents() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents.clone());
+
+        let uri1 = Url::from_str("file:///test1.py").unwrap();
+        let source1 = r#"def func1():
+    """First function."""
+    pass
+"#;
+
+        let uri2 = Url::from_str("file:///test2.py").unwrap();
+        let source2 = r#"def target_func():
+    """Target function in second file."""
+    pass
+"#;
+
+        documents.open_document(uri1.clone(), 1, source1.to_string()).unwrap();
+        documents.open_document(uri2.clone(), 1, source2.to_string()).unwrap();
+
+        let result = provider.find_symbol_docstring("target_func", beacon_parser::SymbolKind::Function);
+
+        assert!(result.is_some());
+        let docstring = result.unwrap();
+        assert_eq!(docstring, "Target function in second file.");
+    }
+
+    #[test]
+    fn test_find_symbol_docstring_variable() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents.clone());
+
+        let uri = Url::from_str("file:///test_var.py").unwrap();
+        let source = "x = 42\n";
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = provider.find_symbol_docstring("x", beacon_parser::SymbolKind::Variable);
+        assert!(result.is_none());
+    }
 }

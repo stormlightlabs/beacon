@@ -246,3 +246,104 @@ fn parse_raises(lines: &[&str]) -> Vec<RaisesEntry> {
 
     raises
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_returns_with_type_and_description() {
+        let lines = vec!["int: The result value"];
+        let result = parse_returns(&lines);
+
+        assert!(result.is_some());
+        let returns = result.unwrap();
+        assert_eq!(returns.type_info, Some("int".to_string()));
+        assert_eq!(returns.description, "The result value");
+    }
+
+    #[test]
+    fn test_parse_returns_type_in_parentheses() {
+        let lines = vec!["(int): The integer result", "    with more details"];
+        let result = parse_returns(&lines);
+
+        assert!(result.is_some());
+        let returns = result.unwrap();
+        assert_eq!(returns.type_info, Some("(int)".to_string()));
+        assert!(returns.description.contains("The integer result"));
+        assert!(returns.description.contains("with more details"));
+    }
+
+    #[test]
+    fn test_parse_returns_no_type() {
+        let lines = vec!["Returns the computed value", "after processing"];
+        let result = parse_returns(&lines);
+
+        assert!(result.is_some());
+        let returns = result.unwrap();
+        assert_eq!(returns.type_info, None);
+        assert!(returns.description.contains("Returns the computed value"));
+        assert!(returns.description.contains("after processing"));
+    }
+
+    #[test]
+    fn test_parse_returns_empty() {
+        let lines: Vec<&str> = vec![];
+        let result = parse_returns(&lines);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_returns_whitespace_only() {
+        let lines = vec!["   ", "  ", ""];
+        let result = parse_returns(&lines);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_returns_single_word_type() {
+        let lines = vec!["str: A string value"];
+        let result = parse_returns(&lines);
+
+        assert!(result.is_some());
+        let returns = result.unwrap();
+        assert_eq!(returns.type_info, Some("str".to_string()));
+        assert_eq!(returns.description, "A string value");
+    }
+
+    #[test]
+    fn test_parse_returns_multiline_description() {
+        let lines = vec!["dict: First line of description", "    Second line", "    Third line"];
+        let result = parse_returns(&lines);
+
+        assert!(result.is_some());
+        let returns = result.unwrap();
+        assert_eq!(returns.type_info, Some("dict".to_string()));
+        assert!(returns.description.contains("First line"));
+        assert!(returns.description.contains("Second line"));
+        assert!(returns.description.contains("Third line"));
+    }
+
+    #[test]
+    fn test_parse_returns_complex_description_without_type() {
+        let lines = vec!["This is a longer description", "that spans multiple lines", "without a type annotation"];
+        let result = parse_returns(&lines);
+
+        assert!(result.is_some());
+        let returns = result.unwrap();
+        assert_eq!(returns.type_info, None);
+        assert!(returns.description.contains("longer description"));
+        assert!(returns.description.contains("multiple lines"));
+    }
+
+    #[test]
+    fn test_parse_returns_multiword_before_colon() {
+        let lines = vec!["Some complex type annotation: Description here"];
+        let result = parse_returns(&lines);
+
+        assert!(result.is_some());
+        let returns = result.unwrap();
+        assert_eq!(returns.type_info, None);
+        assert!(returns.description.contains("Some complex type annotation"));
+    }
+}

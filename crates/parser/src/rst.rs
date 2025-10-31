@@ -798,7 +798,7 @@ pub fn parse(input: &str) -> Result<Vec<Block>, ParseError> {
         if let Some(title) = ls.next() {
             if let Some(ul) = ls.peek() {
                 if let Some(level) = underline_level(ul.raw) {
-                    ls.next(); // consume underline
+                    ls.next();
                     let inlines = parse_inlines(title.raw.trim());
                     blocks.push(Block::Heading { level, inlines });
                     continue;
@@ -1152,5 +1152,55 @@ code
         assert!(esc.contains("&lt;"));
         assert!(esc.contains("&gt;"));
         assert!(!esc.contains("<script>"));
+    }
+
+    #[test]
+    fn field_label_standard_fields() {
+        assert_eq!(field_label("param"), "Parameter");
+        assert_eq!(field_label("parameter"), "Parameter");
+        assert_eq!(field_label("arg"), "Parameter");
+        assert_eq!(field_label("argument"), "Parameter");
+        assert_eq!(field_label("type"), "Type");
+        assert_eq!(field_label("return"), "Returns");
+        assert_eq!(field_label("returns"), "Returns");
+        assert_eq!(field_label("yield"), "Yields");
+        assert_eq!(field_label("yields"), "Yields");
+        assert_eq!(field_label("raise"), "Raises");
+        assert_eq!(field_label("raises"), "Raises");
+        assert_eq!(field_label("rtype"), "Return Type");
+    }
+
+    #[test]
+    fn field_label_variables() {
+        assert_eq!(field_label("ivar"), "Instance Variable");
+        assert_eq!(field_label("cvar"), "Class Variable");
+        assert_eq!(field_label("var"), "Variable");
+    }
+
+    #[test]
+    fn field_label_special_fields() {
+        assert_eq!(field_label("seealso"), "See Also");
+        assert_eq!(field_label("note"), "Note");
+    }
+
+    #[test]
+    fn field_label_case_insensitive() {
+        assert_eq!(field_label("PARAM"), "Parameter");
+        assert_eq!(field_label("ReTuRn"), "Returns");
+        assert_eq!(field_label("TYPE"), "Type");
+    }
+
+    #[test]
+    fn field_label_unknown_field() {
+        assert_eq!(field_label("custom"), "Custom");
+        assert_eq!(field_label("myfield"), "Myfield");
+        assert_eq!(field_label(""), "Field");
+    }
+
+    #[test]
+    fn field_label_capitalizes_unknown() {
+        assert_eq!(field_label("author"), "Author");
+        assert_eq!(field_label("version"), "Version");
+        assert_eq!(field_label("since"), "Since");
     }
 }
