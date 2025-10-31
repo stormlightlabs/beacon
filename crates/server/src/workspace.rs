@@ -31,7 +31,7 @@ pub struct ModuleInfo {
 }
 
 impl ModuleInfo {
-    fn new(uri: Url, module_name: String, source_root: PathBuf, is_package: bool) -> Self {
+    pub fn new(uri: Url, module_name: String, source_root: PathBuf, is_package: bool) -> Self {
         Self { uri, module_name, source_root, dependencies: FxHashSet::default(), is_package }
     }
 }
@@ -260,6 +260,7 @@ impl Workspace {
     /// Discover all Python files in the workspace
     ///
     /// Uses [ignore] crate to walk the workspace directory tree, respecting .gitignore files and excluding common virtual environment patterns.
+    /// TODO: Make overrides configurable via [Config::exclude_patterns]
     fn discover_files(&mut self) -> Result<(), WorkspaceError> {
         let root_path = match &self.root_uri {
             Some(uri) if uri.scheme() == "file" => PathBuf::from(uri.path()),
@@ -280,7 +281,6 @@ impl Workspace {
             .git_global(true)
             .git_exclude(true);
 
-        // TODO: Make these configurable via Config.exclude_patterns
         let mut overrides_builder = ignore::overrides::OverrideBuilder::new(&root_path);
         let venv_patterns = vec![
             "!venv/",
@@ -411,7 +411,7 @@ impl Workspace {
     /// Get all source roots to search for modules
     ///
     /// Auto-detects workspace root, src/, and lib/ as per user requirements.
-    /// TODO: Make source_roots configurable via Config
+    /// TODO: Make source_roots configurable via [Config]
     fn get_source_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
 
@@ -1191,6 +1191,12 @@ impl Workspace {
     /// Get document manager
     pub fn documents(&self) -> &DocumentManager {
         &self.documents
+    }
+
+    /// Add a module to the workspace index (for testing only)
+    #[cfg(test)]
+    pub fn add_test_module(&mut self, uri: Url, module_name: String, source_root: std::path::PathBuf) {
+        self.index.insert(ModuleInfo::new(uri, module_name, source_root, false));
     }
 }
 

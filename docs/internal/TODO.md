@@ -19,15 +19,6 @@ Implementation details and mod-specific tasks.
 
 ## LSP Features
 
-### Completions
-
-- [x] Prefix matching against typed text
-- [x] Implement Rocchio algorithm
-- [x] Relevance ranking using rocchio
-- [ ] Cross-file symbol completions
-- [x] Implement Levenshtein edit distance algorithm & Sorensen-Dice coefficient algorithm
-- [x] Fuzzy matching support using above two
-
 ### Hover Improvements
 
 **Files:** `crates/server/src/features/hover.rs`, `crates/server/src/introspection.rs` (new)

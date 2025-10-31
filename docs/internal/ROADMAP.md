@@ -6,11 +6,6 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 
 ## LSP Features
 
-### Completions
-
-- [ ] Filtering, ranking, and fuzzy matching
-- [ ] Cross-file symbol completions
-
 ### Hover & Diagnostics
 
 - [ ] Display inferred types with docstrings and signatures

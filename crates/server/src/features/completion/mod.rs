@@ -46,6 +46,12 @@ struct CompletionContext {
     is_statement_context: bool,
 }
 
+#[derive(Debug)]
+struct ScoredCompletion {
+    item: CompletionItem,
+    score: f64,
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct BuiltinInfo {
     name: String,
@@ -130,7 +136,10 @@ impl CompletionProvider {
             CompletionContextType::Expression => {
                 let symbol_table = self._documents.get_document(uri, |doc| doc.symbol_table().cloned())?;
                 if let Some(st) = symbol_table {
-                    let mut completions = self.symbol_completions(&st, context.scope_id, &context.prefix);
+                    let mut completions = self
+                        .symbol_completions(&st, context.scope_id, &context.prefix, uri)
+                        .await;
+
                     completions.extend(self.keyword_completions(context.is_statement_context, &context.prefix));
                     items.extend(completions);
                 }
@@ -531,23 +540,17 @@ impl CompletionProvider {
         }
     }
 
-    /// Get completions for symbols visible in the current scope
+    /// Get completions for symbols visible in the current scope sorted by relevance score (highest first)
     ///
     /// Uses advanced scoring algorithms to rank completions:
     /// - Prefix matching with word boundary support
     /// - Fuzzy matching for typo tolerance
     /// - Rocchio relevance scoring based on scope proximity and symbol type
     ///
-    /// Returns completion items sorted by relevance score (highest first).
-    fn symbol_completions(
-        &self, symbol_table: &beacon_parser::SymbolTable, scope_id: ScopeId, prefix: &str,
+    /// Also includes public symbols from other workspace files with lower ranking.
+    async fn symbol_completions(
+        &self, symbol_table: &beacon_parser::SymbolTable, scope_id: ScopeId, prefix: &str, current_uri: &Url,
     ) -> Vec<CompletionItem> {
-        #[derive(Debug)]
-        struct ScoredCompletion {
-            item: CompletionItem,
-            score: f64,
-        }
-
         let mut scored_items = Vec::new();
 
         let visible_symbols = symbol_table.get_visible_symbols(scope_id);
@@ -621,6 +624,46 @@ impl CompletionProvider {
             scored_items.push(ScoredCompletion { item: Self::builtin_completion(name, description), score });
         }
 
+        let workspace_symbols = self.collect_workspace_symbols(current_uri, prefix).await;
+        for (symbol, module_name) in workspace_symbols {
+            let type_bonus = match symbol.kind {
+                SymbolKind::Function => 1.0,
+                SymbolKind::Class => 0.9,
+                SymbolKind::MagicMethod => 0.8,
+                SymbolKind::Import => 0.7,
+                SymbolKind::Variable | SymbolKind::Parameter => 0.5,
+                SymbolKind::BuiltinVar => 0.6,
+            };
+
+            let base_score = if prefix.is_empty() {
+                0.2
+            } else {
+                let prefix_score = self.prefix_matcher.similarity(prefix, &symbol.name);
+                if prefix_score > 0.0 {
+                    prefix_score * 0.5
+                } else {
+                    let fuzzy_score = self.fuzzy_matcher.similarity(prefix, &symbol.name);
+                    if fuzzy_score >= self.fuzzy_matcher.threshold() {
+                        fuzzy_score * 0.3
+                    } else {
+                        continue;
+                    }
+                }
+            };
+
+            let score = base_score * type_bonus * 0.6;
+            let kind = Self::symbol_kind_to_completion_kind(&symbol.kind);
+            let detail = format!("{} • from {}", symbol.kind.name(), module_name);
+            let documentation = symbol.docstring.as_ref().map(|doc| {
+                Documentation::MarkupContent(MarkupContent { kind: MarkupKind::Markdown, value: doc.clone() })
+            });
+
+            scored_items.push(ScoredCompletion {
+                item: Self::completion_item(&symbol, kind, Some(detail), documentation),
+                score,
+            });
+        }
+
         scored_items.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         scored_items.into_iter().map(|sc| sc.item).collect()
     }
@@ -630,12 +673,6 @@ impl CompletionProvider {
     /// Uses type inference to determine the type of the expression before '.' and
     /// looks up available attributes/methods on that type. Results are scored and sorted by relevance.
     async fn attribute_completions(&self, uri: &Url, position: Position, prefix: &str) -> Option<Vec<CompletionItem>> {
-        #[derive(Debug)]
-        struct ScoredCompletion {
-            item: CompletionItem,
-            score: f64,
-        }
-
         let mut scored_items = Vec::new();
 
         let (_, expr_position) = self._documents.get_document(uri, |doc| {
@@ -736,6 +773,45 @@ impl CompletionProvider {
 
         scored_items.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
         Some(scored_items.into_iter().map(|sc| sc.item).collect())
+    }
+
+    /// Collect public symbols from other workspace files
+    ///
+    /// Returns a vector of (Symbol, module_name) pairs for all public symbols (not starting with _) from workspace files other than the current file.
+    async fn collect_workspace_symbols(&self, current_uri: &Url, prefix: &str) -> Vec<(Symbol, String)> {
+        let workspace = self.workspace.read().await;
+        let all_modules = workspace.all_modules();
+        drop(workspace);
+
+        let mut workspace_symbols = Vec::new();
+
+        for (uri, module_name) in all_modules {
+            if uri == *current_uri {
+                continue;
+            }
+
+            if let Some(symbols) = Self::collect_document_symbols(&self._documents, &uri) {
+                for symbol in symbols {
+                    if symbol.name.starts_with('_') {
+                        continue;
+                    }
+
+                    if !prefix.is_empty() {
+                        let prefix_match = self.prefix_matcher.similarity(prefix, &symbol.name) > 0.0;
+                        let fuzzy_match = prefix.len() >= 3
+                            && self.fuzzy_matcher.similarity(prefix, &symbol.name) >= self.fuzzy_matcher.threshold();
+
+                        if !prefix_match && !fuzzy_match {
+                            continue;
+                        }
+                    }
+
+                    workspace_symbols.push((symbol, module_name.clone()));
+                }
+            }
+        }
+
+        workspace_symbols
     }
 
     /// Get completions for imports
@@ -1715,6 +1791,331 @@ OTHER_THING = 2
                 assert!(
                     items.iter().any(|item| item.label == "in"),
                     "Expected 'in' in condition"
+                );
+            }
+            _ => panic!("Expected array response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cross_file_symbol_completions() {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
+        let mut workspace = Workspace::new(None, config.clone(), documents.clone());
+
+        let module_a_uri = Url::from_str("file:///workspace/module_a.py").unwrap();
+        let module_a_source = r#"
+def helper_function():
+    """A helper function from module_a"""
+    pass
+
+class HelperClass:
+    """A helper class from module_a"""
+    pass
+
+HELPER_CONSTANT = 42
+"#;
+        documents
+            .open_document(module_a_uri.clone(), 1, module_a_source.to_string())
+            .unwrap();
+
+        workspace.add_test_module(
+            module_a_uri.clone(),
+            "module_a".to_string(),
+            std::path::PathBuf::from("/workspace"),
+        );
+
+        let module_b_uri = Url::from_str("file:///workspace/module_b.py").unwrap();
+        let module_b_source = "help";
+        documents
+            .open_document(module_b_uri.clone(), 1, module_b_source.to_string())
+            .unwrap();
+
+        workspace.add_test_module(
+            module_b_uri.clone(),
+            "module_b".to_string(),
+            std::path::PathBuf::from("/workspace"),
+        );
+
+        let workspace = Arc::new(RwLock::new(workspace));
+        let analyzer = Arc::new(RwLock::new(Analyzer::new(config, documents.clone())));
+        let provider = CompletionProvider::new(documents.clone(), workspace, analyzer);
+
+        let params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: module_b_uri.clone() },
+                position: Position { line: 0, character: 4 },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+            context: None,
+        };
+
+        let response = provider.completion(params).await;
+        assert!(response.is_some());
+
+        match response.unwrap() {
+            CompletionResponse::Array(items) => {
+                assert!(
+                    items.iter().any(|item| item.label == "helper_function"),
+                    "Expected helper_function from module_a"
+                );
+                assert!(
+                    items.iter().any(|item| item.label == "HelperClass"),
+                    "Expected HelperClass from module_a"
+                );
+                assert!(
+                    items.iter().any(|item| item.label == "HELPER_CONSTANT"),
+                    "Expected HELPER_CONSTANT from module_a"
+                );
+
+                let helper_func_item = items.iter().find(|item| item.label == "helper_function").unwrap();
+                assert!(
+                    helper_func_item.detail.as_ref().is_some_and(|d| d.contains("module_a")),
+                    "Expected detail to indicate source module"
+                );
+            }
+            _ => panic!("Expected array response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cross_file_completions_filter_private() {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
+        let mut workspace = Workspace::new(None, config.clone(), documents.clone());
+
+        let module_a_uri = Url::from_str("file:///workspace/module_a.py").unwrap();
+        let module_a_source = r#"
+def public_function():
+    pass
+
+def _private_function():
+    pass
+
+_PRIVATE_VAR = 1
+PUBLIC_VAR = 2
+"#;
+        documents
+            .open_document(module_a_uri.clone(), 1, module_a_source.to_string())
+            .unwrap();
+
+        workspace.add_test_module(
+            module_a_uri.clone(),
+            "module_a".to_string(),
+            std::path::PathBuf::from("/workspace"),
+        );
+
+        let module_b_uri = Url::from_str("file:///workspace/module_b.py").unwrap();
+        let module_b_source = "pub";
+        documents
+            .open_document(module_b_uri.clone(), 1, module_b_source.to_string())
+            .unwrap();
+
+        workspace.add_test_module(
+            module_b_uri.clone(),
+            "module_b".to_string(),
+            std::path::PathBuf::from("/workspace"),
+        );
+
+        let workspace = Arc::new(RwLock::new(workspace));
+        let analyzer = Arc::new(RwLock::new(Analyzer::new(config, documents.clone())));
+        let provider = CompletionProvider::new(documents.clone(), workspace, analyzer);
+
+        let params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: module_b_uri.clone() },
+                position: Position { line: 0, character: 3 },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+            context: None,
+        };
+
+        let response = provider.completion(params).await;
+        assert!(response.is_some());
+
+        match response.unwrap() {
+            CompletionResponse::Array(items) => {
+                assert!(
+                    items.iter().any(|item| item.label == "public_function"),
+                    "Expected public_function"
+                );
+                assert!(
+                    items.iter().any(|item| item.label == "PUBLIC_VAR"),
+                    "Expected PUBLIC_VAR"
+                );
+                assert!(
+                    !items.iter().any(|item| item.label == "_private_function"),
+                    "Should NOT have _private_function"
+                );
+                assert!(
+                    !items.iter().any(|item| item.label == "_PRIVATE_VAR"),
+                    "Should NOT have _PRIVATE_VAR"
+                );
+            }
+            _ => panic!("Expected array response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cross_file_completions_exclude_current_file() {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
+        let mut workspace = Workspace::new(None, config.clone(), documents.clone());
+
+        let module_a_uri = Url::from_str("file:///workspace/module_a.py").unwrap();
+        let module_a_source = r#"
+def local_function():
+    pass
+
+another_local = 1
+
+ano
+"#;
+        documents
+            .open_document(module_a_uri.clone(), 1, module_a_source.to_string())
+            .unwrap();
+
+        workspace.add_test_module(
+            module_a_uri.clone(),
+            "module_a".to_string(),
+            std::path::PathBuf::from("/workspace"),
+        );
+
+        let module_b_uri = Url::from_str("file:///workspace/module_b.py").unwrap();
+        let module_b_source = r#"
+def another_function():
+    pass
+
+another_var = 2
+"#;
+        documents
+            .open_document(module_b_uri.clone(), 1, module_b_source.to_string())
+            .unwrap();
+
+        workspace.add_test_module(
+            module_b_uri.clone(),
+            "module_b".to_string(),
+            std::path::PathBuf::from("/workspace"),
+        );
+
+        let workspace = Arc::new(RwLock::new(workspace));
+        let analyzer = Arc::new(RwLock::new(Analyzer::new(config, documents.clone())));
+        let provider = CompletionProvider::new(documents.clone(), workspace, analyzer);
+
+        let params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: module_a_uri.clone() },
+                position: Position { line: 6, character: 3 },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+            context: None,
+        };
+
+        let response = provider.completion(params).await;
+        assert!(response.is_some());
+
+        match response.unwrap() {
+            CompletionResponse::Array(items) => {
+                assert!(
+                    items.iter().any(|item| item.label == "another_local"),
+                    "Expected local symbol another_local"
+                );
+                assert!(
+                    items.iter().any(|item| item.label == "another_function"),
+                    "Expected cross-file symbol another_function from module_b"
+                );
+                assert!(
+                    items.iter().any(|item| item.label == "another_var"),
+                    "Expected cross-file symbol another_var from module_b"
+                );
+
+                let local_item = items.iter().find(|item| item.label == "another_local").unwrap();
+                assert!(
+                    !local_item.detail.as_ref().is_some_and(|d| d.contains("from")),
+                    "Local symbols should NOT have 'from module' in detail"
+                );
+
+                let cross_file_item = items.iter().find(|item| item.label == "another_function").unwrap();
+                assert!(
+                    cross_file_item.detail.as_ref().is_some_and(|d| d.contains("module_b")),
+                    "Cross-file symbols should indicate source module"
+                );
+            }
+            _ => panic!("Expected array response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_cross_file_completions_ranking() {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
+        let mut workspace = Workspace::new(None, config.clone(), documents.clone());
+
+        let module_a_uri = Url::from_str("file:///workspace/module_a.py").unwrap();
+        let module_a_source = r#"
+def shared_name():
+    pass
+"#;
+        documents
+            .open_document(module_a_uri.clone(), 1, module_a_source.to_string())
+            .unwrap();
+
+        workspace.add_test_module(
+            module_a_uri.clone(),
+            "module_a".to_string(),
+            std::path::PathBuf::from("/workspace"),
+        );
+
+        let module_b_uri = Url::from_str("file:///workspace/module_b.py").unwrap();
+        let module_b_source = r#"
+def shared_name():
+    pass
+
+sha
+"#;
+        documents
+            .open_document(module_b_uri.clone(), 1, module_b_source.to_string())
+            .unwrap();
+
+        workspace.add_test_module(
+            module_b_uri.clone(),
+            "module_b".to_string(),
+            std::path::PathBuf::from("/workspace"),
+        );
+
+        let workspace = Arc::new(RwLock::new(workspace));
+        let analyzer = Arc::new(RwLock::new(Analyzer::new(config, documents.clone())));
+        let provider = CompletionProvider::new(documents.clone(), workspace, analyzer);
+
+        let params = CompletionParams {
+            text_document_position: TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: module_b_uri.clone() },
+                position: Position { line: 4, character: 3 },
+            },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+            context: None,
+        };
+
+        let response = provider.completion(params).await;
+        assert!(response.is_some());
+
+        match response.unwrap() {
+            CompletionResponse::Array(items) => {
+                let shared_items: Vec<_> = items.iter().filter(|item| item.label == "shared_name").collect();
+                assert_eq!(
+                    shared_items.len(),
+                    2,
+                    "Should have both local and cross-file shared_name"
+                );
+
+                let first_shared = shared_items[0];
+                assert!(
+                    !first_shared.detail.as_ref().is_some_and(|d| d.contains("from")),
+                    "First shared_name should be the local one (ranked higher)"
                 );
             }
             _ => panic!("Expected array response"),
