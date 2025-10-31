@@ -26,8 +26,6 @@ Implementation details and mod-specific tasks.
 
 ### Static Analysis & Linting
 
-**Dependencies:** None
-
 **Files:** `crates/server/src/analysis/linter.rs`, `crates/server/src/analysis/rules/mod.rs`, `crates/server/src/features/diagnostics.rs`
 
 See [Linter Rules](#linter-rules) section below for BEA code implementation status.
@@ -40,11 +38,9 @@ See [Linter Rules](#linter-rules) section below for BEA code implementation stat
 
 ### Incremental Re-analysis
 
-**Files:** `crates/server/src/analysis/cache.rs` (new), `crates/server/src/analysis/mod.rs`
+**Files:** `crates/server/src/cache.rs`, `crates/server/src/analysis/mod.rs`
 
-- [ ] Cache CFGs, symbol tables, diagnostics per module
-- [ ] Recompute only changed scopes
-- [ ] Maintain last-known diagnostic set
+- [ ] Recompute only changed scopes (scope-level granularity)
 
 ---
 
@@ -53,12 +49,6 @@ See [Linter Rules](#linter-rules) section below for BEA code implementation stat
 ### Cross-File Diagnostics
 
 **Files:** `crates/server/src/workspace.rs`, `crates/server/src/features/diagnostics.rs`
-
-- [x] Circular imports detection
-- [x] Report unresolved imports
-- [x] Missing modules detection
-
----
 
 - [ ] Inconsistent symbol exports (`__all__` mismatches)
 

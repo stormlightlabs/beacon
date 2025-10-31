@@ -12,7 +12,6 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, RwLock};
-use tracing::debug;
 use url::Url;
 
 /// Cache key for type inference results at specific AST node locations
@@ -20,7 +19,6 @@ use url::Url;
 pub struct TypeCacheKey {
     /// Document URI
     pub uri: Url,
-
     /// Node ID or byte offset in the document
     pub node_id: usize,
 }
@@ -30,15 +28,13 @@ pub struct TypeCacheKey {
 pub struct CachedType {
     /// The inferred type
     pub ty: Type,
-
     /// Document version when this was cached
     pub version: i32,
 }
 
 /// LRU cache for type inference results
 ///
-/// Caches inferred types per document and node location.
-/// Invalidates entries when document version changes.
+/// Caches inferred types per document and node location. Invalidates entries when document version changes.
 pub struct TypeCache {
     cache: Arc<RwLock<LruCache<TypeCacheKey, CachedType>>>,
 }
@@ -51,8 +47,6 @@ impl TypeCache {
     }
 
     /// Get a cached type for a node
-    ///
-    /// Returns None if not cached or version mismatch.
     pub fn get(&self, uri: &Url, node_id: usize, version: i32) -> Option<Type> {
         let mut cache = self.cache.write().unwrap();
 
@@ -75,9 +69,7 @@ impl TypeCache {
         cache.put(key, cached);
     }
 
-    /// Invalidate all entries for a document
-    ///
-    /// Called when a document is edited or closed.
+    /// Invalidate all entries for a document when edited or closed.
     pub fn invalidate_document(&self, uri: &Url) {
         let mut cache = self.cache.write().unwrap();
 
@@ -157,15 +149,11 @@ impl Default for ConstraintCache {
 pub struct IntrospectionCacheKey {
     /// Module name (e.g., "math", "os.path")
     pub module: String,
-
     /// Symbol name (e.g., "sqrt", "join")
     pub symbol: String,
 }
 
-/// Persistent cache for Python introspection results
-///
-/// Caches signature and docstring data from external modules.
-/// Persists to disk across LSP server restarts.
+/// Persistent on disk cache (signature and docstring data from external modules) for Python introspection results
 pub struct IntrospectionCache {
     cache: Arc<RwLock<LruCache<IntrospectionCacheKey, crate::introspection::IntrospectionResult>>>,
     cache_file: Option<std::path::PathBuf>,
@@ -173,9 +161,6 @@ pub struct IntrospectionCache {
 
 impl IntrospectionCache {
     /// Create a new introspection cache
-    ///
-    /// Attempts to load from cache file if it exists.
-    /// Cache capacity is set to 1000 entries.
     pub fn new(workspace_root: Option<&std::path::Path>) -> Self {
         let capacity = NonZeroUsize::new(1000).unwrap();
         let mut cache = LruCache::new(capacity);
@@ -205,21 +190,18 @@ impl IntrospectionCache {
     /// Get a cached introspection result
     pub fn get(&self, module: &str, symbol: &str) -> Option<crate::introspection::IntrospectionResult> {
         let mut cache = self.cache.write().unwrap();
-
         let key = IntrospectionCacheKey { module: module.to_string(), symbol: symbol.to_string() };
-
         cache.get(&key).cloned()
     }
 
     /// Store an introspection result in the cache and persists to disk asynchronously.
     pub fn insert(&self, module: String, symbol: String, result: crate::introspection::IntrospectionResult) {
         let mut cache = self.cache.write().unwrap();
-
         let key = IntrospectionCacheKey { module, symbol };
 
         cache.put(key, result);
-
         drop(cache);
+
         if let Err(e) = self.save_to_disk() {
             tracing::warn!("Failed to persist introspection cache: {}", e);
         }
@@ -246,7 +228,7 @@ impl IntrospectionCache {
             let entries: Vec<_> = cache.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
             let json = serde_json::to_string_pretty(&entries).map_err(std::io::Error::other)?;
             std::fs::write(file, json)?;
-            debug!(
+            tracing::debug!(
                 "Saved {} introspection cache entries to {}",
                 entries.len(),
                 file.display()
@@ -271,7 +253,6 @@ impl IntrospectionCache {
     /// Get cache statistics
     pub fn stats(&self) -> CacheStats {
         let cache = self.cache.read().unwrap();
-
         CacheStats { size: cache.len(), capacity: cache.cap().get() }
     }
 }
@@ -282,22 +263,108 @@ impl Default for IntrospectionCache {
     }
 }
 
+/// Cache key for full analysis results
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct AnalysisCacheKey {
+    /// Document URI
+    pub uri: Url,
+    /// Document version
+    pub version: i32,
+}
+
+/// Cached analysis result for a document
+///
+/// Stores the complete analysis artifacts including type map, diagnostics, CFG, and static analysis.
+/// Enables incremental re-analysis by caching expensive computations.
+#[derive(Debug, Clone)]
+pub struct CachedAnalysisResult {
+    /// Map from AST node IDs to inferred types
+    pub type_map: FxHashMap<usize, beacon_core::Type>,
+    /// Map from source positions to node IDs
+    pub position_map: FxHashMap<(usize, usize), usize>,
+    /// Type errors encountered during analysis
+    pub type_errors: Vec<crate::analysis::TypeErrorInfo>,
+    /// Static analysis results (data flow analysis)
+    pub static_analysis: Option<crate::analysis::data_flow::DataFlowResult>,
+}
+
+/// LRU cache for full analysis results per document
+///
+/// This cache stores complete analysis artifacts to enable incremental re-analysis.
+///
+/// Cache invalidation happens automatically based on document version:
+/// - Cache key includes both URI and version
+/// - When document changes, version increments
+pub struct AnalysisCache {
+    cache: Arc<RwLock<LruCache<AnalysisCacheKey, CachedAnalysisResult>>>,
+}
+
+impl AnalysisCache {
+    /// Create a new analysis cache with the given capacity
+    pub fn new(capacity: usize) -> Self {
+        let cap = NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::new(50).unwrap());
+        Self { cache: Arc::new(RwLock::new(LruCache::new(cap))) }
+    }
+
+    /// Get a cached analysis result for a document
+    pub fn get(&self, uri: &Url, version: i32) -> Option<CachedAnalysisResult> {
+        let mut cache = self.cache.write().unwrap();
+        let key = AnalysisCacheKey { uri: uri.clone(), version };
+        cache.get(&key).cloned()
+    }
+
+    /// Store an analysis result in the cache
+    pub fn insert(&self, uri: Url, version: i32, result: CachedAnalysisResult) {
+        let mut cache = self.cache.write().unwrap();
+        let key = AnalysisCacheKey { uri, version };
+        cache.put(key, result);
+    }
+
+    /// Invalidate all cached entries for a document (all versions) when a document is closed or when we want to free memory.
+    pub fn invalidate_document(&self, uri: &Url) {
+        let mut cache = self.cache.write().unwrap();
+        let keys_to_remove: Vec<_> = cache
+            .iter()
+            .filter(|(key, _)| key.uri == *uri)
+            .map(|(key, _)| key.clone())
+            .collect();
+
+        for key in keys_to_remove {
+            cache.pop(&key);
+        }
+    }
+
+    /// Clear the entire cache
+    pub fn clear(&self) {
+        let mut cache = self.cache.write().unwrap();
+        cache.clear();
+    }
+
+    /// Get cache statistics
+    pub fn stats(&self) -> CacheStats {
+        let cache = self.cache.read().unwrap();
+        CacheStats { size: cache.len(), capacity: cache.cap().get() }
+    }
+}
+
+impl Default for AnalysisCache {
+    fn default() -> Self {
+        Self::new(50)
+    }
+}
+
 /// Main cache manager coordinating all caches
 ///
 /// Provides a unified interface for caching all analysis artifacts.
-/// TODO: Add more specialized caches:
-/// - Symbol resolution cache
-/// - Module import cache
-/// - Stub file cache
 pub struct CacheManager {
-    /// Type inference cache
+    /// Type inference cache (node-level caching)
     pub type_cache: TypeCache,
-
     /// Constraint solving cache
     pub constraint_cache: ConstraintCache,
-
     /// Python introspection cache (persistent)
     pub introspection_cache: IntrospectionCache,
+    /// Full analysis result cache (document-level caching for incremental re-analysis)
+    pub analysis_cache: AnalysisCache,
 }
 
 impl CacheManager {
@@ -307,6 +374,7 @@ impl CacheManager {
             type_cache: TypeCache::default(),
             constraint_cache: ConstraintCache::default(),
             introspection_cache: IntrospectionCache::default(),
+            analysis_cache: AnalysisCache::default(),
         }
     }
 
@@ -316,6 +384,7 @@ impl CacheManager {
             type_cache: TypeCache::new(capacity),
             constraint_cache: ConstraintCache::default(),
             introspection_cache: IntrospectionCache::default(),
+            analysis_cache: AnalysisCache::new(capacity),
         }
     }
 
@@ -325,26 +394,25 @@ impl CacheManager {
             type_cache: TypeCache::new(capacity),
             constraint_cache: ConstraintCache::default(),
             introspection_cache: IntrospectionCache::new(workspace_root),
+            analysis_cache: AnalysisCache::new(capacity),
         }
     }
 
     /// Invalidate all caches for a document
-    /// TODO: Invalidate other caches
     pub fn invalidate_document(&self, uri: &Url) {
         self.type_cache.invalidate_document(uri);
+        self.analysis_cache.invalidate_document(uri);
     }
 
     /// Clear all caches
-    /// TODO: Clear other caches
     pub fn clear_all(&self) {
         self.type_cache.clear();
+        self.analysis_cache.clear();
     }
 
     /// Get aggregate cache statistics
-    ///
-    /// TODO: Combine stats from all caches
     pub fn stats(&self) -> CacheStats {
-        self.type_cache.stats()
+        self.analysis_cache.stats()
     }
 }
 
@@ -403,7 +471,6 @@ mod tests {
     fn test_cache_manager_creation() {
         let manager = CacheManager::new();
         let stats = manager.stats();
-
         assert_eq!(stats.size, 0);
         assert!(stats.capacity > 0);
     }
@@ -412,7 +479,6 @@ mod tests {
     fn test_cache_manager_with_capacity() {
         let manager = CacheManager::with_capacity(50);
         let stats = manager.stats();
-
         assert_eq!(stats.capacity, 50);
     }
 
@@ -470,5 +536,135 @@ mod tests {
         cache.clear();
         assert_eq!(cache.stats().size, 0);
         assert!(!cache_file.exists());
+    }
+
+    #[test]
+    fn test_analysis_cache_creation() {
+        let cache = AnalysisCache::new(10);
+        let stats = cache.stats();
+        assert_eq!(stats.size, 0);
+        assert_eq!(stats.capacity, 10);
+    }
+
+    #[test]
+    fn test_analysis_cache_insert_get() {
+        let cache = AnalysisCache::new(10);
+        let uri = Url::parse("file:///test.py").unwrap();
+
+        let mut type_map = FxHashMap::default();
+        type_map.insert(1, Type::Con(TypeCtor::Int));
+        type_map.insert(2, Type::Con(TypeCtor::String));
+
+        let cached_result = CachedAnalysisResult {
+            type_map: type_map.clone(),
+            position_map: FxHashMap::default(),
+            type_errors: vec![],
+            static_analysis: None,
+        };
+
+        cache.insert(uri.clone(), 1, cached_result);
+
+        let retrieved = cache.get(&uri, 1);
+        assert!(retrieved.is_some());
+
+        let result = retrieved.unwrap();
+        assert_eq!(result.type_map.len(), 2);
+        assert_eq!(result.type_map.get(&1), Some(&Type::Con(TypeCtor::Int)));
+        assert_eq!(result.type_map.get(&2), Some(&Type::Con(TypeCtor::String)));
+    }
+
+    #[test]
+    fn test_analysis_cache_version_mismatch() {
+        let cache = AnalysisCache::new(10);
+        let uri = Url::parse("file:///test.py").unwrap();
+
+        let cached_result = CachedAnalysisResult {
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+            type_errors: vec![],
+            static_analysis: None,
+        };
+
+        cache.insert(uri.clone(), 1, cached_result);
+
+        let retrieved = cache.get(&uri, 2);
+        assert!(retrieved.is_none());
+    }
+
+    #[test]
+    fn test_analysis_cache_invalidate_document() {
+        let cache = AnalysisCache::new(10);
+        let uri = Url::parse("file:///test.py").unwrap();
+
+        let cached_result = CachedAnalysisResult {
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+            type_errors: vec![],
+            static_analysis: None,
+        };
+
+        cache.insert(uri.clone(), 1, cached_result.clone());
+        cache.insert(uri.clone(), 2, cached_result.clone());
+        cache.insert(uri.clone(), 3, cached_result);
+        assert_eq!(cache.stats().size, 3);
+
+        cache.invalidate_document(&uri);
+        assert_eq!(cache.stats().size, 0);
+        assert!(cache.get(&uri, 1).is_none());
+        assert!(cache.get(&uri, 2).is_none());
+        assert!(cache.get(&uri, 3).is_none());
+    }
+
+    #[test]
+    fn test_analysis_cache_lru_eviction() {
+        let cache = AnalysisCache::new(2);
+
+        let uri1 = Url::parse("file:///test1.py").unwrap();
+        let uri2 = Url::parse("file:///test2.py").unwrap();
+        let uri3 = Url::parse("file:///test3.py").unwrap();
+
+        let cached_result = CachedAnalysisResult {
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+            type_errors: vec![],
+            static_analysis: None,
+        };
+
+        cache.insert(uri1.clone(), 1, cached_result.clone());
+        cache.insert(uri2.clone(), 1, cached_result.clone());
+        cache.insert(uri3.clone(), 1, cached_result);
+
+        assert_eq!(cache.stats().size, 2);
+
+        assert!(cache.get(&uri1, 1).is_none());
+        assert!(cache.get(&uri2, 1).is_some());
+        assert!(cache.get(&uri3, 1).is_some());
+    }
+
+    #[test]
+    fn test_cache_manager_with_analysis_cache() {
+        let manager = CacheManager::new();
+        let stats = manager.stats();
+        assert_eq!(stats.size, 0);
+        assert!(stats.capacity > 0);
+    }
+
+    #[test]
+    fn test_cache_manager_invalidate_all() {
+        let manager = CacheManager::new();
+        let uri = Url::parse("file:///test.py").unwrap();
+
+        let cached_result = CachedAnalysisResult {
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+            type_errors: vec![],
+            static_analysis: None,
+        };
+
+        manager.analysis_cache.insert(uri.clone(), 1, cached_result);
+        assert_eq!(manager.analysis_cache.stats().size, 1);
+
+        manager.invalidate_document(&uri);
+        assert_eq!(manager.analysis_cache.stats().size, 0);
     }
 }

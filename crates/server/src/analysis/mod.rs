@@ -25,6 +25,7 @@ use crate::cache::CacheManager;
 use crate::config::Config;
 use crate::document::DocumentManager;
 use crate::utils;
+
 use beacon_core::{
     Subst, Type, TypeCtor, TypeError, TypeVarGen, Unifier,
     errors::{AnalysisError, Result},
@@ -148,6 +149,18 @@ impl Analyzer {
             None => return Err(AnalysisError::DocumentNotFound(uri.clone()).into()),
         };
 
+        if let Some(cached) = self.cache.analysis_cache.get(uri, version) {
+            self.position_maps.insert(uri.clone(), cached.position_map.clone());
+            return Ok(AnalysisResult {
+                uri: uri.clone(),
+                version,
+                type_map: cached.type_map,
+                position_map: cached.position_map,
+                type_errors: cached.type_errors,
+                static_analysis: cached.static_analysis,
+            });
+        }
+
         let ConstraintResult(constraints, mut type_map, position_map, class_registry) =
             walker::generate_constraints(&self.stub_cache, &ast, &symbol_table)?;
 
@@ -160,6 +173,16 @@ impl Analyzer {
         self.position_maps.insert(uri.clone(), position_map.clone());
 
         let static_analysis = self.perform_static_analysis(&ast, &symbol_table);
+
+        let cached_result = crate::cache::CachedAnalysisResult {
+            type_map: type_map.clone(),
+            position_map: position_map.clone(),
+            type_errors: type_errors.clone(),
+            static_analysis: static_analysis.clone(),
+        };
+
+        self.cache.analysis_cache.insert(uri.clone(), version, cached_result);
+
         Ok(AnalysisResult { uri: uri.clone(), version, type_map, position_map, type_errors, static_analysis })
     }
 
@@ -1847,6 +1870,7 @@ first = lst.pop()
         );
     }
 
+    /// TODO: fix the error detection
     #[test]
     fn test_builtin_dict_method_access() {
         let config = Config::default();
@@ -1909,7 +1933,6 @@ result = s.nonexistent_method()
 
         let result = analyzer.analyze(&uri).unwrap();
 
-        // TODO: fix the error detection
         if result.type_errors.is_empty() {
             eprintln!("WARNING: No type error for nonexistent method - this is a known limitation");
             return;
@@ -2192,5 +2215,163 @@ class Calculator:
         } else {
             panic!("compute method should be overloaded");
         }
+    }
+
+    #[test]
+    fn test_incremental_reanalysis_cache_hit() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+x = 42
+y = "hello"
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result1 = analyzer.analyze(&uri).unwrap();
+        assert_eq!(result1.version, 1);
+        assert!(!result1.type_map.is_empty());
+
+        let cache_stats_before = analyzer.cache.analysis_cache.stats();
+        assert_eq!(cache_stats_before.size, 1);
+
+        let result2 = analyzer.analyze(&uri).unwrap();
+        assert_eq!(result2.version, 1);
+        assert_eq!(result2.type_map.len(), result1.type_map.len());
+
+        let cache_stats_after = analyzer.cache.analysis_cache.stats();
+        assert_eq!(cache_stats_after.size, 1);
+    }
+
+    #[test]
+    fn test_incremental_reanalysis_cache_miss_on_edit() {
+        use lsp_types::{TextDocumentContentChangeEvent, VersionedTextDocumentIdentifier};
+
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source1 = "x = 42";
+
+        documents.open_document(uri.clone(), 1, source1.to_string()).unwrap();
+
+        let result1 = analyzer.analyze(&uri).unwrap();
+        assert_eq!(result1.version, 1);
+
+        let cache_stats = analyzer.cache.analysis_cache.stats();
+        assert_eq!(cache_stats.size, 1);
+
+        let source2 = "x = 42\ny = 'hello'";
+        let params = VersionedTextDocumentIdentifier { uri: uri.clone(), version: 2 };
+        let changes =
+            vec![TextDocumentContentChangeEvent { range: None, range_length: None, text: source2.to_string() }];
+        documents.update_document(params, changes).unwrap();
+
+        let result2 = analyzer.analyze(&uri).unwrap();
+        assert_eq!(result2.version, 2);
+
+        let cache_stats_after = analyzer.cache.analysis_cache.stats();
+        assert_eq!(cache_stats_after.size, 2);
+    }
+
+    #[test]
+    fn test_incremental_reanalysis_preserves_type_errors() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+class Foo:
+    def bar(self):
+        return self.nonexistent_attr
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result1 = analyzer.analyze(&uri).unwrap();
+        let errors1 = result1.type_errors.len();
+
+        let result2 = analyzer.analyze(&uri).unwrap();
+        let errors2 = result2.type_errors.len();
+
+        assert_eq!(errors1, errors2, "Cached result should preserve type errors");
+    }
+
+    #[test]
+    fn test_incremental_reanalysis_invalidation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "x = 42";
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        analyzer.analyze(&uri).unwrap();
+
+        let cache_stats_before = analyzer.cache.analysis_cache.stats();
+        assert_eq!(cache_stats_before.size, 1);
+
+        analyzer.invalidate(&uri);
+
+        let cache_stats_after = analyzer.cache.analysis_cache.stats();
+        assert_eq!(cache_stats_after.size, 0);
+    }
+
+    #[test]
+    fn test_incremental_reanalysis_multiple_documents() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+
+        let uri1 = Url::from_str("file:///test1.py").unwrap();
+        let uri2 = Url::from_str("file:///test2.py").unwrap();
+        let uri3 = Url::from_str("file:///test3.py").unwrap();
+
+        documents.open_document(uri1.clone(), 1, "x = 1".to_string()).unwrap();
+        documents.open_document(uri2.clone(), 1, "y = 2".to_string()).unwrap();
+        documents.open_document(uri3.clone(), 1, "z = 3".to_string()).unwrap();
+
+        analyzer.analyze(&uri1).unwrap();
+        analyzer.analyze(&uri2).unwrap();
+        analyzer.analyze(&uri3).unwrap();
+
+        let cache_stats = analyzer.cache.analysis_cache.stats();
+        assert_eq!(cache_stats.size, 3);
+
+        analyzer.analyze(&uri1).unwrap();
+        analyzer.analyze(&uri2).unwrap();
+        analyzer.analyze(&uri3).unwrap();
+
+        let cache_stats_after = analyzer.cache.analysis_cache.stats();
+        assert_eq!(cache_stats_after.size, 3);
+    }
+
+    #[test]
+    fn test_incremental_reanalysis_static_analysis_cached() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def test():
+    x = 1
+    return x
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result1 = analyzer.analyze(&uri).unwrap();
+        let has_static_analysis_1 = result1.static_analysis.is_some();
+
+        let result2 = analyzer.analyze(&uri).unwrap();
+        let has_static_analysis_2 = result2.static_analysis.is_some();
+
+        assert_eq!(
+            has_static_analysis_1, has_static_analysis_2,
+            "Static analysis should be consistent across cache hits"
+        );
     }
 }
