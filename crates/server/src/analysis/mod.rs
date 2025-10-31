@@ -26,29 +26,28 @@ use crate::config::Config;
 use crate::document::DocumentManager;
 use crate::utils;
 use beacon_core::{
-    Subst, Type, TypeCtor, TypeVarGen, Unifier,
+    Subst, Type, TypeCtor, TypeError, TypeVarGen, Unifier,
     errors::{AnalysisError, Result},
 };
 use beacon_parser::{AstNode, SymbolTable};
-use constraint_gen::{Constraint, ConstraintGenContext, ConstraintResult, ConstraintSet, Span};
+use constraint_gen::{Constraint, ConstraintResult, ConstraintSet, Span};
 use lsp_types::Position;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use type_env::TypeEnvironment;
 use url::Url;
 
 /// Type error with location information
 #[derive(Debug, Clone)]
 pub struct TypeErrorInfo {
-    pub error: beacon_core::TypeError,
+    pub error: TypeError,
     /// Span where the error occurred
     pub span: Span,
 }
 
 impl TypeErrorInfo {
     /// Create a new type error with location
-    pub fn new(error: beacon_core::TypeError, span: Span) -> Self {
+    pub fn new(error: TypeError, span: Span) -> Self {
         Self { error, span }
     }
 
@@ -71,8 +70,8 @@ impl TypeErrorInfo {
 
 #[derive(Debug)]
 struct MethodInfo {
-    params: Vec<beacon_core::Type>,
-    return_type: beacon_core::Type,
+    params: Vec<Type>,
+    return_type: Type,
     decorators: Vec<String>,
     is_overload: bool,
 }
@@ -167,7 +166,6 @@ impl Analyzer {
     /// Get the inferred type at a specific position
     ///
     /// Analyzes the document and looks up the type at the specified position.
-    /// Returns None if no type information is available at that position.
     pub fn type_at_position(&mut self, uri: &Url, position: Position) -> Result<Option<Type>> {
         let result = self.analyze(uri)?;
         let line = (position.line + 1) as usize;
@@ -189,17 +187,9 @@ impl Analyzer {
         self.position_maps.remove(uri);
     }
 
-    #[deprecated]
-    fn _visit_node(&mut self, node: &AstNode, _constraints: &mut [Constraint]) -> Result<Type> {
-        let mut env = TypeEnvironment::new();
-        let mut ctx = ConstraintGenContext::new();
-        walker::visit_node_with_env(node, &mut env, &mut ctx, None)
-    }
-
     /// Convert a Type::Fun to a MethodSignature
     ///
     /// Extracts parameters and return type from a function type.
-    /// Returns None if the type is not a function type.
     fn type_to_method_signature(name: &str, ty: &Type) -> Option<beacon_core::protocols::MethodSignature> {
         match ty {
             Type::Fun(params, ret) => Some(beacon_core::protocols::MethodSignature {
@@ -263,7 +253,7 @@ impl Analyzer {
     }
 
     /// Solve a set of constraints using beacon-core's unification algorithm
-    /// Returns a substitution and a list of type errors encountered during solving.
+    ///
     /// Errors are accumulated rather than failing fast to provide comprehensive feedback.
     fn solve_constraints(
         constraint_set: ConstraintSet, class_registry: &class_metadata::ClassRegistry,
@@ -560,7 +550,13 @@ impl Analyzer {
                         let mut builder = cfg::CfgBuilder::new();
                         builder.build_function(func_body);
                         let cfg = builder.build();
-                        let analyzer = data_flow::DataFlowAnalyzer::new(&cfg, func_body, symbol_table);
+                        let scope_id = symbol_table
+                            .scopes
+                            .values()
+                            .find(|scope| scope.kind == beacon_parser::ScopeKind::Function)
+                            .map(|scope| scope.id)
+                            .unwrap_or(symbol_table.root_scope);
+                        let analyzer = data_flow::DataFlowAnalyzer::new(&cfg, func_body, symbol_table, scope_id);
                         return Some(analyzer.analyze());
                     }
                 }
@@ -570,7 +566,13 @@ impl Analyzer {
                 let mut builder = cfg::CfgBuilder::new();
                 builder.build_function(body);
                 let cfg = builder.build();
-                let analyzer = data_flow::DataFlowAnalyzer::new(&cfg, body, symbol_table);
+                let scope_id = symbol_table
+                    .scopes
+                    .values()
+                    .find(|scope| scope.kind == beacon_parser::ScopeKind::Function)
+                    .map(|scope| scope.id)
+                    .unwrap_or(symbol_table.root_scope);
+                let analyzer = data_flow::DataFlowAnalyzer::new(&cfg, body, symbol_table, scope_id);
                 Some(analyzer.analyze())
             }
             _ => None,
@@ -870,9 +872,8 @@ impl Analyzer {
 
 #[cfg(test)]
 mod tests {
-    use crate::analysis::class_metadata::ClassRegistry;
-
     use super::*;
+    use crate::analysis::class_metadata::ClassRegistry;
     use std::str::FromStr;
 
     #[test]
@@ -880,20 +881,6 @@ mod tests {
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
         let _analyzer = Analyzer::new(config, documents);
-    }
-
-    #[test]
-    fn test_constraint_generation_literal() {
-        let config = Config::default();
-        let documents = DocumentManager::new().unwrap();
-        let mut analyzer = Analyzer::new(config, documents);
-
-        let lit = AstNode::Literal { value: beacon_parser::LiteralValue::Integer(42), line: 1, col: 1 };
-        let mut constraints = Vec::new();
-
-        #[allow(deprecated)]
-        let ty = analyzer._visit_node(&lit, &mut constraints).unwrap();
-        assert!(matches!(ty, Type::Con(TypeCtor::Int)));
     }
 
     #[test]
@@ -1520,7 +1507,7 @@ for i in range(10):
 
     #[test]
     fn test_constraint_gen_context() {
-        let mut ctx = ConstraintGenContext::new();
+        let mut ctx = constraint_gen::ConstraintGenContext::new();
 
         assert_eq!(ctx.node_counter, 0);
         assert!(ctx.type_map.is_empty());

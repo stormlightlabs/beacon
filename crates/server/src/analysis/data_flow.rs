@@ -6,7 +6,7 @@
 //! - Unused variable detection
 
 use super::cfg::{BlockId, ControlFlowGraph};
-use beacon_parser::{AstNode, SymbolTable};
+use beacon_parser::{AstNode, ScopeId, SymbolTable};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Result of data flow analysis
@@ -47,13 +47,96 @@ pub struct UnusedVariable {
 /// Performs data flow analysis on a CFG
 pub struct DataFlowAnalyzer<'a> {
     cfg: &'a ControlFlowGraph,
-    function_body: &'a [AstNode],
+    /// Flattened list of ALL statements (including nested ones) for indexing
+    all_statements: Vec<&'a AstNode>,
     symbol_table: &'a SymbolTable,
+    /// Scope ID of the function being analyzed (for parameter lookup)
+    scope_id: ScopeId,
 }
 
 impl<'a> DataFlowAnalyzer<'a> {
-    pub fn new(cfg: &'a ControlFlowGraph, function_body: &'a [AstNode], symbol_table: &'a SymbolTable) -> Self {
-        Self { cfg, function_body, symbol_table }
+    pub fn new(
+        cfg: &'a ControlFlowGraph, function_body: &'a [AstNode], symbol_table: &'a SymbolTable, scope_id: ScopeId,
+    ) -> Self {
+        let mut all_statements = Vec::new();
+        for stmt in function_body {
+            Self::collect_all_statements(stmt, &mut all_statements);
+        }
+        Self { cfg, all_statements, symbol_table, scope_id }
+    }
+
+    /// Recursively collect all statements including nested ones
+    fn collect_all_statements(node: &'a AstNode, statements: &mut Vec<&'a AstNode>) {
+        match node {
+            AstNode::If { body, elif_parts, else_body, .. } => {
+                for stmt in body {
+                    statements.push(stmt);
+                }
+
+                for (_, elif_body) in elif_parts {
+                    for stmt in elif_body {
+                        statements.push(stmt);
+                    }
+                }
+
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        statements.push(stmt);
+                    }
+                }
+            }
+            AstNode::For { body, else_body, .. } | AstNode::While { body, else_body, .. } => {
+                statements.push(node);
+                for stmt in body {
+                    statements.push(stmt);
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        statements.push(stmt);
+                    }
+                }
+            }
+            AstNode::Try { body, handlers, else_body, finally_body, .. } => {
+                for stmt in body {
+                    statements.push(stmt);
+                }
+
+                for handler in handlers {
+                    for stmt in &handler.body {
+                        statements.push(stmt);
+                    }
+                }
+
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        statements.push(stmt);
+                    }
+                }
+
+                if let Some(finally_stmts) = finally_body {
+                    for stmt in finally_stmts {
+                        statements.push(stmt);
+                    }
+                }
+            }
+            AstNode::With { body, .. } => {
+                for stmt in body {
+                    statements.push(stmt);
+                }
+            }
+            AstNode::Match { cases, .. } => {
+                for case in cases {
+                    for stmt in &case.body {
+                        statements.push(stmt);
+                    }
+                }
+            }
+            // We don't recurse into nested function/class definitions because they have their own scope and CFG
+            AstNode::FunctionDef { .. } | AstNode::ClassDef { .. } => {}
+            _ => {
+                statements.push(node);
+            }
+        }
     }
 
     /// Run all data flow analyses and return combined results
@@ -68,7 +151,6 @@ impl<'a> DataFlowAnalyzer<'a> {
     ///
     /// Uses forward data flow analysis to track which variables are definitely assigned on all paths to each program point.
     fn find_use_before_def(&self) -> Vec<UseBeforeDef> {
-        let mut errors = Vec::new();
         let mut def_in: FxHashMap<BlockId, FxHashSet<String>> = FxHashMap::default();
         let mut def_out: FxHashMap<BlockId, FxHashSet<String>> = FxHashMap::default();
 
@@ -78,14 +160,11 @@ impl<'a> DataFlowAnalyzer<'a> {
         }
 
         let mut worklist: Vec<BlockId> = self.cfg.blocks.keys().copied().collect();
-        let mut changed = true;
 
-        while changed && !worklist.is_empty() {
-            changed = false;
-            let block_id = worklist.pop().unwrap();
-
+        while let Some(block_id) = worklist.pop() {
             let block = self.cfg.blocks.get(&block_id).unwrap();
-            let mut new_def_in = if block.predecessors.is_empty() {
+
+            let new_def_in = if block.predecessors.is_empty() {
                 FxHashSet::default()
             } else {
                 let first_pred = block.predecessors[0].0;
@@ -99,33 +178,49 @@ impl<'a> DataFlowAnalyzer<'a> {
                 result
             };
 
+            let mut new_def_out = new_def_in.clone();
             for &stmt_idx in &block.statements {
-                if stmt_idx < self.function_body.len() {
-                    let stmt = &self.function_body[stmt_idx];
-                    let (uses, defs) = self.get_uses_and_defs(stmt);
-
-                    for (var_name, line, col) in uses {
-                        if !new_def_in.contains(&var_name) && !self.is_parameter(&var_name) {
-                            errors.push(UseBeforeDef { var_name, line, col });
-                        }
-                    }
+                if stmt_idx < self.all_statements.len() {
+                    let stmt = self.all_statements[stmt_idx];
+                    let (_, defs) = self.get_uses_and_defs(stmt);
 
                     for def_var in defs {
-                        new_def_in.insert(def_var);
+                        new_def_out.insert(def_var);
                     }
                 }
             }
 
             let old_def_in = def_in.get(&block_id).cloned().unwrap_or_default();
             let old_def_out = def_out.get(&block_id).cloned().unwrap_or_default();
-            if new_def_in != old_def_in || new_def_in != old_def_out {
-                def_in.insert(block_id, new_def_in.clone());
-                def_out.insert(block_id, new_def_in);
-                changed = true;
+            if new_def_in != old_def_in || new_def_out != old_def_out {
+                def_in.insert(block_id, new_def_in);
+                def_out.insert(block_id, new_def_out);
 
                 for &(succ_id, _) in &block.successors {
                     if !worklist.contains(&succ_id) {
                         worklist.push(succ_id);
+                    }
+                }
+            }
+        }
+
+        let mut errors = Vec::new();
+        for (block_id, block) in &self.cfg.blocks {
+            let mut current_def_in = def_in.get(block_id).cloned().unwrap_or_default();
+
+            for &stmt_idx in &block.statements {
+                if stmt_idx < self.all_statements.len() {
+                    let stmt = self.all_statements[stmt_idx];
+                    let (uses, defs) = self.get_uses_and_defs(stmt);
+
+                    for (var_name, line, col) in uses {
+                        if !current_def_in.contains(&var_name) && !self.is_parameter(&var_name) {
+                            errors.push(UseBeforeDef { var_name, line, col });
+                        }
+                    }
+
+                    for def_var in defs {
+                        current_def_in.insert(def_var);
                     }
                 }
             }
@@ -142,8 +237,8 @@ impl<'a> DataFlowAnalyzer<'a> {
         for block_id in unreachable_blocks {
             if let Some(block) = self.cfg.blocks.get(&block_id) {
                 if let Some(&stmt_idx) = block.statements.first() {
-                    if stmt_idx < self.function_body.len() {
-                        let (line, col) = self.get_stmt_location(&self.function_body[stmt_idx]);
+                    if stmt_idx < self.all_statements.len() {
+                        let (line, col) = self.get_stmt_location(self.all_statements[stmt_idx]);
                         unreachable.push(UnreachableCode { block_id, line, col });
                     }
                 }
@@ -155,8 +250,7 @@ impl<'a> DataFlowAnalyzer<'a> {
 
     /// Find unused variables (already implemented in symbol table)
     ///
-    /// This delegates to the symbol table's unused variable detection,
-    /// which tracks references during name resolution.
+    /// This delegates to the symbol table's unused variable detection, which tracks references during name resolution.
     fn find_unused_variables(&self) -> Vec<UnusedVariable> {
         self.symbol_table
             .find_unused_symbols()
@@ -235,12 +329,14 @@ impl<'a> DataFlowAnalyzer<'a> {
 
     /// Check if a variable is a function parameter in the current scope
     fn is_parameter(&self, name: &str) -> bool {
-        // TODO: need scope context
-        self.symbol_table
-            .scopes
-            .values()
-            .flat_map(|scope| scope.symbols.values())
-            .any(|sym| sym.name == name && sym.kind == beacon_parser::SymbolKind::Parameter)
+        if let Some(scope) = self.symbol_table.get_scope(self.scope_id) {
+            scope
+                .symbols
+                .values()
+                .any(|sym| sym.name == name && sym.kind == beacon_parser::SymbolKind::Parameter)
+        } else {
+            false
+        }
     }
 
     /// Get the location of a statement
@@ -289,11 +385,19 @@ impl<'a> DataFlowAnalyzer<'a> {
 mod tests {
     use super::*;
     use crate::analysis::cfg::CfgBuilder;
-    use beacon_parser::NameResolver;
+    use beacon_parser::{NameResolver, ScopeId, ScopeKind, SymbolTable};
 
-    // TODO: CFG builder needs to populate statement indices for DFA to work
+    /// Helper to find the first function scope in the symbol table (for tests)
+    fn find_function_scope(symbol_table: &SymbolTable) -> ScopeId {
+        symbol_table
+            .scopes
+            .values()
+            .find(|scope| scope.kind == ScopeKind::Function)
+            .map(|scope| scope.id)
+            .expect("No function scope found in symbol table")
+    }
+
     #[test]
-    #[ignore]
     fn test_use_before_def_detection() {
         let source = "def foo():\n    y = x\n    x = 1".to_string();
         let mut resolver = NameResolver::new(source);
@@ -333,7 +437,8 @@ mod tests {
             builder.build_function(body);
             let cfg = builder.build();
 
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table);
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
             let result = analyzer.find_use_before_def();
 
             assert!(!result.is_empty(), "Expected use-before-def for x");
@@ -399,7 +504,8 @@ mod tests {
             builder.build_function(body);
             let cfg = builder.build();
 
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table);
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
             let unused = analyzer.find_unused_variables();
 
             assert!(unused.iter().any(|u| u.var_name == "x"));
@@ -462,7 +568,8 @@ mod tests {
             builder.build_function(body);
 
             let cfg = builder.build();
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table);
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
             let result = analyzer.find_use_before_def();
             assert!(!result.is_empty());
             assert!(result.iter().any(|e| e.var_name == "x"));
@@ -533,7 +640,9 @@ mod tests {
             builder.build_function(body);
 
             let cfg = builder.build();
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table);
+
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
             let result = analyzer.find_use_before_def();
             let x_errors: Vec<_> = result.iter().filter(|e| e.var_name == "x" && e.line == 6).collect();
             assert!(x_errors.is_empty());
@@ -542,9 +651,7 @@ mod tests {
         }
     }
 
-    // TODO: CFG builder needs to populate statement indices for DFA to work
     #[test]
-    #[ignore]
     fn test_use_before_def_in_loop() {
         let source = "def foo():\n    for i in items:\n        result = total\n        total = i".to_string();
         let mut resolver = NameResolver::new(source);
@@ -587,7 +694,8 @@ mod tests {
             builder.build_function(body);
 
             let cfg = builder.build();
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table);
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
             let result = analyzer.find_use_before_def();
             assert!(!result.is_empty(), "Expected use-before-def errors");
         } else {
@@ -638,7 +746,8 @@ mod tests {
             builder.build_function(body);
 
             let cfg = builder.build();
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table);
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
             let result = analyzer.find_unreachable_code();
             assert!(!result.is_empty());
         } else {
@@ -646,9 +755,7 @@ mod tests {
         }
     }
 
-    // TODO: CFG builder needs to populate statement indices for DFA to work
     #[test]
-    #[ignore]
     fn test_data_flow_analyze_combined() {
         let source = "def foo():\n    y = x\n    z = 1".to_string();
         let mut resolver = NameResolver::new(source);
@@ -688,7 +795,8 @@ mod tests {
             builder.build_function(body);
 
             let cfg = builder.build();
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table);
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
             let result = analyzer.analyze();
 
             assert!(!result.use_before_def.is_empty());
@@ -733,7 +841,8 @@ mod tests {
             builder.build_function(body);
 
             let cfg = builder.build();
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table);
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
             let result = analyzer.find_use_before_def();
 
             assert!(!result.iter().any(|e| e.var_name == "param"));
@@ -782,7 +891,8 @@ mod tests {
             builder.build_function(body);
             let cfg = builder.build();
 
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table);
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
             let result = analyzer.find_use_before_def();
 
             // Loop target 'i' is defined by the for statement before the body executes
@@ -797,9 +907,7 @@ mod tests {
         }
     }
 
-    // TODO: CFG builder needs to populate statement indices for DFA to work
     #[test]
-    #[ignore]
     fn test_binary_op_uses_tracked() {
         let source = "def foo():\n    z = x + y".to_string();
         let mut resolver = NameResolver::new(source);
@@ -833,7 +941,8 @@ mod tests {
             builder.build_function(body);
 
             let cfg = builder.build();
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table);
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
             let result = analyzer.find_use_before_def();
 
             assert!(result.iter().any(|e| e.var_name == "x"));
@@ -883,7 +992,8 @@ mod tests {
             builder.build_function(body);
 
             let cfg = builder.build();
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table);
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
             let result = analyzer.find_use_before_def();
             let x_errors: Vec<_> = result.iter().filter(|e| e.var_name == "x" && e.line == 3).collect();
             assert!(x_errors.is_empty());
