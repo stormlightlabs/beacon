@@ -62,7 +62,7 @@ impl Features {
         analyzer: Arc<RwLock<analysis::Analyzer>>,
     ) -> Self {
         Self {
-            diagnostics: DiagnosticProvider::new(documents.clone()),
+            diagnostics: DiagnosticProvider::new(documents.clone(), workspace.clone()),
             hover: HoverProvider::with_introspection(documents.clone(), interpreter_path, introspection_cache),
             completion: CompletionProvider::new(documents.clone(), workspace.clone(), analyzer),
             goto_definition: GotoDefinitionProvider::new(documents.clone(), workspace.clone()),

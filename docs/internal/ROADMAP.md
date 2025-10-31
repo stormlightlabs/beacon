@@ -11,10 +11,6 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 - [ ] "Did you mean" suggestions and annotation fixes
 - [ ] Code actions for refactoring (insert annotations, adjust Optional)
 
-### Inlay Hints
-
-- [ ] Configurable verbosity
-
 ## Advanced Type Features
 
 ### Pattern Matching (PEP 634)
@@ -54,6 +50,8 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 - [ ] Configuration options (`mode`, `pythonVersion`, `stubPaths`, `decoratorStubs`)
 - [ ] Config hot-reload without restart
 - [ ] Contributor documentation
+- [ ] Type checking modes (strict/balanced/loose)
+- [ ] Configurable verbosity for inlay hints
 
 ### Performance & Testing
 
@@ -86,5 +84,3 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
     - Full signature compatibility validation via `Type::is_subtype_of()`
 
 ## Parking Lot
-
-- [ ] Type checking modes (strict/balanced/loose)

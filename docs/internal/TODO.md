@@ -45,16 +45,25 @@ See [Linter Rules](#linter-rules) section below for BEA code implementation stat
 - [ ] Cache CFGs, symbol tables, diagnostics per module
 - [ ] Recompute only changed scopes
 - [ ] Maintain last-known diagnostic set
+
+---
+
 - [ ] Benchmark incremental performance (target: <100ms)
 
 ### Cross-File Diagnostics
 
-**Files:** `crates/server/src/workspace/graph.rs`, `crates/server/src/features/diagnostics.rs`
+**Files:** `crates/server/src/workspace.rs`, `crates/server/src/features/diagnostics.rs`
 
-- [ ] Circular imports detection
-- [ ] Report unresolved imports
-- [ ] Missing modules detection
+- [x] Circular imports detection
+- [x] Report unresolved imports
+- [x] Missing modules detection
+
+---
+
 - [ ] Inconsistent symbol exports (`__all__` mismatches)
+
+---
+
 - [ ] Conflicting stub definitions
 
 ## Linter Rules

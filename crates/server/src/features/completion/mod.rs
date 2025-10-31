@@ -1,7 +1,7 @@
 //! Code completion provider
 //!
 //! Provides intelligent completions for identifiers, attributes, imports, and keywords.
-mod algorithms;
+pub mod algorithms;
 
 use crate::analysis::Analyzer;
 use crate::document::DocumentManager;
