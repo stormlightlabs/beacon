@@ -6,7 +6,7 @@
 //! - Unused variable detection
 
 use super::cfg::{BlockId, ControlFlowGraph};
-use beacon_parser::{AstNode, ScopeId, SymbolTable};
+use beacon_parser::{AstNode, BinaryOperator, CompareOperator, LiteralValue, ScopeId, SymbolTable, UnaryOperator};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Result of data flow analysis
@@ -44,7 +44,34 @@ pub struct UnusedVariable {
     pub col: usize,
 }
 
+/// A constant value that can be propagated through data flow analysis
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConstantValue {
+    /// Boolean constant
+    Bool(bool),
+    /// Integer constant
+    Integer(i64),
+    /// String constant
+    String(String),
+    /// None constant
+    None,
+    /// Unknown or non-constant value
+    Unknown,
+}
+
+/// Result of evaluating a condition symbolically
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConditionResult {
+    /// Condition is always true
+    AlwaysTrue,
+    /// Condition is always false
+    AlwaysFalse,
+    /// Cannot determine condition at compile time
+    Unknown,
+}
+
 /// Performs data flow analysis on a CFG
+/// TODO: Store condition expressions in CFG blocks to automatically detect unreachable branches based on constant conditions.
 pub struct DataFlowAnalyzer<'a> {
     cfg: &'a ControlFlowGraph,
     /// Flattened list of ALL statements (including nested ones) for indexing
@@ -229,7 +256,6 @@ impl<'a> DataFlowAnalyzer<'a> {
         errors
     }
 
-    /// Find unreachable code blocks
     fn find_unreachable_code(&self) -> Vec<UnreachableCode> {
         let unreachable_blocks = self.cfg.unreachable_blocks();
         let mut unreachable = Vec::new();
@@ -327,7 +353,6 @@ impl<'a> DataFlowAnalyzer<'a> {
         }
     }
 
-    /// Check if a variable is a function parameter in the current scope
     fn is_parameter(&self, name: &str) -> bool {
         if let Some(scope) = self.symbol_table.get_scope(self.scope_id) {
             scope
@@ -339,7 +364,6 @@ impl<'a> DataFlowAnalyzer<'a> {
         }
     }
 
-    /// Get the location of a statement
     fn get_stmt_location(&self, stmt: &AstNode) -> (usize, usize) {
         match stmt {
             AstNode::Assignment { line, col, .. }
@@ -363,23 +387,229 @@ impl<'a> DataFlowAnalyzer<'a> {
             _ => (0, 0),
         }
     }
-}
 
-// TODO: Implement constant propagation for detecting always-true/always-false conditionals
-// This would enable more precise unreachable code detection.
-//
-// Algorithm:
-// 1. Track known constant values for variables
-// 2. Evaluate conditions symbolically when possible
-// 3. Identify branches that can never be taken
-// 4. Mark those blocks as unreachable
-//
-// Example:
-// ```python
-// DEBUG = False
-// if DEBUG:
-//     print("debug mode")  # unreachable
-// ```
+    /// Perform constant propagation analysis
+    ///
+    /// Tracks which variables have known constant values at each program point.
+    pub fn propagate_constants(&self) -> FxHashMap<BlockId, FxHashMap<String, ConstantValue>> {
+        let mut const_in: FxHashMap<BlockId, FxHashMap<String, ConstantValue>> = FxHashMap::default();
+        let mut const_out: FxHashMap<BlockId, FxHashMap<String, ConstantValue>> = FxHashMap::default();
+
+        for block_id in self.cfg.blocks.keys() {
+            const_in.insert(*block_id, FxHashMap::default());
+            const_out.insert(*block_id, FxHashMap::default());
+        }
+
+        let mut worklist: Vec<BlockId> = self.cfg.blocks.keys().copied().collect();
+
+        while let Some(block_id) = worklist.pop() {
+            let block = self.cfg.blocks.get(&block_id).unwrap();
+
+            let new_const_in = if block.predecessors.is_empty() {
+                FxHashMap::default()
+            } else {
+                let first_pred = block.predecessors[0].0;
+                let mut result = const_out.get(&first_pred).cloned().unwrap_or_default();
+
+                for &(pred_id, _) in &block.predecessors[1..] {
+                    if let Some(pred_const_out) = const_out.get(&pred_id) {
+                        result
+                            .retain(|var, value| pred_const_out.get(var).is_some_and(|pred_value| pred_value == value));
+                    } else {
+                        result.clear();
+                    }
+                }
+                result
+            };
+
+            let mut new_const_out = new_const_in.clone();
+            for &stmt_idx in &block.statements {
+                if stmt_idx < self.all_statements.len() {
+                    let stmt = self.all_statements[stmt_idx];
+                    self.update_constants_for_stmt(stmt, &mut new_const_out);
+                }
+            }
+
+            let old_const_in = const_in.get(&block_id).cloned().unwrap_or_default();
+            let old_const_out = const_out.get(&block_id).cloned().unwrap_or_default();
+            if new_const_in != old_const_in || new_const_out != old_const_out {
+                const_in.insert(block_id, new_const_in);
+                const_out.insert(block_id, new_const_out);
+
+                for &(succ_id, _) in &block.successors {
+                    if !worklist.contains(&succ_id) {
+                        worklist.push(succ_id);
+                    }
+                }
+            }
+        }
+
+        const_in
+    }
+
+    fn update_constants_for_stmt(&self, stmt: &AstNode, constants: &mut FxHashMap<String, ConstantValue>) {
+        match stmt {
+            AstNode::Assignment { target, value, .. } => {
+                let const_value = self.evaluate_to_constant(value, constants);
+                constants.insert(target.clone(), const_value)
+            }
+            AstNode::AnnotatedAssignment { target, value: Some(val), .. } => {
+                let const_value = self.evaluate_to_constant(val, constants);
+                constants.insert(target.clone(), const_value)
+            }
+            AstNode::For { target, .. } => constants.insert(target.clone(), ConstantValue::Unknown),
+            AstNode::NamedExpr { target, value, .. } => {
+                let const_value = self.evaluate_to_constant(value, constants);
+                constants.insert(target.clone(), const_value)
+            }
+            _ => None,
+        };
+    }
+
+    /// Evaluate an expression to a constant value if possible
+    fn evaluate_to_constant(&self, expr: &AstNode, constants: &FxHashMap<String, ConstantValue>) -> ConstantValue {
+        match expr {
+            AstNode::Literal { value, .. } => match value {
+                LiteralValue::Integer(i) => ConstantValue::Integer(*i),
+                LiteralValue::Float(_) => ConstantValue::Unknown,
+                LiteralValue::String { value, .. } => ConstantValue::String(value.clone()),
+                LiteralValue::Boolean(b) => ConstantValue::Bool(*b),
+                LiteralValue::None => ConstantValue::None,
+            },
+            AstNode::Identifier { name, .. } => constants.get(name).cloned().unwrap_or(ConstantValue::Unknown),
+            AstNode::UnaryOp { op, operand, .. } => {
+                let operand_value = self.evaluate_to_constant(operand, constants);
+                match (op, operand_value) {
+                    (UnaryOperator::Not, ConstantValue::Bool(b)) => ConstantValue::Bool(!b),
+                    (UnaryOperator::Plus, ConstantValue::Integer(i)) => ConstantValue::Integer(i),
+                    (UnaryOperator::Minus, ConstantValue::Integer(i)) => ConstantValue::Integer(-i),
+                    _ => ConstantValue::Unknown,
+                }
+            }
+            AstNode::BinaryOp { left, op, right, .. } => {
+                let left_value = self.evaluate_to_constant(left, constants);
+                let right_value = self.evaluate_to_constant(right, constants);
+                self.evaluate_binary_op(&left_value, op, &right_value)
+            }
+            _ => ConstantValue::Unknown,
+        }
+    }
+
+    /// Evaluate a binary operation on constant values
+    fn evaluate_binary_op(&self, left: &ConstantValue, op: &BinaryOperator, right: &ConstantValue) -> ConstantValue {
+        match (left, op, right) {
+            (ConstantValue::Integer(a), BinaryOperator::Add, ConstantValue::Integer(b)) => {
+                ConstantValue::Integer(a.wrapping_add(*b))
+            }
+            (ConstantValue::Integer(a), BinaryOperator::Sub, ConstantValue::Integer(b)) => {
+                ConstantValue::Integer(a.wrapping_sub(*b))
+            }
+            (ConstantValue::Integer(a), BinaryOperator::Mult, ConstantValue::Integer(b)) => {
+                ConstantValue::Integer(a.wrapping_mul(*b))
+            }
+            (ConstantValue::String(a), BinaryOperator::Add, ConstantValue::String(b)) => {
+                ConstantValue::String(format!("{a}{b}"))
+            }
+            (ConstantValue::Bool(a), BinaryOperator::And, ConstantValue::Bool(b)) => ConstantValue::Bool(*a && *b),
+            (ConstantValue::Bool(a), BinaryOperator::Or, ConstantValue::Bool(b)) => ConstantValue::Bool(*a || *b),
+            _ => ConstantValue::Unknown,
+        }
+    }
+
+    /// Evaluate a condition expression symbolically
+    pub fn evaluate_condition(
+        &self, condition: &AstNode, constants: &FxHashMap<String, ConstantValue>,
+    ) -> ConditionResult {
+        match condition {
+            AstNode::Literal { value: LiteralValue::Boolean(b), .. } => {
+                if *b {
+                    ConditionResult::AlwaysTrue
+                } else {
+                    ConditionResult::AlwaysFalse
+                }
+            }
+            AstNode::Identifier { name, .. } => match constants.get(name) {
+                Some(ConstantValue::Bool(true)) => ConditionResult::AlwaysTrue,
+                Some(ConstantValue::Bool(false)) => ConditionResult::AlwaysFalse,
+                _ => ConditionResult::Unknown,
+            },
+            AstNode::UnaryOp { op: beacon_parser::UnaryOperator::Not, operand, .. } => {
+                match self.evaluate_condition(operand, constants) {
+                    ConditionResult::AlwaysTrue => ConditionResult::AlwaysFalse,
+                    ConditionResult::AlwaysFalse => ConditionResult::AlwaysTrue,
+                    ConditionResult::Unknown => ConditionResult::Unknown,
+                }
+            }
+            AstNode::Compare { left, ops, comparators, .. } => {
+                if ops.len() == 1 && comparators.len() == 1 {
+                    let left_value = self.evaluate_to_constant(left, constants);
+                    let right_value = self.evaluate_to_constant(&comparators[0], constants);
+                    self.evaluate_comparison(&left_value, &ops[0], &right_value)
+                } else {
+                    ConditionResult::Unknown
+                }
+            }
+            AstNode::BinaryOp { left, op, right, .. } => match op {
+                beacon_parser::BinaryOperator::And => {
+                    let left_result = self.evaluate_condition(left, constants);
+                    let right_result = self.evaluate_condition(right, constants);
+                    match (left_result, right_result) {
+                        (ConditionResult::AlwaysFalse, _) | (_, ConditionResult::AlwaysFalse) => {
+                            ConditionResult::AlwaysFalse
+                        }
+                        (ConditionResult::AlwaysTrue, ConditionResult::AlwaysTrue) => ConditionResult::AlwaysTrue,
+                        _ => ConditionResult::Unknown,
+                    }
+                }
+                beacon_parser::BinaryOperator::Or => {
+                    let left_result = self.evaluate_condition(left, constants);
+                    let right_result = self.evaluate_condition(right, constants);
+                    match (left_result, right_result) {
+                        (ConditionResult::AlwaysTrue, _) | (_, ConditionResult::AlwaysTrue) => {
+                            ConditionResult::AlwaysTrue
+                        }
+                        (ConditionResult::AlwaysFalse, ConditionResult::AlwaysFalse) => ConditionResult::AlwaysFalse,
+                        _ => ConditionResult::Unknown,
+                    }
+                }
+                _ => {
+                    let value = self.evaluate_to_constant(condition, constants);
+                    match value {
+                        ConstantValue::Bool(true) => ConditionResult::AlwaysTrue,
+                        ConstantValue::Bool(false) => ConditionResult::AlwaysFalse,
+                        _ => ConditionResult::Unknown,
+                    }
+                }
+            },
+            _ => ConditionResult::Unknown,
+        }
+    }
+
+    /// Evaluate a comparison operation
+    fn evaluate_comparison(
+        &self, left: &ConstantValue, op: &CompareOperator, right: &ConstantValue,
+    ) -> ConditionResult {
+        let result = match (left, op, right) {
+            (ConstantValue::Integer(a), CompareOperator::Eq, ConstantValue::Integer(b)) => Some(a == b),
+            (ConstantValue::Integer(a), CompareOperator::NotEq, ConstantValue::Integer(b)) => Some(a != b),
+            (ConstantValue::Integer(a), CompareOperator::Lt, ConstantValue::Integer(b)) => Some(a < b),
+            (ConstantValue::Integer(a), CompareOperator::LtE, ConstantValue::Integer(b)) => Some(a <= b),
+            (ConstantValue::Integer(a), CompareOperator::Gt, ConstantValue::Integer(b)) => Some(a > b),
+            (ConstantValue::Integer(a), CompareOperator::GtE, ConstantValue::Integer(b)) => Some(a >= b),
+            (ConstantValue::Bool(a), CompareOperator::Eq, ConstantValue::Bool(b)) => Some(a == b),
+            (ConstantValue::Bool(a), CompareOperator::NotEq, ConstantValue::Bool(b)) => Some(a != b),
+            (ConstantValue::String(a), CompareOperator::Eq, ConstantValue::String(b)) => Some(a == b),
+            (ConstantValue::String(a), CompareOperator::NotEq, ConstantValue::String(b)) => Some(a != b),
+            _ => None,
+        };
+
+        match result {
+            Some(true) => ConditionResult::AlwaysTrue,
+            Some(false) => ConditionResult::AlwaysFalse,
+            None => ConditionResult::Unknown,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -997,6 +1227,325 @@ mod tests {
             let result = analyzer.find_use_before_def();
             let x_errors: Vec<_> = result.iter().filter(|e| e.var_name == "x" && e.line == 3).collect();
             assert!(x_errors.is_empty());
+        } else {
+            panic!("Expected FunctionDef");
+        }
+    }
+
+    #[test]
+    fn test_constant_propagation_boolean() {
+        let source = "def foo():\n    DEBUG = False\n    x = 1".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::FunctionDef {
+            name: "foo".to_string(),
+            args: vec![],
+            body: vec![
+                AstNode::Assignment {
+                    target: "DEBUG".to_string(),
+                    value: Box::new(AstNode::Literal {
+                        value: beacon_parser::LiteralValue::Boolean(false),
+                        line: 2,
+                        col: 13,
+                    }),
+                    line: 2,
+                    col: 5,
+                },
+                AstNode::Assignment {
+                    target: "x".to_string(),
+                    value: Box::new(AstNode::Literal {
+                        value: beacon_parser::LiteralValue::Integer(1),
+                        line: 3,
+                        col: 9,
+                    }),
+                    line: 3,
+                    col: 5,
+                },
+            ],
+            docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
+            line: 1,
+            col: 1,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        if let AstNode::FunctionDef { body, .. } = &ast {
+            let mut builder = CfgBuilder::new();
+            builder.build_function(body);
+            let cfg = builder.build();
+
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+
+            // Test that we can evaluate DEBUG condition
+            let debug_identifier = AstNode::Identifier { name: "DEBUG".to_string(), line: 2, col: 13 };
+
+            let mut test_constants = FxHashMap::default();
+            test_constants.insert("DEBUG".to_string(), ConstantValue::Bool(false));
+
+            let result = analyzer.evaluate_condition(&debug_identifier, &test_constants);
+            assert_eq!(result, ConditionResult::AlwaysFalse);
+        } else {
+            panic!("Expected FunctionDef");
+        }
+    }
+
+    #[test]
+    fn test_constant_propagation_integer_arithmetic() {
+        let source = "def foo():\n    x = 5\n    y = x + 3".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::FunctionDef {
+            name: "foo".to_string(),
+            args: vec![],
+            body: vec![
+                AstNode::Assignment {
+                    target: "x".to_string(),
+                    value: Box::new(AstNode::Literal {
+                        value: beacon_parser::LiteralValue::Integer(5),
+                        line: 2,
+                        col: 9,
+                    }),
+                    line: 2,
+                    col: 5,
+                },
+                AstNode::Assignment {
+                    target: "y".to_string(),
+                    value: Box::new(AstNode::BinaryOp {
+                        left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 3, col: 9 }),
+                        op: beacon_parser::BinaryOperator::Add,
+                        right: Box::new(AstNode::Literal {
+                            value: beacon_parser::LiteralValue::Integer(3),
+                            line: 3,
+                            col: 13,
+                        }),
+                        line: 3,
+                        col: 11,
+                    }),
+                    line: 3,
+                    col: 5,
+                },
+            ],
+            docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
+            line: 1,
+            col: 1,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        if let AstNode::FunctionDef { body, .. } = &ast {
+            let mut builder = CfgBuilder::new();
+            builder.build_function(body);
+            let cfg = builder.build();
+
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+
+            let mut test_constants = FxHashMap::default();
+            test_constants.insert("x".to_string(), ConstantValue::Integer(5));
+
+            let expr = AstNode::BinaryOp {
+                left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 3, col: 9 }),
+                op: beacon_parser::BinaryOperator::Add,
+                right: Box::new(AstNode::Literal { value: beacon_parser::LiteralValue::Integer(3), line: 3, col: 13 }),
+                line: 3,
+                col: 11,
+            };
+
+            let result = analyzer.evaluate_to_constant(&expr, &test_constants);
+            assert_eq!(result, ConstantValue::Integer(8));
+        } else {
+            panic!("Expected FunctionDef");
+        }
+    }
+
+    #[test]
+    fn test_evaluate_condition_with_comparison() {
+        let source = "def foo():\n    x = 10".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::FunctionDef {
+            name: "foo".to_string(),
+            args: vec![],
+            body: vec![AstNode::Assignment {
+                target: "x".to_string(),
+                value: Box::new(AstNode::Literal { value: beacon_parser::LiteralValue::Integer(10), line: 2, col: 9 }),
+                line: 2,
+                col: 5,
+            }],
+            docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
+            line: 1,
+            col: 1,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        if let AstNode::FunctionDef { body, .. } = &ast {
+            let mut builder = CfgBuilder::new();
+            builder.build_function(body);
+            let cfg = builder.build();
+
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+
+            let mut test_constants = FxHashMap::default();
+            test_constants.insert("x".to_string(), ConstantValue::Integer(10));
+
+            let condition = AstNode::Compare {
+                left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 2, col: 9 }),
+                ops: vec![beacon_parser::CompareOperator::Gt],
+                comparators: vec![AstNode::Literal {
+                    value: beacon_parser::LiteralValue::Integer(5),
+                    line: 2,
+                    col: 13,
+                }],
+                line: 2,
+                col: 11,
+            };
+
+            let result = analyzer.evaluate_condition(&condition, &test_constants);
+            assert_eq!(result, ConditionResult::AlwaysTrue);
+
+            let condition2 = AstNode::Compare {
+                left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 2, col: 9 }),
+                ops: vec![beacon_parser::CompareOperator::Lt],
+                comparators: vec![AstNode::Literal {
+                    value: beacon_parser::LiteralValue::Integer(5),
+                    line: 2,
+                    col: 13,
+                }],
+                line: 2,
+                col: 11,
+            };
+
+            let result2 = analyzer.evaluate_condition(&condition2, &test_constants);
+            assert_eq!(result2, ConditionResult::AlwaysFalse);
+        } else {
+            panic!("Expected FunctionDef");
+        }
+    }
+
+    #[test]
+    fn test_constant_propagation_string_concat() {
+        let source = "def foo():\n    s = 'hello'".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::FunctionDef {
+            name: "foo".to_string(),
+            args: vec![],
+            body: vec![AstNode::Assignment {
+                target: "s".to_string(),
+                value: Box::new(AstNode::Literal {
+                    value: beacon_parser::LiteralValue::String { value: "hello".to_string(), prefix: String::new() },
+                    line: 2,
+                    col: 9,
+                }),
+                line: 2,
+                col: 5,
+            }],
+            docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
+            line: 1,
+            col: 1,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        if let AstNode::FunctionDef { body, .. } = &ast {
+            let mut builder = CfgBuilder::new();
+            builder.build_function(body);
+            let cfg = builder.build();
+
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+
+            let mut test_constants = FxHashMap::default();
+            test_constants.insert("s".to_string(), ConstantValue::String("hello".to_string()));
+
+            let expr = AstNode::BinaryOp {
+                left: Box::new(AstNode::Identifier { name: "s".to_string(), line: 2, col: 9 }),
+                op: beacon_parser::BinaryOperator::Add,
+                right: Box::new(AstNode::Literal {
+                    value: beacon_parser::LiteralValue::String { value: " world".to_string(), prefix: String::new() },
+                    line: 2,
+                    col: 13,
+                }),
+                line: 2,
+                col: 11,
+            };
+
+            let result = analyzer.evaluate_to_constant(&expr, &test_constants);
+            assert_eq!(result, ConstantValue::String("hello world".to_string()));
+        } else {
+            panic!("Expected FunctionDef");
+        }
+    }
+
+    #[test]
+    fn test_evaluate_boolean_operators() {
+        let source = "def foo():\n    pass".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::FunctionDef {
+            name: "foo".to_string(),
+            args: vec![],
+            body: vec![AstNode::Pass { line: 2, col: 5 }],
+            docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
+            line: 1,
+            col: 1,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        if let AstNode::FunctionDef { body, .. } = &ast {
+            let mut builder = CfgBuilder::new();
+            builder.build_function(body);
+            let cfg = builder.build();
+
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+
+            let mut test_constants = FxHashMap::default();
+            test_constants.insert("a".to_string(), ConstantValue::Bool(true));
+            test_constants.insert("b".to_string(), ConstantValue::Bool(false));
+
+            let and_expr = AstNode::BinaryOp {
+                left: Box::new(AstNode::Identifier { name: "a".to_string(), line: 2, col: 5 }),
+                op: beacon_parser::BinaryOperator::And,
+                right: Box::new(AstNode::Identifier { name: "b".to_string(), line: 2, col: 11 }),
+                line: 2,
+                col: 9,
+            };
+            let and_result = analyzer.evaluate_condition(&and_expr, &test_constants);
+            assert_eq!(and_result, ConditionResult::AlwaysFalse);
+
+            let or_expr = AstNode::BinaryOp {
+                left: Box::new(AstNode::Identifier { name: "a".to_string(), line: 2, col: 5 }),
+                op: beacon_parser::BinaryOperator::Or,
+                right: Box::new(AstNode::Identifier { name: "b".to_string(), line: 2, col: 10 }),
+                line: 2,
+                col: 8,
+            };
+            let or_result = analyzer.evaluate_condition(&or_expr, &test_constants);
+            assert_eq!(or_result, ConditionResult::AlwaysTrue);
+
+            let not_expr = AstNode::UnaryOp {
+                op: beacon_parser::UnaryOperator::Not,
+                operand: Box::new(AstNode::Identifier { name: "b".to_string(), line: 2, col: 9 }),
+                line: 2,
+                col: 5,
+            };
+            let not_result = analyzer.evaluate_condition(&not_expr, &test_constants);
+            assert_eq!(not_result, ConditionResult::AlwaysTrue);
         } else {
             panic!("Expected FunctionDef");
         }
