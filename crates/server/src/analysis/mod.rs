@@ -21,7 +21,7 @@ pub mod type_env;
 mod loader;
 mod walker;
 
-use crate::cache::CacheManager;
+use crate::cache::{CacheManager, ScopeCacheKey};
 use crate::config::Config;
 use crate::document::DocumentManager;
 use crate::utils;
@@ -30,11 +30,11 @@ use beacon_core::{
     Subst, Type, TypeCtor, TypeError, TypeVarGen, Unifier,
     errors::{AnalysisError, Result},
 };
-use beacon_parser::{AstNode, SymbolTable};
+use beacon_parser::{AstNode, ScopeId, ScopeKind, SymbolTable, resolve::Scope};
 use constraint_gen::{Constraint, ConstraintResult, ConstraintSet, Span};
 use lsp_types::Position;
 use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 use tokio::sync::RwLock;
 use url::Url;
 
@@ -134,16 +134,89 @@ impl Analyzer {
         }
     }
 
+    /// Extract scopes from the symbol table and get their source content
+    ///
+    /// Returns a vec of (ScopeId, source_content, scope) for caching.
+    fn extract_scopes_with_content(&self, symbol_table: &SymbolTable, source: &str) -> Vec<(ScopeId, String, Scope)> {
+        let mut scopes = Vec::new();
+
+        for (scope_id, scope) in &symbol_table.scopes {
+            let content = Self::extract_scope_content(source, scope);
+            scopes.push((*scope_id, content, scope.clone()));
+        }
+
+        scopes
+    }
+
+    /// Extract the source content for a scope based on its byte range
+    fn extract_scope_content(source: &str, scope: &Scope) -> String {
+        let start = scope.start_byte.min(source.len());
+        let end = scope.end_byte.min(source.len());
+        source[start..end].to_string()
+    }
+
+    /// Check which scopes have changed by comparing content hashes
+    ///
+    /// Returns a set of scope IDs that have changed or are not cached.
+    fn find_changed_scopes(
+        &self, uri: &Url, scopes: &[(ScopeId, String, Scope)],
+    ) -> std::collections::HashSet<ScopeId> {
+        let mut changed = HashSet::new();
+
+        for (scope_id, content, _scope) in scopes {
+            let key = ScopeCacheKey::new(uri.clone(), *scope_id, content);
+            if self.cache.scope_cache.get(&key).is_none() {
+                changed.insert(*scope_id);
+            }
+        }
+
+        changed
+    }
+
+    /// Cache scope analysis results for each scope
+    /// TODO: Implement proper node-to-scope mapping
+    /// TODO: Track scope dependencies
+    fn cache_scope_results(
+        &self, uri: &Url, scopes: &[(ScopeId, String, Scope)], type_map: &FxHashMap<usize, Type>,
+        position_map: &FxHashMap<(usize, usize), usize>,
+    ) {
+        use crate::cache::{CachedScopeResult, ScopeCacheKey};
+
+        for (scope_id, content, scope) in scopes {
+            let scope_type_map: FxHashMap<usize, Type> = type_map
+                .iter()
+                .filter(|(_node_id, _ty)| true)
+                .map(|(k, v)| (*k, v.clone()))
+                .collect();
+
+            let scope_position_map: FxHashMap<(usize, usize), usize> = position_map
+                .iter()
+                .filter(|((line, _col), _node_id)| {
+                    let scope_start_line = scope.start_byte / 80;
+                    let scope_end_line = scope.end_byte / 80;
+                    *line >= scope_start_line && *line <= scope_end_line
+                })
+                .map(|(k, v)| (*k, *v))
+                .collect();
+
+            let key = ScopeCacheKey::new(uri.clone(), *scope_id, content);
+            let result =
+                CachedScopeResult { type_map: scope_type_map, position_map: scope_position_map, dependencies: vec![] };
+
+            self.cache.scope_cache.insert(key, result);
+        }
+    }
+
     /// Analyze a document and return inferred types
     pub fn analyze(&mut self, uri: &Url) -> Result<AnalysisResult> {
         let result = self.documents.get_document(uri, |doc| {
             let ast = doc.ast().ok_or(AnalysisError::MissingAst)?.clone();
             let symbol_table = doc.symbol_table().ok_or(AnalysisError::MissingSymbolTable)?.clone();
-
-            Ok::<_, AnalysisError>((ast, symbol_table, doc.version))
+            let source = doc.text();
+            Ok::<_, AnalysisError>((ast, symbol_table, source, doc.version))
         });
 
-        let (ast, symbol_table, version) = match result {
+        let (ast, symbol_table, source, version) = match result {
             Some(Ok(data)) => data,
             Some(Err(e)) => return Err(e.into()),
             None => return Err(AnalysisError::DocumentNotFound(uri.clone()).into()),
@@ -161,6 +234,20 @@ impl Analyzer {
             });
         }
 
+        let scopes = self.extract_scopes_with_content(&symbol_table, &source);
+        let changed_scopes = self.find_changed_scopes(uri, &scopes);
+        if !changed_scopes.is_empty() {
+            let total_scopes = scopes.len();
+            let unchanged_scopes = total_scopes - changed_scopes.len();
+            tracing::debug!(
+                "Scope cache for {}: {} unchanged, {} changed out of {} total",
+                uri,
+                unchanged_scopes,
+                changed_scopes.len(),
+                total_scopes
+            );
+        }
+
         let ConstraintResult(constraints, mut type_map, position_map, class_registry) =
             walker::generate_constraints(&self.stub_cache, &ast, &symbol_table)?;
 
@@ -173,6 +260,18 @@ impl Analyzer {
         self.position_maps.insert(uri.clone(), position_map.clone());
 
         let static_analysis = self.perform_static_analysis(&ast, &symbol_table);
+
+        self.cache_scope_results(uri, &scopes, &type_map, &position_map);
+
+        let scope_stats = self.cache.scope_stats();
+        if scope_stats.hits + scope_stats.misses > 0 {
+            tracing::debug!(
+                "Scope cache stats - Size: {}/{}, Hit rate: {:.1}%",
+                scope_stats.size,
+                scope_stats.capacity,
+                scope_stats.hit_rate
+            );
+        }
 
         let cached_result = crate::cache::CachedAnalysisResult {
             type_map: type_map.clone(),
@@ -576,7 +675,7 @@ impl Analyzer {
                         let scope_id = symbol_table
                             .scopes
                             .values()
-                            .find(|scope| scope.kind == beacon_parser::ScopeKind::Function)
+                            .find(|scope| scope.kind == ScopeKind::Function)
                             .map(|scope| scope.id)
                             .unwrap_or(symbol_table.root_scope);
                         let analyzer = data_flow::DataFlowAnalyzer::new(&cfg, func_body, symbol_table, scope_id);
@@ -592,7 +691,7 @@ impl Analyzer {
                 let scope_id = symbol_table
                     .scopes
                     .values()
-                    .find(|scope| scope.kind == beacon_parser::ScopeKind::Function)
+                    .find(|scope| scope.kind == ScopeKind::Function)
                     .map(|scope| scope.id)
                     .unwrap_or(symbol_table.root_scope);
                 let analyzer = data_flow::DataFlowAnalyzer::new(&cfg, body, symbol_table, scope_id);

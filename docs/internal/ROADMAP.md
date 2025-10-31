@@ -84,3 +84,16 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
     - Full signature compatibility validation via `Type::is_subtype_of()`
 
 ## Parking Lot
+
+### Incremental Re-analysis
+
+- [ ] Implement proper node-to-scope mapping (currently includes all nodes)
+- [ ] Track scope dependencies for transitive invalidation
+- [ ] Selective re-analysis: only re-analyze changed scopes (requires refactoring walker)
+- [ ] Add scope boundary detection in position_map filtering
+
+### Core Type System
+
+- [ ] Add more comprehensive stdlib stubs (os, sys, pathlib, etc.)
+- [ ] Implement type checking mode awareness (strict/balanced/loose)
+- [ ] Auto-generate stubs from Python runtime introspection

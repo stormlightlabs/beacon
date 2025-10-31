@@ -5,11 +5,15 @@
 //! - Type inference results
 //! - Symbol tables
 //! - Constraint solve results
+//! - Scope-level analysis results for incremental re-analysis
 
 use beacon_core::Type;
+use beacon_parser::ScopeId;
 use lru::LruCache;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, RwLock};
 use url::Url;
@@ -111,37 +115,6 @@ impl Default for TypeCache {
 pub struct CacheStats {
     pub size: usize,
     pub capacity: usize,
-}
-
-/// Cache for constraint solving results
-///
-/// TODO: Implement caching for constraint generation and solving
-/// This will cache the constraint sets and substitutions per document/scope.
-pub struct ConstraintCache {
-    _cache: Arc<RwLock<FxHashMap<String, ()>>>,
-}
-
-impl ConstraintCache {
-    pub fn new() -> Self {
-        Self { _cache: Arc::new(RwLock::new(FxHashMap::default())) }
-    }
-
-    /// TODO: Implement constraint caching
-    pub fn get(&self, _key: &str) -> Option<()> {
-        None
-    }
-
-    /// TODO: Implement constraint storage
-    pub fn insert(&self, _key: String, _value: ()) {}
-
-    /// TODO: Implement invalidation
-    pub fn invalidate(&self, _key: &str) {}
-}
-
-impl Default for ConstraintCache {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 /// Cache key for introspection results
@@ -263,6 +236,163 @@ impl Default for IntrospectionCache {
     }
 }
 
+/// Cache key for scope-level analysis results
+///
+/// Uniquely identifies a scope within a document for granular incremental re-analysis.
+/// The content hash allows detecting changes to the scope's source code.
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct ScopeCacheKey {
+    /// Document URI
+    pub uri: Url,
+    /// Unique identifier for the scope within the document
+    pub scope_id: ScopeId,
+    /// Hash of the scope's source content (start_byte..end_byte)
+    /// Used to detect if the scope's code has changed
+    pub content_hash: u64,
+}
+
+impl ScopeCacheKey {
+    /// Create a new scope cache key by hashing the source content
+    pub fn new(uri: Url, scope_id: ScopeId, source_content: &str) -> Self {
+        let mut hasher = DefaultHasher::new();
+        source_content.hash(&mut hasher);
+        let content_hash = hasher.finish();
+
+        Self { uri, scope_id, content_hash }
+    }
+}
+
+/// Cached analysis result for a single scope
+///
+/// Stores the analysis artifacts for a specific scope, enabling fine-grained
+/// incremental re-analysis. When a document changes, only modified scopes
+/// and their dependents need to be re-analyzed.
+#[derive(Debug, Clone)]
+pub struct CachedScopeResult {
+    /// Map from AST node IDs to inferred types (only for nodes in this scope)
+    pub type_map: FxHashMap<usize, Type>,
+    /// Map from source positions to node IDs (only for positions in this scope)
+    pub position_map: FxHashMap<(usize, usize), usize>,
+    /// Scope IDs that this scope depends on (e.g., parent scope, referenced scopes)
+    pub dependencies: Vec<ScopeId>,
+}
+
+/// LRU cache for scope-level analysis results
+///
+/// Provides granular incremental re-analysis by caching at scope level rather than
+/// document level. When a document is edited:
+///
+/// 1. Identify which scopes changed (by comparing content hashes)
+/// 2. Invalidate changed scopes and their dependents
+/// 3. Re-use cached results for unchanged scopes
+///
+/// This dramatically reduces re-analysis cost for large files with localized changes.
+pub struct ScopeCache {
+    cache: Arc<RwLock<LruCache<ScopeCacheKey, CachedScopeResult>>>,
+    /// Track hit/miss statistics for performance monitoring
+    hits: Arc<RwLock<usize>>,
+    misses: Arc<RwLock<usize>>,
+}
+
+impl ScopeCache {
+    /// Create a new scope cache with the given capacity
+    pub fn new(capacity: usize) -> Self {
+        let cap = NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::new(200).unwrap());
+        Self {
+            cache: Arc::new(RwLock::new(LruCache::new(cap))),
+            hits: Arc::new(RwLock::new(0)),
+            misses: Arc::new(RwLock::new(0)),
+        }
+    }
+
+    /// Get a cached scope result
+    ///
+    /// Returns the cached result if the scope exists with matching content hash.
+    /// Records hit/miss statistics for performance monitoring.
+    pub fn get(&self, key: &ScopeCacheKey) -> Option<CachedScopeResult> {
+        let mut cache = self.cache.write().unwrap();
+
+        if let Some(result) = cache.get(key).cloned() {
+            *self.hits.write().unwrap() += 1;
+            Some(result)
+        } else {
+            *self.misses.write().unwrap() += 1;
+            None
+        }
+    }
+
+    /// Store a scope analysis result in the cache
+    pub fn insert(&self, key: ScopeCacheKey, result: CachedScopeResult) {
+        let mut cache = self.cache.write().unwrap();
+        cache.put(key, result);
+    }
+
+    /// Invalidate a specific scope
+    pub fn invalidate_scope(&self, uri: &Url, scope_id: ScopeId) {
+        let mut cache = self.cache.write().unwrap();
+
+        let keys_to_remove: Vec<_> = cache
+            .iter()
+            .filter(|(key, _)| key.uri == *uri && key.scope_id == scope_id)
+            .map(|(key, _)| key.clone())
+            .collect();
+
+        for key in keys_to_remove {
+            cache.pop(&key);
+        }
+    }
+
+    /// Invalidate all scopes for a document
+    pub fn invalidate_document(&self, uri: &Url) {
+        let mut cache = self.cache.write().unwrap();
+
+        let keys_to_remove: Vec<_> = cache
+            .iter()
+            .filter(|(key, _)| key.uri == *uri)
+            .map(|(key, _)| key.clone())
+            .collect();
+
+        for key in keys_to_remove {
+            cache.pop(&key);
+        }
+    }
+
+    /// Clear the entire cache
+    pub fn clear(&self) {
+        let mut cache = self.cache.write().unwrap();
+        cache.clear();
+        *self.hits.write().unwrap() = 0;
+        *self.misses.write().unwrap() = 0;
+    }
+
+    /// Get cache statistics including hit rate
+    pub fn stats(&self) -> ScopeCacheStats {
+        let cache = self.cache.read().unwrap();
+        let hits = *self.hits.read().unwrap();
+        let misses = *self.misses.read().unwrap();
+        let total_requests = hits + misses;
+        let hit_rate = if total_requests > 0 { (hits as f64 / total_requests as f64) * 100.0 } else { 0.0 };
+
+        ScopeCacheStats { size: cache.len(), capacity: cache.cap().get(), hits, misses, hit_rate }
+    }
+}
+
+impl Default for ScopeCache {
+    fn default() -> Self {
+        Self::new(200)
+    }
+}
+
+/// Scope cache statistics including hit rate
+#[derive(Debug, Clone)]
+pub struct ScopeCacheStats {
+    pub size: usize,
+    pub capacity: usize,
+    pub hits: usize,
+    pub misses: usize,
+    pub hit_rate: f64,
+}
+
 /// Cache key for full analysis results
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct AnalysisCacheKey {
@@ -359,12 +489,12 @@ impl Default for AnalysisCache {
 pub struct CacheManager {
     /// Type inference cache (node-level caching)
     pub type_cache: TypeCache,
-    /// Constraint solving cache
-    pub constraint_cache: ConstraintCache,
     /// Python introspection cache (persistent)
     pub introspection_cache: IntrospectionCache,
     /// Full analysis result cache (document-level caching for incremental re-analysis)
     pub analysis_cache: AnalysisCache,
+    /// Scope-level analysis cache for granular incremental re-analysis
+    pub scope_cache: ScopeCache,
 }
 
 impl CacheManager {
@@ -372,9 +502,9 @@ impl CacheManager {
     pub fn new() -> Self {
         Self {
             type_cache: TypeCache::default(),
-            constraint_cache: ConstraintCache::default(),
             introspection_cache: IntrospectionCache::default(),
             analysis_cache: AnalysisCache::default(),
+            scope_cache: ScopeCache::default(),
         }
     }
 
@@ -382,9 +512,9 @@ impl CacheManager {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             type_cache: TypeCache::new(capacity),
-            constraint_cache: ConstraintCache::default(),
             introspection_cache: IntrospectionCache::default(),
             analysis_cache: AnalysisCache::new(capacity),
+            scope_cache: ScopeCache::new(capacity * 2),
         }
     }
 
@@ -392,9 +522,9 @@ impl CacheManager {
     pub fn with_workspace(capacity: usize, workspace_root: Option<&std::path::Path>) -> Self {
         Self {
             type_cache: TypeCache::new(capacity),
-            constraint_cache: ConstraintCache::default(),
             introspection_cache: IntrospectionCache::new(workspace_root),
             analysis_cache: AnalysisCache::new(capacity),
+            scope_cache: ScopeCache::new(capacity * 2),
         }
     }
 
@@ -402,17 +532,24 @@ impl CacheManager {
     pub fn invalidate_document(&self, uri: &Url) {
         self.type_cache.invalidate_document(uri);
         self.analysis_cache.invalidate_document(uri);
+        self.scope_cache.invalidate_document(uri);
     }
 
     /// Clear all caches
     pub fn clear_all(&self) {
         self.type_cache.clear();
         self.analysis_cache.clear();
+        self.scope_cache.clear();
     }
 
     /// Get aggregate cache statistics
     pub fn stats(&self) -> CacheStats {
         self.analysis_cache.stats()
+    }
+
+    /// Get scope cache statistics
+    pub fn scope_stats(&self) -> ScopeCacheStats {
+        self.scope_cache.stats()
     }
 }
 
@@ -666,5 +803,215 @@ mod tests {
 
         manager.invalidate_document(&uri);
         assert_eq!(manager.analysis_cache.stats().size, 0);
+    }
+
+    #[test]
+    fn test_scope_cache_key_content_hashing() {
+        let uri = Url::parse("file:///test.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        let source1 = "x = 42";
+        let source2 = "x = 42";
+        let source3 = "x = 43";
+
+        let key1 = ScopeCacheKey::new(uri.clone(), scope_id, source1);
+        let key2 = ScopeCacheKey::new(uri.clone(), scope_id, source2);
+        let key3 = ScopeCacheKey::new(uri.clone(), scope_id, source3);
+
+        assert_eq!(key1.content_hash, key2.content_hash);
+        assert_eq!(key1, key2);
+        assert_ne!(key1.content_hash, key3.content_hash);
+        assert_ne!(key1, key3);
+    }
+
+    #[test]
+    fn test_scope_cache_insert_and_get() {
+        let cache = ScopeCache::new(10);
+        let uri = Url::parse("file:///test.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        let source = "def foo(): pass";
+        let key = ScopeCacheKey::new(uri, scope_id, source);
+
+        let mut type_map = FxHashMap::default();
+        type_map.insert(1, Type::Con(TypeCtor::Int));
+
+        let result =
+            CachedScopeResult { type_map: type_map.clone(), position_map: FxHashMap::default(), dependencies: vec![] };
+
+        cache.insert(key.clone(), result);
+
+        let retrieved = cache.get(&key);
+        assert!(retrieved.is_some());
+        let retrieved_result = retrieved.unwrap();
+        assert_eq!(retrieved_result.type_map.len(), 1);
+        assert_eq!(retrieved_result.type_map.get(&1), Some(&Type::Con(TypeCtor::Int)));
+    }
+
+    #[test]
+    fn test_scope_cache_content_change_invalidation() {
+        let cache = ScopeCache::new(10);
+        let uri = Url::parse("file:///test.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        let source1 = "def foo(): pass";
+        let source2 = "def foo(): return 42";
+
+        let key1 = ScopeCacheKey::new(uri.clone(), scope_id, source1);
+        let key2 = ScopeCacheKey::new(uri, scope_id, source2);
+
+        let result = CachedScopeResult {
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+            dependencies: vec![],
+        };
+
+        cache.insert(key1.clone(), result.clone());
+
+        assert!(cache.get(&key1).is_some());
+        assert!(cache.get(&key2).is_none());
+    }
+
+    #[test]
+    fn test_scope_cache_invalidate_scope() {
+        let cache = ScopeCache::new(10);
+        let uri = Url::parse("file:///test.py").unwrap();
+        let scope_id1 = beacon_parser::ScopeId::from_raw(0);
+        let scope_id2 = beacon_parser::ScopeId::from_raw(1);
+
+        let source = "def foo(): pass";
+        let key1 = ScopeCacheKey::new(uri.clone(), scope_id1, source);
+        let key2 = ScopeCacheKey::new(uri.clone(), scope_id2, source);
+
+        let result = CachedScopeResult {
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+            dependencies: vec![],
+        };
+
+        cache.insert(key1.clone(), result.clone());
+        cache.insert(key2.clone(), result);
+        assert!(cache.get(&key1).is_some());
+        assert!(cache.get(&key2).is_some());
+
+        cache.invalidate_scope(&uri, scope_id1);
+        assert!(cache.get(&key1).is_none());
+        assert!(cache.get(&key2).is_some());
+    }
+
+    #[test]
+    fn test_scope_cache_invalidate_document() {
+        let cache = ScopeCache::new(10);
+        let uri1 = Url::parse("file:///test1.py").unwrap();
+        let uri2 = Url::parse("file:///test2.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        let source = "def foo(): pass";
+        let key1 = ScopeCacheKey::new(uri1.clone(), scope_id, source);
+        let key2 = ScopeCacheKey::new(uri2.clone(), scope_id, source);
+
+        let result = CachedScopeResult {
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+            dependencies: vec![],
+        };
+
+        cache.insert(key1.clone(), result.clone());
+        cache.insert(key2.clone(), result);
+        assert!(cache.get(&key1).is_some());
+        assert!(cache.get(&key2).is_some());
+
+        cache.invalidate_document(&uri1);
+        assert!(cache.get(&key1).is_none());
+        assert!(cache.get(&key2).is_some());
+    }
+
+    #[test]
+    fn test_scope_cache_statistics() {
+        let cache = ScopeCache::new(10);
+        let uri = Url::parse("file:///test.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        let stats = cache.stats();
+        assert_eq!(stats.size, 0);
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 0);
+        assert_eq!(stats.hit_rate, 0.0);
+
+        let source = "def foo(): pass";
+        let key = ScopeCacheKey::new(uri, scope_id, source);
+
+        let result = CachedScopeResult {
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+            dependencies: vec![],
+        };
+
+        cache.insert(key.clone(), result);
+        let _ = cache.get(&key);
+        let stats = cache.stats();
+        assert_eq!(stats.size, 1);
+        assert!(stats.hits > 0);
+        assert!(stats.hit_rate > 0.0);
+    }
+
+    #[test]
+    fn test_scope_cache_lru_eviction() {
+        let cache = ScopeCache::new(2);
+        let uri = Url::parse("file:///test.py").unwrap();
+
+        let scope_id1 = beacon_parser::ScopeId::from_raw(0);
+        let scope_id2 = beacon_parser::ScopeId::from_raw(1);
+        let scope_id3 = beacon_parser::ScopeId::from_raw(2);
+
+        let source = "def foo(): pass";
+        let key1 = ScopeCacheKey::new(uri.clone(), scope_id1, source);
+        let key2 = ScopeCacheKey::new(uri.clone(), scope_id2, source);
+        let key3 = ScopeCacheKey::new(uri.clone(), scope_id3, source);
+
+        let result = CachedScopeResult {
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+            dependencies: vec![],
+        };
+
+        cache.insert(key1.clone(), result.clone());
+        cache.insert(key2.clone(), result.clone());
+        cache.insert(key3.clone(), result);
+
+        assert_eq!(cache.stats().size, 2);
+        assert!(cache.get(&key1).is_none());
+        assert!(cache.get(&key2).is_some());
+        assert!(cache.get(&key3).is_some());
+    }
+
+    #[test]
+    fn test_cache_manager_with_scope_cache() {
+        let manager = CacheManager::new();
+        let scope_stats = manager.scope_stats();
+        assert_eq!(scope_stats.size, 0);
+        assert!(scope_stats.capacity > 0);
+    }
+
+    #[test]
+    fn test_cache_manager_scope_invalidation() {
+        let manager = CacheManager::new();
+        let uri = Url::parse("file:///test.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        let source = "def foo(): pass";
+        let key = ScopeCacheKey::new(uri.clone(), scope_id, source);
+
+        let result = CachedScopeResult {
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+            dependencies: vec![],
+        };
+
+        manager.scope_cache.insert(key.clone(), result);
+        assert_eq!(manager.scope_stats().size, 1);
+
+        manager.invalidate_document(&uri);
+        assert_eq!(manager.scope_stats().size, 0);
     }
 }

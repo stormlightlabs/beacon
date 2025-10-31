@@ -131,6 +131,25 @@ pub struct Symbol {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ScopeId(u32);
 
+impl ScopeId {
+    /// Create a new ScopeId for testing purposes
+    ///
+    /// In production, ScopeIds are created internally by SymbolTable.create_scope().
+    /// This constructor is primarily for testing and cache key creation.
+    #[cfg(test)]
+    pub fn new(id: u32) -> Self {
+        Self(id)
+    }
+
+    /// Create a ScopeId from a raw u32 value (for cache and testing)
+    ///
+    /// SAFETY: This should only be used in controlled contexts like caching
+    /// where you need to reconstruct a ScopeId from a stored value.
+    pub fn from_raw(id: u32) -> Self {
+        Self(id)
+    }
+}
+
 /// Types of scopes in Python
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScopeKind {

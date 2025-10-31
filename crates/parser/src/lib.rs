@@ -9,7 +9,7 @@ pub mod rst;
 pub use docstring::{DocstringStyle, ParsedDocstring, parse as parse_docstring};
 pub use highlight::PythonHighlighter;
 pub use resolve::{
-    BUILTIN_DUNDERS, MAGIC_METHODS, NameResolver, ReferenceKind, ScopeId, ScopeKind, Symbol, SymbolKind,
+    BUILTIN_DUNDERS, MAGIC_METHODS, NameResolver, ReferenceKind, Scope, ScopeId, ScopeKind, Symbol, SymbolKind,
     SymbolReference, SymbolTable,
 };
 

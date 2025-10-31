@@ -2,15 +2,7 @@
 
 Implementation details and mod-specific tasks.
 
-## Core Type System Stability
-
-### Future Work
-
-- [ ] Add more comprehensive stdlib stubs (os, sys, pathlib, etc.)
-- [ ] Implement type checking mode awareness (strict/balanced/loose)
-- [ ] Auto-generate stubs from Python runtime introspection
-
----
+## Integration Test Cases
 
 - [ ] Integration test: `with open('file') as f:` infers file type (requires _IO stub integration)
 - [ ] Integration test: `lst[0]` where `lst: list[int]` infers `int` (requires full test harness)
@@ -37,12 +29,6 @@ See [Linter Rules](#linter-rules) section below for BEA code implementation stat
 - [ ] Symbol table integration for unused detection
 
 ### Incremental Re-analysis
-
-**Files:** `crates/server/src/cache.rs`, `crates/server/src/analysis/mod.rs`
-
-- [ ] Recompute only changed scopes (scope-level granularity)
-
----
 
 - [ ] Benchmark incremental performance (target: <100ms)
 
