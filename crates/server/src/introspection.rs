@@ -8,7 +8,6 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 use thiserror::Error;
-use tracing::{debug, warn};
 
 /// Marker for signature section in introspection output
 const SIGNATURE_MARKER: &str = "SIGSTART";
@@ -68,6 +67,43 @@ except Exception as e:
     )
 }
 
+/// Python module introspection script
+///
+/// Extracts docstring from a module.
+/// Output format:
+/// SIGSTART
+/// <empty>
+/// DOCSTART
+/// <docstring>
+fn module_introspection_script() -> String {
+    format!(
+        r#"
+import sys, inspect, importlib
+
+mod_name = sys.argv[1]
+
+try:
+    mod = importlib.import_module(mod_name)
+    doc = inspect.getdoc(mod) or ""
+
+    print("{SIGNATURE_MARKER}")
+    print("")
+    print("{DOC_MARKER}")
+    print(doc)
+except ImportError as e:
+    print("{SIGNATURE_MARKER}")
+    print("")
+    print("{DOC_MARKER}")
+    print("Module '{{}}' not found: {{}}".format(mod_name, e))
+except Exception as e:
+    print("{SIGNATURE_MARKER}")
+    print("")
+    print("{DOC_MARKER}")
+    print("Error: {{}}".format(e))
+"#
+    )
+}
+
 /// Result of Python introspection
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IntrospectionResult {
@@ -105,7 +141,7 @@ pub enum IntrospectionError {
 pub async fn introspect(
     interpreter: &Path, module_name: &str, symbol_name: &str,
 ) -> Result<IntrospectionResult, IntrospectionError> {
-    debug!(
+    tracing::debug!(
         "Introspecting {}.{} using {}",
         module_name,
         symbol_name,
@@ -131,11 +167,37 @@ pub async fn introspect(
     parse_introspection_output(&stdout)
 }
 
+/// Introspect a module (not a specific symbol) to get its docstring
+///
+/// Executes a Python subprocess to extract the module's docstring with a 3s timeout
+pub async fn introspect_module(
+    interpreter: &Path, module_name: &str,
+) -> Result<IntrospectionResult, IntrospectionError> {
+    tracing::debug!("Introspecting module {} using {}", module_name, interpreter.display());
+
+    let script = module_introspection_script();
+
+    let output = tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio::process::Command::new(interpreter)
+            .arg("-c")
+            .arg(&script)
+            .arg(module_name)
+            .output(),
+    )
+    .await
+    .map_err(|_| IntrospectionError::Timeout(Duration::from_secs(3)))?
+    .map_err(|e| IntrospectionError::ExecutionFailed(e.to_string()))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_introspection_output(&stdout)
+}
+
 /// Synchronous version of introspect for non-async contexts. Uses [std::process::Command] with a timeout thread.
 pub fn introspect_sync(
     interpreter: &Path, module_name: &str, symbol_name: &str,
 ) -> Result<IntrospectionResult, IntrospectionError> {
-    debug!(
+    tracing::debug!(
         "Introspecting {}.{} using {} (sync)",
         module_name,
         symbol_name,
@@ -156,7 +218,35 @@ pub fn introspect_sync(
         parse_introspection_output(&stdout)
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        warn!("Python introspection failed: {}", stderr);
+        tracing::warn!("Python introspection failed: {}", stderr);
+        Err(IntrospectionError::ExecutionFailed(stderr.to_string()))
+    }
+}
+
+/// Synchronous version of introspect_module for non-async contexts
+pub fn introspect_module_sync(
+    interpreter: &Path, module_name: &str,
+) -> Result<IntrospectionResult, IntrospectionError> {
+    tracing::debug!(
+        "Introspecting module {} using {} (sync)",
+        module_name,
+        interpreter.display()
+    );
+
+    let script = module_introspection_script();
+    let output = Command::new(interpreter)
+        .arg("-c")
+        .arg(&script)
+        .arg(module_name)
+        .output()
+        .map_err(|e| IntrospectionError::ExecutionFailed(e.to_string()))?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        parse_introspection_output(&stdout)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        tracing::warn!("Python module introspection failed: {}", stderr);
         Err(IntrospectionError::ExecutionFailed(stderr.to_string()))
     }
 }

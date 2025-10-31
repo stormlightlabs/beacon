@@ -19,17 +19,9 @@ Implementation details and mod-specific tasks.
 
 ## LSP Features
 
-### Hover Improvements
-
-**Files:** `crates/server/src/features/hover.rs`, `crates/server/src/introspection.rs` (new)
-
-- [ ] Display inferred types with docstrings
-- [ ] Show signature help
-- [ ] Module/package documentation from introspection
-
 ### Inlay Hints
 
-**Files:** `crates/server/src/features/inlay_hints.rs` (new)
+**Files:** `crates/server/src/features/inlay_hints.rs`
 
 - [ ] Variable type hints for local variables
 - [ ] Parameter hints in function calls

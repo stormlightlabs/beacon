@@ -8,7 +8,6 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 
 ### Hover & Diagnostics
 
-- [ ] Display inferred types with docstrings and signatures
 - [ ] "Did you mean" suggestions and annotation fixes
 - [ ] Code actions for refactoring (insert annotations, adjust Optional)
 

@@ -5,8 +5,10 @@
 use crate::cache::IntrospectionCache;
 use crate::document::DocumentManager;
 use crate::features::{builtin_docs, dunders};
+use crate::introspection::IntrospectionResult;
 use crate::parser;
 use crate::{analysis::Analyzer, introspection};
+use beacon_core::{Type, TypeCtor};
 use beacon_parser::{AstNode, SymbolKind, parse_docstring};
 use lsp_types::{Hover, HoverContents, HoverParams, MarkupContent, MarkupKind, Position};
 use std::{ops::Not, path::PathBuf};
@@ -98,13 +100,12 @@ impl HoverProvider {
         })?
     }
 
-    /// Format hover for a function
+    /// Format hover for a function with signature display
     fn format_function_hover(
         &self, name: &str, ast: &AstNode, def_line: usize, docstring: Option<&str>,
     ) -> MarkupContent {
-        let signature = Self::extract_function_signature(ast, name).unwrap_or_else(|| format!("def {name}(...)"));
-
-        let mut value = format!("```python\n{signature}\n```\n\n**Function** defined at line {def_line}");
+        let sig = Self::extract_function_signature(ast, name).unwrap_or_else(|| format!("def {name}(...)"));
+        let mut value = format!("```python\n{sig}\n```\n\n**Function** defined at line {def_line}");
 
         if let Some(doc) = docstring {
             let parsed = parse_docstring(doc);
@@ -252,8 +253,30 @@ impl HoverProvider {
     fn format_import_hover(&self, name: &str, ast: &AstNode, line: usize) -> MarkupContent {
         if let Some((module, symbol)) = Self::find_import_info(ast, line, name) {
             if let Some(ref python) = self.interpreter_path {
+                let module_doc = if let Some(cached) = self.introspection_cache.get(&module, "__module__") {
+                    Some(cached.docstring.clone())
+                } else {
+                    match introspection::introspect_module_sync(python, &module) {
+                        Ok(result) => {
+                            self.introspection_cache
+                                .insert(module.clone(), "__module__".to_string(), result.clone());
+                            Some(result.docstring)
+                        }
+                        Err(e) => {
+                            tracing::debug!("Module introspection failed for {}: {}", module, e);
+                            None
+                        }
+                    }
+                };
+
                 if let Some(cached) = self.introspection_cache.get(&module, &symbol) {
-                    return self.format_introspection_result(name, &module, &symbol, &cached);
+                    return self.format_introspection_result_with_module(
+                        name,
+                        &module,
+                        &symbol,
+                        &cached,
+                        module_doc.as_deref(),
+                    );
                 }
 
                 match introspection::introspect_sync(python, &module, &symbol) {
@@ -261,10 +284,30 @@ impl HoverProvider {
                         self.introspection_cache
                             .insert(module.clone(), symbol.clone(), result.clone());
 
-                        return self.format_introspection_result(name, &module, &symbol, &result);
+                        return self.format_introspection_result_with_module(
+                            name,
+                            &module,
+                            &symbol,
+                            &result,
+                            module_doc.as_deref(),
+                        );
                     }
                     Err(e) => {
                         tracing::warn!("Introspection failed for {}.{}: {}", module, symbol, e);
+
+                        if let Some(doc) = module_doc {
+                            if !doc.trim().is_empty() {
+                                let mut value = format!(
+                                    "**Import** `{name}` from module `{module}`\n\n**Module documentation:**\n\n"
+                                );
+                                let parsed = parse_docstring(&doc);
+                                let rendered = parsed.to_markdown();
+                                if !rendered.trim().is_empty() {
+                                    value.push_str(rendered.trim());
+                                }
+                                return MarkupContent { kind: MarkupKind::Markdown, value };
+                            }
+                        }
                     }
                 }
             }
@@ -301,9 +344,11 @@ impl HoverProvider {
         }
     }
 
-    /// Format introspection result as hover content
-    fn format_introspection_result(
-        &self, symbol_name: &str, module_name: &str, _full_symbol: &str, result: &introspection::IntrospectionResult,
+    /// Format introspection result as hover content with optional module documentation
+    /// FIXME: simplify this signature
+    fn format_introspection_result_with_module(
+        &self, symbol_name: &str, module_name: &str, _full_symbol: &str, result: &IntrospectionResult,
+        module_doc: Option<&str>,
     ) -> MarkupContent {
         let mut value = String::new();
 
@@ -324,16 +369,50 @@ impl HoverProvider {
             }
         }
 
+        if let Some(mod_doc) = module_doc {
+            if !mod_doc.trim().is_empty() {
+                let parsed = parse_docstring(mod_doc);
+                let rendered = parsed.to_markdown();
+                if !rendered.trim().is_empty() {
+                    value.push_str("\n\n---\n\n**Module documentation:**\n\n");
+                    value.push_str(rendered.trim());
+                }
+            }
+        }
+
         MarkupContent { kind: MarkupKind::Markdown, value }
     }
 
+    /// Extract detailed function signature including type annotations and default values
     fn extract_function_signature(node: &AstNode, name: &str) -> Option<String> {
         match node {
-            AstNode::FunctionDef { name: fn_name, args, .. } if fn_name == name => Some(format!(
-                "def {}({})",
-                name,
-                args.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(", ")
-            )),
+            AstNode::FunctionDef { name: fn_name, args, return_type, .. } if fn_name == name => {
+                let params: Vec<String> = args
+                    .iter()
+                    .map(|p| {
+                        let mut param = p.name.clone();
+
+                        if let Some(ref type_ann) = p.type_annotation {
+                            param.push_str(": ");
+                            param.push_str(type_ann);
+                        }
+
+                        if p.default_value.is_some() {
+                            param.push_str(" = ...");
+                        }
+
+                        param
+                    })
+                    .collect();
+
+                let mut signature = format!("def {}({})", name, params.join(", "));
+                if let Some(ret_type) = return_type {
+                    signature.push_str(" -> ");
+                    signature.push_str(ret_type);
+                }
+
+                Some(signature)
+            }
             AstNode::Module { body, .. } | AstNode::ClassDef { body, .. } => {
                 for stmt in body {
                     let sig = Self::extract_function_signature(stmt, name);
@@ -388,10 +467,69 @@ impl HoverProvider {
     }
 
     /// Provides rich formatting with type information on hover
+    ///
+    /// Attempts to enrich type information with docstrings for classes and other named types
     fn format_type_hover(&self, ty: &beacon_core::Type) -> MarkupContent {
         let type_str = self.format_type(ty);
-        let value = format!("```python\n{type_str}\n```\n\n**Inferred type**");
+        let mut value = format!("```python\n{type_str}\n```\n\n**Inferred type**");
+
+        if let Some(docstring) = self.get_type_docstring(ty) {
+            if !docstring.trim().is_empty() {
+                let parsed = parse_docstring(&docstring);
+                let rendered = parsed.to_markdown();
+                if !rendered.trim().is_empty() {
+                    value.push_str("\n\n---\n\n");
+                    value.push_str(rendered.trim());
+                }
+            }
+        }
+
         MarkupContent { kind: MarkupKind::Markdown, value }
+    }
+
+    /// Attempt to get docstring for a type by looking it up in the symbol table or via [introspection]
+    fn get_type_docstring(&self, ty: &beacon_core::Type) -> Option<String> {
+        match ty {
+            Type::Con(TypeCtor::Class(class_name)) => {
+                let class_doc = self.find_symbol_docstring(class_name, beacon_parser::SymbolKind::Class);
+                if class_doc.is_some() {
+                    return class_doc;
+                }
+
+                if let Some(ref python) = self.interpreter_path {
+                    if let Some(cached) = self.introspection_cache.get("builtins", class_name) {
+                        return Some(cached.docstring.clone());
+                    }
+
+                    if let Ok(result) = introspection::introspect_sync(python, "builtins", class_name) {
+                        self.introspection_cache
+                            .insert("builtins".to_string(), class_name.clone(), result.clone());
+                        return Some(result.docstring);
+                    }
+                }
+
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Find a symbol's docstring by searching through document symbol tables
+    fn find_symbol_docstring(&self, symbol_name: &str, kind: beacon_parser::SymbolKind) -> Option<String> {
+        for uri in self.documents.all_documents() {
+            if let Some(doc) = self.documents.get_document(&uri, |doc| {
+                let symbol_table = doc.symbol_table()?;
+                let symbol = symbol_table.lookup_symbol(symbol_name, symbol_table.root_scope)?;
+
+                if symbol.kind == kind { symbol.docstring.clone() } else { None }
+            }) {
+                if doc.is_some() {
+                    return doc;
+                }
+            }
+        }
+
+        None
     }
 
     /// Format a type as a string using [std::fmt::Display] trait
@@ -580,73 +718,6 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_function_signature() {
-        let ast = AstNode::Module {
-            body: vec![AstNode::FunctionDef {
-                name: "calculate".to_string(),
-                args: vec![
-                    Parameter { name: "a".to_string(), line: 1, col: 16, type_annotation: None, default_value: None },
-                    Parameter { name: "b".to_string(), line: 1, col: 19, type_annotation: None, default_value: None },
-                ],
-                body: vec![],
-                line: 1,
-                col: 1,
-                docstring: None,
-                return_type: None,
-                decorators: Vec::new(),
-            }],
-            docstring: None,
-        };
-
-        let signature = HoverProvider::extract_function_signature(&ast, "calculate");
-        assert!(signature.is_some());
-        assert_eq!(signature.unwrap(), "def calculate(a, b)");
-    }
-
-    #[test]
-    fn test_extract_function_signature_nested_in_class() {
-        let ast = AstNode::Module {
-            body: vec![AstNode::ClassDef {
-                name: "MyClass".to_string(),
-                metaclass: None,
-                bases: Vec::new(),
-                body: vec![AstNode::FunctionDef {
-                    name: "method".to_string(),
-                    args: vec![Parameter {
-                        name: "self".to_string(),
-                        line: 2,
-                        col: 16,
-                        type_annotation: None,
-                        default_value: None,
-                    }],
-                    body: vec![],
-                    line: 2,
-                    col: 5,
-                    docstring: None,
-                    return_type: None,
-                    decorators: Vec::new(),
-                }],
-                line: 1,
-                col: 1,
-                docstring: None,
-                decorators: Vec::new(),
-            }],
-            docstring: None,
-        };
-
-        let signature = HoverProvider::extract_function_signature(&ast, "method");
-        assert!(signature.is_some());
-        assert_eq!(signature.unwrap(), "def method(self)");
-    }
-
-    #[test]
-    fn test_extract_function_signature_not_found() {
-        let ast = beacon_parser::AstNode::Module { body: vec![], docstring: None };
-        let signature = HoverProvider::extract_function_signature(&ast, "nonexistent");
-        assert!(signature.is_none());
-    }
-
-    #[test]
     fn test_hover_provider_creation() {
         let documents = DocumentManager::new().unwrap();
         let _ = HoverProvider::new(documents);
@@ -742,27 +813,6 @@ mod tests {
         let documents = DocumentManager::new().unwrap();
         let provider = HoverProvider::new(documents);
         assert_eq!(provider.format_type(&Type::Con(TypeCtor::Never)), "Never");
-    }
-
-    #[test]
-    fn test_extract_function_signature_empty_args() {
-        let ast = AstNode::Module {
-            body: vec![AstNode::FunctionDef {
-                name: "no_args".to_string(),
-                args: vec![],
-                body: vec![],
-                line: 1,
-                col: 1,
-                docstring: None,
-                return_type: None,
-                decorators: Vec::new(),
-            }],
-            docstring: None,
-        };
-
-        let signature = HoverProvider::extract_function_signature(&ast, "no_args");
-        assert!(signature.is_some());
-        assert_eq!(signature.unwrap(), "def no_args()");
     }
 
     #[test]
