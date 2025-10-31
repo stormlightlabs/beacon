@@ -357,7 +357,9 @@ impl Default for CacheManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::introspection::IntrospectionResult;
     use beacon_core::{Type, TypeCtor};
+    use tempfile::tempdir;
 
     #[test]
     fn test_type_cache_insert_get() {
@@ -412,5 +414,61 @@ mod tests {
         let stats = manager.stats();
 
         assert_eq!(stats.capacity, 50);
+    }
+
+    #[test]
+    fn test_introspection_cache_load_from_disk() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("introspection.json");
+        let entries = vec![(
+            IntrospectionCacheKey { module: "math".to_string(), symbol: "sqrt".to_string() },
+            IntrospectionResult { signature: "(x)".to_string(), docstring: "Square root".to_string() },
+        )];
+
+        let json = serde_json::to_string(&entries).unwrap();
+        std::fs::write(&file_path, json).unwrap();
+
+        let loaded = IntrospectionCache::load_from_disk(&file_path).unwrap();
+        assert_eq!(loaded, entries);
+    }
+
+    #[test]
+    fn test_introspection_cache_stats() {
+        let dir = tempdir().unwrap();
+        let cache = IntrospectionCache::new(Some(dir.path()));
+
+        cache.insert(
+            "math".to_string(),
+            "sqrt".to_string(),
+            IntrospectionResult { signature: "(x)".to_string(), docstring: "Square root".to_string() },
+        );
+        cache.insert(
+            "math".to_string(),
+            "cos".to_string(),
+            IntrospectionResult { signature: "(x)".to_string(), docstring: "Cosine".to_string() },
+        );
+
+        let stats = cache.stats();
+        assert_eq!(stats.size, 2);
+        assert_eq!(stats.capacity, 1000);
+    }
+
+    #[test]
+    fn test_introspection_cache_clear() {
+        let dir = tempdir().unwrap();
+        let cache = IntrospectionCache::new(Some(dir.path()));
+        let cache_file = dir.path().join(".beacon-cache").join("introspection.json");
+
+        cache.insert(
+            "math".to_string(),
+            "sqrt".to_string(),
+            IntrospectionResult { signature: "(x)".to_string(), docstring: "Square root".to_string() },
+        );
+        assert!(cache_file.exists());
+        assert_eq!(cache.stats().size, 1);
+
+        cache.clear();
+        assert_eq!(cache.stats().size, 0);
+        assert!(!cache_file.exists());
     }
 }

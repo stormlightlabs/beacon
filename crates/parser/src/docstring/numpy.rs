@@ -351,4 +351,40 @@ mod tests {
         assert_eq!(returns.type_info, None);
         assert_eq!(returns.description, "Description without type");
     }
+
+    #[test]
+    fn test_parse_raises_single_entry_with_multiline_description() {
+        let lines = vec![
+            "ValueError",
+            "    Raised when the value is invalid.",
+            "    Additional context.",
+        ];
+        let raises = parse_raises(&lines);
+        assert_eq!(raises.len(), 1);
+
+        let entry = &raises[0];
+        assert_eq!(entry.exception_type, Some("ValueError".to_string()));
+        assert_eq!(
+            entry.description,
+            "Raised when the value is invalid. Additional context."
+        );
+    }
+
+    #[test]
+    fn test_parse_raises_multiple_entries_and_blank_lines() {
+        let lines = vec![
+            "ValueError",
+            "    Raised when the value is invalid.",
+            "",
+            "TypeError",
+            "    Raised when an incorrect type is provided.",
+        ];
+        let raises = parse_raises(&lines);
+
+        assert_eq!(raises.len(), 2);
+        assert_eq!(raises[0].exception_type, Some("ValueError".to_string()));
+        assert_eq!(raises[0].description, "Raised when the value is invalid.");
+        assert_eq!(raises[1].exception_type, Some("TypeError".to_string()));
+        assert_eq!(raises[1].description, "Raised when an incorrect type is provided.");
+    }
 }

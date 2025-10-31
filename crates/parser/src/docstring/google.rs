@@ -326,7 +326,11 @@ mod tests {
 
     #[test]
     fn test_parse_returns_complex_description_without_type() {
-        let lines = vec!["This is a longer description", "that spans multiple lines", "without a type annotation"];
+        let lines = vec![
+            "This is a longer description",
+            "that spans multiple lines",
+            "without a type annotation",
+        ];
         let result = parse_returns(&lines);
 
         assert!(result.is_some());
@@ -345,5 +349,28 @@ mod tests {
         let returns = result.unwrap();
         assert_eq!(returns.type_info, None);
         assert!(returns.description.contains("Some complex type annotation"));
+    }
+
+    #[test]
+    fn test_parse_raises_single_entry_with_multiline_description() {
+        let lines = vec!["ValueError: Raised on invalid value.", "    Additional context."];
+        let raises = parse_raises(&lines);
+        assert_eq!(raises.len(), 1);
+
+        let entry = &raises[0];
+        assert_eq!(entry.exception_type, Some("ValueError".to_string()));
+        assert_eq!(entry.description, "Raised on invalid value. Additional context.");
+    }
+
+    #[test]
+    fn test_parse_raises_multiple_entries() {
+        let lines = vec!["ValueError: Invalid value.", "", "TypeError: Wrong type."];
+        let raises = parse_raises(&lines);
+
+        assert_eq!(raises.len(), 2);
+        assert_eq!(raises[0].exception_type, Some("ValueError".to_string()));
+        assert_eq!(raises[0].description, "Invalid value.");
+        assert_eq!(raises[1].exception_type, Some("TypeError".to_string()));
+        assert_eq!(raises[1].description, "Wrong type.");
     }
 }

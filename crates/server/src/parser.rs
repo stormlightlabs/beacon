@@ -289,4 +289,84 @@ result = greet("World")
         let node = node.unwrap();
         assert_eq!(node.kind(), "integer");
     }
+
+    #[test]
+    fn test_convert_edits_single_line_replacement() {
+        let parser = LspParser::new().unwrap();
+        let old_text = "hello world";
+        let new_text = "hello there";
+        let edits = vec![TextEdit {
+            range: Range { start: Position { line: 0, character: 6 }, end: Position { line: 0, character: 11 } },
+            new_text: "there".to_string(),
+        }];
+
+        let input_edits = parser.convert_edits(old_text, new_text, &edits);
+        assert_eq!(input_edits.len(), 1);
+
+        let edit = &input_edits[0];
+        assert_eq!(edit.start_byte, 6);
+        assert_eq!(edit.old_end_byte, 11);
+        assert_eq!(edit.new_end_byte, 11);
+        assert_eq!(edit.start_position.row, 0);
+        assert_eq!(edit.start_position.column, 6);
+        assert_eq!(edit.old_end_position.row, 0);
+        assert_eq!(edit.old_end_position.column, 11);
+        assert_eq!(edit.new_end_position.row, 0);
+        assert_eq!(edit.new_end_position.column, 11);
+    }
+
+    #[test]
+    fn test_convert_edits_multiline_insertion() {
+        let parser = LspParser::new().unwrap();
+        let old_text = "alpha\nbeta";
+        let new_text = "alpha\nbeta\ngamma";
+        let edits = vec![TextEdit {
+            range: Range { start: Position { line: 1, character: 0 }, end: Position { line: 1, character: 4 } },
+            new_text: "beta\ngamma".to_string(),
+        }];
+
+        let input_edits = parser.convert_edits(old_text, new_text, &edits);
+        assert_eq!(input_edits.len(), 1);
+
+        let edit = &input_edits[0];
+        assert_eq!(edit.start_byte, 6);
+        assert_eq!(edit.old_end_byte, 10);
+        assert_eq!(edit.new_end_byte, 16);
+        assert_eq!(edit.start_position.row, 1);
+        assert_eq!(edit.start_position.column, 0);
+        assert_eq!(edit.old_end_position.row, 1);
+        assert_eq!(edit.old_end_position.column, 4);
+        assert_eq!(edit.new_end_position.row, 2);
+        assert_eq!(edit.new_end_position.column, 5);
+    }
+
+    #[test]
+    fn test_reparse_applies_text_edits() {
+        let mut parser = LspParser::new().unwrap();
+        let old_text = "def add(a, b):\n    return a + b\n";
+        let old_result = parser.parse(old_text).unwrap();
+
+        let new_text = "def add(a, b):\n    return a - b\n";
+        let edits = vec![TextEdit {
+            range: Range { start: Position { line: 1, character: 13 }, end: Position { line: 1, character: 14 } },
+            new_text: "-".to_string(),
+        }];
+        let reparse_result = parser.reparse(&old_result.tree, old_text, new_text, &edits).unwrap();
+
+        assert!(reparse_result.errors.is_empty());
+        assert_eq!(reparse_result.rope.to_string(), new_text);
+
+        let mut fresh_parser = LspParser::new().unwrap();
+        let full_parse = fresh_parser.parse(new_text).unwrap();
+
+        assert_eq!(reparse_result.ast, full_parse.ast);
+        assert_eq!(
+            reparse_result.tree.root_node().to_sexp(),
+            full_parse.tree.root_node().to_sexp()
+        );
+
+        let root_scope = reparse_result.symbol_table.root_scope;
+        let function_symbol = reparse_result.symbol_table.lookup_symbol("add", root_scope);
+        assert!(function_symbol.is_some());
+    }
 }

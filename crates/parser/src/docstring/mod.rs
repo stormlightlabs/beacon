@@ -435,6 +435,69 @@ Args:
     }
 
     #[test]
+    fn test_parse_rest_fields() {
+        let doc = r#"Summary line.
+Second summary line.
+
+:param x: First parameter.
+:type x: int
+:param y: Second parameter.
+:return: Primary result
+:returns: Additional detail
+:rtype: bool
+:raises ValueError: Raised when invalid.
+:raises TypeError: Raised when wrong type.
+
+Further description after fields."#;
+
+        let parsed = parse_rest(doc);
+        assert_eq!(parsed.style, DocstringStyle::ReST);
+        assert_eq!(parsed.summary, "Summary line. Second summary line.");
+        assert_eq!(
+            parsed.description,
+            Some("Further description after fields.".to_string())
+        );
+
+        let mut params = parsed.parameters.clone();
+        params.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(params.len(), 2);
+        assert_eq!(
+            params[0],
+            Parameter {
+                name: "x".to_string(),
+                type_info: Some("int".to_string()),
+                description: "First parameter.".to_string()
+            }
+        );
+        assert_eq!(
+            params[1],
+            Parameter { name: "y".to_string(), type_info: None, description: "Second parameter.".to_string() }
+        );
+
+        assert_eq!(
+            parsed.returns,
+            Some(Returns {
+                type_info: Some("bool".to_string()),
+                description: "Primary result Additional detail".to_string(),
+            })
+        );
+
+        assert_eq!(
+            parsed.raises,
+            vec![
+                RaisesEntry {
+                    exception_type: Some("ValueError".to_string()),
+                    description: "Raised when invalid.".to_string(),
+                },
+                RaisesEntry {
+                    exception_type: Some("TypeError".to_string()),
+                    description: "Raised when wrong type.".to_string(),
+                }
+            ]
+        );
+    }
+
+    #[test]
     fn test_to_markdown() {
         let mut parsed = ParsedDocstring::empty(DocstringStyle::Plain);
         parsed.summary = "Brief summary.".to_string();
