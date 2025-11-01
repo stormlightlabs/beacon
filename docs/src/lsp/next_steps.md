@@ -20,9 +20,15 @@ Support multi-root workspaces and remote development scenarios.
 
 ## Tooling Enhancements
 
-Implement formatting (`textDocument/formatting`, `rangeFormatting`) and integrate with Beacon’s formatting rules.
+Implement formatting (`textDocument/formatting`, `rangeFormatting`) and integrate with Beacon's formatting rules.
 
-Deliver concrete code actions (e.g., quick fixes for undefined variables, import suggestions).
+Expand code actions beyond the current quick fixes (remove unused, wrap with Optional) to include:
+
+- Insert type annotations from inference
+- Add missing imports for undefined symbols
+- Implement missing protocol methods
+- Extract to function/method refactorings
+- Inline variable refactorings
 
 Extend semantic tokens with modifier support (documentation, deprecated symbols) and align with editor theming.
 

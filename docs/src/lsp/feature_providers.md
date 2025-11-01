@@ -1,6 +1,7 @@
 # Feature Providers
 
-Each capability exposed by the language server lives in its own provider under `crates/server/src/features`. Providers share the `DocumentManager` and, when needed, the analyzer. This modular design keeps logic focused and testable.
+Each capability exposed by the language server lives in its own provider under `crates/server/src/features`.
+Providers share the `DocumentManager` and, when needed, the analyzer.
 
 ## Diagnostics
 
@@ -15,7 +16,10 @@ Results are published with document versions to prevent stale diagnostics in the
 
 ## Hover
 
-`HoverProvider` returns context-sensitive information for the symbol under the cursor—typically inferred types or documentation snippets. It reads the current AST and analyzer output to assemble `Hover` responses.
+`HoverProvider` returns context-sensitive information for the symbol under the cursor—typically inferred types or documentation snippets.
+It reads the current AST and analyzer output to assemble `Hover` responses.
+
+The hover system integrates with the builtin documentation and dunder metadata modules to provide rich information for Python's standard types and magic methods.
 
 ## Completion
 
@@ -43,10 +47,28 @@ Results are published with document versions to prevent stale diagnostics in the
 
 ## Refactoring
 
-`RenameProvider` validates proposed identifiers, gathers edits via both AST traversal and Tree-sitter scans, deduplicates overlapping ranges, and returns a `WorkspaceEdit`. Future refinements will integrate deeper analyzer data for cross-file renames.
+`RenameProvider` validates proposed identifiers, gathers edits via both AST traversal and Tree-sitter scans, deduplicates overlapping ranges, and returns a `WorkspaceEdit`.
 
 ## Code Actions
 
-`CodeActionsProvider` is scaffolded for quick fixes. It currently returns empty results until specific code actions are implemented.
+`CodeActionsProvider` provides quick fixes for common issues:
+
+- Removing unused variables and imports
+- Wrapping types with `Optional` for None-related type errors
+- Automatically adding `from typing import Optional` when needed
+- Insert type annotations from inference (coming soon!)
+- Add missing imports for undefined symbols (coming soon!)
+- Implement missing protocol methods (coming soon!)
+- Extract to function/method refactorings (coming soon!)
+- Inline variable refactorings (coming soon!)
+
+## Support Modules
+
+The features system includes specialized support modules:
+
+`builtin_docs` provides embedded documentation for Python built-in types (str, int, list, dict, etc.).
+Documentation is loaded from JSON at compile time and includes descriptions, common methods, and links to official Python documentation.
+
+`dunders` supplies metadata and documentation for Python's magic methods (`__init__`, `__str__`, etc.) and builtin variables (`__name__`, `__file__`, etc.).
 
 Adding new features typically means introducing a provider that consumes `DocumentManager`, optionally the analyzer, and wiring it through the `Features` struct so the backend can route requests.

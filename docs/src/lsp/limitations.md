@@ -22,11 +22,11 @@ Workspace symbol searches iterate synchronously over all open documents, which c
 
 ## Feature Gaps
 
-Code actions return placeholders; no concrete quick fixes ship yet.
+Code actions support basic quick fixes (removing unused variables/imports, wrapping types with Optional) but many advanced refactorings remain unimplemented.
 
 Formatting endpoints (`textDocument/formatting`, etc.) are unimplemented.
 
-Configuration (`Config`) is still a stub and does not honour user settings.
+Configuration (`Config`) is still a stub and does not honor user settings.
 
 ## Tooling Ergonomics
 
