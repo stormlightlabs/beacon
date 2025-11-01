@@ -422,6 +422,7 @@ mod tests {
                 decorators: Vec::new(),
                 line: 1,
                 col: 1,
+                is_async: false,
             }],
             docstring: None,
         };

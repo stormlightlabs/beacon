@@ -65,6 +65,9 @@ pub enum ParseError {
 
     #[error("Invalid UTF-8 in source code")]
     InvalidUtf8,
+
+    #[error("Missing node {0}")]
+    MissingNode(String),
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -350,7 +350,7 @@ impl<'a> Linter<'a> {
                     self.visit_node(element);
                 }
             }
-            AstNode::Identifier { .. } => {}
+            AstNode::Yield { .. } | AstNode::YieldFrom { .. } | AstNode::Await { .. } | AstNode::Identifier { .. } => {}
         }
     }
 

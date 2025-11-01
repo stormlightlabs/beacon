@@ -2,13 +2,16 @@
 
 This file provides type information for built-in Python types and functions."""
 
-from typing import TypeVar, Generic, Iterator, Iterable
+from typing import TypeVar, Generic, Iterator, Iterable, Generator, AsyncGenerator, Coroutine
 
 _T = TypeVar("_T")
 _KT = TypeVar("_KT")
 _VT = TypeVar("_VT")
 _T_co = TypeVar("_T_co", covariant=True)
 _T2 = TypeVar("_T2")
+_YieldT = TypeVar("_YieldT")
+_SendT = TypeVar("_SendT")
+_ReturnT = TypeVar("_ReturnT")
 
 class int:
     def __add__(self, other: int) -> int: ...

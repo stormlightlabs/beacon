@@ -251,6 +251,7 @@ result = hello()"#;
             docstring: None,
             return_type: None,
             decorators: Vec::new(),
+            is_async: false,
         };
 
         let mut highlights = Vec::new();

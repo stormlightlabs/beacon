@@ -158,7 +158,6 @@ impl<'a> DataFlowAnalyzer<'a> {
                     }
                 }
             }
-            // We don't recurse into nested function/class definitions because they have their own scope and CFG
             AstNode::FunctionDef { .. } | AstNode::ClassDef { .. } => {}
             _ => {
                 statements.push(node);
@@ -658,6 +657,7 @@ mod tests {
             decorators: Vec::new(),
             line: 1,
             col: 1,
+            is_async: false,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -724,6 +724,7 @@ mod tests {
             return_type: None,
             decorators: Vec::new(),
             line: 1,
+            is_async: false,
             col: 1,
         };
 
@@ -788,6 +789,7 @@ mod tests {
             return_type: None,
             decorators: Vec::new(),
             line: 1,
+            is_async: false,
             col: 1,
         };
 
@@ -861,6 +863,7 @@ mod tests {
             decorators: Vec::new(),
             line: 1,
             col: 1,
+            is_async: false,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -915,6 +918,7 @@ mod tests {
             decorators: Vec::new(),
             line: 1,
             col: 1,
+            is_async: false,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -967,6 +971,7 @@ mod tests {
             decorators: Vec::new(),
             line: 1,
             col: 1,
+            is_async: false,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1016,6 +1021,7 @@ mod tests {
             decorators: Vec::new(),
             line: 1,
             col: 1,
+            is_async: false,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1062,6 +1068,7 @@ mod tests {
             decorators: Vec::new(),
             line: 1,
             col: 1,
+            is_async: false,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1112,6 +1119,7 @@ mod tests {
             decorators: Vec::new(),
             line: 1,
             col: 1,
+            is_async: false,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1162,6 +1170,7 @@ mod tests {
             decorators: Vec::new(),
             line: 1,
             col: 1,
+            is_async: false,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1213,6 +1222,7 @@ mod tests {
             decorators: Vec::new(),
             line: 1,
             col: 1,
+            is_async: false,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1267,6 +1277,7 @@ mod tests {
             decorators: Vec::new(),
             line: 1,
             col: 1,
+            is_async: false,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1274,12 +1285,10 @@ mod tests {
         if let AstNode::FunctionDef { body, .. } = &ast {
             let mut builder = CfgBuilder::new();
             builder.build_function(body);
-            let cfg = builder.build();
 
+            let cfg = builder.build();
             let scope_id = find_function_scope(&resolver.symbol_table);
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
-
-            // Test that we can evaluate DEBUG condition
             let debug_identifier = AstNode::Identifier { name: "DEBUG".to_string(), line: 2, col: 13 };
 
             let mut test_constants = FxHashMap::default();
@@ -1333,6 +1342,7 @@ mod tests {
             decorators: Vec::new(),
             line: 1,
             col: 1,
+            is_async: false,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1382,6 +1392,7 @@ mod tests {
             decorators: Vec::new(),
             line: 1,
             col: 1,
+            is_async: false,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1454,6 +1465,7 @@ mod tests {
             decorators: Vec::new(),
             line: 1,
             col: 1,
+            is_async: false,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1502,6 +1514,7 @@ mod tests {
             decorators: Vec::new(),
             line: 1,
             col: 1,
+            is_async: false,
         };
 
         resolver.resolve(&ast).unwrap();

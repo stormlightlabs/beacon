@@ -509,7 +509,10 @@ impl SemanticTokensProvider {
     fn get_node_position(node: &AstNode) -> (usize, usize) {
         match node {
             AstNode::Module { .. } => (1, 1),
-            AstNode::Tuple { line, col, .. }
+            AstNode::Yield { line, col, .. }
+            | AstNode::YieldFrom { line, col, .. }
+            | AstNode::Await { line, col, .. }
+            | AstNode::Tuple { line, col, .. }
             | AstNode::FunctionDef { line, col, .. }
             | AstNode::ClassDef { line, col, .. }
             | AstNode::Assignment { line, col, .. }

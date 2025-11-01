@@ -911,7 +911,13 @@ impl Analyzer {
                     Self::collect_unbound_in_node(exception, symbol_table, text, unbound);
                 }
             }
-            AstNode::Tuple { .. } | AstNode::Pass { .. } | AstNode::Break { .. } | AstNode::Continue { .. } => {}
+            AstNode::Yield { .. }
+            | AstNode::YieldFrom { .. }
+            | AstNode::Await { .. }
+            | AstNode::Tuple { .. }
+            | AstNode::Pass { .. }
+            | AstNode::Break { .. }
+            | AstNode::Continue { .. } => {}
         }
     }
 

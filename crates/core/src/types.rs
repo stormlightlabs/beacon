@@ -157,7 +157,6 @@ impl TypeVar {
     }
 }
 
-// Constructor function for easier creation
 impl From<u32> for TypeVar {
     fn from(id: u32) -> Self {
         TypeVar::new(id)
@@ -213,6 +212,12 @@ pub enum TypeCtor {
     Module(String),
     /// Literal singleton type (Literal[True], Literal[42], etc.)
     Literal(LiteralType),
+    /// Generator type: Generator[YieldType, SendType, ReturnType]
+    Generator,
+    /// Async generator type: AsyncGenerator[YieldType, SendType]
+    AsyncGenerator,
+    /// Coroutine type: Coroutine[YieldType, SendType, ReturnType]
+    Coroutine,
 }
 
 impl fmt::Display for TypeCtor {
@@ -243,6 +248,9 @@ impl fmt::Display for TypeCtor {
             TypeCtor::Class(name) => write!(f, "{name}"),
             TypeCtor::Module(name) => write!(f, "module<{name}>"),
             TypeCtor::Literal(lit) => write!(f, "{lit}"),
+            TypeCtor::Generator => write!(f, "Generator"),
+            TypeCtor::AsyncGenerator => write!(f, "AsyncGenerator"),
+            TypeCtor::Coroutine => write!(f, "Coroutine"),
         }
     }
 }
@@ -269,7 +277,12 @@ impl TypeCtor {
             TypeCtor::Tuple => Kind::Star,
             // * -> * -> * (simplified)
             TypeCtor::Function => Kind::arity(2),
-            // Generic and Protocol are just markers, kind is Star
+            // * -> * -> * -> * (Generator[YieldType, SendType, ReturnType])
+            TypeCtor::Generator => Kind::arity(3),
+            // * -> * -> * (AsyncGenerator[YieldType, SendType])
+            TypeCtor::AsyncGenerator => Kind::arity(2),
+            // * -> * -> * -> * (Coroutine[YieldType, SendType, ReturnType])
+            TypeCtor::Coroutine => Kind::arity(3),
             TypeCtor::Generic | TypeCtor::Protocol(_) => Kind::Star,
             TypeCtor::Class(_) | TypeCtor::Module(_) => Kind::Star,
         }
@@ -296,6 +309,9 @@ impl TypeCtor {
                 | TypeCtor::Generic
                 | TypeCtor::Protocol(_)
                 | TypeCtor::Literal(_)
+                | TypeCtor::Generator
+                | TypeCtor::AsyncGenerator
+                | TypeCtor::Coroutine
         )
     }
 
@@ -470,6 +486,39 @@ impl Type {
         Type::App(
             Box::new(Type::App(Box::new(Type::Con(TypeCtor::Dict)), Box::new(key_type))),
             Box::new(value_type),
+        )
+    }
+
+    /// Create a Generator type: Generator[YieldType, SendType, ReturnType]
+    pub fn generator(yield_ty: Type, send_ty: Type, return_ty: Type) -> Self {
+        Type::App(
+            Box::new(Type::App(
+                Box::new(Type::App(Box::new(Type::Con(TypeCtor::Generator)), Box::new(yield_ty))),
+                Box::new(send_ty),
+            )),
+            Box::new(return_ty),
+        )
+    }
+
+    /// Create an AsyncGenerator type: AsyncGenerator[YieldType, SendType]
+    pub fn async_generator(yield_ty: Type, send_ty: Type) -> Self {
+        Type::App(
+            Box::new(Type::App(
+                Box::new(Type::Con(TypeCtor::AsyncGenerator)),
+                Box::new(yield_ty),
+            )),
+            Box::new(send_ty),
+        )
+    }
+
+    /// Create a Coroutine type: Coroutine[YieldType, SendType, ReturnType]
+    pub fn coroutine(yield_ty: Type, send_ty: Type, return_ty: Type) -> Self {
+        Type::App(
+            Box::new(Type::App(
+                Box::new(Type::App(Box::new(Type::Con(TypeCtor::Coroutine)), Box::new(yield_ty))),
+                Box::new(send_ty),
+            )),
+            Box::new(return_ty),
         )
     }
 

@@ -10,6 +10,108 @@ use std::sync::Arc;
 
 type TStubCache = Arc<std::sync::RwLock<crate::workspace::StubCache>>;
 
+/// Represents the kind of function based on yield/await detection
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FunctionKind {
+    /// Regular synchronous function
+    Regular,
+    /// Generator function (contains yield or yield from)
+    Generator,
+    /// Async generator function (async def with yield)
+    AsyncGenerator,
+    /// Coroutine function (async def without yield)
+    Coroutine,
+}
+
+/// Detect what kind of function this is based on its body and async flag
+///
+/// Traverses the function body AST to detect yield, yield from, and await expressions.
+/// Note: This is a simplified implementation that detects presence but doesn't validate
+/// that yields/awaits are at the correct scope level (e.g., not inside nested functions).
+fn detect_function_kind(body: &[AstNode], is_async: bool) -> FunctionKind {
+    let has_yield = contains_yield(body);
+
+    match (is_async, has_yield) {
+        (true, true) => FunctionKind::AsyncGenerator,
+        (true, false) => FunctionKind::Coroutine,
+        (false, true) => FunctionKind::Generator,
+        (false, false) => FunctionKind::Regular,
+    }
+}
+
+/// Check if the AST nodes contain yield or yield from expressions
+///
+/// TODO: This implementation doesn't distinguish between yields in the current scope
+/// vs yields in nested functions. A more sophisticated implementation would track scope.
+fn contains_yield(nodes: &[AstNode]) -> bool {
+    for node in nodes {
+        if check_node_for_yield(node) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Recursively check a single node for yield/yield from
+fn check_node_for_yield(node: &AstNode) -> bool {
+    match node {
+        AstNode::Yield { .. } | AstNode::YieldFrom { .. } => true,
+        AstNode::FunctionDef { .. } | AstNode::ClassDef { .. } => false,
+        AstNode::If { test, body, elif_parts, else_body, .. } => {
+            check_node_for_yield(test)
+                || contains_yield(body)
+                || elif_parts
+                    .iter()
+                    .any(|(test, body)| check_node_for_yield(test) || contains_yield(body))
+                || else_body.as_ref().is_some_and(|b| contains_yield(b))
+        }
+        AstNode::For { iter, body, else_body, .. } => {
+            check_node_for_yield(iter) || contains_yield(body) || else_body.as_ref().is_some_and(|b| contains_yield(b))
+        }
+        AstNode::While { test, body, else_body, .. } => {
+            check_node_for_yield(test) || contains_yield(body) || else_body.as_ref().is_some_and(|b| contains_yield(b))
+        }
+        AstNode::Try { body, handlers, else_body, finally_body, .. } => {
+            contains_yield(body)
+                || handlers.iter().any(|h| contains_yield(&h.body))
+                || else_body.as_ref().is_some_and(|b| contains_yield(b))
+                || finally_body.as_ref().is_some_and(|b| contains_yield(b))
+        }
+        AstNode::With { body, .. } => contains_yield(body),
+        AstNode::Match { subject, cases, .. } => {
+            check_node_for_yield(subject) || cases.iter().any(|c| contains_yield(&c.body))
+        }
+        AstNode::ListComp { element, .. } => check_node_for_yield(element),
+        AstNode::DictComp { key, value, .. } => check_node_for_yield(key) || check_node_for_yield(value),
+        AstNode::SetComp { element, .. } => check_node_for_yield(element),
+        AstNode::GeneratorExp { element, .. } => check_node_for_yield(element),
+        AstNode::Call { args, .. } => args.iter().any(check_node_for_yield),
+        AstNode::BinaryOp { left, right, .. } => check_node_for_yield(left) || check_node_for_yield(right),
+        AstNode::UnaryOp { operand, .. } => check_node_for_yield(operand),
+        AstNode::Compare { left, comparators, .. } => {
+            check_node_for_yield(left) || comparators.iter().any(check_node_for_yield)
+        }
+        AstNode::Lambda { body, .. } => check_node_for_yield(body),
+        AstNode::Assignment { value, .. } => check_node_for_yield(value),
+        AstNode::AnnotatedAssignment { value, .. } => value.as_ref().is_some_and(|v| check_node_for_yield(v)),
+        AstNode::NamedExpr { value, .. } => check_node_for_yield(value),
+        AstNode::Return { value, .. } => value.as_ref().is_some_and(|v| check_node_for_yield(v)),
+        AstNode::Raise { exc, .. } => exc.as_ref().is_some_and(|e| check_node_for_yield(e)),
+        AstNode::Attribute { object, .. } => check_node_for_yield(object),
+        AstNode::Subscript { value, slice, .. } => check_node_for_yield(value) || check_node_for_yield(slice),
+        AstNode::Tuple { elements, .. } => elements.iter().any(check_node_for_yield),
+        AstNode::Await { value, .. } => check_node_for_yield(value),
+        AstNode::Identifier { .. }
+        | AstNode::Literal { .. }
+        | AstNode::Pass { .. }
+        | AstNode::Break { .. }
+        | AstNode::Continue { .. }
+        | AstNode::Import { .. }
+        | AstNode::ImportFrom { .. } => false,
+        AstNode::Module { .. } => false,
+    }
+}
+
 pub fn generate_constraints(
     stub_cache: &Option<TStubCache>, ast: &AstNode, symbol_table: &SymbolTable,
 ) -> Result<ConstraintResult> {
@@ -48,7 +150,7 @@ pub fn visit_node_with_env(
             }
             Ok(Type::Con(TypeCtor::Module("".into())))
         }
-        AstNode::FunctionDef { name, args, return_type, body, decorators, line, col, .. } => {
+        AstNode::FunctionDef { name, args, return_type, body, decorators, is_async, line, col, .. } => {
             let param_types: Vec<Type> = args
                 .iter()
                 .map(|param| {
@@ -60,10 +162,27 @@ pub fn visit_node_with_env(
                 })
                 .collect();
 
-            let ret_type = return_type
-                .as_ref()
-                .map(|ann| env.parse_annotation_or_any(ann))
-                .unwrap_or_else(|| Type::Var(env.fresh_var()));
+            let function_kind = detect_function_kind(body, *is_async);
+
+            let ret_type = if matches!(function_kind, FunctionKind::Regular) {
+                return_type
+                    .as_ref()
+                    .map(|ann| env.parse_annotation_or_any(ann))
+                    .unwrap_or_else(|| Type::Var(env.fresh_var()))
+            } else {
+                let annotated_ret = return_type
+                    .as_ref()
+                    .map(|ann| env.parse_annotation_or_any(ann))
+                    .unwrap_or_else(|| Type::Var(env.fresh_var()));
+
+                // TODO: Properly infer yield type from yield expressions
+                match function_kind {
+                    FunctionKind::Generator => Type::generator(Type::Var(env.fresh_var()), Type::none(), annotated_ret),
+                    FunctionKind::AsyncGenerator => Type::async_generator(Type::Var(env.fresh_var()), Type::none()),
+                    FunctionKind::Coroutine => Type::coroutine(Type::none(), Type::none(), annotated_ret),
+                    FunctionKind::Regular => unreachable!(),
+                }
+            };
 
             let fn_type = Type::fun(param_types.clone(), ret_type.clone());
 
@@ -187,6 +306,26 @@ pub fn visit_node_with_env(
             let ty = if let Some(val) = value { visit_node_with_env(val, env, ctx, stub_cache)? } else { Type::none() };
             ctx.record_type(*line, *col, ty.clone());
             Ok(ty)
+        }
+        // TODO: Generate constraint to unify yielded type with generator's yield parameter
+        AstNode::Yield { value, line, col } => {
+            let ty = if let Some(val) = value { visit_node_with_env(val, env, ctx, stub_cache)? } else { Type::none() };
+            ctx.record_type(*line, *col, ty.clone());
+            Ok(ty)
+        }
+        // TODO: Generate constraint for yield from delegation
+        AstNode::YieldFrom { value, line, col } => {
+            let ty = visit_node_with_env(value, env, ctx, stub_cache)?;
+            ctx.record_type(*line, *col, ty.clone());
+            Ok(ty)
+        }
+        // TODO: Extract awaited type from Coroutine[Y, S, R] -> R
+        // TODO: Add constraint to extract return type from coroutine
+        AstNode::Await { value, line, col } => {
+            let _coroutine_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
+            let result_ty = Type::Var(env.fresh_var());
+            ctx.record_type(*line, *col, result_ty.clone());
+            Ok(result_ty)
         }
         AstNode::Attribute { object, attribute, line, col } => {
             let obj_ty = visit_node_with_env(object, env, ctx, stub_cache)?;
@@ -581,8 +720,6 @@ pub fn visit_node_with_env(
             ctx.record_type(*line, *col, dict_ty.clone());
             Ok(dict_ty)
         }
-        // NOTE: Approximated as iterable[T] rather than proper Generator[T, None, None]
-        // TODO: See ROADMAP.md for Generator[YieldType, SendType, ReturnType] modeling
         AstNode::GeneratorExp { element, generators, line, col } => {
             let mut comp_env = env.clone();
 
@@ -606,7 +743,7 @@ pub fn visit_node_with_env(
             }
 
             let elem_ty = visit_node_with_env(element, &mut comp_env, ctx, stub_cache)?;
-            let generator_ty = Type::list(elem_ty);
+            let generator_ty = Type::generator(elem_ty, Type::none(), Type::none());
 
             ctx.record_type(*line, *col, generator_ty.clone());
             Ok(generator_ty)

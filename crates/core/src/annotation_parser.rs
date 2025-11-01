@@ -9,6 +9,7 @@
 //! - Intersection types: Protocol1 & Protocol2
 //! - Optional: Optional[T] → Union[T, None]
 //! - Callable: Callable[[args...], return]
+//! - Generator types: Generator[Y, S, R], AsyncGenerator[Y, S], Coroutine[Y, S, R]
 //! - Any, Never, Top
 //!
 //! ## Examples
@@ -423,6 +424,50 @@ impl Parser {
                     Type::Con(TypeCtor::Protocol(None))
                 }
             }
+            "Generator" => {
+                if matches!(self.peek(), Some(Token::LBracket)) {
+                    self.advance();
+
+                    let yield_ty = self.parse_type()?;
+                    self.expect(Token::Comma)?;
+
+                    let send_ty = self.parse_type()?;
+                    self.expect(Token::Comma)?;
+
+                    let return_ty = self.parse_type()?;
+                    self.expect(Token::RBracket)?;
+
+                    Type::generator(yield_ty, send_ty, return_ty)
+                } else {
+                    Type::generator(Type::any(), Type::none(), Type::none())
+                }
+            }
+            "AsyncGenerator" => {
+                if matches!(self.peek(), Some(Token::LBracket)) {
+                    self.advance();
+                    let yield_ty = self.parse_type()?;
+                    self.expect(Token::Comma)?;
+                    let send_ty = self.parse_type()?;
+                    self.expect(Token::RBracket)?;
+                    Type::async_generator(yield_ty, send_ty)
+                } else {
+                    Type::async_generator(Type::any(), Type::none())
+                }
+            }
+            "Coroutine" => {
+                if matches!(self.peek(), Some(Token::LBracket)) {
+                    self.advance();
+                    let yield_ty = self.parse_type()?;
+                    self.expect(Token::Comma)?;
+                    let send_ty = self.parse_type()?;
+                    self.expect(Token::Comma)?;
+                    let return_ty = self.parse_type()?;
+                    self.expect(Token::RBracket)?;
+                    Type::coroutine(yield_ty, send_ty, return_ty)
+                } else {
+                    Type::coroutine(Type::any(), Type::none(), Type::any())
+                }
+            }
             _ => {
                 if name.len() == 1 && name.chars().next().unwrap().is_uppercase() {
                     Type::Con(TypeCtor::TypeVariable(name.to_string()))
@@ -829,5 +874,36 @@ mod tests {
             }
             _ => panic!("Expected intersection type"),
         }
+    }
+
+    #[test]
+    fn test_parse_generator() {
+        let parser = AnnotationParser::new();
+        let generator_ty = parser.parse("Generator[int, None, str]").unwrap();
+        assert_eq!(generator_ty, Type::generator(Type::int(), Type::none(), Type::string()));
+    }
+
+    #[test]
+    fn test_parse_generator_with_complex_types() {
+        let parser = AnnotationParser::new();
+        let generator_ty = parser.parse("Generator[list[int], str, None]").unwrap();
+        assert_eq!(
+            generator_ty,
+            Type::generator(Type::list(Type::int()), Type::string(), Type::none())
+        );
+    }
+
+    #[test]
+    fn test_parse_async_generator() {
+        let parser = AnnotationParser::new();
+        let async_gen_ty = parser.parse("AsyncGenerator[int, None]").unwrap();
+        assert_eq!(async_gen_ty, Type::async_generator(Type::int(), Type::none()));
+    }
+
+    #[test]
+    fn test_parse_coroutine() {
+        let parser = AnnotationParser::new();
+        let coro = parser.parse("Coroutine[None, None, int]").unwrap();
+        assert_eq!(coro, Type::coroutine(Type::none(), Type::none(), Type::int()));
     }
 }

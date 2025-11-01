@@ -662,7 +662,10 @@ impl NameResolver {
                     self.track_references(exception)?;
                 }
             }
-            AstNode::Tuple { .. }
+            AstNode::Yield { .. }
+            | AstNode::YieldFrom { .. }
+            | AstNode::Await { .. }
+            | AstNode::Tuple { .. }
             | AstNode::Literal { .. }
             | AstNode::Pass { .. }
             | AstNode::Break { .. }
@@ -735,7 +738,10 @@ impl NameResolver {
                 }
                 self.source.len()
             }
-            AstNode::Tuple { line, col, .. }
+            AstNode::Yield { line, col, .. }
+            | AstNode::YieldFrom { line, col, .. }
+            | AstNode::Await { line, col, .. }
+            | AstNode::Tuple { line, col, .. }
             | AstNode::Assignment { line, col, .. }
             | AstNode::AnnotatedAssignment { line, col, .. }
             | AstNode::Call { line, col, .. }
@@ -1120,7 +1126,10 @@ impl NameResolver {
                     self.visit_node(exception)?;
                 }
             }
-            AstNode::Tuple { .. }
+            AstNode::Yield { .. }
+            | AstNode::YieldFrom { .. }
+            | AstNode::Await { .. }
+            | AstNode::Tuple { .. }
             | AstNode::Identifier { .. }
             | AstNode::Literal { .. }
             | AstNode::Pass { .. }
@@ -1249,6 +1258,7 @@ mod tests {
             docstring: None,
             return_type: None,
             decorators: Vec::new(),
+            is_async: false,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1318,6 +1328,7 @@ mod tests {
                     docstring: None,
                     return_type: None,
                     decorators: Vec::new(),
+                    is_async: false,
                 },
                 AstNode::Assignment {
                     target: "w".to_string(),
@@ -1381,6 +1392,7 @@ mod tests {
                     col: 1,
                     docstring: None,
                     return_type: None,
+                    is_async: false,
                     decorators: Vec::new(),
                 },
             ],
@@ -1632,6 +1644,7 @@ mod tests {
                     docstring: None,
                     return_type: None,
                     decorators: Vec::new(),
+                    is_async: false,
                 }],
                 line: 1,
                 col: 1,
@@ -1681,6 +1694,7 @@ mod tests {
                 docstring: None,
                 return_type: None,
                 decorators: Vec::new(),
+                is_async: false,
             }],
             docstring: None,
         };
@@ -1748,6 +1762,7 @@ mod tests {
                     docstring: None,
                     return_type: None,
                     decorators: Vec::new(),
+                    is_async: false,
                 },
             ],
             docstring: None,
@@ -1808,6 +1823,7 @@ mod tests {
                             docstring: None,
                             return_type: None,
                             decorators: Vec::new(),
+                            is_async: false,
                         },
                     ],
                     line: 2,
@@ -1815,6 +1831,7 @@ mod tests {
                     docstring: None,
                     return_type: None,
                     decorators: Vec::new(),
+                    is_async: false,
                 },
             ],
             docstring: None,
@@ -1885,6 +1902,7 @@ mod tests {
                     docstring: None,
                     return_type: None,
                     decorators: Vec::new(),
+                    is_async: false,
                 },
             ],
             docstring: None,
@@ -2011,6 +2029,7 @@ mod tests {
                 col: 1,
                 docstring: None,
                 return_type: None,
+                is_async: false,
                 decorators: Vec::new(),
             }],
             docstring: None,

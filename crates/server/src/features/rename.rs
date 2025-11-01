@@ -392,6 +392,7 @@ print(x)"#;
             docstring: None,
             return_type: None,
             decorators: Vec::new(),
+            is_async: false,
         };
 
         let mut edits = Vec::new();
@@ -453,6 +454,7 @@ print(x)"#;
                     docstring: None,
                     return_type: None,
                     decorators: Vec::new(),
+                    is_async: false,
                 }],
                 line: 1,
                 col: 1,

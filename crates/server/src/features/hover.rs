@@ -650,6 +650,7 @@ mod tests {
                 docstring: None,
                 return_type: None,
                 decorators: Vec::new(),
+                is_async: false,
             }],
             docstring: None,
         };
