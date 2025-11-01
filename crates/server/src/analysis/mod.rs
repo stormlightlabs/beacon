@@ -11,10 +11,7 @@
 //!  5. Caching -> Type cache
 
 pub mod cfg;
-pub mod class_metadata;
-pub mod constraint_gen;
 pub mod data_flow;
-pub mod exhaustiveness;
 pub mod linter;
 pub mod pattern;
 pub mod rules;
@@ -28,48 +25,17 @@ use crate::config::Config;
 use crate::document::DocumentManager;
 use crate::utils;
 
+use beacon_constraint::{ConstraintResult, TypeErrorInfo};
 use beacon_core::{
-    MethodSignature, ProtocolChecker, ProtocolName, Subst, Type, TypeCtor, TypeError, TypeVarGen, Unifier,
+    Type, TypeVarGen,
     errors::{AnalysisError, Result},
 };
 use beacon_parser::{AstNode, ScopeId, ScopeKind, SymbolTable, resolve::Scope};
-use constraint_gen::{Constraint, ConstraintResult, ConstraintSet, Span};
 use lsp_types::Position;
 use rustc_hash::FxHashMap;
 use std::{collections::HashSet, sync::Arc};
 use tokio::sync::RwLock;
 use url::Url;
-
-/// Type error with location information
-#[derive(Debug, Clone)]
-pub struct TypeErrorInfo {
-    pub error: TypeError,
-    /// Span where the error occurred
-    pub span: Span,
-}
-
-impl TypeErrorInfo {
-    /// Create a new type error with location
-    pub fn new(error: TypeError, span: Span) -> Self {
-        Self { error, span }
-    }
-
-    pub fn line(&self) -> usize {
-        self.span.line
-    }
-
-    pub fn col(&self) -> usize {
-        self.span.col
-    }
-
-    pub fn end_line(&self) -> Option<usize> {
-        self.span.end_line
-    }
-
-    pub fn end_col(&self) -> Option<usize> {
-        self.span.end_col
-    }
-}
 
 #[derive(Debug)]
 struct MethodInfo {
@@ -249,7 +215,7 @@ impl Analyzer {
         let ConstraintResult(constraints, mut type_map, position_map, class_registry) =
             walker::generate_constraints(&self.stub_cache, &ast, &symbol_table)?;
 
-        let (substitution, type_errors) = Self::solve_constraints(constraints, &class_registry)?;
+        let (substitution, type_errors) = beacon_constraint::solver::solve_constraints(constraints, &class_registry)?;
 
         for (_node_id, ty) in type_map.iter_mut() {
             *ty = substitution.apply(ty);
@@ -303,384 +269,6 @@ impl Analyzer {
     pub fn invalidate(&mut self, uri: &Url) {
         self.cache.invalidate_document(uri);
         self.position_maps.remove(uri);
-    }
-
-    /// Convert a [Type::Fun] to a [MethodSignature] by extracting parameters and return types from a function type.
-    fn type_to_method_signature(name: &str, ty: &Type) -> Option<MethodSignature> {
-        match ty {
-            Type::Fun(params, ret) => Some(MethodSignature {
-                name: name.to_string(),
-                params: params.clone(),
-                return_type: ret.as_ref().clone(),
-            }),
-            _ => None,
-        }
-    }
-
-    /// Check if a type satisfies a user-defined protocol
-    ///
-    /// This method checks structural conformance by verifying that the type has all required methods with compatible signatures.
-    /// Uses full variance checking: contravariant parameters, covariant returns.
-    fn check_user_defined_protocol(
-        ty: &Type, protocol_name: &str, class_registry: &class_metadata::ClassRegistry,
-    ) -> bool {
-        let protocol_meta = match class_registry.get_class(protocol_name) {
-            Some(meta) if meta.is_protocol => meta,
-            _ => return false,
-        };
-
-        let required_methods = protocol_meta.get_protocol_methods();
-        if required_methods.is_empty() {
-            return true;
-        }
-
-        match ty {
-            Type::Con(TypeCtor::Class(class_name)) => {
-                if let Some(class_meta) = class_registry.get_class(class_name) {
-                    let mut required_sigs = Vec::new();
-                    for (method_name, method_type) in required_methods {
-                        if let Some(sig) = Self::type_to_method_signature(method_name, method_type) {
-                            required_sigs.push(sig);
-                        }
-                    }
-
-                    let mut available_sigs = Vec::new();
-                    for (method_name, method_type) in class_meta.methods.iter() {
-                        if let Some(ty) = method_type.primary_type() {
-                            if let Some(sig) = Self::type_to_method_signature(method_name, ty) {
-                                available_sigs.push((method_name.clone(), sig));
-                            }
-                        }
-                    }
-
-                    let protocol_def = beacon_core::protocols::ProtocolDef {
-                        name: beacon_core::protocols::ProtocolName::UserDefined(protocol_name.to_string()),
-                        required_methods: required_sigs,
-                    };
-
-                    protocol_def.check_method_signatures(&available_sigs).is_ok()
-                } else {
-                    false
-                }
-            }
-            Type::Con(TypeCtor::Any) => true,
-            _ => false,
-        }
-    }
-
-    /// Solve a set of constraints using beacon-core's unification algorithm
-    ///
-    /// Errors are accumulated rather than failing fast to provide comprehensive feedback.
-    fn solve_constraints(
-        constraint_set: ConstraintSet, class_registry: &class_metadata::ClassRegistry,
-    ) -> Result<(Subst, Vec<TypeErrorInfo>)> {
-        let mut subst = Subst::empty();
-        let mut type_errors = Vec::new();
-        for constraint in constraint_set.constraints {
-            match constraint {
-                Constraint::Equal(t1, t2, span) => match Unifier::unify(&subst.apply(&t1), &subst.apply(&t2)) {
-                    Ok(s) => {
-                        subst = s.compose(subst);
-                    }
-                    Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                        type_errors.push(TypeErrorInfo::new(type_err, span));
-                    }
-                    Err(_) => {}
-                },
-
-                Constraint::Call(func_ty, arg_types, ret_ty, span) => {
-                    let applied_func = subst.apply(&func_ty);
-
-                    if let Type::Con(TypeCtor::Class(class_name)) = &applied_func {
-                        if let Some(metadata) = class_registry.get_class(class_name) {
-                            if let Some(ctor_ty) = metadata.new_type.as_ref().or(metadata.init_type.as_ref()) {
-                                if let Type::Fun(params, _) = ctor_ty {
-                                    let ctor_params: Vec<Type> = params.iter().skip(1).cloned().collect();
-                                    if ctor_params.len() == arg_types.len() {
-                                        for (provided_arg, expected_param) in arg_types.iter().zip(ctor_params.iter()) {
-                                            match Unifier::unify(
-                                                &subst.apply(provided_arg),
-                                                &subst.apply(expected_param),
-                                            ) {
-                                                Ok(s) => {
-                                                    subst = s.compose(subst);
-                                                }
-                                                Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                                    type_errors.push(TypeErrorInfo::new(type_err, span));
-                                                }
-                                                Err(_) => {}
-                                            }
-                                        }
-                                    }
-                                }
-
-                                match Unifier::unify(&subst.apply(&ret_ty), &applied_func) {
-                                    Ok(s) => {
-                                        subst = s.compose(subst);
-                                    }
-                                    Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                        type_errors.push(TypeErrorInfo::new(type_err, span));
-                                    }
-                                    Err(_) => {}
-                                }
-                            } else {
-                                match Unifier::unify(&subst.apply(&ret_ty), &applied_func) {
-                                    Ok(s) => {
-                                        subst = s.compose(subst);
-                                    }
-                                    Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                        type_errors.push(TypeErrorInfo::new(type_err, span));
-                                    }
-                                    Err(_) => {}
-                                }
-                            }
-                        }
-                    } else if let Type::BoundMethod(receiver, method_name, method) = &applied_func {
-                        let resolved_method = if let Type::Con(TypeCtor::Class(class_name)) = receiver.as_ref() {
-                            if let Some(metadata) = class_registry.get_class(class_name) {
-                                if let Some(method_type) = metadata.lookup_method_type(method_name) {
-                                    let applied_args: Vec<Type> =
-                                        arg_types.iter().map(|arg| subst.apply(arg)).collect();
-                                    method_type.resolve_for_args(&applied_args).unwrap_or(method.as_ref())
-                                } else {
-                                    method.as_ref()
-                                }
-                            } else {
-                                method.as_ref()
-                            }
-                        } else {
-                            method.as_ref()
-                        };
-
-                        if let Type::Fun(params, method_ret) = resolved_method {
-                            let bound_params: Vec<Type> = params.iter().skip(1).cloned().collect();
-                            if bound_params.len() == arg_types.len() {
-                                for (provided_arg, expected_param) in arg_types.iter().zip(bound_params.iter()) {
-                                    match Unifier::unify(&subst.apply(provided_arg), &subst.apply(expected_param)) {
-                                        Ok(s) => {
-                                            subst = s.compose(subst);
-                                        }
-                                        Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                            type_errors.push(TypeErrorInfo::new(type_err, span));
-                                        }
-                                        Err(_) => {}
-                                    }
-                                }
-
-                                match Unifier::unify(&subst.apply(&ret_ty), &subst.apply(method_ret)) {
-                                    Ok(s) => {
-                                        subst = s.compose(subst);
-                                    }
-                                    Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                        type_errors.push(TypeErrorInfo::new(type_err, span));
-                                    }
-                                    Err(_) => {}
-                                }
-                            } else {
-                                type_errors.push(TypeErrorInfo::new(
-                                    beacon_core::TypeError::UnificationError(
-                                        format!("function with {} arguments", bound_params.len()),
-                                        format!("function with {} arguments", arg_types.len()),
-                                    ),
-                                    span,
-                                ));
-                            }
-                        } else {
-                            let expected_fn_ty = Type::fun(arg_types, ret_ty);
-                            match Unifier::unify(&subst.apply(&func_ty), &subst.apply(&expected_fn_ty)) {
-                                Ok(s) => {
-                                    subst = s.compose(subst);
-                                }
-                                Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                    type_errors.push(TypeErrorInfo::new(type_err, span));
-                                }
-                                Err(_) => {}
-                            }
-                        }
-                    } else {
-                        let expected_fn_ty = Type::fun(arg_types, ret_ty);
-                        match Unifier::unify(&subst.apply(&func_ty), &subst.apply(&expected_fn_ty)) {
-                            Ok(s) => {
-                                subst = s.compose(subst);
-                            }
-                            Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                type_errors.push(TypeErrorInfo::new(type_err, span));
-                            }
-                            Err(_) => {}
-                        }
-                    }
-                }
-                Constraint::HasAttr(obj_ty, attr_name, attr_ty, span) => {
-                    let applied_obj = subst.apply(&obj_ty);
-
-                    match &applied_obj {
-                        Type::Con(TypeCtor::Class(class_name)) => {
-                            if let Some(resolved_attr_ty) =
-                                class_registry.lookup_attribute_with_inheritance(class_name, &attr_name)
-                            {
-                                let final_type = if class_registry.is_method(class_name, &attr_name) {
-                                    Type::BoundMethod(
-                                        Box::new(applied_obj.clone()),
-                                        attr_name.clone(),
-                                        Box::new(resolved_attr_ty.clone()),
-                                    )
-                                } else {
-                                    resolved_attr_ty.clone()
-                                };
-
-                                match Unifier::unify(&subst.apply(&attr_ty), &final_type) {
-                                    Ok(s) => {
-                                        subst = s.compose(subst);
-                                    }
-                                    Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                        type_errors.push(TypeErrorInfo::new(type_err, span));
-                                    }
-                                    Err(_) => {}
-                                }
-                            } else {
-                                type_errors.push(TypeErrorInfo::new(
-                                    beacon_core::TypeError::AttributeNotFound(
-                                        applied_obj.to_string(),
-                                        attr_name.clone(),
-                                    ),
-                                    span,
-                                ));
-                            }
-                        }
-                        Type::Con(type_ctor) => {
-                            let class_name = match type_ctor {
-                                TypeCtor::String => Some("str"),
-                                TypeCtor::Int => Some("int"),
-                                TypeCtor::Float => Some("float"),
-                                TypeCtor::Bool => Some("bool"),
-                                TypeCtor::List => Some("list"),
-                                TypeCtor::Dict => Some("dict"),
-                                TypeCtor::Set => Some("set"),
-                                TypeCtor::Tuple => Some("tuple"),
-                                TypeCtor::Any => {
-                                    if let Ok(s) = Unifier::unify(&subst.apply(&attr_ty), &Type::any()) {
-                                        subst = s.compose(subst);
-                                    }
-                                    None
-                                }
-                                _ => None,
-                            };
-
-                            if let Some(class_name) = class_name {
-                                if let Some(resolved_attr_ty) = class_registry.lookup_attribute(class_name, &attr_name)
-                                {
-                                    let final_type = if class_registry.is_method(class_name, &attr_name) {
-                                        Type::BoundMethod(
-                                            Box::new(applied_obj.clone()),
-                                            attr_name.clone(),
-                                            Box::new(resolved_attr_ty.clone()),
-                                        )
-                                    } else {
-                                        resolved_attr_ty.clone()
-                                    };
-
-                                    match Unifier::unify(&subst.apply(&attr_ty), &final_type) {
-                                        Ok(s) => {
-                                            subst = s.compose(subst);
-                                        }
-                                        Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                            type_errors.push(TypeErrorInfo::new(type_err, span));
-                                        }
-                                        Err(_) => {}
-                                    }
-                                } else {
-                                    type_errors.push(TypeErrorInfo::new(
-                                        beacon_core::TypeError::AttributeNotFound(
-                                            applied_obj.to_string(),
-                                            attr_name.clone(),
-                                        ),
-                                        span,
-                                    ));
-                                }
-                            }
-                        }
-                        Type::Var(_) => {}
-                        _ => {
-                            type_errors.push(TypeErrorInfo::new(
-                                beacon_core::TypeError::AttributeNotFound(applied_obj.to_string(), attr_name.clone()),
-                                span,
-                            ));
-                        }
-                    }
-                }
-
-                Constraint::Protocol(obj_ty, protocol_name, elem_ty, span) => {
-                    let applied_obj = subst.apply(&obj_ty);
-                    let satisfies = match &protocol_name {
-                        ProtocolName::UserDefined(proto_name) => {
-                            Self::check_user_defined_protocol(&applied_obj, proto_name, class_registry)
-                        }
-                        _ => ProtocolChecker::satisfies(&applied_obj, &protocol_name),
-                    };
-
-                    if satisfies {
-                        let extracted_elem = match protocol_name {
-                            ProtocolName::Iterable | ProtocolName::Iterator | ProtocolName::Sequence => {
-                                ProtocolChecker::extract_iterable_element(&applied_obj)
-                            }
-                            ProtocolName::AsyncIterable | ProtocolName::AsyncIterator => {
-                                ProtocolChecker::extract_async_iterable_element(&applied_obj)
-                            }
-                            ProtocolName::Awaitable => ProtocolChecker::extract_awaitable_result(&applied_obj),
-                            _ => Type::any(),
-                        };
-
-                        match Unifier::unify(&subst.apply(&elem_ty), &extracted_elem) {
-                            Ok(s) => {
-                                subst = s.compose(subst);
-                            }
-                            Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                type_errors.push(TypeErrorInfo::new(type_err, span));
-                            }
-                            Err(_) => {}
-                        }
-                    } else {
-                        type_errors.push(TypeErrorInfo::new(
-                            beacon_core::TypeError::ProtocolNotSatisfied(
-                                applied_obj.to_string(),
-                                protocol_name.to_string(),
-                            ),
-                            span,
-                        ));
-                    }
-                }
-
-                Constraint::MatchPattern(_subject_ty, _pattern, bindings, _span) => {
-                    for (_var_name, binding_ty) in bindings {
-                        let applied_binding = subst.apply(&binding_ty);
-                        let _ = applied_binding;
-                    }
-                }
-
-                Constraint::PatternExhaustive(subject_ty, patterns, span) => {
-                    let result = exhaustiveness::check_exhaustiveness(&subject_ty, &patterns);
-                    match result {
-                        exhaustiveness::ExhaustivenessResult::Exhaustive => {}
-                        exhaustiveness::ExhaustivenessResult::NonExhaustive { uncovered } => {
-                            let uncovered_str =
-                                uncovered.iter().map(|ty| ty.to_string()).collect::<Vec<_>>().join(", ");
-                            type_errors.push(TypeErrorInfo::new(TypeError::PatternNonExhaustive(uncovered_str), span));
-                        }
-                    }
-                }
-                Constraint::PatternReachable(pattern, previous_patterns, span) => {
-                    let result = exhaustiveness::check_reachability(&pattern, &previous_patterns);
-                    match result {
-                        exhaustiveness::ReachabilityResult::Reachable => {}
-                        exhaustiveness::ReachabilityResult::Unreachable { subsumed_by: _ } => {
-                            type_errors.push(TypeErrorInfo::new(TypeError::PatternUnreachable, span));
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok((subst, type_errors))
     }
 
     /// Perform static analysis (CFG + data flow) on the AST
@@ -1024,7 +612,8 @@ impl Analyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::class_metadata::ClassRegistry;
+    use beacon_constraint::ConstraintGenContext;
+    use beacon_core::{ClassRegistry, MethodType, TypeCtor, TypeError};
     use std::str::FromStr;
 
     #[test]
@@ -1658,7 +1247,7 @@ for i in range(10):
 
     #[test]
     fn test_constraint_gen_context() {
-        let mut ctx = constraint_gen::ConstraintGenContext::new();
+        let mut ctx = ConstraintGenContext::new();
 
         assert_eq!(ctx.node_counter, 0);
         assert!(ctx.type_map.is_empty());
@@ -2341,7 +1930,7 @@ method = s.upper
         let convert_method = meta.lookup_method_type("convert");
         assert!(convert_method.is_some(), "convert method not found");
 
-        if let Some(class_metadata::MethodType::Overloaded(overload_set)) = convert_method {
+        if let Some(MethodType::Overloaded(overload_set)) = convert_method {
             assert_eq!(
                 overload_set.signatures.len(),
                 2,
@@ -2358,7 +1947,7 @@ method = s.upper
         let process_method = meta.lookup_method_type("process");
         assert!(process_method.is_some(), "process method not found");
 
-        if let Some(class_metadata::MethodType::Overloaded(overload_set)) = process_method {
+        if let Some(MethodType::Overloaded(overload_set)) = process_method {
             assert_eq!(
                 overload_set.signatures.len(),
                 2,
@@ -2396,7 +1985,7 @@ class Calculator:
         let meta = calc_meta.unwrap();
         let compute_method = meta.lookup_method_type("compute");
 
-        if let Some(class_metadata::MethodType::Overloaded(overload_set)) = compute_method {
+        if let Some(MethodType::Overloaded(overload_set)) = compute_method {
             assert_eq!(
                 overload_set.signatures.len(),
                 2,

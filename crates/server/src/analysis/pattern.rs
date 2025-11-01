@@ -3,11 +3,10 @@
 //! This module implements type extraction and binding for PEP 634 pattern matching.
 //! It handles type narrowing, variable binding, and pattern-subject compatibility checking.
 
-use super::class_metadata::ClassRegistry;
 use super::type_env::TypeEnvironment;
 
 use beacon_core::{
-    Type, TypeCtor,
+    ClassRegistry, Type, TypeCtor,
     errors::{AnalysisError, Result},
 };
 use beacon_parser::{AstNode, LiteralValue, Pattern};
@@ -306,7 +305,7 @@ fn is_mapping_type(ty: &Type) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::class_metadata::ClassMetadata;
+    use beacon_core::ClassMetadata;
     use beacon_parser::Pattern;
 
     #[test]

@@ -413,7 +413,7 @@ pub struct CachedAnalysisResult {
     /// Map from source positions to node IDs
     pub position_map: FxHashMap<(usize, usize), usize>,
     /// Type errors encountered during analysis
-    pub type_errors: Vec<crate::analysis::TypeErrorInfo>,
+    pub type_errors: Vec<beacon_constraint::TypeErrorInfo>,
     /// Static analysis results (data flow analysis)
     pub static_analysis: Option<crate::analysis::data_flow::DataFlowResult>,
 }

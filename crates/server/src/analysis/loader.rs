@@ -1,19 +1,15 @@
-use crate::analysis::{
-    MethodInfo,
-    class_metadata::{self, ClassRegistry},
-};
+use crate::analysis::MethodInfo;
 use beacon_core::TypeCtor;
 use beacon_core::{
-    Type,
+    ClassMetadata, ClassRegistry, Type,
     errors::{AnalysisError, Result},
 };
 use beacon_parser::AstNode;
-
 use std::collections::HashMap;
 use std::path::Path;
 
 /// Extract class metadata from stub AST and register them in the ClassRegistry
-pub fn extract_stub_classes_into_registry(node: &AstNode, class_registry: &mut class_metadata::ClassRegistry) {
+pub fn extract_stub_classes_into_registry(node: &AstNode, class_registry: &mut ClassRegistry) {
     match node {
         AstNode::Module { body, .. } => {
             for stmt in body {
@@ -21,7 +17,7 @@ pub fn extract_stub_classes_into_registry(node: &AstNode, class_registry: &mut c
             }
         }
         AstNode::ClassDef { name, bases, metaclass, body, .. } => {
-            let mut metadata = class_metadata::ClassMetadata::new(name.clone());
+            let mut metadata = ClassMetadata::new(name.clone());
             let is_protocol = bases
                 .iter()
                 .any(|base| base == "Protocol" || base.ends_with(".Protocol") || base == "typing.Protocol");
@@ -48,7 +44,7 @@ pub fn extract_stub_classes_into_registry(node: &AstNode, class_registry: &mut c
 /// Handles @overload decorators by collecting multiple signatures for the same method name.
 /// Functions with @overload are signature declarations only; the function without @overload
 /// (if present) becomes the implementation signature.
-pub fn process_class_methods(body: &[AstNode], metadata: &mut class_metadata::ClassMetadata) {
+pub fn process_class_methods(body: &[AstNode], metadata: &mut ClassMetadata) {
     let mut methods_by_name: HashMap<String, Vec<MethodInfo>> = HashMap::new();
 
     for stmt in body {

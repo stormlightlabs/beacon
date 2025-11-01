@@ -109,6 +109,11 @@ dependencies = [
 [[package]]
 name = "beacon-constraint"
 version = "0.1.0"
+dependencies = [
+ "beacon-core",
+ "beacon-parser",
+ "rustc-hash",
+]
 
 [[package]]
 name = "beacon-core"
@@ -124,6 +129,7 @@ dependencies = [
 name = "beacon-lsp"
 version = "0.1.0"
 dependencies = [
+ "beacon-constraint",
  "beacon-core",
  "beacon-parser",
  "dirs",

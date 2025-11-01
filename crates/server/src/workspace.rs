@@ -958,17 +958,14 @@ impl Workspace {
     /// Extract class metadata from stub AST nodes
     ///
     /// Returns a map of class names to their metadata for registration in ClassRegistry.
-    pub fn extract_stub_classes(
-        &self, node: &beacon_parser::AstNode,
-    ) -> FxHashMap<String, crate::analysis::class_metadata::ClassMetadata> {
+    pub fn extract_stub_classes(&self, node: &beacon_parser::AstNode) -> FxHashMap<String, beacon_core::ClassMetadata> {
         let mut classes = FxHashMap::default();
         self.extract_classes_recursive(node, &mut classes);
         classes
     }
 
     fn extract_classes_recursive(
-        &self, node: &beacon_parser::AstNode,
-        classes: &mut FxHashMap<String, crate::analysis::class_metadata::ClassMetadata>,
+        &self, node: &beacon_parser::AstNode, classes: &mut FxHashMap<String, beacon_core::ClassMetadata>,
     ) {
         match node {
             AstNode::Module { body, .. } => {
@@ -977,7 +974,7 @@ impl Workspace {
                 }
             }
             AstNode::ClassDef { name, body, .. } => {
-                let mut metadata = crate::analysis::class_metadata::ClassMetadata::new(name.clone());
+                let mut metadata = beacon_core::ClassMetadata::new(name.clone());
 
                 for stmt in body {
                     if let AstNode::FunctionDef { name: method_name, args: params, return_type, .. } = stmt {

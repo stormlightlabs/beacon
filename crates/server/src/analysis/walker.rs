@@ -1,9 +1,9 @@
-use super::constraint_gen::{Constraint, ConstraintGenContext, ConstraintResult, ConstraintSet, Span};
+use super::loader;
 use super::pattern::extract_pattern_bindings;
 use super::type_env::TypeEnvironment;
-use super::{class_metadata::ClassMetadata, loader};
 
-use beacon_core::{Type, TypeScheme, errors::Result};
+use beacon_constraint::{Constraint, ConstraintGenContext, ConstraintResult, ConstraintSet, Span};
+use beacon_core::{ClassMetadata, Type, TypeScheme, errors::Result};
 use beacon_core::{TypeCtor, TypeVarGen};
 use beacon_parser::{AstNode, LiteralValue, SymbolTable};
 use std::sync::Arc;
@@ -1030,7 +1030,6 @@ fn type_name_to_type(name: &str) -> Type {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::constraint_gen;
     use beacon_parser::{AstNode, SymbolTable};
 
     #[test]
@@ -1204,7 +1203,7 @@ mod tests {
 
     #[test]
     fn test_await_coroutine_type() {
-        let mut ctx = super::super::constraint_gen::ConstraintGenContext::new();
+        let mut ctx = ConstraintGenContext::new();
         let symbol_table = SymbolTable::new();
         let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
             &symbol_table,
@@ -1238,7 +1237,7 @@ mod tests {
 
     #[test]
     fn test_await_generates_awaitable_constraint() {
-        let mut ctx = constraint_gen::ConstraintGenContext::new();
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
         let symbol_table = SymbolTable::new();
         let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
             &symbol_table,

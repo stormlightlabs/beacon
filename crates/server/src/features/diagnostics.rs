@@ -846,7 +846,7 @@ fn analysis_error_to_diagnostic(error: &BeaconError) -> Diagnostic {
 }
 
 /// Convert a type error with location info to an LSP diagnostic
-fn type_error_to_diagnostic(error_info: &crate::analysis::TypeErrorInfo) -> Diagnostic {
+fn type_error_to_diagnostic(error_info: &beacon_constraint::TypeErrorInfo) -> Diagnostic {
     use beacon_core::TypeError;
 
     let start_pos = Position {
@@ -901,7 +901,7 @@ fn type_error_to_diagnostic(error_info: &crate::analysis::TypeErrorInfo) -> Diag
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::{TypeErrorInfo, constraint_gen::Span};
+    use beacon_constraint::{Span, TypeErrorInfo};
     use beacon_core::{AnalysisError, Type, TypeCtor, TypeError, TypeVar};
     use std::str::FromStr;
     use std::sync::Arc;
@@ -1026,8 +1026,6 @@ mod tests {
 
     #[test]
     fn test_generate_diagnostics_with_parse_errors() {
-        use std::str::FromStr;
-
         let documents = DocumentManager::new().unwrap();
         let workspace = create_test_workspace(documents.clone());
         let provider = DiagnosticProvider::new(documents.clone(), workspace);
@@ -1263,8 +1261,6 @@ class MyClass:
 
     #[test]
     fn test_type_errors_surfaced_in_diagnostics() {
-        use std::str::FromStr;
-
         let documents = DocumentManager::new().unwrap();
         let workspace = create_test_workspace(documents.clone());
         let provider = DiagnosticProvider::new(documents.clone(), workspace);
@@ -1297,8 +1293,6 @@ def test():
 
     #[tokio::test]
     async fn test_circular_import_detection() {
-        use std::str::FromStr;
-
         let documents = DocumentManager::new().unwrap();
         let workspace = create_test_workspace(documents.clone());
         let provider = DiagnosticProvider::new(documents.clone(), workspace.clone());
@@ -1348,8 +1342,6 @@ def test():
 
     #[tokio::test]
     async fn test_unresolved_import_detection() {
-        use std::str::FromStr;
-
         let documents = DocumentManager::new().unwrap();
         let workspace = create_test_workspace(documents.clone());
         let provider = DiagnosticProvider::new(documents.clone(), workspace.clone());
@@ -1394,8 +1386,6 @@ def test():
 
     #[tokio::test]
     async fn test_missing_module_detection() {
-        use std::str::FromStr;
-
         let documents = DocumentManager::new().unwrap();
         let workspace = create_test_workspace(documents.clone());
         let provider = DiagnosticProvider::new(documents.clone(), workspace.clone());

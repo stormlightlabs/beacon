@@ -1,4 +1,5 @@
-use beacon_core::types::{OverloadSet, Type};
+use crate::types::{OverloadSet, Type};
+
 use std::collections::HashMap;
 
 /// Represents either a single method signature or an overloaded method with multiple signatures
@@ -368,7 +369,7 @@ impl ClassRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beacon_core::types::{Type, TypeCtor};
+    use crate::types::{Type, TypeCtor};
 
     #[test]
     fn test_class_metadata_creation() {
