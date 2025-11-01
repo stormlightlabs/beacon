@@ -369,22 +369,28 @@ pub fn visit_node_with_env(
             Ok(result_ty)
         }
         AstNode::Await { value, line, col } => {
-            let coroutine_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
+            let awaitable_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
             let span = Span::new(*line, *col);
 
-            let result_ty = if let Some((_y, _s, r)) = coroutine_ty.extract_coroutine_params() {
+            let result_ty = if let Some((_y, _s, r)) = awaitable_ty.extract_coroutine_params() {
                 r.clone()
-            } else if matches!(coroutine_ty, Type::Var(_)) {
+            } else if matches!(awaitable_ty, Type::Var(_)) {
                 let result_var = Type::Var(env.fresh_var());
                 let y_var = Type::Var(env.fresh_var());
                 let s_var = Type::Var(env.fresh_var());
                 let expected_coro_ty = Type::coroutine(y_var, s_var, result_var.clone());
                 ctx.constraints
-                    .push(Constraint::Equal(coroutine_ty.clone(), expected_coro_ty, span));
+                    .push(Constraint::Equal(awaitable_ty.clone(), expected_coro_ty, span));
                 result_var
             } else {
-                // TODO: Add support for Awaitable[T] protocol
-                Type::Var(env.fresh_var())
+                let result_var = Type::Var(env.fresh_var());
+                ctx.constraints.push(Constraint::Protocol(
+                    awaitable_ty.clone(),
+                    beacon_core::ProtocolName::Awaitable,
+                    result_var.clone(),
+                    span,
+                ));
+                result_var
             };
 
             ctx.record_type(*line, *col, result_ty.clone());
@@ -495,6 +501,7 @@ pub fn visit_node_with_env(
 
             let element_ty = Type::Var(env.fresh_var());
             let span = Span::new(*line, *col);
+
             ctx.constraints.push(Constraint::Protocol(
                 iter_ty,
                 beacon_core::ProtocolName::Iterable,
@@ -1023,16 +1030,15 @@ fn type_name_to_type(name: &str) -> Type {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beacon_parser::AstNode;
+    use crate::analysis::constraint_gen;
+    use beacon_parser::{AstNode, SymbolTable};
 
-    /// Test that yields in the current function scope are detected
     #[test]
     fn test_contains_yield_simple() {
         let nodes = vec![AstNode::Yield { value: None, line: 1, col: 1 }];
         assert!(contains_yield(&nodes));
     }
 
-    /// Test that yields in nested functions are NOT detected
     #[test]
     fn test_contains_yield_nested_function() {
         let nodes = vec![AstNode::FunctionDef {
@@ -1052,7 +1058,6 @@ mod tests {
         );
     }
 
-    /// Test that yields in lambda functions are NOT detected
     #[test]
     fn test_contains_yield_in_lambda() {
         let nodes = vec![AstNode::Assignment {
@@ -1072,7 +1077,6 @@ mod tests {
         );
     }
 
-    /// Test that yields in list comprehensions are NOT detected
     #[test]
     fn test_contains_yield_in_list_comp() {
         let nodes = vec![AstNode::ListComp {
@@ -1087,7 +1091,6 @@ mod tests {
         );
     }
 
-    /// Test that yields in generator expressions are NOT detected (they have their own scope)
     #[test]
     fn test_contains_yield_in_generator_exp() {
         let nodes = vec![AstNode::GeneratorExp {
@@ -1102,7 +1105,6 @@ mod tests {
         );
     }
 
-    /// Test that yields in dict comprehensions are NOT detected
     #[test]
     fn test_contains_yield_in_dict_comp() {
         let nodes = vec![AstNode::DictComp {
@@ -1118,7 +1120,6 @@ mod tests {
         );
     }
 
-    /// Test that yields in set comprehensions are NOT detected
     #[test]
     fn test_contains_yield_in_set_comp() {
         let nodes = vec![AstNode::SetComp {
@@ -1133,7 +1134,6 @@ mod tests {
         );
     }
 
-    /// Test that yields in if statements ARE detected
     #[test]
     fn test_contains_yield_in_if_statement() {
         let nodes = vec![AstNode::If {
@@ -1150,7 +1150,6 @@ mod tests {
         );
     }
 
-    /// Test FunctionKind detection for regular functions
     #[test]
     fn test_detect_function_kind_regular() {
         let body = vec![AstNode::Return {
@@ -1165,7 +1164,6 @@ mod tests {
         assert_eq!(detect_function_kind(&body, false), FunctionKind::Regular);
     }
 
-    /// Test FunctionKind detection for generators
     #[test]
     fn test_detect_function_kind_generator() {
         let body = vec![AstNode::Yield {
@@ -1180,7 +1178,6 @@ mod tests {
         assert_eq!(detect_function_kind(&body, false), FunctionKind::Generator);
     }
 
-    /// Test FunctionKind detection for async generators
     #[test]
     fn test_detect_function_kind_async_generator() {
         let body = vec![AstNode::Yield {
@@ -1195,7 +1192,6 @@ mod tests {
         assert_eq!(detect_function_kind(&body, true), FunctionKind::AsyncGenerator);
     }
 
-    /// Test FunctionKind detection for coroutines
     #[test]
     fn test_detect_function_kind_coroutine() {
         let body = vec![AstNode::Await {
@@ -1204,5 +1200,60 @@ mod tests {
             col: 5,
         }];
         assert_eq!(detect_function_kind(&body, true), FunctionKind::Coroutine);
+    }
+
+    #[test]
+    fn test_await_coroutine_type() {
+        let mut ctx = super::super::constraint_gen::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let async_fn = AstNode::FunctionDef {
+            name: "async_fn".to_string(),
+            args: vec![],
+            body: vec![AstNode::Return {
+                value: Some(Box::new(AstNode::Literal {
+                    value: beacon_parser::LiteralValue::Integer(42),
+                    line: 2,
+                    col: 12,
+                })),
+                line: 2,
+                col: 5,
+            }],
+            docstring: None,
+            return_type: Some("int".to_string()),
+            decorators: vec![],
+            is_async: true,
+            line: 1,
+            col: 1,
+        };
+
+        let fn_ty = visit_node_with_env(&async_fn, &mut env, &mut ctx, None).unwrap();
+
+        assert!(matches!(fn_ty, Type::Fun(_, _)));
+    }
+
+    #[test]
+    fn test_await_generates_awaitable_constraint() {
+        let mut ctx = constraint_gen::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let await_expr = AstNode::Await {
+            value: Box::new(AstNode::Identifier { name: "unknown_awaitable".to_string(), line: 1, col: 7 }),
+            line: 1,
+            col: 1,
+        };
+
+        let result_ty = visit_node_with_env(&await_expr, &mut env, &mut ctx, None).unwrap();
+
+        assert!(matches!(result_ty, Type::Var(_)));
+        assert!(!ctx.constraints.is_empty());
     }
 }

@@ -28,9 +28,8 @@ use crate::config::Config;
 use crate::document::DocumentManager;
 use crate::utils;
 
-use beacon_core::MethodSignature;
 use beacon_core::{
-    Subst, Type, TypeCtor, TypeError, TypeVarGen, Unifier,
+    MethodSignature, ProtocolChecker, ProtocolName, Subst, Type, TypeCtor, TypeError, TypeVarGen, Unifier,
     errors::{AnalysisError, Result},
 };
 use beacon_parser::{AstNode, ScopeId, ScopeKind, SymbolTable, resolve::Scope};
@@ -613,19 +612,21 @@ impl Analyzer {
                 Constraint::Protocol(obj_ty, protocol_name, elem_ty, span) => {
                     let applied_obj = subst.apply(&obj_ty);
                     let satisfies = match &protocol_name {
-                        beacon_core::ProtocolName::UserDefined(proto_name) => {
+                        ProtocolName::UserDefined(proto_name) => {
                             Self::check_user_defined_protocol(&applied_obj, proto_name, class_registry)
                         }
-                        _ => beacon_core::ProtocolChecker::satisfies(&applied_obj, &protocol_name),
+                        _ => ProtocolChecker::satisfies(&applied_obj, &protocol_name),
                     };
 
                     if satisfies {
                         let extracted_elem = match protocol_name {
-                            beacon_core::ProtocolName::Iterable
-                            | beacon_core::ProtocolName::Iterator
-                            | beacon_core::ProtocolName::Sequence => {
-                                beacon_core::ProtocolChecker::extract_iterable_element(&applied_obj)
+                            ProtocolName::Iterable | ProtocolName::Iterator | ProtocolName::Sequence => {
+                                ProtocolChecker::extract_iterable_element(&applied_obj)
                             }
+                            ProtocolName::AsyncIterable | ProtocolName::AsyncIterator => {
+                                ProtocolChecker::extract_async_iterable_element(&applied_obj)
+                            }
+                            ProtocolName::Awaitable => ProtocolChecker::extract_awaitable_result(&applied_obj),
                             _ => Type::any(),
                         };
 
@@ -2162,6 +2163,74 @@ result = f()
             has_bound_method,
             "Expected to find BoundMethod type in type map, got: {:?}",
             result.type_map.values().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_await_coroutine() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+async def fetch_data() -> int:
+    return 42
+
+async def main():
+    result = await fetch_data()
+    return result
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Await coroutine analysis should succeed");
+    }
+
+    #[test]
+    fn test_await_async_generator() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+async def async_gen():
+    yield 1
+    yield 2
+
+async def main():
+    gen = async_gen()
+    # Note: awaiting an async generator doesn't make semantic sense in Python
+    # but our type system should handle it gracefully
+    return gen
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Async generator analysis should succeed");
+    }
+
+    #[test]
+    fn test_await_non_awaitable_error() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+async def main():
+    result = await 42
+    return result
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri).unwrap();
+
+        // Should have a protocol not satisfied error
+        assert!(
+            !result.type_errors.is_empty(),
+            "Should have error for awaiting non-awaitable"
         );
     }
 

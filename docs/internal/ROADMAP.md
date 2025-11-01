@@ -9,18 +9,6 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 - [ ] "Did you mean" suggestions and annotation fixes
 - [ ] Code actions for refactoring (insert annotations, adjust Optional)
 
-## Advanced Type Features
-
-### Async & Generators
-
-**Note:** Currently using iterable approximations (sufficient for basic iteration)
-
-- [ ] `Generator[Y, S, R]`, `AsyncGenerator[Y, S]`, `Coroutine[Y, S, R]` type constructors
-- [ ] Yield detection to distinguish generator functions
-- [ ] Coroutine return types and `await` result types
-- [ ] Bidirectional generator `send()` support
-- [ ] `yield from` delegation
-
 ## Infrastructure (Can Proceed Independently)
 
 ### Static Analysis & Linting

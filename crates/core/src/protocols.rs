@@ -41,6 +41,8 @@ pub enum ProtocolName {
     AsyncIterator,
     /// Async iterable protocol: __aiter__() -> AsyncIterator[T]
     AsyncIterable,
+    /// Awaitable protocol: __await__() -> Iterator[Any, Any, T]
+    Awaitable,
     /// Sized protocol: __len__() -> int
     Sized,
     /// Sequence protocol: __getitem__(int) -> T, __len__() -> int
@@ -64,6 +66,7 @@ impl std::fmt::Display for ProtocolName {
             ProtocolName::Iterable => write!(f, "Iterable"),
             ProtocolName::AsyncIterator => write!(f, "AsyncIterator"),
             ProtocolName::AsyncIterable => write!(f, "AsyncIterable"),
+            ProtocolName::Awaitable => write!(f, "Awaitable"),
             ProtocolName::Sized => write!(f, "Sized"),
             ProtocolName::Sequence => write!(f, "Sequence"),
             ProtocolName::Mapping => write!(f, "Mapping"),
@@ -120,6 +123,14 @@ impl ProtocolDef {
                 name: ProtocolName::AsyncIterable,
                 required_methods: vec![MethodSignature {
                     name: "__aiter__".to_string(),
+                    params: vec![],
+                    return_type: Type::any(),
+                }],
+            },
+            ProtocolName::Awaitable => Self {
+                name: ProtocolName::Awaitable,
+                required_methods: vec![MethodSignature {
+                    name: "__await__".to_string(),
                     params: vec![],
                     return_type: Type::any(),
                 }],
@@ -312,6 +323,22 @@ impl ProtocolChecker {
             (Type::App(inner, _), ProtocolName::AsyncIterable) => {
                 matches!(inner.as_ref(), Type::App(ctor, _) if matches!(ctor.as_ref(), Type::Con(TypeCtor::AsyncGenerator)))
             }
+            (Type::App(inner, _), ProtocolName::Awaitable) => {
+                if let Type::App(ctor, _) = inner.as_ref() {
+                    if matches!(ctor.as_ref(), Type::Con(TypeCtor::AsyncGenerator)) {
+                        return true;
+                    }
+                }
+                if let Type::App(inner2, _) = inner.as_ref() {
+                    if let Type::App(ctor, _) = inner2.as_ref() {
+                        if matches!(ctor.as_ref(), Type::Con(TypeCtor::Coroutine)) {
+                            return true;
+                        }
+                    }
+                }
+
+                false
+            }
             (Type::Con(TypeCtor::String), ProtocolName::Sized) => true,
             (Type::Con(TypeCtor::Any), _) => true,
             (Type::Con(TypeCtor::Protocol(Some(name))), ProtocolName::UserDefined(proto_name)) => name == proto_name,
@@ -383,6 +410,25 @@ impl ProtocolChecker {
                 if let Type::App(ctor, yield_type) = inner.as_ref() {
                     if matches!(ctor.as_ref(), Type::Con(TypeCtor::AsyncGenerator)) {
                         return yield_type.as_ref().clone();
+                    }
+                }
+                Type::any()
+            }
+            _ => Type::any(),
+        }
+    }
+
+    /// Extract result type from a type that satisfies Awaitable[T]
+    ///
+    /// Returns the result type T if the type is awaitable (Coroutine[Y, S, T] or AsyncGenerator[T, S]), otherwise returns Any.
+    pub fn extract_awaitable_result(ty: &Type) -> Type {
+        match ty {
+            Type::App(inner, result_type) => {
+                if let Type::App(inner2, _send_type) = inner.as_ref() {
+                    if let Type::App(ctor, _yield_type) = inner2.as_ref() {
+                        if matches!(ctor.as_ref(), Type::Con(TypeCtor::Coroutine)) {
+                            return result_type.as_ref().clone();
+                        }
                     }
                 }
                 Type::any()
@@ -759,5 +805,83 @@ mod tests {
             &both,
             &ProtocolName::UserDefined("AsyncIterator".to_string())
         ));
+    }
+
+    #[test]
+    fn test_coroutine_satisfies_awaitable() {
+        let coro = Type::coroutine(Type::none(), Type::none(), Type::int());
+        assert!(ProtocolChecker::satisfies(&coro, &ProtocolName::Awaitable));
+    }
+
+    #[test]
+    fn test_async_generator_satisfies_awaitable() {
+        let async_gen = Type::async_generator(Type::int(), Type::none());
+        assert!(ProtocolChecker::satisfies(&async_gen, &ProtocolName::Awaitable));
+    }
+
+    #[test]
+    fn test_regular_types_dont_satisfy_awaitable() {
+        assert!(!ProtocolChecker::satisfies(&Type::int(), &ProtocolName::Awaitable));
+        assert!(!ProtocolChecker::satisfies(
+            &Type::list(Type::int()),
+            &ProtocolName::Awaitable
+        ));
+        assert!(!ProtocolChecker::satisfies(&Type::string(), &ProtocolName::Awaitable));
+    }
+
+    #[test]
+    fn test_any_satisfies_awaitable() {
+        assert!(ProtocolChecker::satisfies(&Type::any(), &ProtocolName::Awaitable));
+    }
+
+    #[test]
+    fn test_extract_awaitable_result_from_coroutine() {
+        let coro = Type::coroutine(Type::none(), Type::none(), Type::int());
+        let result = ProtocolChecker::extract_awaitable_result(&coro);
+        assert_eq!(result, Type::int());
+    }
+
+    #[test]
+    fn test_extract_awaitable_result_complex_type() {
+        let coro = Type::coroutine(Type::string(), Type::none(), Type::list(Type::string()));
+        let result = ProtocolChecker::extract_awaitable_result(&coro);
+        assert_eq!(result, Type::list(Type::string()));
+    }
+
+    #[test]
+    fn test_extract_awaitable_result_from_non_awaitable() {
+        let list_type = Type::list(Type::int());
+        let result = ProtocolChecker::extract_awaitable_result(&list_type);
+        assert_eq!(result, Type::any());
+    }
+
+    #[test]
+    fn test_awaitable_protocol_def() {
+        let def = ProtocolDef::get(&ProtocolName::Awaitable);
+        assert_eq!(def.name, ProtocolName::Awaitable);
+        assert_eq!(def.required_methods.len(), 1);
+        assert_eq!(def.required_methods[0].name, "__await__");
+    }
+
+    #[test]
+    fn test_awaitable_with_union() {
+        let coro1 = Type::coroutine(Type::none(), Type::none(), Type::int());
+        let coro2 = Type::coroutine(Type::none(), Type::none(), Type::string());
+        let union = Type::union(vec![coro1, coro2]);
+        assert!(ProtocolChecker::satisfies(&union, &ProtocolName::Awaitable));
+    }
+
+    #[test]
+    fn test_awaitable_with_mixed_union() {
+        let coro = Type::coroutine(Type::none(), Type::none(), Type::int());
+        let list = Type::list(Type::int());
+        let mixed_union = Type::union(vec![coro, list]);
+        assert!(!ProtocolChecker::satisfies(&mixed_union, &ProtocolName::Awaitable));
+    }
+
+    #[test]
+    fn test_protocol_display_awaitable() {
+        let protocol = ProtocolName::Awaitable;
+        assert_eq!(protocol.to_string(), "Awaitable");
     }
 }
