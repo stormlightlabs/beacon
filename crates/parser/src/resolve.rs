@@ -947,7 +947,7 @@ impl NameResolver {
                     }
                 }
             }
-            AstNode::For { target, iter, body, else_body, line, col } => {
+            AstNode::For { target, iter, body, else_body, line, col, .. } => {
                 self.visit_node(iter)?;
 
                 let symbol = Symbol {

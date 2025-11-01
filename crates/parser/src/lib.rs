@@ -132,6 +132,7 @@ pub enum AstNode {
         iter: Box<AstNode>,
         body: Vec<AstNode>,
         else_body: Option<Vec<AstNode>>,
+        is_async: bool,
         line: usize,
         col: usize,
     },
@@ -156,6 +157,7 @@ pub enum AstNode {
     With {
         items: Vec<WithItem>,
         body: Vec<AstNode>,
+        is_async: bool,
         line: usize,
         col: usize,
     },
@@ -406,7 +408,7 @@ struct InfoTry(
     Option<Vec<AstNode>>,
 );
 
-struct InfoFor(String, AstNode, Vec<AstNode>, Option<Vec<AstNode>>);
+struct InfoFor(String, AstNode, Vec<AstNode>, Option<Vec<AstNode>>, bool);
 
 impl PythonParser {
     pub fn new() -> Result<Self> {
@@ -602,8 +604,8 @@ impl PythonParser {
                 Ok(AstNode::If { test: Box::new(test), body, elif_parts, else_body, line, col })
             }
             "for_statement" => {
-                let InfoFor(target, iter, body, else_body) = self.extract_for_info(&node, source)?;
-                Ok(AstNode::For { target, iter: Box::new(iter), body, else_body, line, col })
+                let InfoFor(target, iter, body, else_body, is_async) = self.extract_for_info(&node, source)?;
+                Ok(AstNode::For { target, iter: Box::new(iter), body, else_body, is_async, line, col })
             }
             "while_statement" => {
                 let (test, body, else_body) = self.extract_while_info(&node, source)?;
@@ -614,8 +616,8 @@ impl PythonParser {
                 Ok(AstNode::Try { body, handlers, else_body, finally_body, line, col })
             }
             "with_statement" => {
-                let (items, body) = self.extract_with_info(&node, source)?;
-                Ok(AstNode::With { items, body, line, col })
+                let (items, body, is_async) = self.extract_with_info(&node, source)?;
+                Ok(AstNode::With { items, body, is_async, line, col })
             }
             "list_comprehension" => {
                 let (element, generators) = self.extract_list_comp_info(&node, source)?;
@@ -1255,7 +1257,12 @@ impl PythonParser {
             .map(|alt| self.extract_body(&alt, source))
             .transpose()?;
 
-        Ok(InfoFor(target, iter, body, else_body))
+        let is_async = {
+            let mut cursor = node.walk();
+            node.children(&mut cursor).any(|child| child.kind() == "async")
+        };
+
+        Ok(InfoFor(target, iter, body, else_body, is_async))
     }
 
     fn extract_while_info(&self, node: &Node, source: &str) -> Result<(AstNode, Vec<AstNode>, Option<Vec<AstNode>>)> {
@@ -1332,22 +1339,37 @@ impl PythonParser {
         Ok(ExceptHandler { exception_type, name, body, line, col })
     }
 
-    fn extract_with_info(&self, node: &Node, source: &str) -> Result<(Vec<WithItem>, Vec<AstNode>)> {
+    fn extract_with_info(&self, node: &Node, source: &str) -> Result<(Vec<WithItem>, Vec<AstNode>, bool)> {
         let mut items = Vec::new();
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if child.kind() == "with_item" {
-                let context_expr_node = child.named_child(0).ok_or_else(|| {
-                    ParseError::TreeSitterError("Missing context expression in with item".to_string())
-                })?;
-                let context_expr = self.node_to_ast(context_expr_node, source)?;
+            if child.kind() == "with_clause" {
+                let mut clause_cursor = child.walk();
+                for with_item in child.children(&mut clause_cursor) {
+                    if with_item.kind() == "with_item" {
+                        let first_child = with_item.named_child(0).ok_or_else(|| {
+                            ParseError::TreeSitterError("Missing context expression in with item".to_string())
+                        })?;
 
-                let optional_vars = child
-                    .child_by_field_name("alias")
-                    .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-                    .map(|s| s.to_string());
+                        let (context_expr, optional_vars) = if first_child.kind() == "as_pattern" {
+                            let ctx_expr_node = first_child.named_child(0).ok_or_else(|| {
+                                ParseError::TreeSitterError("Missing context in as_pattern".to_string())
+                            })?;
+                            let context_expr = self.node_to_ast(ctx_expr_node, source)?;
 
-                items.push(WithItem { context_expr, optional_vars });
+                            let alias = first_child
+                                .child_by_field_name("alias")
+                                .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                                .map(|s| s.to_string());
+
+                            (context_expr, alias)
+                        } else {
+                            (self.node_to_ast(first_child, source)?, None)
+                        };
+
+                        items.push(WithItem { context_expr, optional_vars });
+                    }
+                }
             }
         }
 
@@ -1356,7 +1378,12 @@ impl PythonParser {
             .ok_or_else(|| ParseError::TreeSitterError("Missing with body".to_string()))?;
         let body = self.extract_body(&body_node, source)?;
 
-        Ok((items, body))
+        let is_async = {
+            let mut cursor = node.walk();
+            node.children(&mut cursor).any(|child| child.kind() == "async")
+        };
+
+        Ok((items, body, is_async))
     }
 
     fn extract_list_comp_info(&self, node: &Node, source: &str) -> Result<(AstNode, Vec<Comprehension>)> {
@@ -3839,6 +3866,93 @@ async def fetch():
                     }
                 }
                 _ => panic!("Expected FunctionDef"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_async_for_loop() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"
+async for item in async_iterable:
+    print(item)
+"#;
+
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::For { target, is_async, body, .. } => {
+                    assert_eq!(target, "item");
+                    assert!(*is_async, "is_async should be true for async for loop");
+                    assert_eq!(body.len(), 1);
+                }
+                other => panic!("Expected For node, got: {other:?}"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_regular_for_loop_not_async() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"
+for item in iterable:
+    print(item)
+"#;
+
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::For { target, is_async, .. } => {
+                    assert_eq!(target, "item");
+                    assert!(!(*is_async), "is_async should be false for regular for loop");
+                }
+                other => panic!("Expected For node, got: {other:?}"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_async_with_statement() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"
+async with async_context_manager as value:
+    print(value)
+"#;
+
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::With { items, is_async, body, .. } => {
+                    assert!(*is_async, "is_async should be true for async with statement");
+                    assert_eq!(items.len(), 1);
+                    assert_eq!(items[0].optional_vars, Some("value".to_string()));
+                    assert_eq!(body.len(), 1);
+                }
+                other => panic!("Expected With node, got: {other:?}"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_regular_with_statement_not_async() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"
+with context_manager as value:
+    print(value)
+"#;
+
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::With { items, is_async, .. } => {
+                    assert!(!(*is_async), "is_async should be false for regular with statement");
+                    assert_eq!(items.len(), 1);
+                }
+                other => panic!("Expected With node, got: {other:?}"),
             },
             _ => panic!("Expected module"),
         }

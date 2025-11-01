@@ -136,7 +136,7 @@ impl<'a> Linter<'a> {
             AstNode::Continue { line, col } => {
                 self.check_continue_outside_loop(*line, *col);
             }
-            AstNode::For { target, iter, body, else_body, line, col } => {
+            AstNode::For { target, iter, body, else_body, line, col, .. } => {
                 self.visit_node(iter);
 
                 if self.ctx.is_import(target) {

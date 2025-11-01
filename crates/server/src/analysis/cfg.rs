@@ -556,6 +556,7 @@ mod tests {
             iter: Box::new(AstNode::Identifier { name: "items".to_string(), line: 1, col: 14 }),
             body: vec![AstNode::Pass { line: 2, col: 5 }],
             else_body: None,
+            is_async: false,
             line: 1,
             col: 1,
         }];
@@ -578,6 +579,7 @@ mod tests {
             iter: Box::new(AstNode::Identifier { name: "items".to_string(), line: 1, col: 14 }),
             body: vec![AstNode::Break { line: 2, col: 5 }],
             else_body: None,
+            is_async: false,
             line: 1,
             col: 1,
         }];
@@ -600,6 +602,7 @@ mod tests {
             iter: Box::new(AstNode::Identifier { name: "items".to_string(), line: 1, col: 14 }),
             body: vec![AstNode::Continue { line: 2, col: 5 }],
             else_body: None,
+            is_async: false,
             line: 1,
             col: 1,
         }];
@@ -695,6 +698,7 @@ mod tests {
                 optional_vars: None,
             }],
             body: vec![AstNode::Pass { line: 2, col: 5 }],
+            is_async: false,
             line: 1,
             col: 1,
         }];
@@ -831,6 +835,7 @@ mod tests {
                     col: 9,
                 }],
                 else_body: None,
+                is_async: false,
                 line: 2,
                 col: 1,
             },

@@ -496,18 +496,19 @@ pub fn visit_node_with_env(
             ctx.record_type(*line, *col, module_type.clone());
             Ok(module_type)
         }
-        AstNode::For { target, iter, body, else_body, line, col } => {
+        AstNode::For { target, iter, body, else_body, is_async, line, col } => {
             let iter_ty = visit_node_with_env(iter, env, ctx, stub_cache)?;
-
             let element_ty = Type::Var(env.fresh_var());
             let span = Span::new(*line, *col);
 
-            ctx.constraints.push(Constraint::Protocol(
-                iter_ty,
-                beacon_core::ProtocolName::Iterable,
-                element_ty.clone(),
-                span,
-            ));
+            let protocol = if *is_async {
+                beacon_core::ProtocolName::AsyncIterable
+            } else {
+                beacon_core::ProtocolName::Iterable
+            };
+
+            ctx.constraints
+                .push(Constraint::Protocol(iter_ty, protocol, element_ty.clone(), span));
 
             env.bind(target.clone(), TypeScheme::mono(element_ty));
 
@@ -633,7 +634,10 @@ pub fn visit_node_with_env(
             Ok(Type::never())
         }
 
-        AstNode::With { items, body, line, col } => {
+        AstNode::With { items, body, is_async, line, col } => {
+            let (enter_method, exit_method) =
+                if *is_async { ("__aenter__", "__aexit__") } else { ("__enter__", "__exit__") };
+
             for item in items {
                 let context_ty = visit_node_with_env(&item.context_expr, env, ctx, stub_cache)?;
 
@@ -641,14 +645,14 @@ pub fn visit_node_with_env(
                 let span = Span::new(*line, *col);
                 ctx.constraints.push(Constraint::HasAttr(
                     context_ty.clone(),
-                    "__enter__".to_string(),
+                    enter_method.to_string(),
                     enter_ty.clone(),
                     span,
                 ));
 
                 let exit_ty = Type::Var(env.fresh_var());
                 ctx.constraints
-                    .push(Constraint::HasAttr(context_ty, "__exit__".to_string(), exit_ty, span));
+                    .push(Constraint::HasAttr(context_ty, exit_method.to_string(), exit_ty, span));
 
                 if let Some(ref target) = item.optional_vars {
                     env.bind(target.clone(), TypeScheme::mono(enter_ty));
@@ -662,7 +666,6 @@ pub fn visit_node_with_env(
             ctx.record_type(*line, *col, Type::none());
             Ok(Type::none())
         }
-
         AstNode::Lambda { args, body, line, col } => {
             let param_types: Vec<Type> = args
                 .iter()
@@ -686,7 +689,6 @@ pub fn visit_node_with_env(
             ctx.record_type(*line, *col, lambda_ty.clone());
             Ok(lambda_ty)
         }
-
         AstNode::Compare { left, comparators, line, col, .. } => {
             visit_node_with_env(left, env, ctx, stub_cache)?;
 
@@ -731,7 +733,6 @@ pub fn visit_node_with_env(
             ctx.record_type(*line, *col, list_ty.clone());
             Ok(list_ty)
         }
-
         AstNode::SetComp { element, generators, line, col } => {
             let mut comp_env = env.clone();
 
@@ -760,7 +761,6 @@ pub fn visit_node_with_env(
             ctx.record_type(*line, *col, set_ty.clone());
             Ok(set_ty)
         }
-
         AstNode::DictComp { key, value, generators, line, col } => {
             let mut comp_env = env.clone();
 
