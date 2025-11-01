@@ -306,6 +306,12 @@ impl ProtocolChecker {
                     Type::Con(TypeCtor::List) | Type::Con(TypeCtor::Set) | Type::Con(TypeCtor::Tuple)
                 ) || matches!(ctor.as_ref(), Type::App(inner_ctor, _) if matches!(inner_ctor.as_ref(), Type::Con(TypeCtor::Dict)))
             }
+            (Type::App(inner, _), ProtocolName::AsyncIterator) => {
+                matches!(inner.as_ref(), Type::App(ctor, _) if matches!(ctor.as_ref(), Type::Con(TypeCtor::AsyncGenerator)))
+            }
+            (Type::App(inner, _), ProtocolName::AsyncIterable) => {
+                matches!(inner.as_ref(), Type::App(ctor, _) if matches!(ctor.as_ref(), Type::Con(TypeCtor::AsyncGenerator)))
+            }
             (Type::Con(TypeCtor::String), ProtocolName::Sized) => true,
             (Type::Con(TypeCtor::Any), _) => true,
             (Type::Con(TypeCtor::Protocol(Some(name))), ProtocolName::UserDefined(proto_name)) => name == proto_name,
@@ -360,6 +366,23 @@ impl ProtocolChecker {
                 if let Type::App(ctor, key) = inner.as_ref() {
                     if matches!(ctor.as_ref(), Type::Con(TypeCtor::Dict)) {
                         return key.as_ref().clone();
+                    }
+                }
+                Type::any()
+            }
+            _ => Type::any(),
+        }
+    }
+
+    /// Extract yield type from a type that satisfies AsyncIterable[T]
+    ///
+    /// Returns the yield type T if the type is async iterable (AsyncGenerator[T, S]), otherwise returns Any.
+    pub fn extract_async_iterable_element(ty: &Type) -> Type {
+        match ty {
+            Type::App(inner, _send_type) => {
+                if let Type::App(ctor, yield_type) = inner.as_ref() {
+                    if matches!(ctor.as_ref(), Type::Con(TypeCtor::AsyncGenerator)) {
+                        return yield_type.as_ref().clone();
                     }
                 }
                 Type::any()
@@ -642,5 +665,99 @@ mod tests {
 
         assert!(ProtocolChecker::satisfies(&intersection, &ProtocolName::Iterable));
         assert!(ProtocolChecker::satisfies(&intersection, &ProtocolName::Sized));
+    }
+
+    #[test]
+    fn test_async_generator_satisfies_async_iterator() {
+        let async_gen = Type::async_generator(Type::int(), Type::none());
+        assert!(ProtocolChecker::satisfies(&async_gen, &ProtocolName::AsyncIterator));
+    }
+
+    #[test]
+    fn test_async_generator_satisfies_async_iterable() {
+        let async_gen = Type::async_generator(Type::string(), Type::none());
+        assert!(ProtocolChecker::satisfies(&async_gen, &ProtocolName::AsyncIterable));
+    }
+
+    #[test]
+    fn test_regular_types_dont_satisfy_async_protocols() {
+        assert!(!ProtocolChecker::satisfies(
+            &Type::list(Type::int()),
+            &ProtocolName::AsyncIterator
+        ));
+        assert!(!ProtocolChecker::satisfies(
+            &Type::list(Type::int()),
+            &ProtocolName::AsyncIterable
+        ));
+        assert!(!ProtocolChecker::satisfies(&Type::int(), &ProtocolName::AsyncIterator));
+        assert!(!ProtocolChecker::satisfies(
+            &Type::string(),
+            &ProtocolName::AsyncIterable
+        ));
+    }
+
+    #[test]
+    fn test_async_generator_doesnt_satisfy_sync_iterator() {
+        let async_gen = Type::async_generator(Type::int(), Type::none());
+        assert!(!ProtocolChecker::satisfies(&async_gen, &ProtocolName::Iterable));
+    }
+
+    #[test]
+    fn test_any_satisfies_async_protocols() {
+        assert!(ProtocolChecker::satisfies(&Type::any(), &ProtocolName::AsyncIterator));
+        assert!(ProtocolChecker::satisfies(&Type::any(), &ProtocolName::AsyncIterable));
+    }
+
+    #[test]
+    fn test_extract_async_iterable_element() {
+        let async_gen = Type::async_generator(Type::int(), Type::none());
+        let element = ProtocolChecker::extract_async_iterable_element(&async_gen);
+        assert_eq!(element, Type::int());
+    }
+
+    #[test]
+    fn test_extract_async_iterable_element_complex_type() {
+        let async_gen = Type::async_generator(Type::list(Type::string()), Type::none());
+        let element = ProtocolChecker::extract_async_iterable_element(&async_gen);
+        assert_eq!(element, Type::list(Type::string()));
+    }
+
+    #[test]
+    fn test_extract_async_iterable_element_from_non_async() {
+        let list_type = Type::list(Type::int());
+        let element = ProtocolChecker::extract_async_iterable_element(&list_type);
+        assert_eq!(element, Type::any());
+    }
+
+    #[test]
+    fn test_async_protocol_with_union() {
+        let async_gen1 = Type::async_generator(Type::int(), Type::none());
+        let async_gen2 = Type::async_generator(Type::string(), Type::none());
+        let union = Type::union(vec![async_gen1, async_gen2]);
+
+        assert!(ProtocolChecker::satisfies(&union, &ProtocolName::AsyncIterator));
+        assert!(ProtocolChecker::satisfies(&union, &ProtocolName::AsyncIterable));
+    }
+
+    #[test]
+    fn test_async_protocol_with_mixed_union() {
+        let async_gen = Type::async_generator(Type::int(), Type::none());
+        let list = Type::list(Type::int());
+        let mixed_union = Type::union(vec![async_gen, list]);
+
+        assert!(!ProtocolChecker::satisfies(&mixed_union, &ProtocolName::AsyncIterator));
+        assert!(!ProtocolChecker::satisfies(&mixed_union, &ProtocolName::AsyncIterable));
+    }
+
+    #[test]
+    fn test_async_protocol_with_intersection() {
+        let async_iter_proto = Type::Con(TypeCtor::Protocol(Some("AsyncIterator".to_string())));
+        let sized_proto = Type::Con(TypeCtor::Protocol(Some("Sized".to_string())));
+        let both = Type::intersection(vec![async_iter_proto, sized_proto]);
+
+        assert!(ProtocolChecker::satisfies(
+            &both,
+            &ProtocolName::UserDefined("AsyncIterator".to_string())
+        ));
     }
 }
