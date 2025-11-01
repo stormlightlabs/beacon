@@ -164,6 +164,26 @@ impl From<u32> for TypeVar {
     }
 }
 
+/// Literal values for singleton types (Literal[True], Literal[42], etc.)
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum LiteralType {
+    Int(i64),
+    Bool(bool),
+    String(String),
+    None,
+}
+
+impl fmt::Display for LiteralType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LiteralType::Int(n) => write!(f, "Literal[{n}]"),
+            LiteralType::Bool(b) => write!(f, "Literal[{}]", if *b { "True" } else { "False" }),
+            LiteralType::String(s) => write!(f, "Literal[{s:?}]"),
+            LiteralType::None => write!(f, "Literal[None]"),
+        }
+    }
+}
+
 /// Type constructors for built-in and user-defined types
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TypeCtor {
@@ -191,6 +211,8 @@ pub enum TypeCtor {
     Protocol(Option<String>),
     Class(String),
     Module(String),
+    /// Literal singleton type (Literal[True], Literal[42], etc.)
+    Literal(LiteralType),
 }
 
 impl fmt::Display for TypeCtor {
@@ -220,6 +242,7 @@ impl fmt::Display for TypeCtor {
             }
             TypeCtor::Class(name) => write!(f, "{name}"),
             TypeCtor::Module(name) => write!(f, "module<{name}>"),
+            TypeCtor::Literal(lit) => write!(f, "{lit}"),
         }
     }
 }
@@ -236,7 +259,8 @@ impl TypeCtor {
             | TypeCtor::Any
             | TypeCtor::Top
             | TypeCtor::Never
-            | TypeCtor::TypeVariable(_) => Kind::Star,
+            | TypeCtor::TypeVariable(_)
+            | TypeCtor::Literal(_) => Kind::Star,
             // * -> *
             TypeCtor::List | TypeCtor::Set => Kind::arity(1),
             // * -> * -> *
@@ -271,7 +295,19 @@ impl TypeCtor {
                 | TypeCtor::TypeVariable(_)
                 | TypeCtor::Generic
                 | TypeCtor::Protocol(_)
+                | TypeCtor::Literal(_)
         )
+    }
+
+    /// Get the base type of a literal (e.g., Literal[42] -> int)
+    pub fn base_type(&self) -> Option<TypeCtor> {
+        match self {
+            TypeCtor::Literal(LiteralType::Int(_)) => Some(TypeCtor::Int),
+            TypeCtor::Literal(LiteralType::Bool(_)) => Some(TypeCtor::Bool),
+            TypeCtor::Literal(LiteralType::String(_)) => Some(TypeCtor::String),
+            TypeCtor::Literal(LiteralType::None) => Some(TypeCtor::NoneType),
+            _ => None,
+        }
     }
 }
 
@@ -390,6 +426,26 @@ impl Type {
 
     pub fn none() -> Self {
         Type::Con(TypeCtor::NoneType)
+    }
+
+    /// Create a literal int type (e.g., Literal[42])
+    pub fn literal_int(value: i64) -> Self {
+        Type::Con(TypeCtor::Literal(LiteralType::Int(value)))
+    }
+
+    /// Create a literal bool type (e.g., Literal[True])
+    pub fn literal_bool(value: bool) -> Self {
+        Type::Con(TypeCtor::Literal(LiteralType::Bool(value)))
+    }
+
+    /// Create a literal string type (e.g., Literal["hello"])
+    pub fn literal_string(value: String) -> Self {
+        Type::Con(TypeCtor::Literal(LiteralType::String(value)))
+    }
+
+    /// Create a literal None type (Literal[None])
+    pub fn literal_none() -> Self {
+        Type::Con(TypeCtor::Literal(LiteralType::None))
     }
 
     pub fn any() -> Self {

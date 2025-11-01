@@ -1,9 +1,11 @@
 //! Pattern matching type extraction and analysis
 //!
-//! This module implements type extraction and binding logic for PEP 634 pattern matching.
+//! This module implements type extraction and binding for PEP 634 pattern matching.
 //! It handles type narrowing, variable binding, and pattern-subject compatibility checking.
 
+use super::class_metadata::ClassRegistry;
 use super::type_env::TypeEnvironment;
+
 use beacon_core::{
     Type, TypeCtor,
     errors::{AnalysisError, Result},
@@ -30,31 +32,32 @@ use std::collections::HashSet;
 /// ```ignore
 /// // case [x, y]:
 /// //   Binds x: T, y: T where subject: list[T]
-///
 /// // case {"key": value}:
 /// //   Binds value: V where subject: dict[str, V]
-///
 /// // case Point(x, y):
 /// //   Binds x: int, y: int where subject: Point
-///
 /// // case x:
 /// //   Binds x: subject_type
 /// ```
 pub fn extract_pattern_bindings(
-    pattern: &Pattern, subject_type: &Type, env: &mut TypeEnvironment,
+    pattern: &Pattern, subject_type: &Type, env: &mut TypeEnvironment, class_registry: &ClassRegistry,
 ) -> Result<Vec<(String, Type)>> {
     match pattern {
         Pattern::MatchValue(literal) => {
             let _ = extract_literal_type(literal, env)?;
             Ok(vec![])
         }
-        Pattern::MatchSequence(patterns) => extract_sequence_bindings(patterns, subject_type, env),
-        Pattern::MatchMapping { keys, patterns } => extract_mapping_bindings(keys, patterns, subject_type, env),
-        Pattern::MatchClass { cls, patterns } => extract_class_bindings(cls, patterns, subject_type, env),
+        Pattern::MatchSequence(patterns) => extract_sequence_bindings(patterns, subject_type, env, class_registry),
+        Pattern::MatchMapping { keys, patterns } => {
+            extract_mapping_bindings(keys, patterns, subject_type, env, class_registry)
+        }
+        Pattern::MatchClass { cls, patterns } => {
+            extract_class_bindings(cls, patterns, subject_type, env, class_registry)
+        }
         Pattern::MatchAs { pattern: sub_pattern, name } => {
             let mut bindings = Vec::new();
             if let Some(sub) = sub_pattern {
-                bindings.extend(extract_pattern_bindings(sub, subject_type, env)?);
+                bindings.extend(extract_pattern_bindings(sub, subject_type, env, class_registry)?);
             }
 
             if let Some(var_name) = name {
@@ -64,7 +67,7 @@ pub fn extract_pattern_bindings(
 
             Ok(bindings)
         }
-        Pattern::MatchOr(alternatives) => extract_or_bindings(alternatives, subject_type, env),
+        Pattern::MatchOr(alternatives) => extract_or_bindings(alternatives, subject_type, env, class_registry),
     }
 }
 
@@ -88,12 +91,12 @@ fn extract_literal_type(literal: &AstNode, env: &mut TypeEnvironment) -> Result<
 
 /// Extract bindings from a sequence pattern like [x, y, *rest]
 fn extract_sequence_bindings(
-    patterns: &[Pattern], subject_type: &Type, env: &mut TypeEnvironment,
+    patterns: &[Pattern], subject_type: &Type, env: &mut TypeEnvironment, class_registry: &ClassRegistry,
 ) -> Result<Vec<(String, Type)>> {
     let element_type = extract_sequence_element_type(subject_type, env);
     let mut bindings = Vec::new();
     for pattern in patterns {
-        let pattern_bindings = extract_pattern_bindings(pattern, &element_type, env)?;
+        let pattern_bindings = extract_pattern_bindings(pattern, &element_type, env, class_registry)?;
         bindings.extend(pattern_bindings);
     }
     Ok(bindings)
@@ -113,11 +116,12 @@ fn extract_sequence_element_type(subject_type: &Type, env: &mut TypeEnvironment)
 /// The exprs are evaluated and compared, but unbound
 fn extract_mapping_bindings(
     _keys: &[AstNode], patterns: &[Pattern], subject_type: &Type, env: &mut TypeEnvironment,
+    class_registry: &ClassRegistry,
 ) -> Result<Vec<(String, Type)>> {
     let value_type = extract_mapping_value_type(subject_type, env);
     let mut bindings = Vec::new();
     for pattern in patterns {
-        let pattern_bindings = extract_pattern_bindings(pattern, &value_type, env)?;
+        let pattern_bindings = extract_pattern_bindings(pattern, &value_type, env, class_registry)?;
         bindings.extend(pattern_bindings);
     }
     Ok(bindings)
@@ -139,20 +143,58 @@ fn extract_mapping_value_type(subject_type: &Type, env: &mut TypeEnvironment) ->
 }
 
 /// Extract bindings from a class pattern like Point(x, y)
-/// TODO: Look up class constructor signature and field types from class metadata
-/// For class patterns, we need to check if the subject type is compatible with the
-/// class and then extract field types for the positional patterns
+///
+/// Looks up the class constructor signature from the class registry and validates that the number of
+/// patterns matches the number of constructor parameters.
+/// Extracts proper field types from the constructor signature instead of using fresh type variables.
 fn extract_class_bindings(
-    _cls: &str, patterns: &[Pattern], _subject_type: &Type, env: &mut TypeEnvironment,
+    cls: &str, patterns: &[Pattern], _subject_type: &Type, env: &mut TypeEnvironment, class_registry: &ClassRegistry,
 ) -> Result<Vec<(String, Type)>> {
     let mut bindings = Vec::new();
+
+    if let Some(class_meta) = class_registry.get_class(cls) {
+        if let Some(init_type) = &class_meta.init_type {
+            let param_types = extract_constructor_params(init_type);
+            if patterns.len() != param_types.len() {
+                return Err(AnalysisError::ConstraintGeneration(format!(
+                    "Class pattern for '{}' expects {} arguments but got {}",
+                    cls,
+                    param_types.len(),
+                    patterns.len()
+                ))
+                .into());
+            }
+
+            for (pattern, param_type) in patterns.iter().zip(param_types.iter()) {
+                let pattern_bindings = extract_pattern_bindings(pattern, param_type, env, class_registry)?;
+                bindings.extend(pattern_bindings);
+            }
+
+            return Ok(bindings);
+        }
+    }
+
     for pattern in patterns {
         let field_type = Type::Var(env.fresh_var());
-        let pattern_bindings = extract_pattern_bindings(pattern, &field_type, env)?;
+        let pattern_bindings = extract_pattern_bindings(pattern, &field_type, env, class_registry)?;
         bindings.extend(pattern_bindings);
     }
 
     Ok(bindings)
+}
+
+/// Extract constructor parameter types from an __init__ function type
+fn extract_constructor_params(init_type: &Type) -> Vec<Type> {
+    match init_type {
+        Type::Fun(params, _ret) => {
+            if params.len() > 1 {
+                params[1..].to_vec()
+            } else {
+                vec![]
+            }
+        }
+        _ => vec![],
+    }
 }
 
 /// Extract bindings from an OR pattern like case 1 | 2 | 3:
@@ -160,17 +202,17 @@ fn extract_class_bindings(
 /// In Python, OR patterns must bind the same set of variables in all alternatives.
 /// This function validates that all alternatives bind exactly the same variable names.
 fn extract_or_bindings(
-    alternatives: &[Pattern], subject_type: &Type, env: &mut TypeEnvironment,
+    alternatives: &[Pattern], subject_type: &Type, env: &mut TypeEnvironment, class_registry: &ClassRegistry,
 ) -> Result<Vec<(String, Type)>> {
     if alternatives.is_empty() {
         return Ok(vec![]);
     }
 
-    let mut common_bindings = extract_pattern_bindings(&alternatives[0], subject_type, env)?;
+    let mut common_bindings = extract_pattern_bindings(&alternatives[0], subject_type, env, class_registry)?;
     let first_names: HashSet<String> = common_bindings.iter().map(|(name, _)| name.clone()).collect();
 
     for (idx, alt) in alternatives[1..].iter().enumerate() {
-        let alt_bindings = extract_pattern_bindings(alt, subject_type, env)?;
+        let alt_bindings = extract_pattern_bindings(alt, subject_type, env, class_registry)?;
         let alt_names: HashSet<String> = alt_bindings.iter().map(|(name, _)| name.clone()).collect();
 
         if first_names != alt_names {
@@ -207,10 +249,7 @@ fn extract_or_bindings(
 fn narrow_type_for_pattern(subject_type: &Type, pattern: Option<&Pattern>) -> Type {
     match pattern {
         None => subject_type.clone(),
-        Some(Pattern::MatchValue(_literal)) => {
-            // TODO: create singleton types for literals
-            subject_type.clone()
-        }
+        Some(Pattern::MatchValue(_literal)) => subject_type.clone(),
         Some(Pattern::MatchSequence(_)) => match subject_type {
             Type::Union(variants) => {
                 let seq_variants: Vec<Type> = variants.iter().filter(|t| is_sequence_type(t)).cloned().collect();
@@ -267,6 +306,7 @@ fn is_mapping_type(ty: &Type) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::class_metadata::ClassMetadata;
     use beacon_parser::Pattern;
 
     #[test]
@@ -311,9 +351,10 @@ mod tests {
     #[test]
     fn test_match_as_bindings() {
         let mut env = TypeEnvironment::new();
+        let class_registry = ClassRegistry::new();
         let subject_type = Type::list(Type::int());
         let pattern = Pattern::MatchAs { pattern: None, name: Some("x".to_string()) };
-        let bindings = extract_pattern_bindings(&pattern, &subject_type, &mut env).unwrap();
+        let bindings = extract_pattern_bindings(&pattern, &subject_type, &mut env, &class_registry).unwrap();
         assert_eq!(bindings.len(), 1);
         assert_eq!(bindings[0].0, "x");
         assert_eq!(bindings[0].1, subject_type);
@@ -322,12 +363,13 @@ mod tests {
     #[test]
     fn test_match_sequence_bindings() {
         let mut env = TypeEnvironment::new();
+        let class_registry = ClassRegistry::new();
         let subject_type = Type::list(Type::int());
         let pattern = Pattern::MatchSequence(vec![
             Pattern::MatchAs { pattern: None, name: Some("x".to_string()) },
             Pattern::MatchAs { pattern: None, name: Some("y".to_string()) },
         ]);
-        let bindings = extract_pattern_bindings(&pattern, &subject_type, &mut env).unwrap();
+        let bindings = extract_pattern_bindings(&pattern, &subject_type, &mut env, &class_registry).unwrap();
         assert_eq!(bindings.len(), 2);
         assert_eq!(bindings[0].0, "x");
         assert_eq!(bindings[0].1, Type::int());
@@ -338,6 +380,7 @@ mod tests {
     #[test]
     fn test_match_mapping_bindings() {
         let mut env = TypeEnvironment::new();
+        let class_registry = ClassRegistry::new();
         let subject_type = Type::dict(Type::string(), Type::int());
         let key = AstNode::Literal {
             value: LiteralValue::String { value: "key".to_string(), prefix: String::new() },
@@ -348,7 +391,7 @@ mod tests {
             keys: vec![key],
             patterns: vec![Pattern::MatchAs { pattern: None, name: Some("value".to_string()) }],
         };
-        let bindings = extract_pattern_bindings(&pattern, &subject_type, &mut env).unwrap();
+        let bindings = extract_pattern_bindings(&pattern, &subject_type, &mut env, &class_registry).unwrap();
         assert_eq!(bindings.len(), 1);
         assert_eq!(bindings[0].0, "value");
         assert_eq!(bindings[0].1, Type::int());
@@ -357,12 +400,13 @@ mod tests {
     #[test]
     fn test_match_or_bindings() {
         let mut env = TypeEnvironment::new();
+        let class_registry = ClassRegistry::new();
         let subject_type = Type::union(vec![Type::int(), Type::string()]);
         let pattern = Pattern::MatchOr(vec![
             Pattern::MatchAs { pattern: None, name: Some("val".to_string()) },
             Pattern::MatchAs { pattern: None, name: Some("val".to_string()) },
         ]);
-        let bindings = extract_pattern_bindings(&pattern, &subject_type, &mut env).unwrap();
+        let bindings = extract_pattern_bindings(&pattern, &subject_type, &mut env, &class_registry).unwrap();
         assert_eq!(bindings.len(), 1);
         assert_eq!(bindings[0].0, "val");
         assert!(matches!(bindings[0].1, Type::Union(_)));
@@ -371,10 +415,11 @@ mod tests {
     #[test]
     fn test_match_value_no_bindings() {
         let mut env = TypeEnvironment::new();
+        let class_registry = ClassRegistry::new();
         let subject_type = Type::int();
         let literal = AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 1 };
         let pattern = Pattern::MatchValue(literal);
-        let bindings = extract_pattern_bindings(&pattern, &subject_type, &mut env).unwrap();
+        let bindings = extract_pattern_bindings(&pattern, &subject_type, &mut env, &class_registry).unwrap();
         assert_eq!(bindings.len(), 0);
     }
 
@@ -397,24 +442,26 @@ mod tests {
     #[test]
     fn test_or_pattern_bindings_consistent() {
         let mut env = TypeEnvironment::new();
+        let class_registry = ClassRegistry::new();
         let subject_type = Type::union(vec![Type::int(), Type::string()]);
         let pattern = Pattern::MatchOr(vec![
             Pattern::MatchAs { pattern: None, name: Some("x".to_string()) },
             Pattern::MatchAs { pattern: None, name: Some("x".to_string()) },
         ]);
-        let result = extract_pattern_bindings(&pattern, &subject_type, &mut env);
+        let result = extract_pattern_bindings(&pattern, &subject_type, &mut env, &class_registry);
         assert!(result.is_ok(), "OR pattern with consistent bindings should succeed");
     }
 
     #[test]
     fn test_or_pattern_bindings_inconsistent() {
         let mut env = TypeEnvironment::new();
+        let class_registry = ClassRegistry::new();
         let subject_type = Type::union(vec![Type::int(), Type::string()]);
         let pattern = Pattern::MatchOr(vec![
             Pattern::MatchAs { pattern: None, name: Some("x".to_string()) },
             Pattern::MatchAs { pattern: None, name: Some("y".to_string()) },
         ]);
-        let result = extract_pattern_bindings(&pattern, &subject_type, &mut env);
+        let result = extract_pattern_bindings(&pattern, &subject_type, &mut env, &class_registry);
 
         assert!(result.is_err(), "OR pattern with inconsistent bindings should fail");
 
@@ -433,6 +480,7 @@ mod tests {
     #[test]
     fn test_or_pattern_bindings_extra_variable() {
         let mut env = TypeEnvironment::new();
+        let class_registry = ClassRegistry::new();
         let subject_type = Type::union(vec![Type::int(), Type::string()]);
         let pattern = Pattern::MatchOr(vec![
             Pattern::MatchAs { pattern: None, name: Some("x".to_string()) },
@@ -442,10 +490,192 @@ mod tests {
             ]),
         ]);
 
-        let result = extract_pattern_bindings(&pattern, &subject_type, &mut env);
+        let result = extract_pattern_bindings(&pattern, &subject_type, &mut env, &class_registry);
         assert!(
             result.is_err(),
             "OR pattern with extra bindings in one alternative should fail"
         );
+    }
+
+    #[test]
+    fn test_class_pattern_with_valid_arity() {
+        let mut env = TypeEnvironment::new();
+        let mut class_registry = ClassRegistry::new();
+
+        let mut point_meta = ClassMetadata::new("Point".to_string());
+        point_meta.init_type = Some(Type::Fun(
+            vec![
+                Type::Con(TypeCtor::Class("Point".to_string())),
+                Type::int(),
+                Type::int(),
+            ],
+            Box::new(Type::none()),
+        ));
+        class_registry.register_class("Point".to_string(), point_meta);
+
+        let subject_type = Type::Con(TypeCtor::Class("Point".to_string()));
+        let pattern = Pattern::MatchClass {
+            cls: "Point".to_string(),
+            patterns: vec![
+                Pattern::MatchAs { pattern: None, name: Some("x".to_string()) },
+                Pattern::MatchAs { pattern: None, name: Some("y".to_string()) },
+            ],
+        };
+
+        let bindings = extract_pattern_bindings(&pattern, &subject_type, &mut env, &class_registry).unwrap();
+        assert_eq!(bindings.len(), 2);
+        assert_eq!(bindings[0].0, "x");
+        assert_eq!(bindings[0].1, Type::int());
+        assert_eq!(bindings[1].0, "y");
+        assert_eq!(bindings[1].1, Type::int());
+    }
+
+    #[test]
+    fn test_class_pattern_with_too_many_args() {
+        let mut env = TypeEnvironment::new();
+        let mut class_registry = ClassRegistry::new();
+
+        let mut point_meta = ClassMetadata::new("Point".to_string());
+        point_meta.init_type = Some(Type::Fun(
+            vec![
+                Type::Con(TypeCtor::Class("Point".to_string())),
+                Type::int(),
+                Type::int(),
+            ],
+            Box::new(Type::none()),
+        ));
+        class_registry.register_class("Point".to_string(), point_meta);
+
+        let subject_type = Type::Con(TypeCtor::Class("Point".to_string()));
+        let pattern = Pattern::MatchClass {
+            cls: "Point".to_string(),
+            patterns: vec![
+                Pattern::MatchAs { pattern: None, name: Some("x".to_string()) },
+                Pattern::MatchAs { pattern: None, name: Some("y".to_string()) },
+                Pattern::MatchAs { pattern: None, name: Some("z".to_string()) },
+            ],
+        };
+
+        let result = extract_pattern_bindings(&pattern, &subject_type, &mut env, &class_registry);
+        assert!(result.is_err(), "Should fail with too many arguments");
+
+        match result {
+            Err(e) => {
+                let error_msg = e.to_string();
+                assert!(
+                    error_msg.contains("expects 2 arguments but got 3"),
+                    "Error should mention argument count mismatch, got: {error_msg}"
+                );
+            }
+            Ok(_) => panic!("Expected error for wrong number of arguments"),
+        }
+    }
+
+    #[test]
+    fn test_class_pattern_with_too_few_args() {
+        let mut env = TypeEnvironment::new();
+        let mut class_registry = ClassRegistry::new();
+
+        let mut point_meta = ClassMetadata::new("Point".to_string());
+        point_meta.init_type = Some(Type::Fun(
+            vec![
+                Type::Con(TypeCtor::Class("Point".to_string())),
+                Type::int(),
+                Type::int(),
+            ],
+            Box::new(Type::none()),
+        ));
+        class_registry.register_class("Point".to_string(), point_meta);
+
+        let subject_type = Type::Con(TypeCtor::Class("Point".to_string()));
+        let pattern = Pattern::MatchClass {
+            cls: "Point".to_string(),
+            patterns: vec![Pattern::MatchAs { pattern: None, name: Some("x".to_string()) }],
+        };
+
+        let result = extract_pattern_bindings(&pattern, &subject_type, &mut env, &class_registry);
+        assert!(result.is_err(), "Should fail with too few arguments");
+
+        match result {
+            Err(e) => {
+                let error_msg = e.to_string();
+                assert!(
+                    error_msg.contains("expects 2 arguments but got 1"),
+                    "Error should mention argument count mismatch, got: {error_msg}"
+                );
+            }
+            Ok(_) => panic!("Expected error for wrong number of arguments"),
+        }
+    }
+
+    #[test]
+    fn test_class_pattern_with_nested_patterns() {
+        let mut env = TypeEnvironment::new();
+        let mut class_registry = ClassRegistry::new();
+
+        let mut container_meta = ClassMetadata::new("Container".to_string());
+        container_meta.init_type = Some(Type::Fun(
+            vec![
+                Type::Con(TypeCtor::Class("Container".to_string())),
+                Type::list(Type::int()),
+            ],
+            Box::new(Type::none()),
+        ));
+        class_registry.register_class("Container".to_string(), container_meta);
+
+        let subject_type = Type::Con(TypeCtor::Class("Container".to_string()));
+        let pattern = Pattern::MatchClass {
+            cls: "Container".to_string(),
+            patterns: vec![Pattern::MatchSequence(vec![
+                Pattern::MatchAs { pattern: None, name: Some("first".to_string()) },
+                Pattern::MatchAs { pattern: None, name: Some("second".to_string()) },
+            ])],
+        };
+
+        let bindings = extract_pattern_bindings(&pattern, &subject_type, &mut env, &class_registry).unwrap();
+        assert_eq!(bindings.len(), 2);
+        assert_eq!(bindings[0].0, "first");
+        assert_eq!(bindings[0].1, Type::int());
+        assert_eq!(bindings[1].0, "second");
+        assert_eq!(bindings[1].1, Type::int());
+    }
+
+    #[test]
+    fn test_class_pattern_for_unknown_class_fallback() {
+        let mut env = TypeEnvironment::new();
+        let class_registry = ClassRegistry::new();
+
+        let subject_type = Type::Con(TypeCtor::Class("UnknownClass".to_string()));
+        let pattern = Pattern::MatchClass {
+            cls: "UnknownClass".to_string(),
+            patterns: vec![
+                Pattern::MatchAs { pattern: None, name: Some("x".to_string()) },
+                Pattern::MatchAs { pattern: None, name: Some("y".to_string()) },
+            ],
+        };
+
+        let bindings = extract_pattern_bindings(&pattern, &subject_type, &mut env, &class_registry).unwrap();
+        assert_eq!(bindings.len(), 2);
+        assert_eq!(bindings[0].0, "x");
+        assert_eq!(bindings[1].0, "y");
+    }
+
+    #[test]
+    fn test_class_pattern_without_init_fallback() {
+        let mut env = TypeEnvironment::new();
+        let mut class_registry = ClassRegistry::new();
+
+        let simple_meta = ClassMetadata::new("SimpleClass".to_string());
+        class_registry.register_class("SimpleClass".to_string(), simple_meta);
+
+        let subject_type = Type::Con(TypeCtor::Class("SimpleClass".to_string()));
+        let pattern = Pattern::MatchClass {
+            cls: "SimpleClass".to_string(),
+            patterns: vec![Pattern::MatchAs { pattern: None, name: Some("field".to_string()) }],
+        };
+
+        let bindings = extract_pattern_bindings(&pattern, &subject_type, &mut env, &class_registry).unwrap();
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].0, "field");
     }
 }

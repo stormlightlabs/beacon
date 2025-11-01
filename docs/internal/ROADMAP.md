@@ -1,8 +1,6 @@
 # Beacon Roadmap
 
-Strategic milestones for delivering a Hindley-Milner type system and LSP server for Python. See TODO.md for implementation details.
-
-## Type System Extensions
+Strategic milestones for delivering a Hindley-Milner type system and LSP server for Python.
 
 ## LSP Features
 
@@ -12,10 +10,6 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 - [ ] Code actions for refactoring (insert annotations, adjust Optional)
 
 ## Advanced Type Features
-
-### Pattern Matching (PEP 634)
-
-See [TODO](./TODO.md)
 
 ### Async & Generators
 
@@ -59,27 +53,6 @@ See [TODO](./TODO.md)
 - [ ] Property tests for unifier correctness
 - [ ] Corpus harness (compare against MyPy/Pyright)
 - [ ] Fuzzing for parser and solver
-
-## Mitigated Risks
-
-- **Attribute access soundness:** HasAttr constraints prevent invalid access (HM007)
-    - Now includes inheritance chain checking via `lookup_attribute_with_inheritance`
-- **Constructor safety:** `__init__` and `__new__` validate argument types
-    - `__new__` checked before `__init__` for metaclass-aware construction
-- **Protocol satisfaction:** Protocol constraints detect interface mismatches (HM006)
-    - Extended to user-defined protocols via structural checking
-- **Graceful degradation:** Type variables and `Any` allow flexible inference
-- **Decorator typing:** @property, @staticmethod, @classmethod properly transform method signatures
-- **Inheritance support:** Row polymorphism enables structural subtyping with method overrides
-- **Protocol composition:** Intersection and union types enable complex protocol requirements
-    - `Type::Intersection` with normalization (flatten, deduplicate, sort)
-    - Proper subtyping semantics for composed protocols
-- **Overload resolution:** Full Python `@overload` semantics with first-match-wins strategy
-    - Method name tracking in `BoundMethod` type for runtime resolution
-    - Automatic self-parameter handling in overload matching
-    - MethodType enum supporting both single and overloaded methods
-- **Variance checking:** Contravariant parameters, covariant return types in protocols
-    - Full signature compatibility validation via `Type::is_subtype_of()`
 
 ## Parking Lot
 

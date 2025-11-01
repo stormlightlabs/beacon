@@ -387,7 +387,8 @@ pub fn visit_node_with_env(
                 ));
 
                 let mut case_env = env.clone();
-                let bindings = extract_pattern_bindings(&case.pattern, &subject_ty, &mut case_env)?;
+                let bindings =
+                    extract_pattern_bindings(&case.pattern, &subject_ty, &mut case_env, &ctx.class_registry)?;
 
                 ctx.constraints.push(Constraint::MatchPattern(
                     subject_ty.clone(),

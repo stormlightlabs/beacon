@@ -2544,11 +2544,8 @@ def describe(x: int | str):
         );
     }
 
-    /// TODO: Fix parser to correctly handle catch-all patterns (case _ or case x)
-    /// Currently the parser doesn't parse catch-all patterns in a way that the reachability checker can recognize them.
-    /// The unit tests in exhaustiveness.rs demonstrate that the algorithm works correctly when patterns are constructed manually.
+    /// Test that patterns after a catch-all pattern are correctly identified as unreachable
     #[test]
-    #[ignore]
     fn test_pattern_reachability_unreachable_after_catch_all() {
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();

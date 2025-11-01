@@ -1611,7 +1611,14 @@ impl PythonParser {
                 if let Some(child) = node.named_child(0) {
                     self.extract_pattern(&child, source)
                 } else {
-                    Ok(Pattern::MatchValue(self.node_to_ast(*node, source)?))
+                    let pattern_text = node
+                        .utf8_text(source.as_bytes())
+                        .map_err(|e| ParseError::TreeSitterError(format!("Failed to extract pattern text: {e}")))?;
+                    if pattern_text.trim() == "_" {
+                        Ok(Pattern::MatchAs { pattern: None, name: None })
+                    } else {
+                        Ok(Pattern::MatchValue(self.node_to_ast(*node, source)?))
+                    }
                 }
             }
             "as_pattern" => {
@@ -1709,6 +1716,31 @@ impl PythonParser {
 
                 Ok(Pattern::MatchOr(patterns))
             }
+            "identifier" => {
+                let text = node
+                    .utf8_text(source.as_bytes())
+                    .map_err(|e| ParseError::TreeSitterError(format!("Failed to extract identifier text: {e}")))?;
+
+                if text == "_" {
+                    Ok(Pattern::MatchAs { pattern: None, name: None })
+                } else {
+                    Ok(Pattern::MatchAs { pattern: None, name: Some(text.to_string()) })
+                }
+            }
+            "dotted_name" => {
+                let text = node
+                    .utf8_text(source.as_bytes())
+                    .map_err(|e| ParseError::TreeSitterError(format!("Failed to extract dotted name text: {e}")))?;
+
+                if text.contains('.') {
+                    Ok(Pattern::MatchValue(self.node_to_ast(*node, source)?))
+                } else if text == "_" {
+                    Ok(Pattern::MatchAs { pattern: None, name: None })
+                } else {
+                    Ok(Pattern::MatchAs { pattern: None, name: Some(text.to_string()) })
+                }
+            }
+            "_" => Ok(Pattern::MatchAs { pattern: None, name: None }),
             _ => Ok(Pattern::MatchValue(self.node_to_ast(*node, source)?)),
         }
     }
@@ -3571,6 +3603,125 @@ count: int = 0"#;
                     assert_eq!(cases[0].body.len(), 1);
                     assert_eq!(cases[1].body.len(), 1);
                     assert_eq!(cases[2].body.len(), 1);
+                }
+                _ => panic!("Expected Match statement"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_extract_pattern_catch_all_with_underscore() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"match x:
+    case _:
+        pass"#;
+
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Match { cases, .. } => {
+                    assert_eq!(cases.len(), 1);
+                    match &cases[0].pattern {
+                        Pattern::MatchAs { pattern, name } => {
+                            assert!(pattern.is_none(), "Wildcard pattern should have no sub-pattern");
+                            assert!(name.is_none(), "Wildcard _ should have no binding name");
+                        }
+                        _ => panic!("Expected MatchAs pattern for wildcard _"),
+                    }
+                }
+                _ => panic!("Expected Match statement"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_extract_pattern_catch_all_with_identifier() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"match x:
+    case y:
+        pass"#;
+
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Match { cases, .. } => {
+                    assert_eq!(cases.len(), 1);
+                    match &cases[0].pattern {
+                        Pattern::MatchAs { pattern, name } => {
+                            assert!(pattern.is_none(), "Capture pattern should have no sub-pattern");
+                            assert_eq!(name.as_deref(), Some("y"), "Capture pattern should bind to 'y'");
+                        }
+                        _ => panic!("Expected MatchAs pattern for capture identifier"),
+                    }
+                }
+                _ => panic!("Expected Match statement"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_extract_pattern_catch_all_after_specific() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"match x:
+    case 42:
+        pass
+    case y:
+        pass"#;
+
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Match { cases, .. } => {
+                    assert_eq!(cases.len(), 2);
+                    match &cases[0].pattern {
+                        Pattern::MatchValue(_) => {}
+                        _ => panic!("First case should be MatchValue for literal"),
+                    }
+                    match &cases[1].pattern {
+                        Pattern::MatchAs { pattern, name } => {
+                            assert!(pattern.is_none());
+                            assert_eq!(name.as_deref(), Some("y"));
+                        }
+                        _ => panic!("Second case should be MatchAs for capture"),
+                    }
+                }
+                _ => panic!("Expected Match statement"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_extract_pattern_multiple_catch_alls() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"match x:
+    case y:
+        pass
+    case z:
+        pass"#;
+
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Match { cases, .. } => {
+                    assert_eq!(cases.len(), 2);
+                    match &cases[0].pattern {
+                        Pattern::MatchAs { pattern, name } => {
+                            assert!(pattern.is_none());
+                            assert_eq!(name.as_deref(), Some("y"));
+                        }
+                        _ => panic!("First case should be MatchAs"),
+                    }
+                    match &cases[1].pattern {
+                        Pattern::MatchAs { pattern, name } => {
+                            assert!(pattern.is_none());
+                            assert_eq!(name.as_deref(), Some("z"));
+                        }
+                        _ => panic!("Second case should be MatchAs"),
+                    }
                 }
                 _ => panic!("Expected Match statement"),
             },

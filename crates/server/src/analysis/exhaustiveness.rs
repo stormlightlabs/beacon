@@ -56,13 +56,15 @@ pub enum ReachabilityResult {
 }
 
 /// Check if a set of patterns exhaustively covers a subject type
-///
-/// 1. Start with the full subject type as "uncovered"
-/// 2. For each pattern, compute what values it covers
-/// 3. Remove covered values from the uncovered set
-/// 4. If any values remain uncovered, the match is non-exhaustive
 pub fn check_exhaustiveness(subject_type: &Type, patterns: &[Pattern]) -> ExhaustivenessResult {
-    let mut uncovered = vec![subject_type.clone()];
+    let initial_uncovered = match subject_type {
+        Type::Con(TypeCtor::Bool) => {
+            vec![Type::union(vec![Type::literal_bool(true), Type::literal_bool(false)])]
+        }
+        _ => vec![subject_type.clone()],
+    };
+
+    let mut uncovered = initial_uncovered;
     for pattern in patterns {
         let covered = compute_coverage(pattern, subject_type);
         uncovered = subtract_coverage(uncovered, covered);
@@ -114,7 +116,14 @@ fn subtract_coverage(uncovered: Vec<Type>, covered: Vec<Type>) -> Vec<Type> {
 /// Check if type1 is equal to or a subtype of type2
 fn types_equal_or_subtype(type1: &Type, type2: &Type) -> bool {
     match (type1, type2) {
-        (Type::Con(c1), Type::Con(c2)) => c1 == c2,
+        (Type::Con(c1), Type::Con(c2)) => {
+            if let TypeCtor::Literal(lit) = c1 {
+                if let Some(base_type) = lit_to_base_type(lit) {
+                    return c1 == c2 || c2 == &base_type;
+                }
+            }
+            c1 == c2
+        }
         (_, Type::Con(TypeCtor::Any)) => true,
         (Type::Var(v1), Type::Var(v2)) => v1 == v2,
         (Type::App(ctor1, arg1), Type::App(ctor2, arg2)) => {
@@ -126,10 +135,9 @@ fn types_equal_or_subtype(type1: &Type, type2: &Type) -> bool {
     }
 }
 
-/// Check if a pattern is reachable (not subsumed by previous patterns)
-///
-/// For each previous pattern, check if it subsumes the current pattern.
-/// If any previous pattern fully subsumes this one, the pattern is unreachable.
+/// Check if a pattern is reachable (not subsumed by previous patterns):
+/// - For each previous pattern, check if it subsumes the current pattern.
+/// - If any previous pattern fully subsumes this one, the pattern is unreachable.
 pub fn check_reachability(pattern: &Pattern, previous_patterns: &[Pattern]) -> ReachabilityResult {
     for (idx, prev_pattern) in previous_patterns.iter().enumerate() {
         if pattern_subsumes(prev_pattern, pattern) {
@@ -142,18 +150,15 @@ pub fn check_reachability(pattern: &Pattern, previous_patterns: &[Pattern]) -> R
 
 /// Compute the coverage of a pattern for a given subject type for both exhaustiveness and reachability checking.
 fn compute_coverage(pattern: &Pattern, subject_type: &Type) -> Vec<Type> {
-    use beacon_core::TypeCtor;
-    use beacon_parser::{AstNode, LiteralValue};
-
     match pattern {
         Pattern::MatchValue(literal) => {
             let literal_type = match literal {
                 AstNode::Literal { value, .. } => match value {
-                    LiteralValue::Integer(_) => Type::int(),
+                    LiteralValue::Integer(n) => Type::literal_int(*n),
                     LiteralValue::Float(_) => Type::float(),
-                    LiteralValue::String { .. } => Type::string(),
-                    LiteralValue::Boolean(_) => Type::bool(),
-                    LiteralValue::None => Type::none(),
+                    LiteralValue::String { value, .. } => Type::literal_string(value.clone()),
+                    LiteralValue::Boolean(b) => Type::literal_bool(*b),
+                    LiteralValue::None => Type::literal_none(),
                 },
                 _ => return vec![],
             };
@@ -246,9 +251,26 @@ fn types_overlap(type1: &Type, type2: &Type) -> bool {
         (Type::Var(_), _) | (_, Type::Var(_)) => true,
         (Type::Con(TypeCtor::Any), _) | (_, Type::Con(TypeCtor::Any)) => true,
         (Type::Union(vars), other) | (other, Type::Union(vars)) => vars.iter().any(|v| types_overlap(v, other)),
-        (Type::Con(c1), Type::Con(c2)) => c1 == c2,
+        (Type::Con(c1), Type::Con(c2)) => match (c1, c2) {
+            (TypeCtor::Literal(lit), base) | (base, TypeCtor::Literal(lit)) => {
+                if let Some(base_type) = lit_to_base_type(lit) { base == &base_type || c1 == c2 } else { c1 == c2 }
+            }
+            _ => c1 == c2,
+        },
         (Type::App(ctor1, arg1), Type::App(ctor2, arg2)) => types_overlap(ctor1, ctor2) && types_overlap(arg1, arg2),
         _ => false,
+    }
+}
+
+/// Convert a literal type to its base type constructor
+fn lit_to_base_type(lit: &beacon_core::LiteralType) -> Option<beacon_core::TypeCtor> {
+    use beacon_core::{LiteralType, TypeCtor};
+
+    match lit {
+        LiteralType::Int(_) => Some(TypeCtor::Int),
+        LiteralType::Bool(_) => Some(TypeCtor::Bool),
+        LiteralType::String(_) => Some(TypeCtor::String),
+        LiteralType::None => Some(TypeCtor::NoneType),
     }
 }
 
@@ -302,12 +324,12 @@ mod tests {
         let patterns = vec![bool_pattern(true)];
         let result = check_exhaustiveness(&subject, &patterns);
 
-        // NOTE: Current limitation - we can't distinguish specific literal values within a type
-        // TODO: Add singleton or literal types in the type system.
         match result {
-            ExhaustivenessResult::Exhaustive => {}
-            ExhaustivenessResult::NonExhaustive { .. } => {
-                panic!("Unexpected: literal patterns currently cover entire type")
+            ExhaustivenessResult::NonExhaustive { uncovered } => {
+                assert!(!uncovered.is_empty(), "Should have uncovered cases");
+            }
+            ExhaustivenessResult::Exhaustive => {
+                panic!("Expected non-exhaustive: only True is matched, False is missing")
             }
         }
     }
@@ -325,15 +347,14 @@ mod tests {
         let subject = Type::union(vec![Type::int(), Type::string()]);
         let patterns = vec![
             Pattern::MatchValue(AstNode::Literal { value: LiteralValue::Integer(0), line: 1, col: 1 }),
-            Pattern::MatchValue(AstNode::Literal {
-                value: LiteralValue::String { value: "".to_string(), prefix: String::new() },
-                line: 1,
-                col: 1,
-            }),
+            catch_all("rest"),
         ];
 
         let result = check_exhaustiveness(&subject, &patterns);
-        assert!(matches!(result, ExhaustivenessResult::Exhaustive));
+        assert!(
+            matches!(result, ExhaustivenessResult::Exhaustive),
+            "Literal + catch-all should be exhaustive for union"
+        );
     }
 
     #[test]
@@ -478,7 +499,10 @@ mod tests {
         let pattern = int_pattern(42);
         let coverage = compute_coverage(&pattern, &subject);
         assert_eq!(coverage.len(), 1);
-        assert!(matches!(coverage[0], Type::Con(beacon_core::TypeCtor::Int)));
+        assert!(
+            matches!(coverage[0], Type::Con(beacon_core::TypeCtor::Literal(_))),
+            "Literal pattern should produce literal type"
+        );
     }
 
     #[test]
@@ -488,6 +512,102 @@ mod tests {
         let coverage = compute_coverage(&pattern, &subject);
         assert_eq!(coverage.len(), 1);
         assert!(matches!(coverage[0], Type::Union(_)));
+    }
+
+    #[test]
+    fn test_literal_bool_exhaustive() {
+        let subject = Type::bool();
+        let patterns = vec![bool_pattern(true), bool_pattern(false)];
+        let result = check_exhaustiveness(&subject, &patterns);
+        assert!(
+            matches!(result, ExhaustivenessResult::Exhaustive),
+            "Both True and False should be exhaustive for bool"
+        );
+    }
+
+    #[test]
+    fn test_literal_bool_only_true() {
+        let subject = Type::bool();
+        let patterns = vec![bool_pattern(true)];
+        let result = check_exhaustiveness(&subject, &patterns);
+        match result {
+            ExhaustivenessResult::NonExhaustive { .. } => {}
+            ExhaustivenessResult::Exhaustive => {
+                panic!("Only matching True should not be exhaustive for bool")
+            }
+        }
+    }
+
+    #[test]
+    fn test_literal_bool_only_false() {
+        let subject = Type::bool();
+        let patterns = vec![bool_pattern(false)];
+        let result = check_exhaustiveness(&subject, &patterns);
+        match result {
+            ExhaustivenessResult::NonExhaustive { .. } => {}
+            ExhaustivenessResult::Exhaustive => {
+                panic!("Only matching False should not be exhaustive for bool")
+            }
+        }
+    }
+
+    #[test]
+    fn test_literal_int_different_values() {
+        let subject = Type::int();
+        let patterns = vec![int_pattern(1), int_pattern(2)];
+        let coverage1 = compute_coverage(&patterns[0], &subject);
+        let coverage2 = compute_coverage(&patterns[1], &subject);
+
+        assert_eq!(coverage1.len(), 1);
+        assert_eq!(coverage2.len(), 1);
+        assert_ne!(
+            coverage1[0], coverage2[0],
+            "Different int literals should have different types"
+        );
+    }
+
+    #[test]
+    fn test_reachability_duplicate_bool_literal() {
+        let pattern1 = bool_pattern(true);
+        let pattern2 = bool_pattern(true);
+        let result = check_reachability(&pattern2, &[pattern1]);
+        assert!(
+            matches!(result, ReachabilityResult::Unreachable { subsumed_by: 0 }),
+            "Duplicate True pattern should be unreachable"
+        );
+    }
+
+    #[test]
+    fn test_reachability_different_bool_literals() {
+        let pattern1 = bool_pattern(true);
+        let pattern2 = bool_pattern(false);
+        let result = check_reachability(&pattern2, &[pattern1]);
+        assert!(
+            matches!(result, ReachabilityResult::Reachable),
+            "False pattern after True pattern should be reachable"
+        );
+    }
+
+    #[test]
+    fn test_reachability_duplicate_int_literal() {
+        let pattern1 = int_pattern(42);
+        let pattern2 = int_pattern(42);
+        let result = check_reachability(&pattern2, &[pattern1]);
+        assert!(
+            matches!(result, ReachabilityResult::Unreachable { subsumed_by: 0 }),
+            "Duplicate 42 pattern should be unreachable"
+        );
+    }
+
+    #[test]
+    fn test_reachability_different_int_literals() {
+        let pattern1 = int_pattern(42);
+        let pattern2 = int_pattern(43);
+        let result = check_reachability(&pattern2, &[pattern1]);
+        assert!(
+            matches!(result, ReachabilityResult::Reachable),
+            "Different int literals should both be reachable"
+        );
     }
 
     #[test]

@@ -20,19 +20,6 @@ Implementation details and mod-specific tasks.
 
 ## Pattern Matching
 
-- [ ] Parser fix: Catch-all patterns (case _ or case x) not recognized correctly by parser
-    - Unit tests in `exhaustiveness.rs` prove the algorithm works when patterns are constructed manually
-    - Integration test `test_pattern_reachability_unreachable_after_catch_all` is ignored pending parser fix
-- [ ] Singleton/literal types for precise exhaustiveness on bool/literal types (`pattern.rs:211`)
-    - Current limitation: Cannot distinguish between `True` and `False` within `bool` type
-    - Exhaustiveness checking treats all literals of the same base type as equivalent
-    - Example: `match x: case True:` incorrectly reports as exhaustive for `x: bool`
-    - Requires type system extension to support literal types (e.g., `Literal[True]`, `Literal[42]`)
-- [ ] Class pattern field type validation (`pattern.rs:142`)
-    - Need class metadata registry to look up constructor signatures
-    - Currently assigns fresh type variables to all class pattern fields
-    - Cannot validate correct number of positional arguments or keyword arguments
-
 ### LSP Features
 
 **Files:** `crates/server/src/features/diagnostics.rs`, `crates/server/src/features/code_actions.rs`
