@@ -37,6 +37,10 @@ pub enum ProtocolName {
     Iterator,
     /// Iterable protocol: __iter__() -> Iterator[T]
     Iterable,
+    /// Async iterator protocol: __aiter__() -> Self, __anext__() -> Awaitable[T]
+    AsyncIterator,
+    /// Async iterable protocol: __aiter__() -> AsyncIterator[T]
+    AsyncIterable,
     /// Sized protocol: __len__() -> int
     Sized,
     /// Sequence protocol: __getitem__(int) -> T, __len__() -> int
@@ -45,6 +49,8 @@ pub enum ProtocolName {
     Mapping,
     /// Context manager protocol: __enter__() -> T, __exit__(...) -> bool
     ContextManager,
+    /// Async context manager protocol: __aenter__() -> Awaitable[T], __aexit__(...) -> Awaitable[bool]
+    AsyncContextManager,
     /// Callable protocol: __call__(...) -> T
     Callable,
     /// User-defined protocol with the given name
@@ -56,10 +62,13 @@ impl std::fmt::Display for ProtocolName {
         match self {
             ProtocolName::Iterator => write!(f, "Iterator"),
             ProtocolName::Iterable => write!(f, "Iterable"),
+            ProtocolName::AsyncIterator => write!(f, "AsyncIterator"),
+            ProtocolName::AsyncIterable => write!(f, "AsyncIterable"),
             ProtocolName::Sized => write!(f, "Sized"),
             ProtocolName::Sequence => write!(f, "Sequence"),
             ProtocolName::Mapping => write!(f, "Mapping"),
             ProtocolName::ContextManager => write!(f, "ContextManager"),
+            ProtocolName::AsyncContextManager => write!(f, "AsyncContextManager"),
             ProtocolName::Callable => write!(f, "Callable"),
             ProtocolName::UserDefined(name) => write!(f, "{name}"),
         }
@@ -96,6 +105,21 @@ impl ProtocolDef {
                 name: ProtocolName::Iterable,
                 required_methods: vec![MethodSignature {
                     name: "__iter__".to_string(),
+                    params: vec![],
+                    return_type: Type::any(),
+                }],
+            },
+            ProtocolName::AsyncIterator => Self {
+                name: ProtocolName::AsyncIterator,
+                required_methods: vec![
+                    MethodSignature { name: "__aiter__".to_string(), params: vec![], return_type: Type::any() },
+                    MethodSignature { name: "__anext__".to_string(), params: vec![], return_type: Type::any() },
+                ],
+            },
+            ProtocolName::AsyncIterable => Self {
+                name: ProtocolName::AsyncIterable,
+                required_methods: vec![MethodSignature {
+                    name: "__aiter__".to_string(),
                     params: vec![],
                     return_type: Type::any(),
                 }],
@@ -141,6 +165,17 @@ impl ProtocolDef {
                     },
                 ],
             },
+            ProtocolName::AsyncContextManager => Self {
+                name: ProtocolName::AsyncContextManager,
+                required_methods: vec![
+                    MethodSignature { name: "__aenter__".to_string(), params: vec![], return_type: Type::any() },
+                    MethodSignature {
+                        name: "__aexit__".to_string(),
+                        params: vec![Type::any(), Type::any(), Type::any()],
+                        return_type: Type::any(),
+                    },
+                ],
+            },
             ProtocolName::Callable => Self {
                 name: ProtocolName::Callable,
                 required_methods: vec![MethodSignature {
@@ -155,10 +190,8 @@ impl ProtocolDef {
         }
     }
 
-    /// Check if required methods are present (simplified check)
-    ///
-    /// This is a basic implementation that checks for method names only.
-    /// For full signature checking with variance, use `check_method_signatures()`.
+    /// Check if required methods are present.
+    /// For full signature checking with variance, use [Self::check_method_signatures].
     pub fn check_method_names(&self, available_methods: &[String]) -> bool {
         self.required_methods
             .iter()

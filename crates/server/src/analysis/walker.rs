@@ -39,10 +39,10 @@ fn detect_function_kind(body: &[AstNode], is_async: bool) -> FunctionKind {
     }
 }
 
-/// Check if the AST nodes contain yield or yield from expressions
+/// Check if the AST nodes contain yield or yield from expressions in the current scope.
 ///
-/// TODO: This implementation doesn't distinguish between yields in the current scope
-/// vs yields in nested functions. A more sophisticated implementation would track scope.
+/// This correctly excludes yields that appear in nested function definitions, lambdas,
+/// or comprehensions (which have their own scope).
 fn contains_yield(nodes: &[AstNode]) -> bool {
     for node in nodes {
         if check_node_for_yield(node) {
@@ -52,7 +52,7 @@ fn contains_yield(nodes: &[AstNode]) -> bool {
     false
 }
 
-/// Recursively check a single node for yield/yield from
+/// Recursively check a single node for yield/yield from in the current scope
 fn check_node_for_yield(node: &AstNode) -> bool {
     match node {
         AstNode::Yield { .. } | AstNode::YieldFrom { .. } => true,
@@ -81,17 +81,17 @@ fn check_node_for_yield(node: &AstNode) -> bool {
         AstNode::Match { subject, cases, .. } => {
             check_node_for_yield(subject) || cases.iter().any(|c| contains_yield(&c.body))
         }
-        AstNode::ListComp { element, .. } => check_node_for_yield(element),
-        AstNode::DictComp { key, value, .. } => check_node_for_yield(key) || check_node_for_yield(value),
-        AstNode::SetComp { element, .. } => check_node_for_yield(element),
-        AstNode::GeneratorExp { element, .. } => check_node_for_yield(element),
+        AstNode::ListComp { .. } => false,
+        AstNode::DictComp { .. } => false,
+        AstNode::SetComp { .. } => false,
+        AstNode::GeneratorExp { .. } => false,
         AstNode::Call { args, .. } => args.iter().any(check_node_for_yield),
         AstNode::BinaryOp { left, right, .. } => check_node_for_yield(left) || check_node_for_yield(right),
         AstNode::UnaryOp { operand, .. } => check_node_for_yield(operand),
         AstNode::Compare { left, comparators, .. } => {
             check_node_for_yield(left) || comparators.iter().any(check_node_for_yield)
         }
-        AstNode::Lambda { body, .. } => check_node_for_yield(body),
+        AstNode::Lambda { .. } => false,
         AstNode::Assignment { value, .. } => check_node_for_yield(value),
         AstNode::AnnotatedAssignment { value, .. } => value.as_ref().is_some_and(|v| check_node_for_yield(v)),
         AstNode::NamedExpr { value, .. } => check_node_for_yield(value),
@@ -164,24 +164,37 @@ pub fn visit_node_with_env(
 
             let function_kind = detect_function_kind(body, *is_async);
 
-            let ret_type = if matches!(function_kind, FunctionKind::Regular) {
-                return_type
+            let (ret_type, gen_params) = if matches!(function_kind, FunctionKind::Regular) {
+                let ret = return_type
                     .as_ref()
                     .map(|ann| env.parse_annotation_or_any(ann))
-                    .unwrap_or_else(|| Type::Var(env.fresh_var()))
+                    .unwrap_or_else(|| Type::Var(env.fresh_var()));
+                (ret, None)
             } else {
                 let annotated_ret = return_type
                     .as_ref()
                     .map(|ann| env.parse_annotation_or_any(ann))
                     .unwrap_or_else(|| Type::Var(env.fresh_var()));
 
-                // TODO: Properly infer yield type from yield expressions
-                match function_kind {
-                    FunctionKind::Generator => Type::generator(Type::Var(env.fresh_var()), Type::none(), annotated_ret),
-                    FunctionKind::AsyncGenerator => Type::async_generator(Type::Var(env.fresh_var()), Type::none()),
-                    FunctionKind::Coroutine => Type::coroutine(Type::none(), Type::none(), annotated_ret),
+                let yield_var = Type::Var(env.fresh_var());
+                let send_var = Type::Var(env.fresh_var());
+
+                let (ret, params) = match function_kind {
+                    FunctionKind::Generator => {
+                        let ret = Type::generator(yield_var.clone(), send_var.clone(), annotated_ret.clone());
+                        (ret, Some((yield_var, send_var, annotated_ret)))
+                    }
+                    FunctionKind::AsyncGenerator => {
+                        let ret = Type::async_generator(yield_var.clone(), send_var.clone());
+                        (ret, Some((yield_var, send_var, Type::none())))
+                    }
+                    FunctionKind::Coroutine => {
+                        let ret = Type::coroutine(Type::none(), Type::none(), annotated_ret.clone());
+                        (ret, Some((Type::none(), Type::none(), annotated_ret)))
+                    }
                     FunctionKind::Regular => unreachable!(),
-                }
+                };
+                (ret, params)
             };
 
             let fn_type = Type::fun(param_types.clone(), ret_type.clone());
@@ -189,6 +202,10 @@ pub fn visit_node_with_env(
             let mut body_env = env.clone();
             for (param, param_type) in args.iter().zip(param_types.iter()) {
                 body_env.bind(param.name.clone(), TypeScheme::mono(param_type.clone()));
+            }
+
+            if let Some((y, s, r)) = gen_params {
+                body_env.set_generator_params(y, s, r);
             }
 
             let mut body_ty = Type::none();
@@ -307,23 +324,69 @@ pub fn visit_node_with_env(
             ctx.record_type(*line, *col, ty.clone());
             Ok(ty)
         }
-        // TODO: Generate constraint to unify yielded type with generator's yield parameter
         AstNode::Yield { value, line, col } => {
-            let ty = if let Some(val) = value { visit_node_with_env(val, env, ctx, stub_cache)? } else { Type::none() };
-            ctx.record_type(*line, *col, ty.clone());
-            Ok(ty)
+            let yielded_ty =
+                if let Some(val) = value { visit_node_with_env(val, env, ctx, stub_cache)? } else { Type::none() };
+
+            let result_ty = if let Some((yield_var, send_var, _return_var)) = env.get_generator_params() {
+                let span = Span::new(*line, *col);
+                ctx.constraints
+                    .push(Constraint::Equal(yielded_ty.clone(), yield_var.clone(), span));
+
+                send_var.clone()
+            } else {
+                yielded_ty.clone()
+            };
+
+            ctx.record_type(*line, *col, result_ty.clone());
+            Ok(result_ty)
         }
-        // TODO: Generate constraint for yield from delegation
         AstNode::YieldFrom { value, line, col } => {
-            let ty = visit_node_with_env(value, env, ctx, stub_cache)?;
-            ctx.record_type(*line, *col, ty.clone());
-            Ok(ty)
+            let subgen_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
+            let span = Span::new(*line, *col);
+
+            let result_ty = if let Some((sub_yield, sub_send, sub_return)) = subgen_ty.extract_generator_params() {
+                if let Some((yield_var, send_var, _return_var)) = env.get_generator_params() {
+                    ctx.constraints
+                        .push(Constraint::Equal(yield_var.clone(), sub_yield.clone(), span));
+                    ctx.constraints
+                        .push(Constraint::Equal(send_var.clone(), sub_send.clone(), span));
+                }
+
+                sub_return.clone()
+            } else if let Some(elem_ty) = subgen_ty.extract_iterator_elem() {
+                if let Some((yield_var, _send_var, _return_var)) = env.get_generator_params() {
+                    ctx.constraints
+                        .push(Constraint::Equal(yield_var.clone(), elem_ty.clone(), span));
+                }
+
+                Type::none()
+            } else {
+                Type::Var(env.fresh_var())
+            };
+
+            ctx.record_type(*line, *col, result_ty.clone());
+            Ok(result_ty)
         }
-        // TODO: Extract awaited type from Coroutine[Y, S, R] -> R
-        // TODO: Add constraint to extract return type from coroutine
         AstNode::Await { value, line, col } => {
-            let _coroutine_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
-            let result_ty = Type::Var(env.fresh_var());
+            let coroutine_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
+            let span = Span::new(*line, *col);
+
+            let result_ty = if let Some((_y, _s, r)) = coroutine_ty.extract_coroutine_params() {
+                r.clone()
+            } else if matches!(coroutine_ty, Type::Var(_)) {
+                let result_var = Type::Var(env.fresh_var());
+                let y_var = Type::Var(env.fresh_var());
+                let s_var = Type::Var(env.fresh_var());
+                let expected_coro_ty = Type::coroutine(y_var, s_var, result_var.clone());
+                ctx.constraints
+                    .push(Constraint::Equal(coroutine_ty.clone(), expected_coro_ty, span));
+                result_var
+            } else {
+                // TODO: Add support for Awaitable[T] protocol
+                Type::Var(env.fresh_var())
+            };
+
             ctx.record_type(*line, *col, result_ty.clone());
             Ok(result_ty)
         }
@@ -954,5 +1017,192 @@ fn type_name_to_type(name: &str) -> Type {
         "set" => Type::Con(TypeCtor::Set),
         "tuple" => Type::Con(TypeCtor::Tuple),
         _ => Type::Var(TypeVarGen::new().fresh()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use beacon_parser::AstNode;
+
+    /// Test that yields in the current function scope are detected
+    #[test]
+    fn test_contains_yield_simple() {
+        let nodes = vec![AstNode::Yield { value: None, line: 1, col: 1 }];
+        assert!(contains_yield(&nodes));
+    }
+
+    /// Test that yields in nested functions are NOT detected
+    #[test]
+    fn test_contains_yield_nested_function() {
+        let nodes = vec![AstNode::FunctionDef {
+            name: "inner".to_string(),
+            args: vec![],
+            body: vec![AstNode::Yield { value: None, line: 2, col: 5 }],
+            docstring: None,
+            return_type: None,
+            decorators: vec![],
+            is_async: false,
+            line: 2,
+            col: 1,
+        }];
+        assert!(
+            !contains_yield(&nodes),
+            "Yields in nested functions should not be detected"
+        );
+    }
+
+    /// Test that yields in lambda functions are NOT detected
+    #[test]
+    fn test_contains_yield_in_lambda() {
+        let nodes = vec![AstNode::Assignment {
+            target: "x".to_string(),
+            value: Box::new(AstNode::Lambda {
+                args: vec![],
+                body: Box::new(AstNode::Yield { value: None, line: 1, col: 20 }),
+                line: 1,
+                col: 5,
+            }),
+            line: 1,
+            col: 1,
+        }];
+        assert!(
+            !contains_yield(&nodes),
+            "Yields in lambda functions should not be detected"
+        );
+    }
+
+    /// Test that yields in list comprehensions are NOT detected
+    #[test]
+    fn test_contains_yield_in_list_comp() {
+        let nodes = vec![AstNode::ListComp {
+            element: Box::new(AstNode::Yield { value: None, line: 1, col: 10 }),
+            generators: vec![],
+            line: 1,
+            col: 1,
+        }];
+        assert!(
+            !contains_yield(&nodes),
+            "Yields in list comprehensions should not be detected"
+        );
+    }
+
+    /// Test that yields in generator expressions are NOT detected (they have their own scope)
+    #[test]
+    fn test_contains_yield_in_generator_exp() {
+        let nodes = vec![AstNode::GeneratorExp {
+            element: Box::new(AstNode::Yield { value: None, line: 1, col: 10 }),
+            generators: vec![],
+            line: 1,
+            col: 1,
+        }];
+        assert!(
+            !contains_yield(&nodes),
+            "Yields in generator expressions should not be detected"
+        );
+    }
+
+    /// Test that yields in dict comprehensions are NOT detected
+    #[test]
+    fn test_contains_yield_in_dict_comp() {
+        let nodes = vec![AstNode::DictComp {
+            key: Box::new(AstNode::Yield { value: None, line: 1, col: 10 }),
+            value: Box::new(AstNode::Identifier { name: "v".to_string(), line: 1, col: 15 }),
+            generators: vec![],
+            line: 1,
+            col: 1,
+        }];
+        assert!(
+            !contains_yield(&nodes),
+            "Yields in dict comprehensions should not be detected"
+        );
+    }
+
+    /// Test that yields in set comprehensions are NOT detected
+    #[test]
+    fn test_contains_yield_in_set_comp() {
+        let nodes = vec![AstNode::SetComp {
+            element: Box::new(AstNode::Yield { value: None, line: 1, col: 10 }),
+            generators: vec![],
+            line: 1,
+            col: 1,
+        }];
+        assert!(
+            !contains_yield(&nodes),
+            "Yields in set comprehensions should not be detected"
+        );
+    }
+
+    /// Test that yields in if statements ARE detected
+    #[test]
+    fn test_contains_yield_in_if_statement() {
+        let nodes = vec![AstNode::If {
+            test: Box::new(AstNode::Identifier { name: "condition".to_string(), line: 1, col: 4 }),
+            body: vec![AstNode::Yield { value: None, line: 2, col: 5 }],
+            elif_parts: vec![],
+            else_body: None,
+            line: 1,
+            col: 1,
+        }];
+        assert!(
+            contains_yield(&nodes),
+            "Yields in if statement bodies should be detected"
+        );
+    }
+
+    /// Test FunctionKind detection for regular functions
+    #[test]
+    fn test_detect_function_kind_regular() {
+        let body = vec![AstNode::Return {
+            value: Some(Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(42),
+                line: 1,
+                col: 8,
+            })),
+            line: 1,
+            col: 1,
+        }];
+        assert_eq!(detect_function_kind(&body, false), FunctionKind::Regular);
+    }
+
+    /// Test FunctionKind detection for generators
+    #[test]
+    fn test_detect_function_kind_generator() {
+        let body = vec![AstNode::Yield {
+            value: Some(Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(1),
+                line: 1,
+                col: 11,
+            })),
+            line: 1,
+            col: 5,
+        }];
+        assert_eq!(detect_function_kind(&body, false), FunctionKind::Generator);
+    }
+
+    /// Test FunctionKind detection for async generators
+    #[test]
+    fn test_detect_function_kind_async_generator() {
+        let body = vec![AstNode::Yield {
+            value: Some(Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(1),
+                line: 1,
+                col: 11,
+            })),
+            line: 1,
+            col: 5,
+        }];
+        assert_eq!(detect_function_kind(&body, true), FunctionKind::AsyncGenerator);
+    }
+
+    /// Test FunctionKind detection for coroutines
+    #[test]
+    fn test_detect_function_kind_coroutine() {
+        let body = vec![AstNode::Await {
+            value: Box::new(AstNode::Identifier { name: "something".to_string(), line: 1, col: 11 }),
+            line: 1,
+            col: 5,
+        }];
+        assert_eq!(detect_function_kind(&body, true), FunctionKind::Coroutine);
     }
 }

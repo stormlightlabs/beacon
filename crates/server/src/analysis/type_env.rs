@@ -24,6 +24,8 @@ pub struct TypeEnvironment {
     var_gen: TypeVarGen,
     /// Annotation parser for parsing type hints
     annotation_parser: AnnotationParser,
+    /// Generator/coroutine parameters (yield_type, send_type, return_type) when inside a generator/coroutine
+    generator_params: Option<(Type, Type, Type)>,
 }
 
 impl TypeEnvironment {
@@ -33,6 +35,7 @@ impl TypeEnvironment {
             bindings: FxHashMap::default(),
             var_gen: TypeVarGen::new(),
             annotation_parser: AnnotationParser::new(),
+            generator_params: None,
         };
 
         env.add_builtins();
@@ -142,9 +145,7 @@ impl TypeEnvironment {
         subst.apply(&scheme.ty)
     }
 
-    /// Generalize a type into a type scheme
-    ///
-    /// Quantifies over free type variables not in the environment
+    /// Generalize a type into a type scheme by quantifing over free type variables not in the environment
     pub fn generalize(&self, ty: Type) -> TypeScheme {
         let env_vars = self.free_vars();
         TypeScheme::generalize(ty, &env_vars)
@@ -200,9 +201,7 @@ impl TypeEnvironment {
             .unwrap_or(Type::any())
     }
 
-    /// Build type environment from symbol table
-    ///
-    /// This populates the environment with types from the symbol table, using type annotations where available.
+    /// Build type environment from symbol table using type annotations where available.
     pub fn from_symbol_table(symbol_table: &SymbolTable, ast: &AstNode) -> Self {
         let mut env = Self::new();
         env.populate_from_ast(ast);
@@ -298,6 +297,21 @@ impl TypeEnvironment {
     pub fn unify(&self, t1: &Type, t2: &Type) -> beacon_core::Result<Subst> {
         Unifier::unify(t1, t2)
     }
+
+    /// Set the generator parameters (yield_type, send_type, return_type) for the current scope.
+    pub fn set_generator_params(&mut self, yield_ty: Type, send_ty: Type, return_ty: Type) {
+        self.generator_params = Some((yield_ty, send_ty, return_ty));
+    }
+
+    /// Get the generator parameters if we're inside a generator/coroutine function.
+    pub fn get_generator_params(&self) -> Option<&(Type, Type, Type)> {
+        self.generator_params.as_ref()
+    }
+
+    /// Clear the generator parameters when exiting a generator/coroutine function.
+    pub fn clear_generator_params(&mut self) {
+        self.generator_params = None;
+    }
 }
 
 impl Default for TypeEnvironment {
@@ -309,6 +323,7 @@ impl Default for TypeEnvironment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use beacon_parser::NameResolver;
 
     #[test]
     fn test_type_env_creation() {
@@ -401,8 +416,6 @@ mod tests {
 
     #[test]
     fn test_from_symbol_table_with_function() {
-        use beacon_parser::NameResolver;
-
         let source = "def foo(x: int) -> str:\n    return str(x)".to_string();
         let mut resolver = NameResolver::new(source);
 

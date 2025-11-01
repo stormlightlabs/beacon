@@ -212,6 +212,10 @@ pub enum TypeCtor {
     Module(String),
     /// Literal singleton type (Literal[True], Literal[42], etc.)
     Literal(LiteralType),
+    /// Iterator type: Iterator[ElementType]
+    Iterator,
+    /// Iterable type: Iterable[ElementType]
+    Iterable,
     /// Generator type: Generator[YieldType, SendType, ReturnType]
     Generator,
     /// Async generator type: AsyncGenerator[YieldType, SendType]
@@ -248,6 +252,8 @@ impl fmt::Display for TypeCtor {
             TypeCtor::Class(name) => write!(f, "{name}"),
             TypeCtor::Module(name) => write!(f, "module<{name}>"),
             TypeCtor::Literal(lit) => write!(f, "{lit}"),
+            TypeCtor::Iterator => write!(f, "Iterator"),
+            TypeCtor::Iterable => write!(f, "Iterable"),
             TypeCtor::Generator => write!(f, "Generator"),
             TypeCtor::AsyncGenerator => write!(f, "AsyncGenerator"),
             TypeCtor::Coroutine => write!(f, "Coroutine"),
@@ -277,6 +283,9 @@ impl TypeCtor {
             TypeCtor::Tuple => Kind::Star,
             // * -> * -> * (simplified)
             TypeCtor::Function => Kind::arity(2),
+            // * -> * (Iterator[ElementType])
+            TypeCtor::Iterator => Kind::arity(1),
+            TypeCtor::Iterable => Kind::arity(1),
             // * -> * -> * -> * (Generator[YieldType, SendType, ReturnType])
             TypeCtor::Generator => Kind::arity(3),
             // * -> * -> * (AsyncGenerator[YieldType, SendType])
@@ -520,6 +529,51 @@ impl Type {
             )),
             Box::new(return_ty),
         )
+    }
+
+    /// Extract parameters from Generator[Y, S, R] type
+    pub fn extract_generator_params(&self) -> Option<(&Type, &Type, &Type)> {
+        match self {
+            Type::App(app2, r) => match app2.as_ref() {
+                Type::App(app1, s) => match app1.as_ref() {
+                    Type::App(ctor, y) => match ctor.as_ref() {
+                        Type::Con(TypeCtor::Generator) => Some((y, s, r)),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Extract parameters from Coroutine[Y, S, R] type
+    pub fn extract_coroutine_params(&self) -> Option<(&Type, &Type, &Type)> {
+        match self {
+            Type::App(app2, r) => match app2.as_ref() {
+                Type::App(app1, s) => match app1.as_ref() {
+                    Type::App(ctor, y) => match ctor.as_ref() {
+                        Type::Con(TypeCtor::Coroutine) => Some((y, s, r)),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Extract element type from Iterator[T] type
+    pub fn extract_iterator_elem(&self) -> Option<&Type> {
+        match self {
+            Type::App(ctor, elem) => match ctor.as_ref() {
+                Type::Con(TypeCtor::Iterator) => Some(elem),
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     /// Create a function type

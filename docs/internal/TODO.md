@@ -2,6 +2,28 @@
 
 Implementation details and mod-specific tasks.
 
+## Async & Generators
+
+### Type System Foundation & AST Extensions (COMPLETED)
+
+**Files:** `crates/core/src/types.rs`, `crates/core/src/annotation_parser.rs`, `crates/parser/src/lib.rs`, `stubs/builtins.pyi`
+
+### Yield Detection & Basic Generator Inference (COMPLETED)
+
+**Files:** `crates/server/src/analysis/walker.rs`
+
+### Bidirectional Send & Advanced Features (COMPLETED)
+
+**Files:** `crates/server/src/analysis/walker.rs`, `crates/server/src/analysis/type_env.rs`, `crates/core/src/types.rs`
+
+### Async Protocols & Full Support
+
+**Files:** `crates/core/src/protocols.rs`, `crates/parser/src/lib.rs`
+
+- [ ] Extend `ProtocolChecker` to handle async iteration protocols
+- [ ] Add constraint generation for `async for` and `async with` statements
+- [ ] Add comprehensive integration tests for async/await and generators
+
 ## Integration Test Cases
 
 - [ ] `with open('file') as f:` infers file type (requires _IO stub integration)

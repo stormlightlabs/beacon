@@ -520,20 +520,11 @@ impl PythonParser {
                 let docstring = node
                     .child_by_field_name("body")
                     .and_then(|body_node| self.extract_docstring(&body_node, source));
-                let is_async = false;
 
-                Ok(AstNode::FunctionDef { name, args, body, docstring, return_type, decorators, is_async, line, col })
-            }
-            "async_function_definition" => {
-                let name = self.extract_identifier(&node, source, "name")?;
-                let args = self.extract_function_args(&node, source)?;
-                let body = self.extract_function_body(&node, source)?;
-                let return_type = self.extract_return_type(&node, source);
-                let decorators = Vec::new();
-                let docstring = node
-                    .child_by_field_name("body")
-                    .and_then(|body_node| self.extract_docstring(&body_node, source));
-                let is_async = true;
+                let is_async = {
+                    let mut cursor = node.walk();
+                    node.children(&mut cursor).any(|child| child.kind() == "async")
+                };
 
                 Ok(AstNode::FunctionDef { name, args, body, docstring, return_type, decorators, is_async, line, col })
             }
@@ -3778,9 +3769,7 @@ count: int = 0"#;
         }
     }
 
-    /// TODO: Fix tree-sitter integration for async functions
     #[test]
-    #[ignore]
     fn test_async_function() {
         let mut parser = PythonParser::new().unwrap();
         let source = r#"
@@ -3827,9 +3816,7 @@ def count():
         }
     }
 
-    /// TODO: Fix tree-sitter integration for async functions and await
     #[test]
-    #[ignore]
     fn test_await_expression() {
         let mut parser = PythonParser::new().unwrap();
         let source = r#"
