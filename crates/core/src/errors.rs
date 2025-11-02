@@ -26,6 +26,9 @@ pub enum TypeError {
     #[error("Attribute '{1}' not found on type {0}")]
     AttributeNotFound(String, String),
 
+    #[error("Argument count mismatch: expected {expected}, got {found}")]
+    ArgumentCountMismatch { expected: usize, found: usize },
+
     #[error("Match pattern is not exhaustive. Missing coverage for: {0}")]
     PatternNonExhaustive(String),
 

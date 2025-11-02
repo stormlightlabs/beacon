@@ -289,9 +289,30 @@ pub fn visit_node_with_env(
             ctx.record_type(*line, *col, annotated_ty.clone());
             Ok(annotated_ty)
         }
-        // TODO: Handle complex call expressions
         AstNode::Call { function, args, line, col } => {
-            let func_ty = env.lookup(function).unwrap_or_else(|| Type::Var(env.fresh_var()));
+            let func_ty = if function.contains('.') {
+                if let Some(last_dot_idx) = function.rfind('.') {
+                    let (object_part, method_part) = function.split_at(last_dot_idx);
+                    let method_name = &method_part[1..]; // Skip the dot
+                    let obj_ty = env.lookup(object_part).unwrap_or_else(|| Type::Var(env.fresh_var()));
+                    let method_ty = Type::Var(env.fresh_var());
+                    let span = Span::new(*line, *col);
+
+                    ctx.constraints.push(Constraint::HasAttr(
+                        obj_ty,
+                        method_name.to_string(),
+                        method_ty.clone(),
+                        span,
+                    ));
+
+                    method_ty
+                } else {
+                    env.lookup(function).unwrap_or_else(|| Type::Var(env.fresh_var()))
+                }
+            } else {
+                env.lookup(function).unwrap_or_else(|| Type::Var(env.fresh_var()))
+            };
+
             let mut arg_types = Vec::new();
             for arg in args {
                 arg_types.push(visit_node_with_env(arg, env, ctx, stub_cache)?);
@@ -300,6 +321,7 @@ pub fn visit_node_with_env(
             let span = Span::new(*line, *col);
             ctx.constraints
                 .push(Constraint::Call(func_ty, arg_types, ret_ty.clone(), span));
+
             ctx.record_type(*line, *col, ret_ty.clone());
             Ok(ret_ty)
         }

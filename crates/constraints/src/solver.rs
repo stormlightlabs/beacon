@@ -7,6 +7,24 @@ use beacon_core::{
     ClassRegistry, MethodSignature, ProtocolChecker, ProtocolName, Result, Subst, Type, TypeCtor, TypeError, Unifier,
 };
 
+/// Extract the base type constructor from a type application
+///
+/// For example, `dict[str, int]` is represented as `App(App(Dict, str), int)`, and this function extracts "dict".
+fn extract_base_constructor(ty: &Type) -> Option<&str> {
+    match ty {
+        Type::Con(TypeCtor::String) => Some("str"),
+        Type::Con(TypeCtor::Int) => Some("int"),
+        Type::Con(TypeCtor::Float) => Some("float"),
+        Type::Con(TypeCtor::Bool) => Some("bool"),
+        Type::Con(TypeCtor::List) => Some("list"),
+        Type::Con(TypeCtor::Dict) => Some("dict"),
+        Type::Con(TypeCtor::Set) => Some("set"),
+        Type::Con(TypeCtor::Tuple) => Some("tuple"),
+        Type::App(base, _) => extract_base_constructor(base),
+        _ => None,
+    }
+}
+
 /// Convert a [Type::Fun] to a [MethodSignature] by extracting parameters and return types from a function type.
 fn type_to_method_signature(name: &str, ty: &Type) -> Option<MethodSignature> {
     match ty {
@@ -172,10 +190,10 @@ pub fn solve_constraints(
                             }
                         } else {
                             type_errors.push(TypeErrorInfo::new(
-                                beacon_core::TypeError::UnificationError(
-                                    format!("function with {} arguments", bound_params.len()),
-                                    format!("function with {} arguments", arg_types.len()),
-                                ),
+                                TypeError::ArgumentCountMismatch {
+                                    expected: bound_params.len(),
+                                    found: arg_types.len(),
+                                },
                                 span,
                             ));
                         }
@@ -258,6 +276,38 @@ pub fn solve_constraints(
                         };
 
                         if let Some(class_name) = class_name {
+                            if let Some(resolved_attr_ty) = class_registry.lookup_attribute(class_name, &attr_name) {
+                                let final_type = if class_registry.is_method(class_name, &attr_name) {
+                                    Type::BoundMethod(
+                                        Box::new(applied_obj.clone()),
+                                        attr_name.clone(),
+                                        Box::new(resolved_attr_ty.clone()),
+                                    )
+                                } else {
+                                    resolved_attr_ty.clone()
+                                };
+
+                                match Unifier::unify(&subst.apply(&attr_ty), &final_type) {
+                                    Ok(s) => {
+                                        subst = s.compose(subst);
+                                    }
+                                    Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                                        type_errors.push(TypeErrorInfo::new(type_err, span));
+                                    }
+                                    Err(_) => {}
+                                }
+                            } else {
+                                type_errors.push(TypeErrorInfo::new(
+                                    TypeError::AttributeNotFound(applied_obj.to_string(), attr_name.clone()),
+                                    span,
+                                ));
+                            }
+                        }
+                    }
+                    Type::App(base, _param) => {
+                        let base_ctor = extract_base_constructor(base);
+
+                        if let Some(class_name) = base_ctor {
                             if let Some(resolved_attr_ty) = class_registry.lookup_attribute(class_name, &attr_name) {
                                 let final_type = if class_registry.is_method(class_name, &attr_name) {
                                     Type::BoundMethod(

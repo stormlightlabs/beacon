@@ -1034,26 +1034,51 @@ impl NameResolver {
                     self.visit_node(stmt)?;
                 }
             }
-            AstNode::ListComp { element, generators, .. }
-            | AstNode::SetComp { element, generators, .. }
-            | AstNode::GeneratorExp { element, generators, .. } => {
-                self.visit_node(element)?;
+            AstNode::ListComp { element, generators, line, col }
+            | AstNode::SetComp { element, generators, line, col }
+            | AstNode::GeneratorExp { element, generators, line, col } => {
                 for generator in generators {
                     self.visit_node(&generator.iter)?;
+
+                    let symbol = Symbol {
+                        name: generator.target.clone(),
+                        kind: SymbolKind::Variable,
+                        line: *line,
+                        col: *col,
+                        scope_id: self.current_scope,
+                        docstring: None,
+                        references: Vec::new(),
+                    };
+                    self.symbol_table.add_symbol(self.current_scope, symbol);
+
                     for if_clause in &generator.ifs {
                         self.visit_node(if_clause)?;
                     }
                 }
+                self.visit_node(element)?;
             }
-            AstNode::DictComp { key, value, generators, .. } => {
+            AstNode::DictComp { key, value, generators, line, col } => {
+                for generator in generators {
+                    self.visit_node(&generator.iter)?;
+
+                    let symbol = Symbol {
+                        name: generator.target.clone(),
+                        kind: SymbolKind::Variable,
+                        line: *line,
+                        col: *col,
+                        scope_id: self.current_scope,
+                        docstring: None,
+                        references: Vec::new(),
+                    };
+
+                    self.symbol_table.add_symbol(self.current_scope, symbol);
+
+                    for if_clause in &generator.ifs {
+                        self.visit_node(if_clause)?;
+                    }
+                }
                 self.visit_node(key)?;
                 self.visit_node(value)?;
-                for generator in generators {
-                    self.visit_node(&generator.iter)?;
-                    for if_clause in &generator.ifs {
-                        self.visit_node(if_clause)?;
-                    }
-                }
             }
             AstNode::NamedExpr { target, value, line, col } => {
                 self.visit_node(value)?;

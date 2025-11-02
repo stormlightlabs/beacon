@@ -254,8 +254,8 @@ impl Analyzer {
         let result = self.analyze(uri)?;
         let line = (position.line + 1) as usize;
         let col = (position.character + 1) as usize;
-
         let position_map = self.position_maps.get(uri);
+
         if let Some(pos_map) = position_map {
             if let Some(node_id) = pos_map.get(&(line, col)) {
                 return Ok(result.type_map.get(node_id).cloned());
@@ -592,8 +592,8 @@ impl Analyzer {
         )
     }
 
-    /// Check if a string is a valid Python identifier ([a-zA-Z_][a-zA-Z0-9_]*),
-    /// filtering out cases where the parser created an Identifier node for other syntax.
+    /// Check if a string is a valid Python identifier ([a-zA-Z_][a-zA-Z0-9_]*), filtering
+    /// out cases where the parser created an Identifier node for other syntax.
     fn is_valid_identifier(name: &str) -> bool {
         if name.is_empty() {
             return false;
@@ -728,6 +728,66 @@ print(x)
         assert!(
             !unbound.iter().any(|(name, _, _)| name == "y"),
             "y should not be marked as unbound"
+        );
+    }
+
+    #[test]
+    fn test_walrus_in_list_comprehension() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test_walrus.py").unwrap();
+        let source = r#"
+def walrus(threshold: int) -> list[int]:
+    nums = [5, 10, 15, 20, 25]
+    filtered = [n for n in nums if (half := n) and half / 2 < threshold]
+    return filtered
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let unbound = analyzer.find_unbound_variables(&uri);
+        let non_builtins: Vec<_> = unbound
+            .iter()
+            .filter(|(name, _, _)| !Analyzer::is_builtin(name))
+            .collect();
+
+        assert!(
+            !non_builtins.iter().any(|(name, _, _)| name == "n"),
+            "Variable 'n' should not be unbound (it's the list comprehension target)"
+        );
+
+        assert!(
+            !non_builtins.iter().any(|(name, _, _)| name == "half"),
+            "Variable 'half' should not be unbound (it's defined by the walrus operator)"
+        );
+    }
+
+    #[test]
+    fn test_method_call_on_dict() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test_dict_method.py").unwrap();
+        let source = r#"
+SERVICE_REGISTRY: dict[str, object] = {}
+provider = SERVICE_REGISTRY.get("test")
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let result = analyzer.analyze(&uri);
+        assert!(result.is_ok(), "Analysis should succeed for dict.get() method call");
+
+        let unbound = analyzer.find_unbound_variables(&uri);
+        let non_builtins: Vec<_> = unbound
+            .iter()
+            .filter(|(name, _, _)| !Analyzer::is_builtin(name))
+            .collect();
+
+        assert!(
+            !non_builtins.iter().any(|(name, _, _)| name == "SERVICE_REGISTRY"),
+            "SERVICE_REGISTRY should not be undefined"
         );
     }
 
