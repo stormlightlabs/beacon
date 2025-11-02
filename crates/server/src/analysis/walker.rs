@@ -1181,8 +1181,26 @@ fn visit_node_with_context(
 
 /// Extract class metadata from a ClassDef node
 ///
-/// Scans the class body for __init__ method and field assignments to build [ClassMetadata].
+/// Scans the class body for class-level fields and methods to build [ClassMetadata].
 /// This metadata is used during [Constraint::HasAttr] constraint solving to resolve attribute types.
+///
+/// ## Field Extraction Strategy
+///
+/// This function extracts fields from two sources:
+///
+/// 1. **Class-level fields**: Annotations and assignments at class scope
+///    - `x: int` or `x: int = 0` become class attributes
+///    - In Python these are shared across instances, but for type checking we treat them as
+///      "objects of this class have attribute x of type int"
+///
+/// 2. **Instance fields**: Assignments in `__init__` method
+///    - `self.field = value` patterns found by recursively scanning `__init__` body
+///    - These represent per-instance attributes
+///
+/// Both types are registered using `add_field` since the distinction matters for Python runtime
+/// semantics (class variables are shared) but not for structural type checking (both are attributes
+/// the object provides). If a name appears in both places, both get registered and the constraint
+/// solver handles shadowing semantics.
 ///
 /// TODO: Classes with multiple methods (beyond just __init__) experience type unification errors during construction.
 ///
@@ -1192,6 +1210,20 @@ fn visit_node_with_context(
 /// TODO: Consider cloning env for each method to isolate type variable generation
 fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnvironment) -> ClassMetadata {
     let mut metadata = ClassMetadata::new(name.to_string());
+
+    for stmt in body {
+        match stmt {
+            AstNode::AnnotatedAssignment { target, type_annotation, .. } => {
+                let field_type = env.parse_annotation_or_any(type_annotation);
+                metadata.add_field(target.clone(), field_type);
+            }
+            AstNode::Assignment { target, .. } => {
+                let field_type = Type::Var(env.fresh_var());
+                metadata.add_field(target.clone(), field_type);
+            }
+            _ => {}
+        }
+    }
 
     for stmt in body {
         if let AstNode::FunctionDef { name: method_name, args, return_type, body: method_body, decorators, .. } = stmt {
@@ -1244,9 +1276,8 @@ fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnvironmen
     metadata
 }
 
-/// Recursively extract field assignments from statement nodes
-///
-/// Looks for patterns like `self.field = value` or `self.field: Type = value` and registers the field in [ClassMetadata].
+/// Recursively extract field assignments from statement nodes by looking for patterns like
+/// `self.field = value` or `self.field: Type = value` and registers the field in [ClassMetadata].
 fn extract_field_assignments(stmt: &AstNode, metadata: &mut ClassMetadata, env: &mut TypeEnvironment) {
     match stmt {
         AstNode::Assignment { target, .. } => {
@@ -2646,5 +2677,292 @@ mod tests {
 
         let has_bound_method = ctx.type_map.values().any(|t| matches!(t, Type::BoundMethod(_, _, _)));
         assert!(!has_bound_method, "Subscript result should not be a BoundMethod type");
+    }
+
+    #[test]
+    fn test_class_with_only_class_level_annotations() {
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let class_body = vec![
+            AstNode::AnnotatedAssignment {
+                target: "x".to_string(),
+                type_annotation: "int".to_string(),
+                value: None,
+                line: 2,
+                col: 5,
+            },
+            AstNode::AnnotatedAssignment {
+                target: "y".to_string(),
+                type_annotation: "str".to_string(),
+                value: Some(Box::new(AstNode::Literal {
+                    value: LiteralValue::String { value: "default".to_string(), prefix: "".to_string() },
+                    line: 3,
+                    col: 13,
+                })),
+                line: 3,
+                col: 5,
+            },
+        ];
+
+        let metadata = extract_class_metadata("Point", &class_body, &mut env);
+
+        assert!(metadata.fields.contains_key("x"), "Should extract class-level field x");
+        assert!(metadata.fields.contains_key("y"), "Should extract class-level field y");
+
+        if let Some(x_type) = metadata.fields.get("x") {
+            assert!(
+                matches!(x_type, Type::Con(TypeCtor::Int)),
+                "Field x should have type int, got {x_type:?}"
+            );
+        }
+
+        if let Some(y_type) = metadata.fields.get("y") {
+            assert!(
+                matches!(y_type, Type::Con(TypeCtor::String)),
+                "Field y should have type str, got {y_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_class_with_both_class_and_instance_fields() {
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let class_body = vec![
+            AstNode::AnnotatedAssignment {
+                target: "class_var".to_string(),
+                type_annotation: "int".to_string(),
+                value: Some(Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(0),
+                    line: 2,
+                    col: 21,
+                })),
+                line: 2,
+                col: 5,
+            },
+            AstNode::FunctionDef {
+                name: "__init__".to_string(),
+                args: vec![beacon_parser::Parameter {
+                    name: "self".to_string(),
+                    line: 4,
+                    col: 14,
+                    type_annotation: None,
+                    default_value: None,
+                }],
+                body: vec![AstNode::AnnotatedAssignment {
+                    target: "self.instance_var".to_string(),
+                    type_annotation: "str".to_string(),
+                    value: Some(Box::new(AstNode::Literal {
+                        value: LiteralValue::String { value: "hello".to_string(), prefix: "".to_string() },
+                        line: 5,
+                        col: 33,
+                    })),
+                    line: 5,
+                    col: 9,
+                }],
+                docstring: None,
+                return_type: None,
+                decorators: vec![],
+                is_async: false,
+                line: 4,
+                col: 5,
+            },
+        ];
+
+        let metadata = extract_class_metadata("MyClass", &class_body, &mut env);
+
+        assert!(
+            metadata.fields.contains_key("class_var"),
+            "Should extract class-level field class_var"
+        );
+        assert!(
+            metadata.fields.contains_key("instance_var"),
+            "Should extract instance field instance_var from __init__"
+        );
+
+        if let Some(class_var_type) = metadata.fields.get("class_var") {
+            assert!(
+                matches!(class_var_type, Type::Con(TypeCtor::Int)),
+                "class_var should have type int, got {class_var_type:?}"
+            );
+        }
+
+        if let Some(instance_var_type) = metadata.fields.get("instance_var") {
+            assert!(
+                matches!(instance_var_type, Type::Con(TypeCtor::String)),
+                "instance_var should have type str, got {instance_var_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_class_with_non_annotated_class_assignments() {
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let class_body = vec![
+            AstNode::Assignment {
+                target: "counter".to_string(),
+                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(0), line: 2, col: 17 }),
+                line: 2,
+                col: 5,
+            },
+            AstNode::Assignment {
+                target: "name".to_string(),
+                value: Box::new(AstNode::Literal {
+                    value: LiteralValue::String { value: "default".to_string(), prefix: "".to_string() },
+                    line: 3,
+                    col: 14,
+                }),
+                line: 3,
+                col: 5,
+            },
+        ];
+
+        let metadata = extract_class_metadata("Config", &class_body, &mut env);
+
+        assert!(
+            metadata.fields.contains_key("counter"),
+            "Should extract non-annotated class-level field counter"
+        );
+        assert!(
+            metadata.fields.contains_key("name"),
+            "Should extract non-annotated class-level field name"
+        );
+
+        if let Some(counter_type) = metadata.fields.get("counter") {
+            assert!(
+                matches!(counter_type, Type::Var(_)),
+                "Non-annotated field should get fresh type variable, got {counter_type:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_class_with_mixed_annotated_and_non_annotated() {
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let class_body = vec![
+            AstNode::AnnotatedAssignment {
+                target: "typed_field".to_string(),
+                type_annotation: "int".to_string(),
+                value: None,
+                line: 2,
+                col: 5,
+            },
+            AstNode::Assignment {
+                target: "untyped_field".to_string(),
+                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(42), line: 3, col: 23 }),
+                line: 3,
+                col: 5,
+            },
+            AstNode::AnnotatedAssignment {
+                target: "another_typed".to_string(),
+                type_annotation: "str".to_string(),
+                value: Some(Box::new(AstNode::Literal {
+                    value: LiteralValue::String { value: "test".to_string(), prefix: "".to_string() },
+                    line: 4,
+                    col: 25,
+                })),
+                line: 4,
+                col: 5,
+            },
+        ];
+
+        let metadata = extract_class_metadata("MixedClass", &class_body, &mut env);
+
+        assert!(
+            metadata.fields.contains_key("typed_field"),
+            "Should extract typed_field"
+        );
+        assert!(
+            metadata.fields.contains_key("untyped_field"),
+            "Should extract untyped_field"
+        );
+        assert!(
+            metadata.fields.contains_key("another_typed"),
+            "Should extract another_typed"
+        );
+
+        if let Some(typed_field_type) = metadata.fields.get("typed_field") {
+            assert!(
+                matches!(typed_field_type, Type::Con(TypeCtor::Int)),
+                "typed_field should have type int"
+            );
+        }
+
+        if let Some(untyped_field_type) = metadata.fields.get("untyped_field") {
+            assert!(
+                matches!(untyped_field_type, Type::Var(_)),
+                "untyped_field should have fresh type variable"
+            );
+        }
+
+        if let Some(another_typed_type) = metadata.fields.get("another_typed") {
+            assert!(
+                matches!(another_typed_type, Type::Con(TypeCtor::String)),
+                "another_typed should have type str"
+            );
+        }
+    }
+
+    #[test]
+    fn test_class_level_fields_dont_conflict_with_nested_classes() {
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let class_body = vec![
+            AstNode::AnnotatedAssignment {
+                target: "outer_field".to_string(),
+                type_annotation: "int".to_string(),
+                value: None,
+                line: 2,
+                col: 5,
+            },
+            AstNode::ClassDef {
+                name: "Inner".to_string(),
+                bases: vec![],
+                metaclass: None,
+                body: vec![AstNode::Assignment {
+                    target: "inner_field".to_string(),
+                    value: Box::new(AstNode::Literal { value: LiteralValue::Integer(1), line: 4, col: 21 }),
+                    line: 4,
+                    col: 9,
+                }],
+                docstring: None,
+                decorators: vec![],
+                line: 3,
+                col: 5,
+            },
+        ];
+
+        let metadata = extract_class_metadata("Outer", &class_body, &mut env);
+
+        assert!(
+            metadata.fields.contains_key("outer_field"),
+            "Should extract outer_field from outer class"
+        );
+        assert!(
+            !metadata.fields.contains_key("inner_field"),
+            "Should NOT extract inner_field from nested class"
+        );
     }
 }

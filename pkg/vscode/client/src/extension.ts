@@ -33,13 +33,13 @@ export function deactivate(): Thenable<void> | undefined {
  * Get the path to the Beacon LSP server binary
  */
 function getServerPath(context: ExtensionContext): string {
-  const workspaceRoot = path.resolve(context.extensionPath, "..", "..");
-  const debugBinary = path.join(workspaceRoot, "target", "debug", "beacon-lsp");
-  const releaseBinary = path.join(workspaceRoot, "target", "release", "beacon-lsp");
-
-  const fs = require("fs");
-  if (fs.existsSync(releaseBinary)) {
-    return releaseBinary;
-  }
-  return debugBinary;
+  const wsRoot = path.resolve(context.extensionPath, "..", "..");
+  const dbgBin = path.join(wsRoot, "target", "debug", "beacon-lsp");
+  // const releaseBin = path.join(wsRoot, "target", "release", "beacon-lsp");
+  //
+  // const fs = require("fs");
+  // if (fs.existsSync(releaseBin)) {
+  //   return releaseBin;
+  // }
+  return dbgBin;
 }
