@@ -193,6 +193,15 @@ impl<'a> DataFlowAnalyzer<'a> {
             AstNode::ClassDef { name, .. } => {
                 hoisted.insert(name.clone());
             }
+            AstNode::Import { module, alias, .. } => {
+                let name = alias.as_ref().unwrap_or(module);
+                hoisted.insert(name.clone());
+            }
+            AstNode::ImportFrom { names, .. } => {
+                for name in names {
+                    hoisted.insert(name.clone());
+                }
+            }
             AstNode::If { body, elif_parts, else_body, .. } => {
                 for stmt in body {
                     Self::collect_hoisted_from_node(stmt, hoisted);
@@ -274,13 +283,18 @@ impl<'a> DataFlowAnalyzer<'a> {
             def_out.insert(*block_id, FxHashSet::default());
         }
 
+        let builtins = super::Analyzer::get_builtins();
+        let parameters = self.get_parameters();
         let mut worklist: Vec<BlockId> = self.cfg.blocks.keys().copied().collect();
 
         while let Some(block_id) = worklist.pop() {
             let block = self.cfg.blocks.get(&block_id).unwrap();
 
             let new_def_in = if block.predecessors.is_empty() {
-                self.hoisted_definitions.clone()
+                let mut initial_defs = self.hoisted_definitions.clone();
+                initial_defs.extend(builtins.iter().cloned());
+                initial_defs.extend(parameters.iter().cloned());
+                initial_defs
             } else {
                 let first_pred = block.predecessors[0].0;
                 let mut result = def_out.get(&first_pred).cloned().unwrap_or_default();
@@ -449,6 +463,20 @@ impl<'a> DataFlowAnalyzer<'a> {
                 .any(|sym| sym.name == name && sym.kind == beacon_parser::SymbolKind::Parameter)
         } else {
             false
+        }
+    }
+
+    /// Get all function parameters for this scope
+    fn get_parameters(&self) -> FxHashSet<String> {
+        if let Some(scope) = self.symbol_table.get_scope(self.scope_id) {
+            scope
+                .symbols
+                .values()
+                .filter(|sym| sym.kind == beacon_parser::SymbolKind::Parameter)
+                .map(|sym| sym.name.clone())
+                .collect()
+        } else {
+            FxHashSet::default()
         }
     }
 
@@ -1876,6 +1904,167 @@ mod tests {
             };
             let not_result = analyzer.evaluate_condition(&not_expr, &test_constants);
             assert_eq!(not_result, ConditionResult::AlwaysTrue);
+        } else {
+            panic!("Expected FunctionDef");
+        }
+    }
+
+    #[test]
+    fn test_import_hoisting() {
+        let source = "def foo():\n    from bar import baz\n    result = baz()".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::FunctionDef {
+            name: "foo".to_string(),
+            args: vec![],
+            body: vec![
+                AstNode::ImportFrom { module: "bar".to_string(), names: vec!["baz".to_string()], line: 2, col: 5 },
+                AstNode::Assignment {
+                    target: "result".to_string(),
+                    value: Box::new(AstNode::Call { function: "baz".to_string(), args: vec![], line: 3, col: 14 }),
+                    line: 3,
+                    col: 5,
+                },
+            ],
+            docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
+            line: 1,
+            col: 1,
+            is_async: false,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        if let AstNode::FunctionDef { body, .. } = &ast {
+            let mut builder = CfgBuilder::new();
+            builder.build_function(body);
+            let cfg = builder.build();
+
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let result = analyzer.find_use_before_def();
+
+            let baz_errors: Vec<_> = result.iter().filter(|e| e.var_name == "baz").collect();
+            assert!(
+                baz_errors.is_empty(),
+                "Imported name 'baz' should not be flagged as use-before-def due to import hoisting, found: {baz_errors:?}"
+            );
+        } else {
+            panic!("Expected FunctionDef");
+        }
+    }
+
+    #[test]
+    fn test_simple_import_hoisting() {
+        let source = "def foo():\n    import os\n    path = os.path".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::FunctionDef {
+            name: "foo".to_string(),
+            args: vec![],
+            body: vec![
+                AstNode::Import { module: "os".to_string(), alias: None, line: 2, col: 5 },
+                AstNode::Assignment {
+                    target: "path".to_string(),
+                    value: Box::new(AstNode::Attribute {
+                        object: Box::new(AstNode::Identifier { name: "os".to_string(), line: 3, col: 12 }),
+                        attribute: "path".to_string(),
+                        line: 3,
+                        col: 12,
+                    }),
+                    line: 3,
+                    col: 5,
+                },
+            ],
+            docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
+            line: 1,
+            col: 1,
+            is_async: false,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        if let AstNode::FunctionDef { body, .. } = &ast {
+            let mut builder = CfgBuilder::new();
+            builder.build_function(body);
+            let cfg = builder.build();
+
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let result = analyzer.find_use_before_def();
+
+            // 'os' should NOT be flagged as use-before-def because imports are hoisted
+            let os_errors: Vec<_> = result.iter().filter(|e| e.var_name == "os").collect();
+            assert!(
+                os_errors.is_empty(),
+                "Imported module 'os' should not be flagged as use-before-def due to import hoisting, found: {os_errors:?}"
+            );
+        } else {
+            panic!("Expected FunctionDef");
+        }
+    }
+
+    #[test]
+    fn test_import_with_alias_hoisting() {
+        let source = "def foo():\n    import numpy as np\n    arr = np.array([1, 2, 3])".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::FunctionDef {
+            name: "foo".to_string(),
+            args: vec![],
+            body: vec![
+                AstNode::Import { module: "numpy".to_string(), alias: Some("np".to_string()), line: 2, col: 5 },
+                AstNode::Assignment {
+                    target: "arr".to_string(),
+                    value: Box::new(AstNode::Call {
+                        function: "np.array".to_string(),
+                        args: vec![AstNode::Literal {
+                            value: beacon_parser::LiteralValue::Integer(1),
+                            line: 3,
+                            col: 19,
+                        }],
+                        line: 3,
+                        col: 11,
+                    }),
+                    line: 3,
+                    col: 5,
+                },
+            ],
+            docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
+            line: 1,
+            col: 1,
+            is_async: false,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        if let AstNode::FunctionDef { body, .. } = &ast {
+            let mut builder = CfgBuilder::new();
+            builder.build_function(body);
+            let cfg = builder.build();
+
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let result = analyzer.find_use_before_def();
+
+            // 'np' (alias) should NOT be flagged as use-before-def because imports are hoisted
+            let np_errors: Vec<_> = result.iter().filter(|e| e.var_name == "np").collect();
+            assert!(
+                np_errors.is_empty(),
+                "Imported alias 'np' should not be flagged as use-before-def due to import hoisting, found: {np_errors:?}"
+            );
+
+            // 'numpy' should NOT appear in errors (it's the module, not the binding)
+            let numpy_errors: Vec<_> = result.iter().filter(|e| e.var_name == "numpy").collect();
+            assert!(
+                numpy_errors.is_empty(),
+                "Module name 'numpy' should not be flagged, found: {numpy_errors:?}"
+            );
         } else {
             panic!("Expected FunctionDef");
         }

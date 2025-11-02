@@ -511,7 +511,7 @@ impl Analyzer {
     }
 
     /// Check if a name is a Python builtin
-    fn is_builtin(name: &str) -> bool {
+    pub fn is_builtin(name: &str) -> bool {
         matches!(
             name,
             "print"
@@ -590,6 +590,90 @@ impl Analyzer {
                 | "credits"
                 | "license"
         )
+    }
+
+    /// Get all Python builtins as a set
+    pub fn get_builtins() -> rustc_hash::FxHashSet<String> {
+        [
+            "print",
+            "len",
+            "range",
+            "str",
+            "int",
+            "float",
+            "bool",
+            "list",
+            "dict",
+            "set",
+            "tuple",
+            "abs",
+            "all",
+            "any",
+            "ascii",
+            "bin",
+            "callable",
+            "chr",
+            "compile",
+            "complex",
+            "delattr",
+            "dir",
+            "divmod",
+            "enumerate",
+            "eval",
+            "exec",
+            "filter",
+            "format",
+            "frozenset",
+            "getattr",
+            "globals",
+            "hasattr",
+            "hash",
+            "help",
+            "hex",
+            "id",
+            "input",
+            "isinstance",
+            "issubclass",
+            "iter",
+            "locals",
+            "map",
+            "max",
+            "min",
+            "next",
+            "object",
+            "oct",
+            "open",
+            "ord",
+            "pow",
+            "property",
+            "repr",
+            "reversed",
+            "round",
+            "setattr",
+            "slice",
+            "sorted",
+            "staticmethod",
+            "sum",
+            "super",
+            "type",
+            "vars",
+            "zip",
+            "__import__",
+            "True",
+            "False",
+            "None",
+            "NotImplemented",
+            "Ellipsis",
+            "__debug__",
+            "quit",
+            "exit",
+            "copyright",
+            "credits",
+            "license",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
     }
 
     /// Check if a string is a valid Python identifier ([a-zA-Z_][a-zA-Z0-9_]*), filtering

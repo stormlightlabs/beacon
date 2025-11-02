@@ -7,6 +7,7 @@
 
 use crate::config::Config;
 use crate::document::DocumentManager;
+
 use beacon_parser::AstNode;
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -136,11 +137,21 @@ impl Workspace {
     /// Initialize workspace by discovering Python files and stubs
     ///
     /// Scans the workspace for all Python files, builds the module index, constructs the initial dependency graph, and discovers stub files following PEP 561.
+    /// Stubs are always loaded even if file discovery fails, since stdlib stubs are essential for type checking.
     pub fn initialize(&mut self) -> Result<(), WorkspaceError> {
-        self.discover_files()?;
-        self.build_dependency_graph();
+        tracing::info!("Starting workspace initialization & discovering stubs");
         self.discover_stubs();
 
+        tracing::debug!("Discovering Python files");
+        self.discover_files()?;
+
+        tracing::debug!("Building dependency graph");
+        self.build_dependency_graph();
+
+        tracing::info!(
+            "Workspace initialization complete. Index contains {} modules",
+            self.index.modules.len()
+        );
         Ok(())
     }
 
@@ -270,12 +281,25 @@ impl Workspace {
     /// Uses [ignore] crate to walk the workspace directory tree, respecting .gitignore files and excluding common virtual environment patterns.
     /// TODO: Make overrides configurable via [Config::exclude_patterns]
     fn discover_files(&mut self) -> Result<(), WorkspaceError> {
+        tracing::debug!("discover_files: Starting file discovery");
+
         let root_path = match &self.root_uri {
-            Some(uri) if uri.scheme() == "file" => PathBuf::from(uri.path()),
-            _ => return Ok(()),
+            Some(uri) if uri.scheme() == "file" => {
+                let path = PathBuf::from(uri.path());
+                tracing::debug!("discover_files: Root URI is {}, path is {}", uri, path.display());
+                path
+            }
+            _ => {
+                tracing::debug!("discover_files: No file:// root URI, skipping file discovery");
+                return Ok(());
+            }
         };
 
         if !root_path.exists() || !root_path.is_dir() {
+            tracing::error!(
+                "discover_files: Root path does not exist or is not a directory: {}",
+                root_path.display()
+            );
             return Err(WorkspaceError::InvalidRoot(format!(
                 "Workspace root does not exist or is not a directory: {}",
                 root_path.display()
@@ -826,24 +850,32 @@ impl Workspace {
 
     /// Discover all stub files in workspace and populate stub cache during workspace initialization
     pub fn discover_stubs(&mut self) {
+        tracing::debug!("discover_stubs: Loading builtin stubs");
         self.load_builtin_stubs();
 
+        tracing::debug!("discover_stubs: Scanning {} stub paths", self.config.stub_paths.len());
         for stub_path in self.config.stub_paths.clone() {
             self.discover_stubs_in_directory(&stub_path);
         }
 
         if let Some(root_uri) = &self.root_uri {
             if let Ok(root_path) = root_uri.to_file_path() {
+                tracing::debug!("discover_stubs: Scanning for stub packages in {}", root_path.display());
                 self.discover_stub_packages(&root_path);
             }
+        } else {
+            tracing::debug!("discover_stubs: No root_uri, skipping stub package discovery");
         }
+
+        let stub_count = self.stubs.read().ok().map(|s| s.cache.len()).unwrap_or(0);
+        tracing::info!("discover_stubs: Completed. Loaded {} stub modules", stub_count);
     }
 
     /// Load built-in stubs from embedded stdlib stub files
     ///
-    /// Pre-loads core Python stdlib types that are always available.
-    /// Includes builtins, typing, dataclasses, os, enum, and pathlib.
-    fn load_builtin_stubs(&self) {
+    /// Pre-loads core Python stdlib types that are always available. Includes builtins, typing, dataclasses, os, enum, and pathlib.
+    /// Registers these modules in the workspace index so they can be resolved during import resolution.
+    fn load_builtin_stubs(&mut self) {
         let stdlib_stubs = vec![
             ("builtins", BUILTINS_STUB),
             ("typing", TYPING_STUB),
@@ -853,13 +885,36 @@ impl Workspace {
             ("pathlib", PATHLIB_STUB),
         ];
 
+        let stub_count = stdlib_stubs.len();
+        tracing::debug!("Loading {} stdlib modules", stub_count);
+
         for (module_name, stub_content) in stdlib_stubs {
-            if let Ok(stub) = self.parse_stub_from_string(module_name, stub_content) {
-                if let Ok(mut cache) = self.stubs.write() {
-                    cache.insert(module_name.to_string(), stub);
+            match self.parse_stub_from_string(module_name, stub_content) {
+                Ok(stub) => {
+                    tracing::debug!(
+                        "Parsed stdlib module '{}' ({} exports)",
+                        module_name,
+                        stub.exports.len()
+                    );
+
+                    if let Ok(mut cache) = self.stubs.write() {
+                        cache.insert(module_name.to_string(), stub);
+                    }
+
+                    if let Ok(uri) = Url::parse(&format!("builtin://{module_name}")) {
+                        let module_info =
+                            ModuleInfo::new(uri.clone(), module_name.to_string(), PathBuf::from("<builtin>"), false);
+                        self.index.insert(module_info);
+                        tracing::debug!("Registered stdlib module '{}' at {}", module_name, uri);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to parse stdlib module '{}': {:?}", module_name, e);
                 }
             }
         }
+
+        tracing::info!("Loaded {} stdlib stub modules", stub_count);
     }
 
     /// Parse a stub file from string content (used for embedded stdlib stubs)
@@ -911,8 +966,16 @@ impl Workspace {
                                 all_exports: None,
                                 content: None,
                             };
+
                             if let Ok(mut cache) = self.stubs.write() {
-                                cache.insert(module_name, stub);
+                                cache.insert(module_name.clone(), stub);
+                            }
+
+                            if let Ok(uri) = Url::from_file_path(entry.path()) {
+                                let module_info =
+                                    ModuleInfo::new(uri.clone(), module_name.clone(), directory.to_path_buf(), false);
+                                self.index.insert(module_info);
+                                tracing::debug!("Registered stub module '{}' at {}", module_name, uri);
                             }
                         }
                     }
@@ -1856,7 +1919,7 @@ def test_function(x: str) -> bool: ...
     fn test_load_builtin_stubs() {
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
-        let workspace = Workspace::new(None, config, documents);
+        let mut workspace = Workspace::new(None, config, documents);
 
         workspace.load_builtin_stubs();
 
@@ -1865,13 +1928,21 @@ def test_function(x: str) -> bool: ...
         for module_name in expected_modules {
             assert!(cache.contains(module_name), "Stdlib module {module_name} not loaded");
         }
+
+        drop(cache);
+        for module_name in ["builtins", "typing", "dataclasses", "os", "enum", "pathlib"] {
+            assert!(
+                workspace.index.get_by_name(module_name).is_some(),
+                "Stdlib module {module_name} not registered in index"
+            );
+        }
     }
 
     #[test]
     fn test_stdlib_stubs_have_expected_exports() {
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
-        let workspace = Workspace::new(None, config, documents);
+        let mut workspace = Workspace::new(None, config, documents);
 
         workspace.load_builtin_stubs();
         let cache = workspace.stubs.read().unwrap();
@@ -1902,5 +1973,77 @@ def test_function(x: str) -> bool: ...
         let pathlib = cache.get("pathlib").expect("pathlib not loaded");
         assert!(pathlib.exports.contains_key("Path"));
         assert!(pathlib.exports.contains_key("PurePath"));
+    }
+
+    #[test]
+    fn test_stdlib_imports_can_be_resolved() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut workspace = Workspace::new(None, config, documents);
+
+        workspace.load_builtin_stubs();
+
+        let stdlib_modules = vec!["typing", "dataclasses", "os", "enum", "pathlib"];
+        for module_name in stdlib_modules {
+            let resolved = workspace.resolve_import(module_name);
+            assert!(resolved.is_some(), "Failed to resolve stdlib import '{module_name}'");
+
+            let uri = resolved.unwrap();
+            assert_eq!(
+                uri.scheme(),
+                "builtin",
+                "Expected builtin:// scheme for {module_name}, got {}",
+                uri.scheme()
+            );
+        }
+    }
+
+    #[test]
+    fn test_initialize_registers_stdlib_modules() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut workspace = Workspace::new(None, config, documents.clone());
+
+        workspace.initialize().unwrap();
+
+        let stdlib_modules = vec!["typing", "dataclasses", "os", "enum", "pathlib", "builtins"];
+        for module_name in stdlib_modules {
+            let resolved = workspace.resolve_import(module_name);
+            assert!(
+                resolved.is_some(),
+                "Failed to resolve stdlib import '{module_name}' after initialize()"
+            );
+        }
+
+        let test_uri = Url::parse("file:///test.py").unwrap();
+        documents
+            .open_document(
+                test_uri.clone(),
+                1,
+                "from typing import List\nfrom dataclasses import dataclass\n".to_string(),
+            )
+            .unwrap();
+
+        let unresolved = workspace.unresolved_imports(&test_uri);
+        assert!(
+            unresolved.is_empty(),
+            "Expected no unresolved imports, got: {unresolved:?}"
+        );
+    }
+
+    #[test]
+    fn test_stdlib_loaded_without_root_uri() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut workspace = Workspace::new(None, config, documents.clone());
+
+        workspace.initialize().unwrap();
+
+        for module_name in ["typing", "dataclasses", "os", "enum", "pathlib"] {
+            assert!(
+                workspace.resolve_import(module_name).is_some(),
+                "Stdlib module {module_name} not available without root_uri"
+            );
+        }
     }
 }

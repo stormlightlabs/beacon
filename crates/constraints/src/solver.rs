@@ -84,6 +84,57 @@ fn check_user_defined_protocol(ty: &Type, protocol_name: &str, class_registry: &
     }
 }
 
+/// Check if a class type satisfies a builtin protocol by checking for dunder methods
+///
+/// This function checks if a class has the appropriate dunder methods to satisfy builtin protocols like Iterable, Sized, etc.
+fn check_builtin_protocol_on_class(ty: &Type, protocol: &ProtocolName, class_registry: &ClassRegistry) -> bool {
+    let class_name = match ty {
+        Type::Con(TypeCtor::Class(name)) => name,
+        Type::App(ctor, _) => {
+            if let Type::Con(TypeCtor::Class(name)) = ctor.as_ref() {
+                name
+            } else {
+                return false;
+            }
+        }
+        _ => return false,
+    };
+
+    match protocol {
+        ProtocolName::Iterable => class_registry.lookup_attribute(class_name, "__iter__").is_some(),
+        ProtocolName::Iterator => {
+            class_registry.lookup_attribute(class_name, "__iter__").is_some()
+                && class_registry.lookup_attribute(class_name, "__next__").is_some()
+        }
+        ProtocolName::Sized => class_registry.lookup_attribute(class_name, "__len__").is_some(),
+        ProtocolName::Sequence => {
+            class_registry.lookup_attribute(class_name, "__len__").is_some()
+                && class_registry.lookup_attribute(class_name, "__getitem__").is_some()
+        }
+        ProtocolName::Mapping => {
+            class_registry.lookup_attribute(class_name, "__len__").is_some()
+                && class_registry.lookup_attribute(class_name, "__getitem__").is_some()
+                && class_registry.lookup_attribute(class_name, "__iter__").is_some()
+        }
+        ProtocolName::AsyncIterable => class_registry.lookup_attribute(class_name, "__aiter__").is_some(),
+        ProtocolName::AsyncIterator => {
+            class_registry.lookup_attribute(class_name, "__aiter__").is_some()
+                && class_registry.lookup_attribute(class_name, "__anext__").is_some()
+        }
+        ProtocolName::Awaitable => class_registry.lookup_attribute(class_name, "__await__").is_some(),
+        ProtocolName::ContextManager => {
+            class_registry.lookup_attribute(class_name, "__enter__").is_some()
+                && class_registry.lookup_attribute(class_name, "__exit__").is_some()
+        }
+        ProtocolName::AsyncContextManager => {
+            class_registry.lookup_attribute(class_name, "__aenter__").is_some()
+                && class_registry.lookup_attribute(class_name, "__aexit__").is_some()
+        }
+        ProtocolName::Callable => class_registry.lookup_attribute(class_name, "__call__").is_some(),
+        ProtocolName::UserDefined(_) => false,
+    }
+}
+
 /// Solve a set of constraints using beacon-core's unification algorithm
 ///
 /// Errors are accumulated rather than failing fast to provide comprehensive feedback.
@@ -351,11 +402,18 @@ pub fn solve_constraints(
 
             Constraint::Protocol(obj_ty, protocol_name, elem_ty, span) => {
                 let applied_obj = subst.apply(&obj_ty);
+                if matches!(applied_obj, Type::Var(_)) {
+                    continue;
+                }
+
                 let satisfies = match &protocol_name {
                     ProtocolName::UserDefined(proto_name) => {
                         check_user_defined_protocol(&applied_obj, proto_name, class_registry)
                     }
-                    _ => ProtocolChecker::satisfies(&applied_obj, &protocol_name),
+                    _ => {
+                        check_builtin_protocol_on_class(&applied_obj, &protocol_name, class_registry)
+                            || ProtocolChecker::satisfies(&applied_obj, &protocol_name)
+                    }
                 };
 
                 if satisfies {
@@ -803,6 +861,29 @@ mod tests {
 
         let (_, errors) = result.unwrap();
         assert!(errors.is_empty(), "Coroutine should satisfy Awaitable protocol");
+    }
+
+    #[test]
+    fn test_solve_protocol_with_type_variable() {
+        let obj_ty = tvar(12);
+        let elem_ty = tvar(13);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Protocol(
+                obj_ty,
+                ProtocolName::Iterable,
+                elem_ty,
+                test_span(),
+            )],
+        };
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "Protocol constraint on unresolved type variable should be skipped, but got errors: {errors:?}"
+        );
     }
 
     #[test]
