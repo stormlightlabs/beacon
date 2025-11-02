@@ -15,6 +15,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use url::Url;
 
+/// Embedded Python stdlib stub files
+const BUILTINS_STUB: &str = include_str!("../../../stubs/builtins.pyi");
+const TYPING_STUB: &str = include_str!("../../../stubs/typing.pyi");
+const DATACLASSES_STUB: &str = include_str!("../../../stubs/dataclasses.pyi");
+const OS_STUB: &str = include_str!("../../../stubs/os.pyi");
+const ENUM_STUB: &str = include_str!("../../../stubs/enum.pyi");
+const PATHLIB_STUB: &str = include_str!("../../../stubs/pathlib.pyi");
+
 /// Information about a Python module in the workspace
 #[derive(Debug, Clone)]
 pub struct ModuleInfo {
@@ -755,6 +763,7 @@ impl Workspace {
                 is_partial,
                 reexports: Vec::new(),
                 all_exports: None,
+                content: None,
             });
         }
 
@@ -779,6 +788,7 @@ impl Workspace {
                 is_partial,
                 reexports: Vec::new(),
                 all_exports: None,
+                content: None,
             });
         }
 
@@ -797,6 +807,7 @@ impl Workspace {
                 is_partial,
                 reexports: Vec::new(),
                 all_exports: None,
+                content: None,
             });
         }
 
@@ -828,26 +839,53 @@ impl Workspace {
         }
     }
 
-    /// Load built-in stubs (builtins.pyi) from the stubs directory
+    /// Load built-in stubs from embedded stdlib stub files
     ///
-    /// Pre-loads core Python types that are always available.
+    /// Pre-loads core Python stdlib types that are always available.
+    /// Includes builtins, typing, dataclasses, os, enum, and pathlib.
     fn load_builtin_stubs(&self) {
-        let builtin_stub_paths = vec![
-            PathBuf::from("stubs/builtins.pyi"),
-            PathBuf::from("../stubs/builtins.pyi"),
-            PathBuf::from("../../stubs/builtins.pyi"),
+        let stdlib_stubs = vec![
+            ("builtins", BUILTINS_STUB),
+            ("typing", TYPING_STUB),
+            ("dataclasses", DATACLASSES_STUB),
+            ("os", OS_STUB),
+            ("enum", ENUM_STUB),
+            ("pathlib", PATHLIB_STUB),
         ];
 
-        for builtin_path in builtin_stub_paths {
-            if builtin_path.exists() {
-                if let Ok(stub) = self.parse_stub_file(&builtin_path) {
-                    if let Ok(mut cache) = self.stubs.write() {
-                        cache.insert("builtins".to_string(), stub);
-                    }
-                    return;
+        for (module_name, stub_content) in stdlib_stubs {
+            if let Ok(stub) = self.parse_stub_from_string(module_name, stub_content) {
+                if let Ok(mut cache) = self.stubs.write() {
+                    cache.insert(module_name.to_string(), stub);
                 }
             }
         }
+    }
+
+    /// Parse a stub file from string content (used for embedded stdlib stubs)
+    fn parse_stub_from_string(&self, module_name: &str, content: &str) -> Result<StubFile, WorkspaceError> {
+        let mut parser = crate::parser::LspParser::new()
+            .map_err(|e| WorkspaceError::StubLoadFailed(format!("Failed to create parser: {e:?}")))?;
+
+        let parse_result = parser
+            .parse(content)
+            .map_err(|e| WorkspaceError::StubLoadFailed(format!("Failed to parse stub {module_name}: {e:?}")))?;
+
+        let mut exports = FxHashMap::default();
+        let mut reexports = Vec::new();
+        let mut all_exports = None;
+
+        self.extract_stub_signatures(&parse_result.ast, &mut exports, &mut reexports, &mut all_exports);
+
+        Ok(StubFile {
+            module: module_name.to_string(),
+            path: PathBuf::from(format!("<embedded>/{module_name}.pyi")),
+            exports,
+            reexports,
+            all_exports,
+            is_partial: false,
+            content: Some(content.to_string()),
+        })
     }
 
     /// Discover all .pyi files in a directory
@@ -871,6 +909,7 @@ impl Workspace {
                                 is_partial,
                                 reexports: Vec::new(),
                                 all_exports: None,
+                                content: None,
                             };
                             if let Ok(mut cache) = self.stubs.write() {
                                 cache.insert(module_name, stub);
@@ -943,16 +982,15 @@ impl Workspace {
             .map(|p| self.check_if_partial_stub(p))
             .unwrap_or(false);
 
-        Ok(
-            StubFile {
-                module: module_name,
-                path: stub_path.to_path_buf(),
-                exports,
-                is_partial,
-                reexports,
-                all_exports,
-            },
-        )
+        Ok(StubFile {
+            module: module_name,
+            path: stub_path.to_path_buf(),
+            exports,
+            is_partial,
+            reexports,
+            all_exports,
+            content: None,
+        })
     }
 
     /// Extract class metadata from stub AST nodes
@@ -1450,6 +1488,8 @@ pub struct StubFile {
     pub reexports: Vec<String>,
     /// __all__ declaration if present
     pub all_exports: Option<Vec<String>>,
+    /// Embedded content for built-in stubs (avoids filesystem access)
+    pub content: Option<String>,
 }
 
 /// Workspace errors
@@ -1753,5 +1793,114 @@ mod tests {
 
         let ty = workspace.parse_annotation_string("invalid[[[");
         assert!(ty.is_none());
+    }
+
+    #[test]
+    fn test_parse_stub_from_string() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let workspace = Workspace::new(None, config, documents);
+
+        let stub_content = r#"
+"""Test stub file."""
+
+class TestClass:
+    def test_method(self) -> int: ...
+
+def test_function(x: str) -> bool: ...
+"#;
+
+        let result = workspace.parse_stub_from_string("test_module", stub_content);
+        assert!(result.is_ok(), "Failed to parse stub: {:?}", result.err());
+
+        let stub = result.unwrap();
+        assert_eq!(stub.module, "test_module");
+        assert_eq!(stub.path, PathBuf::from("<embedded>/test_module.pyi"));
+        assert!(!stub.is_partial);
+        assert!(stub.exports.contains_key("TestClass"));
+        assert!(stub.exports.contains_key("test_function"));
+    }
+
+    #[test]
+    fn test_embedded_stubs_parse_successfully() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let workspace = Workspace::new(None, config, documents);
+
+        let stubs_to_test = vec![
+            ("builtins", BUILTINS_STUB),
+            ("typing", TYPING_STUB),
+            ("dataclasses", DATACLASSES_STUB),
+            ("os", OS_STUB),
+            ("enum", ENUM_STUB),
+            ("pathlib", PATHLIB_STUB),
+        ];
+
+        for (module_name, stub_content) in stubs_to_test {
+            let result = workspace.parse_stub_from_string(module_name, stub_content);
+            assert!(
+                result.is_ok(),
+                "Failed to parse embedded stub {}: {:?}",
+                module_name,
+                result.err()
+            );
+
+            let stub = result.unwrap();
+            assert_eq!(stub.module, module_name);
+            assert!(!stub.is_partial);
+            assert!(!stub.exports.is_empty(), "Stub {module_name} has no exports");
+        }
+    }
+
+    #[test]
+    fn test_load_builtin_stubs() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let workspace = Workspace::new(None, config, documents);
+
+        workspace.load_builtin_stubs();
+
+        let cache = workspace.stubs.read().unwrap();
+        let expected_modules = vec!["builtins", "typing", "dataclasses", "os", "enum", "pathlib"];
+        for module_name in expected_modules {
+            assert!(cache.contains(module_name), "Stdlib module {module_name} not loaded");
+        }
+    }
+
+    #[test]
+    fn test_stdlib_stubs_have_expected_exports() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let workspace = Workspace::new(None, config, documents);
+
+        workspace.load_builtin_stubs();
+        let cache = workspace.stubs.read().unwrap();
+
+        let builtins = cache.get("builtins").expect("builtins not loaded");
+        assert!(builtins.exports.contains_key("int"));
+        assert!(builtins.exports.contains_key("str"));
+        assert!(builtins.exports.contains_key("list"));
+        assert!(builtins.exports.contains_key("dict"));
+
+        let typing = cache.get("typing").expect("typing not loaded");
+        assert!(typing.exports.contains_key("List"));
+        assert!(typing.exports.contains_key("Dict"));
+        assert!(typing.exports.contains_key("Optional"));
+
+        let dataclasses = cache.get("dataclasses").expect("dataclasses not loaded");
+        assert!(dataclasses.exports.contains_key("dataclass"));
+        assert!(dataclasses.exports.contains_key("field"));
+
+        let os = cache.get("os").expect("os not loaded");
+        assert!(os.exports.contains_key("path"));
+        assert!(os.exports.contains_key("getcwd"));
+
+        let enum_stub = cache.get("enum").expect("enum not loaded");
+        assert!(enum_stub.exports.contains_key("Enum"));
+        assert!(enum_stub.exports.contains_key("IntEnum"));
+
+        let pathlib = cache.get("pathlib").expect("pathlib not loaded");
+        assert!(pathlib.exports.contains_key("Path"));
+        assert!(pathlib.exports.contains_key("PurePath"));
     }
 }

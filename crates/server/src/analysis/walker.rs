@@ -120,7 +120,7 @@ pub fn generate_constraints(
     if let Some(stub_cache) = &stub_cache {
         if let Ok(cache) = stub_cache.try_read() {
             if let Some(builtins) = cache.get("builtins") {
-                loader::load_builtins_into_registry(&builtins.path, &mut ctx.class_registry)?;
+                loader::load_builtins_into_registry(builtins, &mut ctx.class_registry)?;
             }
         }
     }

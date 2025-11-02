@@ -6,7 +6,6 @@ use beacon_core::{
 };
 use beacon_parser::AstNode;
 use std::collections::HashMap;
-use std::path::Path;
 
 /// Extract class metadata from stub AST and register them in the ClassRegistry
 pub fn extract_stub_classes_into_registry(node: &AstNode, class_registry: &mut ClassRegistry) {
@@ -197,14 +196,16 @@ pub fn parse_type_annotation(annotation: &str) -> Option<beacon_core::Type> {
     }
 }
 
-pub fn load_builtins_into_registry(stub_path: &Path, class_registry: &mut ClassRegistry) -> Result<()> {
-    match std::fs::read_to_string(stub_path) {
-        Ok(content) => {
-            let mut parser = crate::parser::LspParser::new()?;
-            let parse_result = parser.parse(&content)?;
-            extract_stub_classes_into_registry(&parse_result.ast, class_registry);
-            Ok(())
-        }
-        Err(e) => Err(AnalysisError::from(e).into()),
-    }
+pub fn load_builtins_into_registry(
+    stub: &crate::workspace::StubFile, class_registry: &mut ClassRegistry,
+) -> Result<()> {
+    let content = match &stub.content {
+        Some(embedded_content) => embedded_content.clone(),
+        None => std::fs::read_to_string(&stub.path).map_err(AnalysisError::from)?,
+    };
+
+    let mut parser = crate::parser::LspParser::new()?;
+    let parse_result = parser.parse(&content)?;
+    extract_stub_classes_into_registry(&parse_result.ast, class_registry);
+    Ok(())
 }

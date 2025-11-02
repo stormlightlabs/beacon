@@ -79,6 +79,8 @@ pub struct DataFlowAnalyzer<'a> {
     symbol_table: &'a SymbolTable,
     /// Scope ID of the function being analyzed (for parameter lookup)
     scope_id: ScopeId,
+    /// Function and class names defined at the top level of this scope (hoisted definitions)
+    hoisted_definitions: FxHashSet<String>,
 }
 
 impl<'a> DataFlowAnalyzer<'a> {
@@ -89,7 +91,10 @@ impl<'a> DataFlowAnalyzer<'a> {
         for stmt in function_body {
             Self::collect_all_statements(stmt, &mut all_statements);
         }
-        Self { cfg, all_statements, symbol_table, scope_id }
+
+        let hoisted_definitions = Self::collect_hoisted_definitions(function_body);
+
+        Self { cfg, all_statements, symbol_table, scope_id, hoisted_definitions }
     }
 
     /// Recursively collect all statements including nested ones
@@ -165,6 +170,90 @@ impl<'a> DataFlowAnalyzer<'a> {
         }
     }
 
+    /// Collect function and class names defined at the top level of the scope.
+    ///
+    /// In Python, function and class definitions are hoised.
+    /// Here we implement Python's two-pass name resolution.
+    fn collect_hoisted_definitions(function_body: &[AstNode]) -> FxHashSet<String> {
+        let mut hoisted = FxHashSet::default();
+
+        for stmt in function_body {
+            Self::collect_hoisted_from_node(stmt, &mut hoisted);
+        }
+
+        hoisted
+    }
+
+    /// Recursively collect hoisted definitions from a node and its control flow bodies.
+    fn collect_hoisted_from_node(node: &AstNode, hoisted: &mut FxHashSet<String>) {
+        match node {
+            AstNode::FunctionDef { name, .. } => {
+                hoisted.insert(name.clone());
+            }
+            AstNode::ClassDef { name, .. } => {
+                hoisted.insert(name.clone());
+            }
+            AstNode::If { body, elif_parts, else_body, .. } => {
+                for stmt in body {
+                    Self::collect_hoisted_from_node(stmt, hoisted);
+                }
+                for (_, elif_body) in elif_parts {
+                    for stmt in elif_body {
+                        Self::collect_hoisted_from_node(stmt, hoisted);
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        Self::collect_hoisted_from_node(stmt, hoisted);
+                    }
+                }
+            }
+            AstNode::For { body, else_body, .. } | AstNode::While { body, else_body, .. } => {
+                for stmt in body {
+                    Self::collect_hoisted_from_node(stmt, hoisted);
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        Self::collect_hoisted_from_node(stmt, hoisted);
+                    }
+                }
+            }
+            AstNode::Try { body, handlers, else_body, finally_body, .. } => {
+                for stmt in body {
+                    Self::collect_hoisted_from_node(stmt, hoisted);
+                }
+                for handler in handlers {
+                    for stmt in &handler.body {
+                        Self::collect_hoisted_from_node(stmt, hoisted);
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        Self::collect_hoisted_from_node(stmt, hoisted);
+                    }
+                }
+                if let Some(finally_stmts) = finally_body {
+                    for stmt in finally_stmts {
+                        Self::collect_hoisted_from_node(stmt, hoisted);
+                    }
+                }
+            }
+            AstNode::With { body, .. } => {
+                for stmt in body {
+                    Self::collect_hoisted_from_node(stmt, hoisted);
+                }
+            }
+            AstNode::Match { cases, .. } => {
+                for case in cases {
+                    for stmt in &case.body {
+                        Self::collect_hoisted_from_node(stmt, hoisted);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Run all data flow analyses and return combined results
     pub fn analyze(&self) -> DataFlowResult {
         let use_before_def = self.find_use_before_def();
@@ -191,7 +280,7 @@ impl<'a> DataFlowAnalyzer<'a> {
             let block = self.cfg.blocks.get(&block_id).unwrap();
 
             let new_def_in = if block.predecessors.is_empty() {
-                FxHashSet::default()
+                self.hoisted_definitions.clone()
             } else {
                 let first_pred = block.predecessors[0].0;
                 let mut result = def_out.get(&first_pred).cloned().unwrap_or_default();
@@ -1497,6 +1586,232 @@ mod tests {
 
             let result = analyzer.evaluate_to_constant(&expr, &test_constants);
             assert_eq!(result, ConstantValue::String("hello world".to_string()));
+        } else {
+            panic!("Expected FunctionDef");
+        }
+    }
+
+    #[test]
+    fn test_function_def_hoisting() {
+        let source =
+            "def outer():\n    result = inner()\n    def inner():\n        return 42\n    return result".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::FunctionDef {
+            name: "outer".to_string(),
+            args: vec![],
+            body: vec![
+                AstNode::Assignment {
+                    target: "result".to_string(),
+                    value: Box::new(AstNode::Call { function: "inner".to_string(), args: vec![], line: 2, col: 14 }),
+                    line: 2,
+                    col: 5,
+                },
+                AstNode::FunctionDef {
+                    name: "inner".to_string(),
+                    args: vec![],
+                    body: vec![AstNode::Return {
+                        value: Some(Box::new(AstNode::Literal {
+                            value: beacon_parser::LiteralValue::Integer(42),
+                            line: 4,
+                            col: 16,
+                        })),
+                        line: 4,
+                        col: 9,
+                    }],
+                    docstring: None,
+                    return_type: None,
+                    decorators: Vec::new(),
+                    line: 3,
+                    col: 5,
+                    is_async: false,
+                },
+                AstNode::Return {
+                    value: Some(Box::new(AstNode::Identifier {
+                        name: "result".to_string(),
+                        line: 5,
+                        col: 12,
+                    })),
+                    line: 5,
+                    col: 5,
+                },
+            ],
+            docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
+            line: 1,
+            col: 1,
+            is_async: false,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        if let AstNode::FunctionDef { body, .. } = &ast {
+            let mut builder = CfgBuilder::new();
+            builder.build_function(body);
+            let cfg = builder.build();
+
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let result = analyzer.find_use_before_def();
+
+            // 'inner' should NOT be flagged as use-before-def because function defs are hoisted
+            let inner_errors: Vec<_> = result.iter().filter(|e| e.var_name == "inner").collect();
+            assert!(
+                inner_errors.is_empty(),
+                "Function 'inner' should not be flagged as use-before-def due to hoisting, found: {inner_errors:?}"
+            );
+        } else {
+            panic!("Expected FunctionDef");
+        }
+    }
+
+    #[test]
+    fn test_class_def_hoisting() {
+        let source =
+            "def factory():\n    obj = MyClass()\n    class MyClass:\n        pass\n    return obj".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::FunctionDef {
+            name: "factory".to_string(),
+            args: vec![],
+            body: vec![
+                AstNode::Assignment {
+                    target: "obj".to_string(),
+                    value: Box::new(AstNode::Call { function: "MyClass".to_string(), args: vec![], line: 2, col: 11 }),
+                    line: 2,
+                    col: 5,
+                },
+                AstNode::ClassDef {
+                    name: "MyClass".to_string(),
+                    bases: vec![],
+                    metaclass: None,
+                    body: vec![AstNode::Pass { line: 4, col: 9 }],
+                    docstring: None,
+                    decorators: Vec::new(),
+                    line: 3,
+                    col: 5,
+                },
+                AstNode::Return {
+                    value: Some(Box::new(AstNode::Identifier {
+                        name: "obj".to_string(),
+                        line: 5,
+                        col: 12,
+                    })),
+                    line: 5,
+                    col: 5,
+                },
+            ],
+            docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
+            line: 1,
+            col: 1,
+            is_async: false,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        if let AstNode::FunctionDef { body, .. } = &ast {
+            let mut builder = CfgBuilder::new();
+            builder.build_function(body);
+            let cfg = builder.build();
+
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let result = analyzer.find_use_before_def();
+
+            // 'MyClass' should NOT be flagged as use-before-def because class defs are hoisted
+            let class_errors: Vec<_> = result.iter().filter(|e| e.var_name == "MyClass").collect();
+            assert!(
+                class_errors.is_empty(),
+                "Class 'MyClass' should not be flagged as use-before-def due to hoisting, found: {class_errors:?}"
+            );
+        } else {
+            panic!("Expected FunctionDef");
+        }
+    }
+
+    #[test]
+    fn test_function_in_conditional_hoisting() {
+        let source =
+            "def outer():\n    result = helper()\n    if True:\n        def helper():\n            return 1\n    return result"
+                .to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let ast = AstNode::FunctionDef {
+            name: "outer".to_string(),
+            args: vec![],
+            body: vec![
+                AstNode::Assignment {
+                    target: "result".to_string(),
+                    value: Box::new(AstNode::Call { function: "helper".to_string(), args: vec![], line: 2, col: 14 }),
+                    line: 2,
+                    col: 5,
+                },
+                AstNode::If {
+                    test: Box::new(AstNode::Literal {
+                        value: beacon_parser::LiteralValue::Boolean(true),
+                        line: 3,
+                        col: 8,
+                    }),
+                    body: vec![AstNode::FunctionDef {
+                        name: "helper".to_string(),
+                        args: vec![],
+                        body: vec![AstNode::Return {
+                            value: Some(Box::new(AstNode::Literal {
+                                value: beacon_parser::LiteralValue::Integer(1),
+                                line: 5,
+                                col: 20,
+                            })),
+                            line: 5,
+                            col: 13,
+                        }],
+                        docstring: None,
+                        return_type: None,
+                        decorators: Vec::new(),
+                        line: 4,
+                        col: 9,
+                        is_async: false,
+                    }],
+                    elif_parts: vec![],
+                    else_body: None,
+                    line: 3,
+                    col: 5,
+                },
+                AstNode::Return {
+                    value: Some(Box::new(AstNode::Identifier {
+                        name: "result".to_string(),
+                        line: 6,
+                        col: 12,
+                    })),
+                    line: 6,
+                    col: 5,
+                },
+            ],
+            docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
+            line: 1,
+            col: 1,
+            is_async: false,
+        };
+
+        resolver.resolve(&ast).unwrap();
+
+        if let AstNode::FunctionDef { body, .. } = &ast {
+            let mut builder = CfgBuilder::new();
+            builder.build_function(body);
+            let cfg = builder.build();
+
+            let scope_id = find_function_scope(&resolver.symbol_table);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let result = analyzer.find_use_before_def();
+            let helper_errors: Vec<_> = result.iter().filter(|e| e.var_name == "helper").collect();
+            assert!(
+                helper_errors.is_empty(),
+                "Function 'helper' in conditional should not be flagged as use-before-def due to hoisting, found: {helper_errors:?}"
+            );
         } else {
             panic!("Expected FunctionDef");
         }

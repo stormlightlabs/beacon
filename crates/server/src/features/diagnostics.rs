@@ -875,9 +875,10 @@ fn type_error_to_diagnostic(error_info: &beacon_constraint::TypeErrorInfo) -> Di
             ("HM006", format!("Type {ty} does not satisfy protocol {protocol}"))
         }
         TypeError::AttributeNotFound(ty, attr) => ("HM007", format!("Attribute '{attr}' not found on type {ty}")),
-        TypeError::ArgumentCountMismatch { expected, found } => {
-            ("HM008", format!("Argument count mismatch: expected {expected}, got {found}"))
-        }
+        TypeError::ArgumentCountMismatch { expected, found } => (
+            "HM008",
+            format!("Argument count mismatch: expected {expected}, got {found}"),
+        ),
         TypeError::PatternNonExhaustive(uncovered) => (
             "PM001",
             format!("Pattern match is not exhaustive. Missing coverage for: {uncovered}"),

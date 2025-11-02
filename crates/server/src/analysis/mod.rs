@@ -1979,7 +1979,17 @@ method = s.upper
         let stub_path = workspace_root.join("stubs/overload_test.pyi");
         let mut class_registry = ClassRegistry::new();
 
-        let result = loader::load_builtins_into_registry(&stub_path, &mut class_registry);
+        let stub = crate::workspace::StubFile {
+            module: "overload_test".to_string(),
+            path: stub_path,
+            exports: FxHashMap::default(),
+            is_partial: false,
+            reexports: Vec::new(),
+            all_exports: None,
+            content: None,
+        };
+
+        let result = loader::load_builtins_into_registry(&stub, &mut class_registry);
         assert!(result.is_ok(), "Failed to load overload test stub: {:?}", result.err());
 
         let converter_meta = class_registry.get_class("Converter");
