@@ -26,6 +26,8 @@ pub struct TypeEnvironment {
     annotation_parser: AnnotationParser,
     /// Generator/coroutine parameters (yield_type, send_type, return_type) when inside a generator/coroutine
     generator_params: Option<(Type, Type, Type)>,
+    /// Expected return type for the current function (used to constrain return statements)
+    expected_return_type: Option<Type>,
 }
 
 impl TypeEnvironment {
@@ -36,6 +38,7 @@ impl TypeEnvironment {
             var_gen: TypeVarGen::new(),
             annotation_parser: AnnotationParser::new(),
             generator_params: None,
+            expected_return_type: None,
         };
 
         env.add_builtins();
@@ -311,6 +314,21 @@ impl TypeEnvironment {
     /// Clear the generator parameters when exiting a generator/coroutine function.
     pub fn clear_generator_params(&mut self) {
         self.generator_params = None;
+    }
+
+    /// Set the expected return type for the current function
+    pub fn set_expected_return_type(&mut self, return_ty: Type) {
+        self.expected_return_type = Some(return_ty);
+    }
+
+    /// Get the expected return type if we're inside a function
+    pub fn get_expected_return_type(&self) -> Option<&Type> {
+        self.expected_return_type.as_ref()
+    }
+
+    /// Clear the expected return type when exiting a function
+    pub fn clear_expected_return_type(&mut self) {
+        self.expected_return_type = None;
     }
 }
 

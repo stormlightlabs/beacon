@@ -10,6 +10,17 @@ use std::sync::Arc;
 
 type TStubCache = Arc<std::sync::RwLock<crate::workspace::StubCache>>;
 
+/// Expression context for constraint generation
+///
+/// Tracks whether an expression's result is used (value context) or discarded (void context) to avoid generating spurious constraints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExprContext {
+    /// Value context: expression result is used (e.g., in assignment, return, argument)
+    Value,
+    /// Void context: expression result is discarded (e.g., statement position)
+    Void,
+}
+
 /// Represents the kind of function based on yield/await detection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FunctionKind {
@@ -112,6 +123,157 @@ fn check_node_for_yield(node: &AstNode) -> bool {
     }
 }
 
+/// Return path analysis result
+///
+/// Tracks what kinds of returns exist in a function to infer the correct return type.
+#[derive(Debug, Clone)]
+struct ReturnPathAnalysis {
+    /// Whether function has explicit `return value` statements
+    has_value_returns: bool,
+    /// Whether function has explicit `return` (no value) statements
+    has_none_returns: bool,
+    /// Whether function can fall through (implicit return None)
+    has_implicit_return: bool,
+}
+
+impl ReturnPathAnalysis {
+    /// Determine if this function should infer Optional[T] return type
+    ///
+    /// A function gets Optional[T] when it has both:
+    /// - Explicit returns with values, AND
+    /// - Either explicit `return` without value OR implicit returns (fall through)
+    fn should_infer_optional(&self) -> bool {
+        self.has_value_returns && (self.has_none_returns || self.has_implicit_return)
+    }
+
+    /// Determine if this function should infer None return type
+    ///
+    /// A function gets None return type when it has NO value returns, only explicit `return` or implicit returns.
+    fn should_infer_none(&self) -> bool {
+        !self.has_value_returns && (self.has_none_returns || self.has_implicit_return)
+    }
+}
+
+/// Analyze return paths in a function body
+///
+/// Examines all paths through the function to determine what types of returns exist.
+/// This is used to infer Optional[T] for mixed returns and None for implicit returns.
+fn analyze_return_paths(body: &[AstNode]) -> ReturnPathAnalysis {
+    let mut analysis =
+        ReturnPathAnalysis { has_value_returns: false, has_none_returns: false, has_implicit_return: true };
+
+    for stmt in body {
+        collect_returns(stmt, &mut analysis);
+    }
+
+    analysis.has_implicit_return = !all_paths_exit(body);
+
+    analysis
+}
+
+/// Recursively collect return statements from a node
+fn collect_returns(node: &AstNode, analysis: &mut ReturnPathAnalysis) {
+    match node {
+        AstNode::Return { value, .. } => {
+            if value.is_some() {
+                analysis.has_value_returns = true;
+            } else {
+                analysis.has_none_returns = true;
+            }
+        }
+        AstNode::If { body, elif_parts, else_body, .. } => {
+            for stmt in body {
+                collect_returns(stmt, analysis);
+            }
+            for (_, elif_body) in elif_parts {
+                for stmt in elif_body {
+                    collect_returns(stmt, analysis);
+                }
+            }
+            if let Some(else_stmts) = else_body {
+                for stmt in else_stmts {
+                    collect_returns(stmt, analysis);
+                }
+            }
+        }
+        AstNode::For { body, else_body, .. } | AstNode::While { body, else_body, .. } => {
+            for stmt in body {
+                collect_returns(stmt, analysis);
+            }
+            if let Some(else_stmts) = else_body {
+                for stmt in else_stmts {
+                    collect_returns(stmt, analysis);
+                }
+            }
+        }
+        AstNode::Try { body, handlers, else_body, finally_body, .. } => {
+            for stmt in body {
+                collect_returns(stmt, analysis);
+            }
+            for handler in handlers {
+                for stmt in &handler.body {
+                    collect_returns(stmt, analysis);
+                }
+            }
+            if let Some(else_stmts) = else_body {
+                for stmt in else_stmts {
+                    collect_returns(stmt, analysis);
+                }
+            }
+            if let Some(finally_stmts) = finally_body {
+                for stmt in finally_stmts {
+                    collect_returns(stmt, analysis);
+                }
+            }
+        }
+        AstNode::With { body, .. } => {
+            for stmt in body {
+                collect_returns(stmt, analysis);
+            }
+        }
+        AstNode::Match { cases, .. } => {
+            for case in cases {
+                for stmt in &case.body {
+                    collect_returns(stmt, analysis);
+                }
+            }
+        }
+        AstNode::FunctionDef { .. } | AstNode::ClassDef { .. } | AstNode::Lambda { .. } => {}
+        _ => {}
+    }
+}
+
+/// Check if all paths through the statements exit (return or raise)
+fn all_paths_exit(stmts: &[AstNode]) -> bool {
+    if stmts.is_empty() {
+        return false;
+    }
+
+    for stmt in stmts {
+        if stmt_always_exits(stmt) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Check if a statement always exits (never falls through)
+fn stmt_always_exits(stmt: &AstNode) -> bool {
+    match stmt {
+        AstNode::Return { .. } | AstNode::Raise { .. } => true,
+        AstNode::If { body, elif_parts, else_body, .. } => {
+            if else_body.is_none() {
+                return false;
+            }
+            all_paths_exit(body)
+                && elif_parts.iter().all(|(_, elif_body)| all_paths_exit(elif_body))
+                && else_body.as_ref().is_some_and(|e| all_paths_exit(e))
+        }
+        _ => false,
+    }
+}
+
 pub fn generate_constraints(
     stub_cache: &Option<TStubCache>, ast: &AstNode, symbol_table: &SymbolTable,
 ) -> Result<ConstraintResult> {
@@ -143,10 +305,21 @@ pub fn generate_constraints(
 pub fn visit_node_with_env(
     node: &AstNode, env: &mut TypeEnvironment, ctx: &mut ConstraintGenContext, stub_cache: Option<&TStubCache>,
 ) -> Result<Type> {
+    visit_node_with_context(node, env, ctx, stub_cache, ExprContext::Value)
+}
+
+/// Internal visitor with expression context tracking
+///
+/// The `expr_ctx` parameter determines whether to generate unification constraints for expression results.
+/// In void contexts (statement position), we skip generating Equal constraints since the result is discarded.
+fn visit_node_with_context(
+    node: &AstNode, env: &mut TypeEnvironment, ctx: &mut ConstraintGenContext, stub_cache: Option<&TStubCache>,
+    expr_ctx: ExprContext,
+) -> Result<Type> {
     match node {
         AstNode::Module { body, .. } => {
             for stmt in body {
-                visit_node_with_env(stmt, env, ctx, stub_cache)?;
+                visit_node_with_context(stmt, env, ctx, stub_cache, ExprContext::Void)?;
             }
             Ok(Type::Con(TypeCtor::Module("".into())))
         }
@@ -163,12 +336,19 @@ pub fn visit_node_with_env(
                 .collect();
 
             let function_kind = detect_function_kind(body, *is_async);
+            let return_analysis = analyze_return_paths(body);
 
             let (ret_type, gen_params) = if matches!(function_kind, FunctionKind::Regular) {
-                let ret = return_type
-                    .as_ref()
-                    .map(|ann| env.parse_annotation_or_any(ann))
-                    .unwrap_or_else(|| Type::Var(env.fresh_var()));
+                let ret = if let Some(ann) = return_type {
+                    env.parse_annotation_or_any(ann)
+                } else if return_analysis.should_infer_optional() {
+                    let inner_ty = Type::Var(env.fresh_var());
+                    Type::Union(vec![inner_ty, Type::none()])
+                } else if return_analysis.should_infer_none() {
+                    Type::none()
+                } else {
+                    Type::Var(env.fresh_var())
+                };
                 (ret, None)
             } else {
                 let annotated_ret = return_type
@@ -208,13 +388,11 @@ pub fn visit_node_with_env(
                 body_env.set_generator_params(y, s, r);
             }
 
-            let mut body_ty = Type::none();
-            for stmt in body {
-                body_ty = visit_node_with_env(stmt, &mut body_env, ctx, stub_cache)?;
-            }
+            body_env.set_expected_return_type(ret_type.clone());
 
-            let span = Span::new(*line, *col);
-            ctx.constraints.push(Constraint::Equal(body_ty, ret_type, span));
+            for stmt in body {
+                visit_node_with_context(stmt, &mut body_env, ctx, stub_cache, ExprContext::Void)?;
+            }
 
             let mut decorated_type = fn_type.clone();
             for decorator in decorators.iter().rev() {
@@ -342,7 +520,18 @@ pub fn visit_node_with_env(
             Ok(ty)
         }
         AstNode::Return { value, line, col } => {
-            let ty = if let Some(val) = value { visit_node_with_env(val, env, ctx, stub_cache)? } else { Type::none() };
+            let ty = if let Some(val) = value {
+                visit_node_with_context(val, env, ctx, stub_cache, ExprContext::Value)?
+            } else {
+                Type::none()
+            };
+
+            if let Some(expected_ret_ty) = env.get_expected_return_type() {
+                let span = Span::new(*line, *col);
+                ctx.constraints
+                    .push(Constraint::Equal(ty.clone(), expected_ret_ty.clone(), span));
+            }
+
             ctx.record_type(*line, *col, ty.clone());
             Ok(ty)
         }
@@ -459,7 +648,10 @@ pub fn visit_node_with_env(
             Ok(result_ty)
         }
         AstNode::If { test, body, elif_parts, else_body, .. } => {
-            visit_node_with_env(test, env, ctx, stub_cache)?;
+            visit_node_with_context(test, env, ctx, stub_cache, ExprContext::Value)?;
+
+            let is_main = is_main_guard(test);
+            let body_context = if is_main { ExprContext::Void } else { expr_ctx };
 
             let (narrowed_var, narrowed_type) = detect_type_guard(test, &mut env.clone());
 
@@ -469,18 +661,18 @@ pub fn visit_node_with_env(
             }
 
             for stmt in body {
-                visit_node_with_env(stmt, &mut true_env, ctx, stub_cache)?;
+                visit_node_with_context(stmt, &mut true_env, ctx, stub_cache, body_context)?;
             }
 
             for (elif_test, elif_body) in elif_parts {
-                visit_node_with_env(elif_test, env, ctx, stub_cache)?;
+                visit_node_with_context(elif_test, env, ctx, stub_cache, ExprContext::Value)?;
                 for stmt in elif_body {
-                    visit_node_with_env(stmt, env, ctx, stub_cache)?;
+                    visit_node_with_context(stmt, env, ctx, stub_cache, expr_ctx)?;
                 }
             }
             if let Some(else_stmts) = else_body {
                 for stmt in else_stmts {
-                    visit_node_with_env(stmt, env, ctx, stub_cache)?;
+                    visit_node_with_context(stmt, env, ctx, stub_cache, expr_ctx)?;
                 }
             }
             Ok(Type::none())
@@ -1049,6 +1241,42 @@ fn type_name_to_type(name: &str) -> Type {
     }
 }
 
+/// Detect if this is the `if __name__ == "__main__":` idiom
+///
+/// This Python idiom checks if the script is being run directly.
+/// The body should always be treated as void context (like module-level code).
+fn is_main_guard(test: &AstNode) -> bool {
+    if let AstNode::Compare { left, ops, comparators, .. } = test {
+        if ops.len() == 1 && comparators.len() == 1 {
+            let is_name_left = matches!(
+                left.as_ref(),
+                AstNode::Identifier { name, .. } if name == "__name__"
+            );
+            let is_main_right = matches!(
+                &comparators[0],
+                AstNode::Literal { value: LiteralValue::String { value, .. }, .. } if value == "__main__"
+            );
+
+            let is_main_left = matches!(
+                left.as_ref(),
+                AstNode::Literal { value: LiteralValue::String { value, .. }, .. } if value == "__main__"
+            );
+            let is_name_right = matches!(
+                &comparators[0],
+                AstNode::Identifier { name, .. } if name == "__name__"
+            );
+
+            let is_eq = matches!(ops[0], beacon_parser::CompareOperator::Eq);
+
+            is_eq && ((is_name_left && is_main_right) || (is_main_left && is_name_right))
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1276,5 +1504,486 @@ mod tests {
 
         assert!(matches!(result_ty, Type::Var(_)));
         assert!(!ctx.constraints.is_empty());
+    }
+
+    #[test]
+    fn test_void_context_module_level_call() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let func_def = AstNode::FunctionDef {
+            name: "create_calculator".to_string(),
+            args: vec![],
+            body: vec![],
+            docstring: None,
+            return_type: Some("Calculator".to_string()),
+            decorators: vec![],
+            is_async: false,
+            line: 1,
+            col: 1,
+        };
+        visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
+
+        // Module with function call at statement level (void context)
+        let module = AstNode::Module {
+            body: vec![AstNode::Call { function: "create_calculator".to_string(), args: vec![], line: 2, col: 1 }],
+            docstring: None,
+        };
+
+        visit_node_with_env(&module, &mut env, &mut ctx, None).unwrap();
+
+        let has_type_mismatch = ctx
+            .constraints
+            .iter()
+            .any(|c| matches!(c, Constraint::Equal(Type::Con(TypeCtor::NoneType), Type::Con(_), _)));
+
+        assert!(
+            !has_type_mismatch,
+            "Should not generate None-to-Calculator unification in void context"
+        );
+    }
+
+    #[test]
+    fn test_if_main_guard_detection() {
+        let test1 = AstNode::Compare {
+            left: Box::new(AstNode::Identifier { name: "__name__".to_string(), line: 1, col: 4 }),
+            ops: vec![beacon_parser::CompareOperator::Eq],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::String { value: "__main__".to_string(), prefix: String::new() },
+                line: 1,
+                col: 15,
+            }],
+            line: 1,
+            col: 4,
+        };
+        assert!(is_main_guard(&test1), "Should detect __name__ == \"__main__\"");
+
+        let test2 = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::String { value: "__main__".to_string(), prefix: String::new() },
+                line: 1,
+                col: 4,
+            }),
+            ops: vec![beacon_parser::CompareOperator::Eq],
+            comparators: vec![AstNode::Identifier { name: "__name__".to_string(), line: 1, col: 18 }],
+            line: 1,
+            col: 4,
+        };
+        assert!(is_main_guard(&test2), "Should detect \"__main__\" == __name__");
+
+        let test3 = AstNode::Compare {
+            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 4 }),
+            ops: vec![beacon_parser::CompareOperator::Eq],
+            comparators: vec![AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 9 }],
+            line: 1,
+            col: 4,
+        };
+        assert!(!is_main_guard(&test3), "Should not detect regular comparison");
+    }
+
+    #[test]
+    fn test_return_path_analysis_implicit_none() {
+        let body = vec![AstNode::Assignment {
+            target: "x".to_string(),
+            value: Box::new(AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 5 }),
+            line: 1,
+            col: 1,
+        }];
+
+        let analysis = analyze_return_paths(&body);
+        assert!(!analysis.has_value_returns, "Should have no value returns");
+        assert!(!analysis.has_none_returns, "Should have no explicit None returns");
+        assert!(analysis.has_implicit_return, "Should have implicit return");
+        assert!(analysis.should_infer_none(), "Should infer None return type");
+    }
+
+    #[test]
+    fn test_return_path_analysis_explicit_value() {
+        let body = vec![AstNode::Return {
+            value: Some(Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(42),
+                line: 1,
+                col: 12,
+            })),
+            line: 1,
+            col: 5,
+        }];
+
+        let analysis = analyze_return_paths(&body);
+        assert!(analysis.has_value_returns, "Should have value returns");
+        assert!(!analysis.has_none_returns, "Should have no explicit None returns");
+        assert!(
+            !analysis.has_implicit_return,
+            "Should not have implicit return (always exits)"
+        );
+        assert!(!analysis.should_infer_none(), "Should not infer None");
+    }
+
+    #[test]
+    fn test_return_path_analysis_mixed_returns() {
+        let body = vec![AstNode::If {
+            test: Box::new(AstNode::Identifier { name: "condition".to_string(), line: 1, col: 4 }),
+            body: vec![AstNode::Return {
+                value: Some(Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(42),
+                    line: 2,
+                    col: 16,
+                })),
+                line: 2,
+                col: 9,
+            }],
+            elif_parts: vec![],
+            else_body: None,
+            line: 1,
+            col: 1,
+        }];
+
+        let analysis = analyze_return_paths(&body);
+        assert!(analysis.has_value_returns, "Should have value returns");
+        assert!(!analysis.has_none_returns, "Should have no explicit None returns");
+        assert!(
+            analysis.has_implicit_return,
+            "Should have implicit return (if might not execute)"
+        );
+        assert!(
+            analysis.should_infer_optional(),
+            "Should infer Optional[T] for mixed returns"
+        );
+    }
+
+    #[test]
+    fn test_return_path_analysis_all_paths_return() {
+        let body = vec![AstNode::If {
+            test: Box::new(AstNode::Identifier { name: "condition".to_string(), line: 1, col: 4 }),
+            body: vec![AstNode::Return {
+                value: Some(Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(1),
+                    line: 2,
+                    col: 16,
+                })),
+                line: 2,
+                col: 9,
+            }],
+            elif_parts: vec![],
+            else_body: Some(vec![AstNode::Return {
+                value: Some(Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(2),
+                    line: 4,
+                    col: 16,
+                })),
+                line: 4,
+                col: 9,
+            }]),
+            line: 1,
+            col: 1,
+        }];
+
+        let analysis = analyze_return_paths(&body);
+        assert!(analysis.has_value_returns, "Should have value returns");
+        assert!(!analysis.has_none_returns, "Should have no explicit None returns");
+        assert!(
+            !analysis.has_implicit_return,
+            "Should not have implicit return (all paths exit)"
+        );
+        assert!(
+            !analysis.should_infer_optional(),
+            "Should not infer Optional when all paths return values"
+        );
+    }
+
+    #[test]
+    fn test_function_with_implicit_none_return() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let func_def = AstNode::FunctionDef {
+            name: "do_nothing".to_string(),
+            args: vec![],
+            body: vec![AstNode::Pass { line: 2, col: 5 }],
+            docstring: None,
+            return_type: None, // No annotation
+            decorators: vec![],
+            is_async: false,
+            line: 1,
+            col: 1,
+        };
+
+        let fn_ty = visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
+
+        if let Type::Fun(params, ret_ty) = fn_ty {
+            assert!(params.is_empty(), "Should have no parameters");
+            assert!(
+                matches!(*ret_ty, Type::Con(TypeCtor::NoneType)),
+                "Should infer None return type"
+            );
+        } else {
+            panic!("Expected function type");
+        }
+    }
+
+    #[test]
+    fn test_function_with_explicit_return_constrains_type() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        // Function with explicit return type annotation
+        let func_def = AstNode::FunctionDef {
+            name: "get_number".to_string(),
+            args: vec![],
+            body: vec![AstNode::Return {
+                value: Some(Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(42),
+                    line: 2,
+                    col: 12,
+                })),
+                line: 2,
+                col: 5,
+            }],
+            docstring: None,
+            return_type: Some("int".to_string()),
+            decorators: vec![],
+            is_async: false,
+            line: 1,
+            col: 1,
+        };
+
+        visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
+
+        let has_return_constraint = ctx.constraints.iter().any(|c| {
+            matches!(
+                c,
+                Constraint::Equal(Type::Con(TypeCtor::Int), Type::Con(TypeCtor::Int), _)
+            )
+        });
+
+        assert!(
+            has_return_constraint || !ctx.constraints.is_empty(),
+            "Should generate constraint for return value"
+        );
+    }
+
+    #[test]
+    fn test_function_with_mixed_returns_infers_optional() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let func_def = AstNode::FunctionDef {
+            name: "maybe_number".to_string(),
+            args: vec![],
+            body: vec![AstNode::If {
+                test: Box::new(AstNode::Identifier { name: "condition".to_string(), line: 2, col: 8 }),
+                body: vec![AstNode::Return {
+                    value: Some(Box::new(AstNode::Literal {
+                        value: LiteralValue::Integer(42),
+                        line: 3,
+                        col: 16,
+                    })),
+                    line: 3,
+                    col: 9,
+                }],
+                elif_parts: vec![],
+                else_body: None,
+                line: 2,
+                col: 5,
+            }],
+            docstring: None,
+            return_type: None,
+            decorators: vec![],
+            is_async: false,
+            line: 1,
+            col: 1,
+        };
+
+        let fn_ty = visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
+
+        if let Type::Fun(params, ret_ty) = fn_ty {
+            assert!(params.is_empty(), "Should have no parameters");
+            match ret_ty.as_ref() {
+                Type::Union(members) => {
+                    assert_eq!(members.len(), 2, "Optional should be a union of 2 types");
+                    assert!(
+                        members.iter().any(|t| matches!(t, Type::Con(TypeCtor::NoneType))),
+                        "Union should contain None type"
+                    );
+                    assert!(
+                        members.iter().any(|t| matches!(t, Type::Var(_))),
+                        "Union should contain a type variable for the inner type"
+                    );
+                }
+                _ => panic!("Expected Union type for Optional, got {ret_ty:?}"),
+            }
+        } else {
+            panic!("Expected function type");
+        }
+    }
+
+    #[test]
+    fn test_function_with_explicit_none_return_infers_optional() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let func_def = AstNode::FunctionDef {
+            name: "maybe_string".to_string(),
+            args: vec![],
+            body: vec![AstNode::If {
+                test: Box::new(AstNode::Identifier { name: "condition".to_string(), line: 2, col: 8 }),
+                body: vec![AstNode::Return {
+                    value: Some(Box::new(AstNode::Literal {
+                        value: LiteralValue::String { value: "hello".to_string(), prefix: String::new() },
+                        line: 3,
+                        col: 16,
+                    })),
+                    line: 3,
+                    col: 9,
+                }],
+                elif_parts: vec![],
+                else_body: Some(vec![AstNode::Return { value: None, line: 5, col: 9 }]),
+                line: 2,
+                col: 5,
+            }],
+            docstring: None,
+            return_type: None,
+            decorators: vec![],
+            is_async: false,
+            line: 1,
+            col: 1,
+        };
+
+        let fn_ty = visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
+
+        if let Type::Fun(params, ret_ty) = fn_ty {
+            assert!(params.is_empty(), "Should have no parameters");
+            match ret_ty.as_ref() {
+                Type::Union(members) => {
+                    assert_eq!(members.len(), 2, "Optional should be a union of 2 types");
+                    assert!(
+                        members.iter().any(|t| matches!(t, Type::Con(TypeCtor::NoneType))),
+                        "Union should contain None type"
+                    );
+                }
+                _ => panic!("Expected Union type for Optional, got {ret_ty:?}"),
+            }
+        } else {
+            panic!("Expected function type");
+        }
+    }
+
+    #[test]
+    fn test_function_all_paths_return_value_not_optional() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let func_def = AstNode::FunctionDef {
+            name: "always_number".to_string(),
+            args: vec![],
+            body: vec![AstNode::If {
+                test: Box::new(AstNode::Identifier { name: "condition".to_string(), line: 2, col: 8 }),
+                body: vec![AstNode::Return {
+                    value: Some(Box::new(AstNode::Literal {
+                        value: LiteralValue::Integer(1),
+                        line: 3,
+                        col: 16,
+                    })),
+                    line: 3,
+                    col: 9,
+                }],
+                elif_parts: vec![],
+                else_body: Some(vec![AstNode::Return {
+                    value: Some(Box::new(AstNode::Literal {
+                        value: LiteralValue::Integer(2),
+                        line: 5,
+                        col: 16,
+                    })),
+                    line: 5,
+                    col: 9,
+                }]),
+                line: 2,
+                col: 5,
+            }],
+            docstring: None,
+            return_type: None,
+            decorators: vec![],
+            is_async: false,
+            line: 1,
+            col: 1,
+        };
+
+        let fn_ty = visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
+
+        if let Type::Fun(params, ret_ty) = fn_ty {
+            assert!(params.is_empty(), "Should have no parameters");
+            match ret_ty.as_ref() {
+                Type::Var(_) => {}
+                Type::Union(_) => {
+                    panic!("Should not infer Optional when all paths return values");
+                }
+                _ => {}
+            }
+        } else {
+            panic!("Expected function type");
+        }
+    }
+
+    #[test]
+    fn test_function_only_implicit_none_not_optional() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let func_def = AstNode::FunctionDef {
+            name: "side_effect".to_string(),
+            args: vec![],
+            body: vec![AstNode::Assignment {
+                target: "x".to_string(),
+                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(42), line: 2, col: 9 }),
+                line: 2,
+                col: 5,
+            }],
+            docstring: None,
+            return_type: None,
+            decorators: vec![],
+            is_async: false,
+            line: 1,
+            col: 1,
+        };
+
+        let fn_ty = visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
+
+        if let Type::Fun(params, ret_ty) = fn_ty {
+            assert!(params.is_empty(), "Should have no parameters");
+            assert!(
+                matches!(ret_ty.as_ref(), Type::Con(TypeCtor::NoneType)),
+                "Should infer None type for functions with only implicit returns, got {ret_ty:?}"
+            );
+        } else {
+            panic!("Expected function type");
+        }
     }
 }

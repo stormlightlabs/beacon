@@ -6,17 +6,17 @@ Implementation details and mod-specific tasks.
 
 **Goal**: Fix None type unification and reduce false positives in type checking
 
-**Files**: `crates/server/src/analysis/mod.rs`, `crates/constraints/src/lib.rs`
+**Files**: `crates/server/src/analysis/mod.rs`, `crates/constraints/src/lib.rs`, `crates/server/src/analysis/walker.rs`
 
 ### Tasks
 
-- [ ] Identify all expression statement constraint generation sites
-- [ ] Add context tracking (void vs value context) to constraint generator
+- [x] Add context tracking (void vs value context) to constraint generator
+- [x] Analyze all function return paths during constraint generation
+- [x] Detect mixed return patterns (some paths return value, some return None)
+- [x] Integrate return path analysis into FunctionDef handler
+- [x] Infer `Optional[T]` return type for functions with mixed return paths
+- [x] Infer `None` return type for functions with only implicit returns
 - [ ] Skip Equal constraints for expression statements in void contexts
-- [ ] Analyze all function return paths during constraint generation
-- [ ] Detect mixed return patterns (some paths return value, some return None)
-- [ ] Infer `Optional[T]` return type for functions with mixed return paths
-- [ ] Infer `None` return type for functions with only implicit returns
 - [ ] Handle `if __name__ == "__main__"` idiom specially (always void context)
 
 ## Integration Test Cases
