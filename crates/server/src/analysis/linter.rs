@@ -350,6 +350,19 @@ impl<'a> Linter<'a> {
                     self.visit_node(element);
                 }
             }
+            AstNode::List { elements, .. } | AstNode::Set { elements, .. } => {
+                for element in elements {
+                    self.visit_node(element);
+                }
+            }
+            AstNode::Dict { keys, values, .. } => {
+                for key in keys {
+                    self.visit_node(key);
+                }
+                for value in values {
+                    self.visit_node(value);
+                }
+            }
             AstNode::Yield { .. } | AstNode::YieldFrom { .. } | AstNode::Await { .. } | AstNode::Identifier { .. } => {}
         }
     }

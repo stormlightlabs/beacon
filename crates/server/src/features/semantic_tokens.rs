@@ -513,6 +513,9 @@ impl SemanticTokensProvider {
             | AstNode::YieldFrom { line, col, .. }
             | AstNode::Await { line, col, .. }
             | AstNode::Tuple { line, col, .. }
+            | AstNode::List { line, col, .. }
+            | AstNode::Dict { line, col, .. }
+            | AstNode::Set { line, col, .. }
             | AstNode::FunctionDef { line, col, .. }
             | AstNode::ClassDef { line, col, .. }
             | AstNode::Assignment { line, col, .. }

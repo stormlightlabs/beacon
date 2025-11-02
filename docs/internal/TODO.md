@@ -2,22 +2,124 @@
 
 Implementation details and mod-specific tasks.
 
-## Refactor Constraint Generation
+## Type System
 
-**Goal**: Fix None type unification and reduce false positives in type checking
+### Class Features - Decorators & Fields
 
-**Files**: `crates/server/src/analysis/mod.rs`, `crates/constraints/src/lib.rs`, `crates/server/src/analysis/walker.rs`
+**Goal**: Proper handling of @dataclass, class-level annotations, and enums
 
-### Tasks
+**Tasks**:
 
-- [x] Add context tracking (void vs value context) to constraint generator
-- [x] Analyze all function return paths during constraint generation
-- [x] Detect mixed return patterns (some paths return value, some return None)
-- [x] Integrate return path analysis into FunctionDef handler
-- [x] Infer `Optional[T]` return type for functions with mixed return paths
-- [x] Infer `None` return type for functions with only implicit returns
-- [ ] Skip Equal constraints for expression statements in void contexts
-- [ ] Handle `if __name__ == "__main__"` idiom specially (always void context)
+- [ ] Add class-level annotation extraction in extract_class_metadata
+    - Parse annotated assignments at class scope
+    - Store as class fields, not just **init** parameters
+- [ ] Implement @dataclass special handling
+    - Detect @dataclass decorator
+    - Synthesize **init** from class-level annotations
+    - Don't treat decorator as type transformer
+- [ ] Add enum class support
+    - Recognize Enum base class
+    - Extract enum members as class attributes
+    - Handle auto() function calls
+- [ ] Fix decorator constraint generation
+    - Remove generic "decorator as transformer" logic for class decorators
+    - Add special cases: @dataclass, @property, @classmethod, @staticmethod
+- [ ] Add tests for decorated classes
+    - Dataclass instantiation and field access
+    - Enum member access
+    - Property getters/setters
+
+**Impact**: Clears 20+ false positives (CacheEntry/bool, enum attributes, dataclass fields)
+
+### Stdlib Integration
+
+**Goal**: Complete method signatures for builtin types
+
+**Tasks**:
+
+- [ ] Expand builtins.pyi stub
+    - str methods: splitlines, strip, replace, format, etc.
+    - list methods: append, extend, pop, etc.
+    - dict methods: get, items, keys, values, etc.
+- [ ] Add pathlib.pyi stub
+    - Path class with **init**, read_text, write_text, exists, etc.
+    - PurePath methods
+- [ ] Add typing.pyi improvements
+    - Generator, Iterator protocol methods
+    - Ensure TypeVar, Generic properly defined
+- [ ] Fix stub loading to ensure all modules loaded
+    - Verify builtins always loaded
+    - Add logging for missing stubs
+
+**Impact**: Clears 10+ false positives (splitlines not found, Path.write_text, etc.)
+
+### Type Inference
+
+**Goal**: Fix complex type inference issues
+
+**Tasks**:
+
+- [ ] Filter module/class docstrings from constraint generation
+    - Skip string literals at module/class level
+    - Don't generate ANY constraints for them
+- [ ] Fix generator/comprehension type construction
+    - Correct type nesting for Generator types
+    - Ensure comprehensions produce proper container types
+- [ ] Improve BoundMethod call handling in solver
+    - When calling BoundMethod, return method's return type
+    - Fix unification to unwrap BoundMethod properly
+- [ ] Add return type inference from context
+    - Use function signature context for return statements
+    - Propagate expected types downward
+
+**Impact**: Clears 5+ false positives (ANY detection, generator types, return type mismatches)
+
+### Flow-Sensitive Type Narrowing
+
+**Location**: `crates/server/src/analysis/walker.rs`, `crates/constraints/src/lib.rs`
+
+**Goal**: Implement type narrowing after None checks and type guards to support patterns like:
+
+```python
+calc = maybe_calc()  # calc: Calculator | None
+if calc is not None:
+    calc.add(1, 2)  # calc narrowed to Calculator here
+```
+
+**Tasks**:
+
+- [ ] Design control flow tracking system in constraint generator
+- [ ] Implement None-check narrowing
+- [ ] Add Narrowing constraint type
+- [ ] Extend to isinstance() checks
+- [ ] Handle truthiness narrowing
+- [ ] Add tests for flow-sensitive narrowing
+
+**Dependencies**: Complete Milestones 1-4 first to ensure solid foundation
+
+### Polish & Validation
+
+**Goal**: Zero false positives on test files
+
+**Tasks**:
+
+- [ ] Run full diagnostic pass on all sample files
+    - Verify bugs.json is empty
+    - Check for new edge cases
+- [ ] Add missing linter suppressions
+    - Implement `# type: ignore` support
+    - Handle intentional test cases (unused variables, etc.)
+- [ ] Improve error messages
+    - Show clearer messages for decorator issues
+    - Better formatting for union type mismatches
+    - Add "did you mean?" suggestions
+- [ ] Update TODO.md with remaining enhancements
+    - Flow-sensitive type narrowing (separate from false positive fixes)
+    - Pattern matching support
+    - Performance optimizations
+- [ ] Documentation update
+    - Document known limitations
+    - Add troubleshooting guide for type errors
 
 ## Integration Test Cases
 
@@ -52,8 +154,6 @@ Implementation details and mod-specific tasks.
 - [ ] Remove unreachable pattern (PM002)
 - [ ] Move pattern before subsuming pattern (PM002)
 
-## Infrastructure
-
 ### Configuration
 
 - [ ] Make interpreter path configurable
@@ -80,9 +180,6 @@ See [Linter Rules](#linter-rules) section below for BEA code implementation stat
 **Files:** `crates/server/src/workspace.rs`, `crates/server/src/features/diagnostics.rs`
 
 - [ ] Inconsistent symbol exports (`__all__` mismatches)
-
----
-
 - [ ] Conflicting stub definitions
 
 ## Linter Rules

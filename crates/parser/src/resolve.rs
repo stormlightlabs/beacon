@@ -662,10 +662,27 @@ impl NameResolver {
                     self.track_references(exception)?;
                 }
             }
+            AstNode::List { elements, .. } | AstNode::Set { elements, .. } => {
+                for elem in elements {
+                    self.track_references(elem)?;
+                }
+            }
+            AstNode::Dict { keys, values, .. } => {
+                for key in keys {
+                    self.track_references(key)?;
+                }
+                for value in values {
+                    self.track_references(value)?;
+                }
+            }
+            AstNode::Tuple { elements, .. } => {
+                for elem in elements {
+                    self.track_references(elem)?;
+                }
+            }
             AstNode::Yield { .. }
             | AstNode::YieldFrom { .. }
             | AstNode::Await { .. }
-            | AstNode::Tuple { .. }
             | AstNode::Literal { .. }
             | AstNode::Pass { .. }
             | AstNode::Break { .. }
@@ -742,6 +759,9 @@ impl NameResolver {
             | AstNode::YieldFrom { line, col, .. }
             | AstNode::Await { line, col, .. }
             | AstNode::Tuple { line, col, .. }
+            | AstNode::List { line, col, .. }
+            | AstNode::Dict { line, col, .. }
+            | AstNode::Set { line, col, .. }
             | AstNode::Assignment { line, col, .. }
             | AstNode::AnnotatedAssignment { line, col, .. }
             | AstNode::Call { line, col, .. }
@@ -1151,10 +1171,27 @@ impl NameResolver {
                     self.visit_node(exception)?;
                 }
             }
+            AstNode::List { elements, .. } | AstNode::Set { elements, .. } => {
+                for elem in elements {
+                    self.visit_node(elem)?;
+                }
+            }
+            AstNode::Dict { keys, values, .. } => {
+                for key in keys {
+                    self.visit_node(key)?;
+                }
+                for value in values {
+                    self.visit_node(value)?;
+                }
+            }
+            AstNode::Tuple { elements, .. } => {
+                for elem in elements {
+                    self.visit_node(elem)?;
+                }
+            }
             AstNode::Yield { .. }
             | AstNode::YieldFrom { .. }
             | AstNode::Await { .. }
-            | AstNode::Tuple { .. }
             | AstNode::Identifier { .. }
             | AstNode::Literal { .. }
             | AstNode::Pass { .. }

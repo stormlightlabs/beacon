@@ -268,6 +268,25 @@ pub enum AstNode {
         line: usize,
         col: usize,
     },
+    /// List literal: [1, 2, 3] or []
+    List {
+        elements: Vec<AstNode>,
+        line: usize,
+        col: usize,
+    },
+    /// Dict literal: {'a': 1, 'b': 2} or {}
+    Dict {
+        keys: Vec<AstNode>,
+        values: Vec<AstNode>,
+        line: usize,
+        col: usize,
+    },
+    /// Set literal: {1, 2, 3}
+    Set {
+        elements: Vec<AstNode>,
+        line: usize,
+        col: usize,
+    },
     /// Yield expression: yield value
     Yield {
         value: Option<Box<AstNode>>,
@@ -689,6 +708,18 @@ impl PythonParser {
                 let elements = self.extract_tuple_elements(&node, source)?;
                 Ok(AstNode::Tuple { elements, line, col })
             }
+            "list" => {
+                let elements = self.extract_list_elements(&node, source)?;
+                Ok(AstNode::List { elements, line, col })
+            }
+            "dictionary" => {
+                let (keys, values) = self.extract_dict_pairs(&node, source)?;
+                Ok(AstNode::Dict { keys, values, line, col })
+            }
+            "set" => {
+                let elements = self.extract_set_elements(&node, source)?;
+                Ok(AstNode::Set { elements, line, col })
+            }
             "parenthesized_expression" => match node.named_child(0) {
                 Some(child) => self.node_to_ast(child, source),
                 None => Ok(AstNode::Identifier { name: "<empty_parens>".to_string(), line, col }),
@@ -1029,6 +1060,51 @@ impl PythonParser {
 
         for child in node.children(&mut cursor) {
             if !child.is_extra() && child.kind() != "(" && child.kind() != ")" && child.kind() != "," {
+                elements.push(self.node_to_ast(child, source)?);
+            }
+        }
+
+        Ok(elements)
+    }
+
+    fn extract_list_elements(&self, node: &Node, source: &str) -> Result<Vec<AstNode>> {
+        let mut elements = Vec::new();
+        let mut cursor = node.walk();
+
+        for child in node.children(&mut cursor) {
+            if !child.is_extra() && child.kind() != "[" && child.kind() != "]" && child.kind() != "," {
+                elements.push(self.node_to_ast(child, source)?);
+            }
+        }
+
+        Ok(elements)
+    }
+
+    fn extract_dict_pairs(&self, node: &Node, source: &str) -> Result<(Vec<AstNode>, Vec<AstNode>)> {
+        let mut keys = Vec::new();
+        let mut values = Vec::new();
+        let mut cursor = node.walk();
+
+        for child in node.children(&mut cursor) {
+            if !child.is_extra() && child.kind() == "pair" {
+                if let Some(key_node) = child.child_by_field_name("key") {
+                    keys.push(self.node_to_ast(key_node, source)?);
+                }
+                if let Some(value_node) = child.child_by_field_name("value") {
+                    values.push(self.node_to_ast(value_node, source)?);
+                }
+            }
+        }
+
+        Ok((keys, values))
+    }
+
+    fn extract_set_elements(&self, node: &Node, source: &str) -> Result<Vec<AstNode>> {
+        let mut elements = Vec::new();
+        let mut cursor = node.walk();
+
+        for child in node.children(&mut cursor) {
+            if !child.is_extra() && child.kind() != "{" && child.kind() != "}" && child.kind() != "," {
                 elements.push(self.node_to_ast(child, source)?);
             }
         }

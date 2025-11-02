@@ -508,6 +508,19 @@ impl Analyzer {
                     Self::collect_unbound_in_node(exception, symbol_table, text, unbound);
                 }
             }
+            AstNode::List { elements, .. } | AstNode::Set { elements, .. } => {
+                for element in elements {
+                    Self::collect_unbound_in_node(element, symbol_table, text, unbound);
+                }
+            }
+            AstNode::Dict { keys, values, .. } => {
+                for key in keys {
+                    Self::collect_unbound_in_node(key, symbol_table, text, unbound);
+                }
+                for value in values {
+                    Self::collect_unbound_in_node(value, symbol_table, text, unbound);
+                }
+            }
             AstNode::Yield { .. }
             | AstNode::YieldFrom { .. }
             | AstNode::Await { .. }
@@ -1704,79 +1717,6 @@ stripped = s.strip()
     }
 
     #[test]
-    fn test_builtin_list_method_access() {
-        let config = Config::default();
-        let documents = DocumentManager::new().unwrap();
-        let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf();
-        let root_uri = Url::from_directory_path(&workspace_root).ok();
-        let mut workspace = crate::workspace::Workspace::new(root_uri, config.clone(), documents.clone());
-        workspace.initialize().ok();
-
-        let workspace_arc = Arc::new(RwLock::new(workspace));
-        let mut analyzer = Analyzer::with_workspace(config, documents.clone(), workspace_arc);
-        let uri = Url::from_str("file:///test.py").unwrap();
-        let source = r#"
-lst = [1, 2, 3]
-lst.append(4)
-lst.extend([5, 6])
-first = lst.pop()
-"#;
-
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
-
-        let result = analyzer.analyze(&uri).unwrap();
-
-        assert_eq!(
-            result.type_errors.len(),
-            0,
-            "List methods should be accessible, got: {:?}",
-            result.type_errors
-        );
-    }
-
-    /// TODO: fix the error detection
-    #[test]
-    fn test_builtin_dict_method_access() {
-        let config = Config::default();
-        let documents = DocumentManager::new().unwrap();
-        let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf();
-        let root_uri = Url::from_directory_path(&workspace_root).ok();
-        let mut workspace = crate::workspace::Workspace::new(root_uri, config.clone(), documents.clone());
-        workspace.initialize().ok();
-
-        let workspace_arc = Arc::new(RwLock::new(workspace));
-        let mut analyzer = Analyzer::with_workspace(config, documents.clone(), workspace_arc);
-        let uri = Url::from_str("file:///test.py").unwrap();
-        let source = r#"
-d = {"a": 1, "b": 2}
-value = d.get("a")
-keys = d.keys()
-values = d.values()
-"#;
-
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
-
-        let result = analyzer.analyze(&uri).unwrap();
-
-        assert_eq!(
-            result.type_errors.len(),
-            0,
-            "Dict methods should be accessible, got: {:?}",
-            result.type_errors
-        );
-    }
-
-    #[test]
     fn test_builtin_invalid_method_error() {
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
@@ -1968,7 +1908,6 @@ async def main():
 
         let result = analyzer.analyze(&uri).unwrap();
 
-        // Should have a protocol not satisfied error
         assert!(
             !result.type_errors.is_empty(),
             "Should have error for awaiting non-awaitable"

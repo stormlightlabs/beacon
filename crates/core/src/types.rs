@@ -498,6 +498,16 @@ impl Type {
         )
     }
 
+    /// Create a set type
+    pub fn set(element_type: Type) -> Self {
+        Type::App(Box::new(Type::Con(TypeCtor::Set)), Box::new(element_type))
+    }
+
+    /// Create a tuple type (homogeneous for now)
+    pub fn tuple(element_type: Type) -> Self {
+        Type::App(Box::new(Type::Con(TypeCtor::Tuple)), Box::new(element_type))
+    }
+
     /// Create a Generator type: Generator[YieldType, SendType, ReturnType]
     pub fn generator(yield_ty: Type, send_ty: Type, return_ty: Type) -> Self {
         Type::App(

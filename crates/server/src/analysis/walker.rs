@@ -111,6 +111,11 @@ fn check_node_for_yield(node: &AstNode) -> bool {
         AstNode::Attribute { object, .. } => check_node_for_yield(object),
         AstNode::Subscript { value, slice, .. } => check_node_for_yield(value) || check_node_for_yield(slice),
         AstNode::Tuple { elements, .. } => elements.iter().any(check_node_for_yield),
+        AstNode::List { elements, .. } => elements.iter().any(check_node_for_yield),
+        AstNode::Dict { keys, values, .. } => {
+            keys.iter().any(check_node_for_yield) || values.iter().any(check_node_for_yield)
+        }
+        AstNode::Set { elements, .. } => elements.iter().any(check_node_for_yield),
         AstNode::Await { value, .. } => check_node_for_yield(value),
         AstNode::Identifier { .. }
         | AstNode::Literal { .. }
@@ -471,7 +476,7 @@ fn visit_node_with_context(
             let func_ty = if function.contains('.') {
                 if let Some(last_dot_idx) = function.rfind('.') {
                     let (object_part, method_part) = function.split_at(last_dot_idx);
-                    let method_name = &method_part[1..]; // Skip the dot
+                    let method_name = &method_part[1..];
                     let obj_ty = env.lookup(object_part).unwrap_or_else(|| Type::Var(env.fresh_var()));
                     let method_ty = Type::Var(env.fresh_var());
                     let span = Span::new(*line, *col);
@@ -631,15 +636,21 @@ fn visit_node_with_context(
         }
         AstNode::Subscript { value, slice, line, col } => {
             let value_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
-
-            visit_node_with_env(slice, env, ctx, stub_cache)?;
-
-            let result_ty = Type::Var(env.fresh_var());
+            let slice_ty = visit_node_with_env(slice, env, ctx, stub_cache)?;
             let span = Span::new(*line, *col);
 
+            let getitem_method_ty = Type::Var(env.fresh_var());
             ctx.constraints.push(Constraint::HasAttr(
                 value_ty,
                 "__getitem__".to_string(),
+                getitem_method_ty.clone(),
+                span,
+            ));
+
+            let result_ty = Type::Var(env.fresh_var());
+            ctx.constraints.push(Constraint::Call(
+                getitem_method_ty,
+                vec![slice_ty],
                 result_ty.clone(),
                 span,
             ));
@@ -664,15 +675,35 @@ fn visit_node_with_context(
                 visit_node_with_context(stmt, &mut true_env, ctx, stub_cache, body_context)?;
             }
 
+            let (inverse_var, inverse_type) = detect_inverse_type_guard(test, &mut env.clone());
+
+            let mut elif_env = env.clone();
+            if let (Some(var_name), Some(refined_ty)) = (inverse_var.as_ref(), inverse_type.as_ref()) {
+                elif_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
+            }
+
             for (elif_test, elif_body) in elif_parts {
-                visit_node_with_context(elif_test, env, ctx, stub_cache, ExprContext::Value)?;
+                visit_node_with_context(elif_test, &mut elif_env, ctx, stub_cache, ExprContext::Value)?;
+
+                let (elif_narrowed_var, elif_narrowed_type) = detect_type_guard(elif_test, &mut elif_env.clone());
+                let mut elif_true_env = elif_env.clone();
+                if let (Some(var_name), Some(refined_ty)) = (elif_narrowed_var.as_ref(), elif_narrowed_type.as_ref()) {
+                    elif_true_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
+                }
+
                 for stmt in elif_body {
-                    visit_node_with_context(stmt, env, ctx, stub_cache, expr_ctx)?;
+                    visit_node_with_context(stmt, &mut elif_true_env, ctx, stub_cache, expr_ctx)?;
+                }
+
+                let (elif_inverse_var, elif_inverse_type) = detect_inverse_type_guard(elif_test, &mut elif_env.clone());
+                if let (Some(var_name), Some(refined_ty)) = (elif_inverse_var, elif_inverse_type) {
+                    elif_env.bind(var_name, TypeScheme::mono(refined_ty));
                 }
             }
+
             if let Some(else_stmts) = else_body {
                 for stmt in else_stmts {
-                    visit_node_with_context(stmt, env, ctx, stub_cache, expr_ctx)?;
+                    visit_node_with_context(stmt, &mut elif_env, ctx, stub_cache, expr_ctx)?;
                 }
             }
             Ok(Type::none())
@@ -1032,9 +1063,119 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, generator_ty.clone());
             Ok(generator_ty)
         }
-        AstNode::Tuple { .. } | AstNode::Pass { .. } | AstNode::Break { .. } | AstNode::Continue { .. } => {
-            Ok(Type::none())
+        AstNode::Tuple { elements, line, col } => {
+            let span = Span::new(*line, *col);
+
+            if elements.is_empty() {
+                let elem_ty = Type::Var(env.fresh_var());
+                let tuple_ty = Type::tuple(elem_ty);
+                ctx.record_type(*line, *col, tuple_ty.clone());
+                Ok(tuple_ty)
+            } else {
+                let element_types = elements
+                    .iter()
+                    .map(|elem| visit_node_with_env(elem, env, ctx, stub_cache))
+                    .collect::<std::result::Result<Vec<Type>, _>>()?;
+
+                let unified_ty = Type::Var(env.fresh_var());
+                for elem_ty in &element_types {
+                    ctx.constraints
+                        .push(Constraint::Equal(elem_ty.clone(), unified_ty.clone(), span));
+                }
+
+                let tuple_ty = Type::tuple(unified_ty);
+                ctx.record_type(*line, *col, tuple_ty.clone());
+                Ok(tuple_ty)
+            }
         }
+        AstNode::List { elements, line, col } => {
+            let span = Span::new(*line, *col);
+
+            if elements.is_empty() {
+                let elem_ty = Type::Var(env.fresh_var());
+                let list_ty = Type::list(elem_ty);
+                ctx.record_type(*line, *col, list_ty.clone());
+                Ok(list_ty)
+            } else {
+                let element_types = elements
+                    .iter()
+                    .map(|elem| visit_node_with_env(elem, env, ctx, stub_cache))
+                    .collect::<std::result::Result<Vec<Type>, _>>()?;
+
+                let unified_ty = Type::Var(env.fresh_var());
+                for elem_ty in &element_types {
+                    ctx.constraints
+                        .push(Constraint::Equal(elem_ty.clone(), unified_ty.clone(), span));
+                }
+
+                let list_ty = Type::list(unified_ty);
+                ctx.record_type(*line, *col, list_ty.clone());
+                Ok(list_ty)
+            }
+        }
+        AstNode::Dict { keys, values, line, col } => {
+            let span = Span::new(*line, *col);
+
+            if keys.is_empty() {
+                let key_ty = Type::Var(env.fresh_var());
+                let value_ty = Type::Var(env.fresh_var());
+                let dict_ty = Type::dict(key_ty, value_ty);
+                ctx.record_type(*line, *col, dict_ty.clone());
+                Ok(dict_ty)
+            } else {
+                let key_types = keys
+                    .iter()
+                    .map(|key| visit_node_with_env(key, env, ctx, stub_cache))
+                    .collect::<std::result::Result<Vec<Type>, _>>()?;
+
+                let value_types = values
+                    .iter()
+                    .map(|value| visit_node_with_env(value, env, ctx, stub_cache))
+                    .collect::<std::result::Result<Vec<Type>, _>>()?;
+
+                let unified_key_ty = Type::Var(env.fresh_var());
+                let unified_value_ty = Type::Var(env.fresh_var());
+
+                for key_ty in &key_types {
+                    ctx.constraints
+                        .push(Constraint::Equal(key_ty.clone(), unified_key_ty.clone(), span));
+                }
+                for value_ty in &value_types {
+                    ctx.constraints
+                        .push(Constraint::Equal(value_ty.clone(), unified_value_ty.clone(), span));
+                }
+
+                let dict_ty = Type::dict(unified_key_ty, unified_value_ty);
+                ctx.record_type(*line, *col, dict_ty.clone());
+                Ok(dict_ty)
+            }
+        }
+        AstNode::Set { elements, line, col } => {
+            let span = Span::new(*line, *col);
+
+            if elements.is_empty() {
+                let elem_ty = Type::Var(env.fresh_var());
+                let set_ty = Type::set(elem_ty);
+                ctx.record_type(*line, *col, set_ty.clone());
+                Ok(set_ty)
+            } else {
+                let element_types = elements
+                    .iter()
+                    .map(|elem| visit_node_with_env(elem, env, ctx, stub_cache))
+                    .collect::<std::result::Result<Vec<Type>, _>>()?;
+
+                let unified_ty = Type::Var(env.fresh_var());
+                for elem_ty in &element_types {
+                    ctx.constraints
+                        .push(Constraint::Equal(elem_ty.clone(), unified_ty.clone(), span));
+                }
+
+                let set_ty = Type::set(unified_ty);
+                ctx.record_type(*line, *col, set_ty.clone());
+                Ok(set_ty)
+            }
+        }
+        AstNode::Pass { .. } | AstNode::Break { .. } | AstNode::Continue { .. } => Ok(Type::none()),
     }
 }
 
@@ -1174,6 +1315,7 @@ fn extract_field_assignments(stmt: &AstNode, metadata: &mut ClassMetadata, env: 
 /// Supported patterns:
 /// - `isinstance(x, int)` -> (x, int)
 /// - `isinstance(x, str)` -> (x, str)
+/// - `isinstance(x, (int, str))` -> (x, Union[int, str])
 /// - `x is None` -> (x, None)
 /// - `x is not None` -> (x, T) where x: Optional[T]
 /// - `x == None` -> (x, None)
@@ -1197,6 +1339,24 @@ fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<Strin
                     let refined_type = type_name_to_type(type_name);
                     return (Some(var_name.clone()), Some(refined_type));
                 }
+
+                if let AstNode::Tuple { elements, .. } = &args[1] {
+                    let types: Vec<Type> = elements
+                        .iter()
+                        .filter_map(|elem| {
+                            if let AstNode::Identifier { name: type_name, .. } = elem {
+                                Some(type_name_to_type(type_name))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    if !types.is_empty() {
+                        let refined_type =
+                            if types.len() == 1 { types.into_iter().next().unwrap() } else { Type::union(types) };
+                        return (Some(var_name.clone()), Some(refined_type));
+                    }
+                }
             }
         }
     }
@@ -1215,6 +1375,74 @@ fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<Strin
                                 return (Some(var_name.clone()), Some(narrowed));
                             }
                             return (None, None);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    (None, None)
+}
+
+/// Detect inverse type guard for else branches
+///
+/// Returns the narrowed type for the "false" branch of a conditional.
+/// For example:
+/// - `if x is not None:` -> else branch has type None
+/// - `if isinstance(x, int):` -> else branch removes int from union
+/// - `if x:` -> else branch narrows to None (for Optional types)
+fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<String>, Option<Type>) {
+    if let AstNode::Identifier { name: var_name, .. } = test {
+        if let Some(current_type) = env.lookup(var_name) {
+            if current_type.is_optional() || matches!(current_type, Type::Union(_)) {
+                return (Some(var_name.clone()), Some(Type::none()));
+            }
+        }
+        return (None, None);
+    }
+
+    if let AstNode::Call { function, args, .. } = test {
+        if function == "isinstance" && args.len() == 2 {
+            if let AstNode::Identifier { name: var_name, .. } = &args[0] {
+                if let Some(current_type) = env.lookup(var_name) {
+                    if let AstNode::Identifier { name: type_name, .. } = &args[1] {
+                        let checked_type = type_name_to_type(type_name);
+                        let narrowed = current_type.remove_from_union(&checked_type);
+                        return (Some(var_name.clone()), Some(narrowed));
+                    }
+
+                    if let AstNode::Tuple { elements, .. } = &args[1] {
+                        let mut result_type = current_type.clone();
+                        for elem in elements {
+                            if let AstNode::Identifier { name: type_name, .. } = elem {
+                                let checked_type = type_name_to_type(type_name);
+                                result_type = result_type.remove_from_union(&checked_type);
+                            }
+                        }
+                        return (Some(var_name.clone()), Some(result_type));
+                    }
+                }
+            }
+        }
+    }
+
+    if let AstNode::Compare { left, ops, comparators, .. } = test {
+        if ops.len() == 1 && comparators.len() == 1 {
+            if let AstNode::Identifier { name: var_name, .. } = left.as_ref() {
+                if let AstNode::Literal { value: LiteralValue::None, .. } = &comparators[0] {
+                    match &ops[0] {
+                        beacon_parser::CompareOperator::Is | beacon_parser::CompareOperator::Eq => {
+                            if let Some(current_type) = env.lookup(var_name) {
+                                let narrowed = current_type.remove_from_union(&Type::none());
+                                return (Some(var_name.clone()), Some(narrowed));
+                            }
+                            return (None, None);
+                        }
+
+                        beacon_parser::CompareOperator::IsNot | beacon_parser::CompareOperator::NotEq => {
+                            return (Some(var_name.clone()), Some(Type::none()));
                         }
                         _ => {}
                     }
@@ -2146,5 +2374,277 @@ mod tests {
             has_call_to_main,
             "Should still generate Call constraint for main() to verify it's called correctly"
         );
+    }
+
+    #[test]
+    fn test_list_literal_empty() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let list_node = AstNode::List { elements: vec![], line: 1, col: 5 };
+        let list_ty = visit_node_with_env(&list_node, &mut env, &mut ctx, None).unwrap();
+
+        assert!(
+            matches!(&list_ty, Type::App(inner, _) if matches!(**inner, Type::Con(TypeCtor::List))),
+            "Empty list should create list type, got {list_ty:?}"
+        );
+    }
+
+    #[test]
+    fn test_list_literal_with_elements() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let list_node = AstNode::List {
+            elements: vec![
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 6 },
+                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 9 },
+                AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 12 },
+            ],
+            line: 1,
+            col: 5,
+        };
+
+        let list_ty = visit_node_with_env(&list_node, &mut env, &mut ctx, None).unwrap();
+        assert!(
+            matches!(&list_ty, Type::App(inner, _) if matches!(**inner, Type::Con(TypeCtor::List))),
+            "List literal should create list type, got {list_ty:?}"
+        );
+
+        let equal_constraints = ctx
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, Constraint::Equal(_, _, _)))
+            .count();
+        assert!(
+            equal_constraints >= 3,
+            "Should have equality constraints for unifying element types"
+        );
+    }
+
+    #[test]
+    fn test_dict_literal_empty() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let dict_node = AstNode::Dict { keys: vec![], values: vec![], line: 1, col: 5 };
+        let dict_ty = visit_node_with_env(&dict_node, &mut env, &mut ctx, None).unwrap();
+
+        assert!(
+            matches!(&dict_ty, Type::App(inner, _) if matches!(inner.as_ref(), Type::App(dict_inner, _) if matches!(dict_inner.as_ref(), Type::Con(TypeCtor::Dict)))),
+            "Empty dict should create dict type, got {dict_ty:?}"
+        );
+    }
+
+    #[test]
+    fn test_dict_literal_with_pairs() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let dict_node = AstNode::Dict {
+            keys: vec![
+                AstNode::Literal {
+                    value: LiteralValue::String { value: "a".to_string(), prefix: "".to_string() },
+                    line: 1,
+                    col: 6,
+                },
+                AstNode::Literal {
+                    value: LiteralValue::String { value: "b".to_string(), prefix: "".to_string() },
+                    line: 1,
+                    col: 15,
+                },
+            ],
+            values: vec![
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 11 },
+                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 20 },
+            ],
+            line: 1,
+            col: 5,
+        };
+        let dict_ty = visit_node_with_env(&dict_node, &mut env, &mut ctx, None).unwrap();
+
+        assert!(
+            matches!(&dict_ty, Type::App(inner, _) if matches!(inner.as_ref(), Type::App(dict_inner, _) if matches!(dict_inner.as_ref(), Type::Con(TypeCtor::Dict)))),
+            "Dict literal should create dict type, got {dict_ty:?}"
+        );
+
+        let equal_constraints = ctx
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, Constraint::Equal(_, _, _)))
+            .count();
+        assert!(
+            equal_constraints >= 4,
+            "Should have equality constraints for unifying key and value types"
+        );
+    }
+
+    #[test]
+    fn test_set_literal() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let set_node = AstNode::Set {
+            elements: vec![
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 6 },
+                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 9 },
+                AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 12 },
+            ],
+            line: 1,
+            col: 5,
+        };
+        let set_ty = visit_node_with_env(&set_node, &mut env, &mut ctx, None).unwrap();
+
+        assert!(
+            matches!(&set_ty, Type::App(inner, _) if matches!(**inner, Type::Con(TypeCtor::Set))),
+            "Set literal should create set type, got {set_ty:?}",
+        );
+
+        let equal_constraints = ctx
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, Constraint::Equal(_, _, _)))
+            .count();
+        assert!(
+            equal_constraints >= 3,
+            "Should have equality constraints for unifying element types"
+        );
+    }
+
+    #[test]
+    fn test_tuple_literal() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let tuple_node = AstNode::Tuple {
+            elements: vec![
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 6 },
+                AstNode::Literal {
+                    value: LiteralValue::String { value: "a".to_string(), prefix: "".to_string() },
+                    line: 1,
+                    col: 9,
+                },
+                AstNode::Literal { value: LiteralValue::Boolean(true), line: 1, col: 14 },
+            ],
+            line: 1,
+            col: 5,
+        };
+        let tuple_ty = visit_node_with_env(&tuple_node, &mut env, &mut ctx, None).unwrap();
+
+        assert!(
+            matches!(&tuple_ty, Type::App(inner, _) if matches!(**inner, Type::Con(TypeCtor::Tuple))),
+            "Tuple literal should create tuple type, got {tuple_ty:?}"
+        );
+
+        let equal_constraints = ctx
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, Constraint::Equal(_, _, _)))
+            .count();
+        assert!(
+            equal_constraints >= 3,
+            "Should have equality constraints for unifying element types"
+        );
+    }
+
+    #[test]
+    fn test_subscript_generates_call_constraint() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let list_node = AstNode::List {
+            elements: vec![
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 6 },
+                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 9 },
+                AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 12 },
+            ],
+            line: 1,
+            col: 5,
+        };
+
+        let subscript_node = AstNode::Subscript {
+            value: Box::new(list_node),
+            slice: Box::new(AstNode::Literal { value: LiteralValue::Integer(0), line: 1, col: 16 }),
+            line: 1,
+            col: 5,
+        };
+
+        let _result_ty = visit_node_with_env(&subscript_node, &mut env, &mut ctx, None).unwrap();
+
+        let has_attr_count = ctx
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, Constraint::HasAttr(_, name, _, _) if name == "__getitem__"))
+            .count();
+        assert_eq!(
+            has_attr_count, 1,
+            "Should generate one HasAttr constraint for __getitem__"
+        );
+
+        let call_count = ctx
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, Constraint::Call(_, args, _, _) if args.len() == 1))
+            .count();
+        assert!(call_count >= 1, "Should generate Call constraint to invoke __getitem__");
+    }
+
+    #[test]
+    fn test_subscript_result_type() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let assignment = AstNode::Assignment {
+            target: "x".to_string(),
+            value: Box::new(AstNode::Subscript {
+                value: Box::new(AstNode::List {
+                    elements: vec![AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 10 }],
+                    line: 1,
+                    col: 9,
+                }),
+                slice: Box::new(AstNode::Literal { value: LiteralValue::Integer(0), line: 1, col: 12 }),
+                line: 1,
+                col: 9,
+            }),
+            line: 1,
+            col: 1,
+        };
+
+        visit_node_with_env(&assignment, &mut env, &mut ctx, None).unwrap();
+
+        let has_bound_method = ctx.type_map.values().any(|t| matches!(t, Type::BoundMethod(_, _, _)));
+        assert!(!has_bound_method, "Subscript result should not be a BoundMethod type");
     }
 }

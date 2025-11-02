@@ -196,6 +196,9 @@ impl DocumentSymbolsProvider {
             | AstNode::YieldFrom { line, col, .. }
             | AstNode::Await { line, col, .. }
             | AstNode::Tuple { line, col, .. }
+            | AstNode::List { line, col, .. }
+            | AstNode::Dict { line, col, .. }
+            | AstNode::Set { line, col, .. }
             | AstNode::Literal { line, col, .. }
             | AstNode::Identifier { line, col, .. }
             | AstNode::Assignment { line, col, .. }
