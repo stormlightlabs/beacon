@@ -278,6 +278,8 @@ impl Analyzer {
     fn perform_static_analysis(&self, ast: &AstNode, symbol_table: &SymbolTable) -> Option<data_flow::DataFlowResult> {
         match ast {
             AstNode::Module { body, .. } => {
+                let module_hoisted = data_flow::DataFlowAnalyzer::collect_hoisted_definitions(body);
+
                 for stmt in body {
                     if let AstNode::FunctionDef { body: func_body, .. } = stmt {
                         let mut builder = cfg::CfgBuilder::new();
@@ -289,7 +291,13 @@ impl Analyzer {
                             .find(|scope| scope.kind == ScopeKind::Function)
                             .map(|scope| scope.id)
                             .unwrap_or(symbol_table.root_scope);
-                        let analyzer = data_flow::DataFlowAnalyzer::new(&cfg, func_body, symbol_table, scope_id);
+                        let analyzer = data_flow::DataFlowAnalyzer::new(
+                            &cfg,
+                            func_body,
+                            symbol_table,
+                            scope_id,
+                            Some(&module_hoisted),
+                        );
                         return Some(analyzer.analyze());
                     }
                 }
@@ -305,7 +313,7 @@ impl Analyzer {
                     .find(|scope| scope.kind == ScopeKind::Function)
                     .map(|scope| scope.id)
                     .unwrap_or(symbol_table.root_scope);
-                let analyzer = data_flow::DataFlowAnalyzer::new(&cfg, body, symbol_table, scope_id);
+                let analyzer = data_flow::DataFlowAnalyzer::new(&cfg, body, symbol_table, scope_id, None);
                 Some(analyzer.analyze())
             }
             _ => None,

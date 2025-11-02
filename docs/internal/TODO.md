@@ -2,6 +2,23 @@
 
 Implementation details and mod-specific tasks.
 
+## Refactor Constraint Generation
+
+**Goal**: Fix None type unification and reduce false positives in type checking
+
+**Files**: `crates/server/src/analysis/mod.rs`, `crates/constraints/src/lib.rs`
+
+### Tasks
+
+- [ ] Identify all expression statement constraint generation sites
+- [ ] Add context tracking (void vs value context) to constraint generator
+- [ ] Skip Equal constraints for expression statements in void contexts
+- [ ] Analyze all function return paths during constraint generation
+- [ ] Detect mixed return patterns (some paths return value, some return None)
+- [ ] Infer `Optional[T]` return type for functions with mixed return paths
+- [ ] Infer `None` return type for functions with only implicit returns
+- [ ] Handle `if __name__ == "__main__"` idiom specially (always void context)
+
 ## Integration Test Cases
 
 - [ ] `with open('file') as f:` infers file type (requires _IO stub integration)
@@ -96,3 +113,19 @@ Implementation status for BEA diagnostic codes. See `docs/src/lsp/lint_rules.md`
 - [ ] BEA004: YieldOutsideFunction - Track yield/yield-from in visit_node
 - [ ] BEA014: TStringMissingPlaceholders - Template string support
 - [ ] BEA025: PercentFormatInvalidFormat - Validate % format syntax
+
+### Improve Caching Granularity
+
+Current limitations from `analysis/mod.rs`:
+
+- Scope cache implementation is basic (extracts all nodes, no real filtering)
+- No proper node-to-scope mapping
+- No dependency tracking between scopes
+- Cache invalidation is wholesale per document
+
+Tasks:
+
+- [ ] Implement proper node-to-scope mapping during constraint generation
+- [ ] Track inter-scope dependencies (e.g., function calls, imports)
+- [ ] Selective invalidation: only reanalyze changed scopes and dependents
+- [ ] Benchmark incremental analysis with large files (target: <50ms for single-scope change)

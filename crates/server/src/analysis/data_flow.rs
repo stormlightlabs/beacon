@@ -86,13 +86,18 @@ pub struct DataFlowAnalyzer<'a> {
 impl<'a> DataFlowAnalyzer<'a> {
     pub fn new(
         cfg: &'a ControlFlowGraph, function_body: &'a [AstNode], symbol_table: &'a SymbolTable, scope_id: ScopeId,
+        parent_hoisted: Option<&FxHashSet<String>>,
     ) -> Self {
         let mut all_statements = Vec::new();
         for stmt in function_body {
             Self::collect_all_statements(stmt, &mut all_statements);
         }
 
-        let hoisted_definitions = Self::collect_hoisted_definitions(function_body);
+        let mut hoisted_definitions = Self::collect_hoisted_definitions(function_body);
+
+        if let Some(parent) = parent_hoisted {
+            hoisted_definitions.extend(parent.iter().cloned());
+        }
 
         Self { cfg, all_statements, symbol_table, scope_id, hoisted_definitions }
     }
@@ -174,7 +179,7 @@ impl<'a> DataFlowAnalyzer<'a> {
     ///
     /// In Python, function and class definitions are hoised.
     /// Here we implement Python's two-pass name resolution.
-    fn collect_hoisted_definitions(function_body: &[AstNode]) -> FxHashSet<String> {
+    pub fn collect_hoisted_definitions(function_body: &[AstNode]) -> FxHashSet<String> {
         let mut hoisted = FxHashSet::default();
 
         for stmt in function_body {
@@ -785,7 +790,7 @@ mod tests {
             let cfg = builder.build();
 
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
 
             assert!(!result.is_empty(), "Expected use-before-def for x");
@@ -853,7 +858,7 @@ mod tests {
             let cfg = builder.build();
 
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let unused = analyzer.find_unused_variables();
 
             assert!(unused.iter().any(|u| u.var_name == "x"));
@@ -918,7 +923,7 @@ mod tests {
 
             let cfg = builder.build();
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
             assert!(!result.is_empty());
             assert!(result.iter().any(|e| e.var_name == "x"));
@@ -992,7 +997,7 @@ mod tests {
             let cfg = builder.build();
 
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
             let x_errors: Vec<_> = result.iter().filter(|e| e.var_name == "x" && e.line == 6).collect();
             assert!(x_errors.is_empty());
@@ -1047,7 +1052,7 @@ mod tests {
 
             let cfg = builder.build();
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
             assert!(!result.is_empty(), "Expected use-before-def errors");
         } else {
@@ -1100,7 +1105,7 @@ mod tests {
 
             let cfg = builder.build();
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_unreachable_code();
             assert!(!result.is_empty());
         } else {
@@ -1150,7 +1155,7 @@ mod tests {
 
             let cfg = builder.build();
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.analyze();
 
             assert!(!result.use_before_def.is_empty());
@@ -1197,7 +1202,7 @@ mod tests {
 
             let cfg = builder.build();
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
 
             assert!(!result.iter().any(|e| e.var_name == "param"));
@@ -1249,7 +1254,7 @@ mod tests {
             let cfg = builder.build();
 
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
 
             // Loop target 'i' is defined by the for statement before the body executes
@@ -1300,7 +1305,7 @@ mod tests {
 
             let cfg = builder.build();
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
 
             assert!(result.iter().any(|e| e.var_name == "x"));
@@ -1352,7 +1357,7 @@ mod tests {
 
             let cfg = builder.build();
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
             let x_errors: Vec<_> = result.iter().filter(|e| e.var_name == "x" && e.line == 3).collect();
             assert!(x_errors.is_empty());
@@ -1407,7 +1412,7 @@ mod tests {
 
             let cfg = builder.build();
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let debug_identifier = AstNode::Identifier { name: "DEBUG".to_string(), line: 2, col: 13 };
 
             let mut test_constants = FxHashMap::default();
@@ -1472,7 +1477,7 @@ mod tests {
             let cfg = builder.build();
 
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
 
             let mut test_constants = FxHashMap::default();
             test_constants.insert("x".to_string(), ConstantValue::Integer(5));
@@ -1522,7 +1527,7 @@ mod tests {
             let cfg = builder.build();
 
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
 
             let mut test_constants = FxHashMap::default();
             test_constants.insert("x".to_string(), ConstantValue::Integer(10));
@@ -1595,7 +1600,7 @@ mod tests {
             let cfg = builder.build();
 
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
 
             let mut test_constants = FxHashMap::default();
             test_constants.insert("s".to_string(), ConstantValue::String("hello".to_string()));
@@ -1680,7 +1685,7 @@ mod tests {
             let cfg = builder.build();
 
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
 
             // 'inner' should NOT be flagged as use-before-def because function defs are hoisted
@@ -1746,7 +1751,7 @@ mod tests {
             let cfg = builder.build();
 
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
 
             // 'MyClass' should NOT be flagged as use-before-def because class defs are hoisted
@@ -1833,7 +1838,7 @@ mod tests {
             let cfg = builder.build();
 
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
             let helper_errors: Vec<_> = result.iter().filter(|e| e.var_name == "helper").collect();
             assert!(
@@ -1870,7 +1875,7 @@ mod tests {
             let cfg = builder.build();
 
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
 
             let mut test_constants = FxHashMap::default();
             test_constants.insert("a".to_string(), ConstantValue::Bool(true));
@@ -1942,7 +1947,7 @@ mod tests {
             let cfg = builder.build();
 
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
 
             let baz_errors: Vec<_> = result.iter().filter(|e| e.var_name == "baz").collect();
@@ -1993,7 +1998,7 @@ mod tests {
             let cfg = builder.build();
 
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
 
             // 'os' should NOT be flagged as use-before-def because imports are hoisted
@@ -2049,7 +2054,7 @@ mod tests {
             let cfg = builder.build();
 
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
+            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
 
             // 'np' (alias) should NOT be flagged as use-before-def because imports are hoisted
@@ -2067,6 +2072,148 @@ mod tests {
             );
         } else {
             panic!("Expected FunctionDef");
+        }
+    }
+
+    #[test]
+    fn test_module_level_class_available_in_function() {
+        let source = "class MyClass:\n    pass\n\ndef factory():\n    return MyClass()".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let class_def = AstNode::ClassDef {
+            name: "MyClass".to_string(),
+            bases: vec![],
+            metaclass: None,
+            body: vec![AstNode::Pass { line: 2, col: 5 }],
+            docstring: None,
+            decorators: Vec::new(),
+            line: 1,
+            col: 1,
+        };
+
+        let func_def = AstNode::FunctionDef {
+            name: "factory".to_string(),
+            args: vec![],
+            body: vec![AstNode::Return {
+                value: Some(Box::new(AstNode::Call {
+                    function: "MyClass".to_string(),
+                    args: vec![],
+                    line: 5,
+                    col: 12,
+                })),
+                line: 5,
+                col: 5,
+            }],
+            docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
+            line: 4,
+            col: 1,
+            is_async: false,
+        };
+
+        let module = AstNode::Module { body: vec![class_def, func_def], docstring: None };
+
+        resolver.resolve(&module).unwrap();
+
+        if let AstNode::Module { body, .. } = &module {
+            let module_hoisted = DataFlowAnalyzer::collect_hoisted_definitions(body);
+            assert!(
+                module_hoisted.contains("MyClass"),
+                "Module-level class should be in hoisted definitions"
+            );
+
+            if let AstNode::FunctionDef { body: func_body, .. } = &body[1] {
+                let mut builder = CfgBuilder::new();
+                builder.build_function(func_body);
+                let cfg = builder.build();
+
+                let scope_id = find_function_scope(&resolver.symbol_table);
+                let analyzer =
+                    DataFlowAnalyzer::new(&cfg, func_body, &resolver.symbol_table, scope_id, Some(&module_hoisted));
+                let result = analyzer.find_use_before_def();
+
+                let class_errors: Vec<_> = result.iter().filter(|e| e.var_name == "MyClass").collect();
+                assert!(
+                    class_errors.is_empty(),
+                    "Module-level class 'MyClass' should not be flagged as use-before-def in function, found: {class_errors:?}"
+                );
+            } else {
+                panic!("Expected FunctionDef as second element");
+            }
+        } else {
+            panic!("Expected Module");
+        }
+    }
+
+    #[test]
+    fn test_module_level_function_available_in_another_function() {
+        let source = "def helper():\n    pass\n\ndef main():\n    helper()".to_string();
+        let mut resolver = NameResolver::new(source);
+
+        let helper_def = AstNode::FunctionDef {
+            name: "helper".to_string(),
+            args: vec![],
+            body: vec![AstNode::Pass { line: 2, col: 5 }],
+            docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
+            line: 1,
+            col: 1,
+            is_async: false,
+        };
+
+        let main_def = AstNode::FunctionDef {
+            name: "main".to_string(),
+            args: vec![],
+            body: vec![AstNode::Call { function: "helper".to_string(), args: vec![], line: 5, col: 5 }],
+            docstring: None,
+            return_type: None,
+            decorators: Vec::new(),
+            line: 4,
+            col: 1,
+            is_async: false,
+        };
+
+        let module = AstNode::Module { body: vec![helper_def, main_def], docstring: None };
+
+        resolver.resolve(&module).unwrap();
+
+        if let AstNode::Module { body, .. } = &module {
+            let module_hoisted = DataFlowAnalyzer::collect_hoisted_definitions(body);
+            assert!(
+                module_hoisted.contains("helper"),
+                "Module-level function should be in hoisted definitions"
+            );
+
+            if let AstNode::FunctionDef { body: main_body, .. } = &body[1] {
+                let mut builder = CfgBuilder::new();
+                builder.build_function(main_body);
+                let cfg = builder.build();
+
+                let scope_id = resolver
+                    .symbol_table
+                    .scopes
+                    .values()
+                    .filter(|scope| scope.kind == ScopeKind::Function)
+                    .nth(1)
+                    .map(|scope| scope.id)
+                    .unwrap_or(resolver.symbol_table.root_scope);
+
+                let analyzer =
+                    DataFlowAnalyzer::new(&cfg, main_body, &resolver.symbol_table, scope_id, Some(&module_hoisted));
+                let result = analyzer.find_use_before_def();
+
+                let helper_errors: Vec<_> = result.iter().filter(|e| e.var_name == "helper").collect();
+                assert!(
+                    helper_errors.is_empty(),
+                    "Module-level function 'helper' should not be flagged as use-before-def in main(), found: {helper_errors:?}"
+                );
+            } else {
+                panic!("Expected FunctionDef as second element");
+            }
+        } else {
+            panic!("Expected Module");
         }
     }
 }

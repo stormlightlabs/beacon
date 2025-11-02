@@ -163,7 +163,7 @@ pub fn solve_constraints(
                         if let Some(ctor_ty) = metadata.new_type.as_ref().or(metadata.init_type.as_ref()) {
                             if let Type::Fun(params, _) = ctor_ty {
                                 let ctor_params: Vec<Type> = params.iter().skip(1).cloned().collect();
-                                if ctor_params.len() == arg_types.len() {
+                                if arg_types.len() <= ctor_params.len() {
                                     for (provided_arg, expected_param) in arg_types.iter().zip(ctor_params.iter()) {
                                         match Unifier::unify(&subst.apply(provided_arg), &subst.apply(expected_param)) {
                                             Ok(s) => {
@@ -175,6 +175,14 @@ pub fn solve_constraints(
                                             Err(_) => {}
                                         }
                                     }
+                                } else {
+                                    type_errors.push(TypeErrorInfo::new(
+                                        TypeError::ArgumentCountMismatch {
+                                            expected: ctor_params.len(),
+                                            found: arg_types.len(),
+                                        },
+                                        span,
+                                    ));
                                 }
                             }
 
@@ -217,7 +225,7 @@ pub fn solve_constraints(
 
                     if let Type::Fun(params, method_ret) = resolved_method {
                         let bound_params: Vec<Type> = params.iter().skip(1).cloned().collect();
-                        if bound_params.len() == arg_types.len() {
+                        if arg_types.len() <= bound_params.len() {
                             for (provided_arg, expected_param) in arg_types.iter().zip(bound_params.iter()) {
                                 match Unifier::unify(&subst.apply(provided_arg), &subst.apply(expected_param)) {
                                     Ok(s) => {
@@ -261,15 +269,47 @@ pub fn solve_constraints(
                         }
                     }
                 } else {
-                    let expected_fn_ty = Type::fun(arg_types, ret_ty);
-                    match Unifier::unify(&subst.apply(&func_ty), &subst.apply(&expected_fn_ty)) {
-                        Ok(s) => {
-                            subst = s.compose(subst);
+                    let applied_func = subst.apply(&func_ty);
+                    if let Type::Fun(params, fn_ret) = &applied_func {
+                        if arg_types.len() <= params.len() {
+                            for (provided_arg, expected_param) in arg_types.iter().zip(params.iter()) {
+                                match Unifier::unify(&subst.apply(provided_arg), &subst.apply(expected_param)) {
+                                    Ok(s) => {
+                                        subst = s.compose(subst);
+                                    }
+                                    Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                                        type_errors.push(TypeErrorInfo::new(type_err, span));
+                                    }
+                                    Err(_) => {}
+                                }
+                            }
+
+                            match Unifier::unify(&subst.apply(&ret_ty), &subst.apply(fn_ret)) {
+                                Ok(s) => {
+                                    subst = s.compose(subst);
+                                }
+                                Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                                    type_errors.push(TypeErrorInfo::new(type_err, span));
+                                }
+                                Err(_) => {}
+                            }
+                        } else {
+                            type_errors.push(TypeErrorInfo::new(
+                                TypeError::ArgumentCountMismatch { expected: params.len(), found: arg_types.len() },
+                                span,
+                            ));
                         }
-                        Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                            type_errors.push(TypeErrorInfo::new(type_err, span));
+                    } else {
+                        let expected_fn_ty = Type::fun(arg_types, ret_ty);
+                        match Unifier::unify(&subst.apply(&func_ty), &subst.apply(&expected_fn_ty)) {
+                            Ok(s) => {
+                                subst = s.compose(subst);
+                            }
+                            Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                                type_errors.push(TypeErrorInfo::new(type_err, span));
+                            }
+                            Err(_) => {}
                         }
-                        Err(_) => {}
                     }
                 }
             }
@@ -1095,5 +1135,135 @@ mod tests {
         let (subst, errors) = result.unwrap();
         assert!(errors.is_empty());
         assert!(subst.is_empty());
+    }
+
+    #[test]
+    fn test_call_with_fewer_args_than_params() {
+        let func_ty = Type::fun(vec![Type::string(), Type::string()], Type::string());
+        let arg_types = vec![Type::string()]; // Only provide first arg
+        let ret_ty = tvar(0);
+        let constraints =
+            ConstraintSet { constraints: vec![Constraint::Call(func_ty, arg_types, ret_ty.clone(), test_span())] };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "Calling function with fewer args (assuming defaults) should succeed, but got errors: {errors:?}"
+        );
+
+        let resolved_ret = subst.apply(&ret_ty);
+        assert_eq!(resolved_ret, Type::string());
+    }
+
+    #[test]
+    fn test_call_with_zero_args_all_defaults() {
+        let func_ty = Type::fun(
+            vec![Type::string()],
+            Type::Con(TypeCtor::Class("Processor".to_string())),
+        );
+        let arg_types = vec![];
+        let ret_ty = tvar(0);
+        let constraints =
+            ConstraintSet { constraints: vec![Constraint::Call(func_ty, arg_types, ret_ty.clone(), test_span())] };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "Calling function with no args (all have defaults) should succeed, but got errors: {errors:?}"
+        );
+
+        let resolved_ret = subst.apply(&ret_ty);
+        assert_eq!(resolved_ret, Type::Con(TypeCtor::Class("Processor".to_string())));
+    }
+
+    #[test]
+    fn test_call_with_too_many_args() {
+        let func_ty = Type::fun(vec![Type::int()], Type::string());
+        let arg_types = vec![Type::int(), Type::int()]; // Too many args
+        let ret_ty = tvar(0);
+        let constraints =
+            ConstraintSet { constraints: vec![Constraint::Call(func_ty, arg_types, ret_ty, test_span())] };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            !errors.is_empty(),
+            "Providing too many arguments should still produce an error"
+        );
+    }
+
+    #[test]
+    fn test_bound_method_call_with_fewer_args() {
+        let mut registry = ClassRegistry::new();
+        let mut class_meta = ClassMetadata::new("TestClass".to_string());
+        class_meta.methods.insert(
+            "method".to_string(),
+            MethodType::Single(Type::fun(vec![Type::any(), Type::int(), Type::string()], Type::bool())),
+        );
+        registry.register_class("TestClass".to_string(), class_meta);
+
+        let receiver = Type::Con(TypeCtor::Class("TestClass".to_string()));
+        let method_ty = Type::fun(vec![Type::any(), Type::int(), Type::string()], Type::bool());
+        let bound_method = Type::BoundMethod(Box::new(receiver), "method".to_string(), Box::new(method_ty));
+        let arg_types = vec![Type::int()]; // Only provide first arg (second has default)
+        let ret_ty = tvar(0);
+
+        let constraints =
+            ConstraintSet { constraints: vec![Constraint::Call(bound_method, arg_types, ret_ty.clone(), test_span())] };
+
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "Bound method call with fewer args (assuming defaults) should succeed, but got errors: {errors:?}"
+        );
+
+        let resolved_ret = subst.apply(&ret_ty);
+        assert_eq!(resolved_ret, Type::bool());
+    }
+
+    #[test]
+    fn test_class_constructor_with_fewer_args() {
+        let mut registry = ClassRegistry::new();
+        let mut class_meta = ClassMetadata::new("TestClass".to_string());
+        class_meta.init_type = Some(Type::fun(vec![Type::any(), Type::int(), Type::string()], Type::any()));
+        registry.register_class("TestClass".to_string(), class_meta);
+
+        let class_ty = Type::Con(TypeCtor::Class("TestClass".to_string()));
+        let arg_types = vec![Type::int()]; // Only provide x, y has default
+        let ret_ty = tvar(0);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Call(
+                class_ty.clone(),
+                arg_types,
+                ret_ty.clone(),
+                test_span(),
+            )],
+        };
+
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "Class constructor call with fewer args should succeed, but got errors: {errors:?}"
+        );
+
+        let resolved_ret = subst.apply(&ret_ty);
+        assert_eq!(resolved_ret, class_ty);
     }
 }
