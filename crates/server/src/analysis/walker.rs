@@ -1528,7 +1528,6 @@ mod tests {
         };
         visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
 
-        // Module with function call at statement level (void context)
         let module = AstNode::Module {
             body: vec![AstNode::Call { function: "create_calculator".to_string(), args: vec![], line: 2, col: 1 }],
             docstring: None,
@@ -1536,15 +1535,92 @@ mod tests {
 
         visit_node_with_env(&module, &mut env, &mut ctx, None).unwrap();
 
-        let has_type_mismatch = ctx
-            .constraints
-            .iter()
-            .any(|c| matches!(c, Constraint::Equal(Type::Con(TypeCtor::NoneType), Type::Con(_), _)));
+        let has_none_calculator_equal = ctx.constraints.iter().any(|c| {
+            matches!(
+                c,
+                Constraint::Equal(Type::Con(TypeCtor::NoneType), Type::Con(_), _)
+                    | Constraint::Equal(Type::Con(_), Type::Con(TypeCtor::NoneType), _)
+            )
+        });
 
         assert!(
-            !has_type_mismatch,
-            "Should not generate None-to-Calculator unification in void context"
+            !has_none_calculator_equal,
+            "Should not generate Equal constraints involving None for expression statements in void context"
         );
+
+        let has_call_constraint = ctx
+            .constraints
+            .iter()
+            .any(|c| matches!(c, Constraint::Call(_, _, _, _)));
+
+        assert!(
+            has_call_constraint,
+            "Should still generate Call constraint to type-check the function call"
+        );
+    }
+
+    #[test]
+    fn test_if_main_guard_void_context() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let main_func = AstNode::FunctionDef {
+            name: "main".to_string(),
+            args: vec![],
+            body: vec![],
+            docstring: None,
+            return_type: Some("Calculator".to_string()),
+            decorators: vec![],
+            is_async: false,
+            line: 1,
+            col: 1,
+        };
+        visit_node_with_env(&main_func, &mut env, &mut ctx, None).unwrap();
+
+        let if_main = AstNode::If {
+            test: Box::new(AstNode::Compare {
+                left: Box::new(AstNode::Identifier { name: "__name__".to_string(), line: 3, col: 4 }),
+                ops: vec![beacon_parser::CompareOperator::Eq],
+                comparators: vec![AstNode::Literal {
+                    value: LiteralValue::String { value: "__main__".to_string(), prefix: String::new() },
+                    line: 3,
+                    col: 15,
+                }],
+                line: 3,
+                col: 4,
+            }),
+            body: vec![AstNode::Call { function: "main".to_string(), args: vec![], line: 4, col: 5 }],
+            elif_parts: vec![],
+            else_body: None,
+            line: 3,
+            col: 1,
+        };
+
+        visit_node_with_env(&if_main, &mut env, &mut ctx, None).unwrap();
+
+        let has_none_calculator_equal = ctx.constraints.iter().any(|c| {
+            matches!(
+                c,
+                Constraint::Equal(Type::Con(TypeCtor::NoneType), Type::Con(_), _)
+                    | Constraint::Equal(Type::Con(_), Type::Con(TypeCtor::NoneType), _)
+            )
+        });
+
+        assert!(
+            !has_none_calculator_equal,
+            "if __name__ == \"__main__\" body should be void context, not generating Equal constraints with None"
+        );
+
+        let has_call_constraint = ctx
+            .constraints
+            .iter()
+            .any(|c| matches!(c, Constraint::Call(_, _, _, _)));
+
+        assert!(has_call_constraint, "Should still type-check the main() call");
     }
 
     #[test]
@@ -1709,7 +1785,7 @@ mod tests {
             args: vec![],
             body: vec![AstNode::Pass { line: 2, col: 5 }],
             docstring: None,
-            return_type: None, // No annotation
+            return_type: None,
             decorators: vec![],
             is_async: false,
             line: 1,
@@ -1738,7 +1814,6 @@ mod tests {
             &AstNode::Module { body: vec![], docstring: None },
         );
 
-        // Function with explicit return type annotation
         let func_def = AstNode::FunctionDef {
             name: "get_number".to_string(),
             args: vec![],
@@ -1985,5 +2060,91 @@ mod tests {
         } else {
             panic!("Expected function type");
         }
+    }
+
+    #[test]
+    fn test_main_guard_with_implicit_none_return() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let main_func = AstNode::FunctionDef {
+            name: "main".to_string(),
+            args: vec![],
+            body: vec![AstNode::Assignment {
+                target: "x".to_string(),
+                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(42), line: 2, col: 9 }),
+                line: 2,
+                col: 5,
+            }],
+            docstring: None,
+            return_type: None,
+            decorators: vec![],
+            is_async: false,
+            line: 1,
+            col: 1,
+        };
+        let main_ty = visit_node_with_env(&main_func, &mut env, &mut ctx, None).unwrap();
+
+        if let Type::Fun(params, ret_ty) = &main_ty {
+            assert!(params.is_empty());
+            assert!(
+                matches!(ret_ty.as_ref(), Type::Con(TypeCtor::NoneType)),
+                "main should be inferred as returning None, got {ret_ty:?}"
+            );
+        } else {
+            panic!("Expected function type for main");
+        }
+
+        let if_main = AstNode::If {
+            test: Box::new(AstNode::Compare {
+                left: Box::new(AstNode::Identifier { name: "__name__".to_string(), line: 5, col: 4 }),
+                ops: vec![beacon_parser::CompareOperator::Eq],
+                comparators: vec![AstNode::Literal {
+                    value: LiteralValue::String { value: "__main__".to_string(), prefix: String::new() },
+                    line: 5,
+                    col: 15,
+                }],
+                line: 5,
+                col: 4,
+            }),
+            body: vec![AstNode::Call { function: "main".to_string(), args: vec![], line: 6, col: 5 }],
+            elif_parts: vec![],
+            else_body: None,
+            line: 5,
+            col: 1,
+        };
+
+        visit_node_with_env(&if_main, &mut env, &mut ctx, None).unwrap();
+
+        let has_calculator_none_constraint = ctx.constraints.iter().any(|c| {
+            matches!(
+                c,
+                Constraint::Equal(Type::Con(TypeCtor::Class(name)), Type::Con(TypeCtor::NoneType), _)
+                    | Constraint::Equal(Type::Con(TypeCtor::NoneType), Type::Con(TypeCtor::Class(name)), _)
+                if name.contains("Calculator") || name.contains("Processor")
+            )
+        });
+
+        assert!(
+            !has_calculator_none_constraint,
+            "Should NOT generate Equal constraints between class types and None for main() call in void context"
+        );
+
+        let has_call_to_main = ctx.constraints.iter().any(|c| {
+            if let Constraint::Call(func_ty, args, _, _) = c {
+                args.is_empty() && matches!(func_ty, Type::Fun(_, _))
+            } else {
+                false
+            }
+        });
+
+        assert!(
+            has_call_to_main,
+            "Should still generate Call constraint for main() to verify it's called correctly"
+        );
     }
 }

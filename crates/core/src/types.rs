@@ -696,6 +696,40 @@ impl Type {
         }
     }
 
+    /// Simplify a type by applying normalization rules
+    ///
+    /// Performs post-processing simplifications that may arise after substitution:
+    /// - Union[T, Any] → Any (Any absorption)
+    /// - Union[T] → T (single-element unwrap, already done by Type::union)
+    /// - Union[T, T] → T (duplicate removal, already done by Type::union)
+    ///
+    /// This is useful after constraint solving when substitutions may create unions that can be simplified.
+    pub fn simplify(self) -> Type {
+        match self {
+            Type::Union(types) => {
+                if types.iter().any(|t| matches!(t, Type::Con(TypeCtor::Any))) {
+                    return Type::any();
+                }
+
+                Type::union(types)
+            }
+            Type::App(f, a) => Type::App(Box::new(f.simplify()), Box::new(a.simplify())),
+            Type::Fun(args, ret) => Type::Fun(
+                args.into_iter().map(|a| a.simplify()).collect(),
+                Box::new(ret.simplify()),
+            ),
+            Type::ForAll(tvs, t) => Type::ForAll(tvs, Box::new(t.simplify())),
+            Type::Intersection(types) => Type::intersection(types.into_iter().map(|t| t.simplify()).collect()),
+            Type::Record(fields, row_var) => {
+                Type::Record(fields.into_iter().map(|(k, v)| (k, v.simplify())).collect(), row_var)
+            }
+            Type::BoundMethod(recv, name, method) => {
+                Type::BoundMethod(Box::new(recv.simplify()), name, Box::new(method.simplify()))
+            }
+            other => other,
+        }
+    }
+
     /// Get all free type variables in this type
     pub fn free_vars(&self) -> FxHashMap<TypeVar, ()> {
         let mut vars = FxHashMap::default();
@@ -2091,5 +2125,75 @@ mod tests {
         assert!(display.contains("Overload["));
         assert!(display.contains("int"));
         assert!(display.contains("str"));
+    }
+
+    #[test]
+    fn test_simplify_union_with_any() {
+        let union = Type::union(vec![Type::int(), Type::any(), Type::string()]);
+        let simplified = union.simplify();
+        assert_eq!(simplified, Type::any());
+    }
+
+    #[test]
+    fn test_simplify_union_without_any() {
+        let union = Type::union(vec![Type::int(), Type::string()]);
+        let simplified = union.simplify();
+        match simplified {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+            }
+            _ => panic!("Expected union type"),
+        }
+    }
+
+    #[test]
+    fn test_simplify_single_element_union() {
+        let union = Type::union(vec![Type::int()]);
+        let simplified = union.simplify();
+        assert_eq!(simplified, Type::int());
+    }
+
+    #[test]
+    fn test_simplify_non_union_types() {
+        assert_eq!(Type::int().simplify(), Type::int());
+        assert_eq!(Type::string().simplify(), Type::string());
+        assert_eq!(Type::any().simplify(), Type::any());
+    }
+
+    #[test]
+    fn test_simplify_nested_types() {
+        let fun_type = Type::fun(
+            vec![Type::union(vec![Type::int(), Type::any()])],
+            Type::union(vec![Type::string(), Type::bool()]),
+        );
+        let simplified = fun_type.simplify();
+
+        match simplified {
+            Type::Fun(args, ret) => {
+                assert_eq!(args[0], Type::any());
+                match ret.as_ref() {
+                    Type::Union(types) => {
+                        assert_eq!(types.len(), 2);
+                    }
+                    _ => panic!("Expected union return type"),
+                }
+            }
+            _ => panic!("Expected function type"),
+        }
+    }
+
+    #[test]
+    fn test_simplify_list_of_union_with_any() {
+        let list_type = Type::list(Type::union(vec![Type::int(), Type::any()]));
+        let simplified = list_type.simplify();
+
+        match simplified {
+            Type::App(_, elem) => {
+                assert_eq!(*elem, Type::any());
+            }
+            _ => panic!("Expected list type"),
+        }
     }
 }

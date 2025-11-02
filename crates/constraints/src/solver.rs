@@ -4,7 +4,8 @@ use crate::{
 };
 
 use beacon_core::{
-    ClassRegistry, MethodSignature, ProtocolChecker, ProtocolName, Result, Subst, Type, TypeCtor, TypeError, Unifier,
+    ClassRegistry, MethodSignature, ProtocolChecker, ProtocolName, Result, Subst, Type, TypeCtor, TypeError, TypeVar,
+    Unifier,
 };
 
 /// Extract the base type constructor from a type application
@@ -132,6 +133,65 @@ fn check_builtin_protocol_on_class(ty: &Type, protocol: &ProtocolName, class_reg
         }
         ProtocolName::Callable => class_registry.lookup_attribute(class_name, "__call__").is_some(),
         ProtocolName::UserDefined(_) => false,
+    }
+}
+
+/// Check if a type has a specific attribute
+fn check_has_attribute(ty: &Type, attr_name: &str, class_registry: &ClassRegistry) -> bool {
+    match ty {
+        Type::Con(TypeCtor::Class(class_name)) => class_registry
+            .lookup_attribute_with_inheritance(class_name, attr_name)
+            .is_some(),
+        Type::Con(type_ctor) => {
+            let class_name = match type_ctor {
+                TypeCtor::String => Some("str"),
+                TypeCtor::Int => Some("int"),
+                TypeCtor::Float => Some("float"),
+                TypeCtor::Bool => Some("bool"),
+                TypeCtor::List => Some("list"),
+                TypeCtor::Dict => Some("dict"),
+                TypeCtor::Set => Some("set"),
+                TypeCtor::Tuple => Some("tuple"),
+                TypeCtor::Any => return true,
+                _ => None,
+            };
+            class_name.is_some_and(|name| class_registry.lookup_attribute(name, attr_name).is_some())
+        }
+        Type::App(base, _) => {
+            let base_ctor = extract_base_constructor(base);
+            base_ctor.is_some_and(|name| class_registry.lookup_attribute(name, attr_name).is_some())
+        }
+        Type::Var(_) => true,
+        _ => false,
+    }
+}
+
+/// Get the type of an attribute from a type
+fn get_attribute_type(ty: &Type, attr_name: &str, class_registry: &ClassRegistry) -> Option<Type> {
+    match ty {
+        Type::Con(TypeCtor::Class(class_name)) => {
+            class_registry.lookup_attribute_with_inheritance(class_name, attr_name)
+        }
+        Type::Con(type_ctor) => {
+            let class_name = match type_ctor {
+                TypeCtor::String => Some("str"),
+                TypeCtor::Int => Some("int"),
+                TypeCtor::Float => Some("float"),
+                TypeCtor::Bool => Some("bool"),
+                TypeCtor::List => Some("list"),
+                TypeCtor::Dict => Some("dict"),
+                TypeCtor::Set => Some("set"),
+                TypeCtor::Tuple => Some("tuple"),
+                TypeCtor::Any => return Some(Type::any()),
+                _ => None,
+            };
+            class_name.and_then(|name| class_registry.lookup_attribute(name, attr_name).cloned())
+        }
+        Type::App(base, _) => {
+            let base_ctor = extract_base_constructor(base);
+            base_ctor.and_then(|name| class_registry.lookup_attribute(name, attr_name).cloned())
+        }
+        _ => None,
     }
 }
 
@@ -315,6 +375,47 @@ pub fn solve_constraints(
             }
             Constraint::HasAttr(obj_ty, attr_name, attr_ty, span) => {
                 let applied_obj = subst.apply(&obj_ty);
+
+                if let Type::Union(variants) = &applied_obj {
+                    let mut all_have_attr = true;
+                    let mut attr_types = Vec::new();
+
+                    for variant in variants {
+                        let has_attr = check_has_attribute(variant, &attr_name, class_registry);
+                        if !has_attr {
+                            all_have_attr = false;
+                            break;
+                        }
+
+                        if let Some(resolved_attr_ty) = get_attribute_type(variant, &attr_name, class_registry) {
+                            attr_types.push(resolved_attr_ty);
+                        }
+                    }
+
+                    if !all_have_attr {
+                        type_errors.push(TypeErrorInfo::new(
+                            beacon_core::TypeError::AttributeNotFound(applied_obj.to_string(), attr_name.clone()),
+                            span,
+                        ));
+                    } else if !attr_types.is_empty() {
+                        let attr_union = if attr_types.len() == 1 {
+                            attr_types.into_iter().next().unwrap()
+                        } else {
+                            Type::union(attr_types)
+                        };
+
+                        match Unifier::unify(&subst.apply(&attr_ty), &attr_union) {
+                            Ok(s) => {
+                                subst = s.compose(subst);
+                            }
+                            Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                                type_errors.push(TypeErrorInfo::new(type_err, span));
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    continue;
+                }
 
                 match &applied_obj {
                     Type::Con(TypeCtor::Class(class_name)) => {
@@ -517,7 +618,25 @@ pub fn solve_constraints(
         }
     }
 
-    Ok((subst, type_errors))
+    let simplified_subst = simplify_substitution(subst);
+
+    Ok((simplified_subst, type_errors))
+}
+
+/// Simplify all types in a substitution by applying normalization rules
+///
+/// This performs post-processing after constraint solving to simplify union types that may have been created during unification.
+fn simplify_substitution(subst: Subst) -> Subst {
+    let simplified_pairs: Vec<(TypeVar, Type)> = subst
+        .iter()
+        .map(|(tv, ty)| (tv.clone(), ty.clone().simplify()))
+        .collect();
+
+    let mut result = Subst::empty();
+    for (tv, simplified_ty) in simplified_pairs {
+        result.insert(tv, simplified_ty);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -1265,5 +1384,151 @@ mod tests {
 
         let resolved_ret = subst.apply(&ret_ty);
         assert_eq!(resolved_ret, class_ty);
+    }
+
+    #[test]
+    fn test_simplify_substitution_with_union_any() {
+        let tv = tvar(0);
+        let union_with_any = Type::union(vec![Type::int(), Type::any(), Type::string()]);
+        let mut subst = Subst::empty();
+        subst.insert(TypeVar::new(0), union_with_any);
+
+        let simplified = simplify_substitution(subst);
+        let result = simplified.apply(&tv);
+        assert_eq!(result, Type::any(), "Union with Any should simplify to Any");
+    }
+
+    #[test]
+    fn test_simplify_substitution_preserves_normal_types() {
+        let tv1 = tvar(0);
+        let tv2 = tvar(1);
+
+        let mut subst = Subst::empty();
+        subst.insert(TypeVar::new(0), Type::int());
+        subst.insert(TypeVar::new(1), Type::union(vec![Type::string(), Type::bool()]));
+
+        let simplified = simplify_substitution(subst);
+
+        assert_eq!(simplified.apply(&tv1), Type::int());
+        match simplified.apply(&tv2) {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::string()));
+                assert!(types.contains(&Type::bool()));
+            }
+            _ => panic!("Expected union type"),
+        }
+    }
+
+    #[test]
+    fn test_has_attr_on_union_all_branches_have_attr() {
+        let mut registry = ClassRegistry::new();
+        let mut class1 = ClassMetadata::new("Class1".to_string());
+        class1.fields.insert("value".to_string(), Type::int());
+        registry.register_class("Class1".to_string(), class1);
+
+        let mut class2 = ClassMetadata::new("Class2".to_string());
+        class2.fields.insert("value".to_string(), Type::string());
+        registry.register_class("Class2".to_string(), class2);
+
+        let obj_ty = Type::union(vec![
+            Type::Con(TypeCtor::Class("Class1".to_string())),
+            Type::Con(TypeCtor::Class("Class2".to_string())),
+        ]);
+        let attr_ty = tvar(0);
+
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::HasAttr(
+                obj_ty,
+                "value".to_string(),
+                attr_ty.clone(),
+                test_span(),
+            )],
+        };
+
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "Both branches have 'value', should succeed. Got errors: {errors:?}"
+        );
+
+        let resolved_attr = subst.apply(&attr_ty);
+        match resolved_attr {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+            }
+            _ => panic!("Expected union type for attribute, got: {resolved_attr}"),
+        }
+    }
+
+    #[test]
+    fn test_has_attr_on_union_missing_attr_in_one_branch() {
+        let mut registry = ClassRegistry::new();
+        let mut class1 = ClassMetadata::new("Class1".to_string());
+        class1.fields.insert("value".to_string(), Type::int());
+        registry.register_class("Class1".to_string(), class1);
+
+        let class2 = ClassMetadata::new("Class2".to_string());
+        registry.register_class("Class2".to_string(), class2);
+
+        let obj_ty = Type::union(vec![
+            Type::Con(TypeCtor::Class("Class1".to_string())),
+            Type::Con(TypeCtor::Class("Class2".to_string())),
+        ]);
+        let attr_ty = tvar(0);
+
+        let constraints =
+            ConstraintSet { constraints: vec![Constraint::HasAttr(obj_ty, "value".to_string(), attr_ty, test_span())] };
+
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            !errors.is_empty(),
+            "Class2 doesn't have 'value', should produce an error"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e.error, TypeError::AttributeNotFound(_, _))),
+            "Expected AttributeNotFound error"
+        );
+    }
+
+    #[test]
+    fn test_has_attr_on_optional_none_missing_attr() {
+        let mut registry = ClassRegistry::new();
+        let mut calc_class = ClassMetadata::new("Calculator".to_string());
+        calc_class.methods.insert(
+            "add".to_string(),
+            MethodType::Single(Type::fun(vec![Type::any(), Type::int(), Type::int()], Type::int())),
+        );
+        registry.register_class("Calculator".to_string(), calc_class);
+
+        let obj_ty = Type::optional(Type::Con(TypeCtor::Class("Calculator".to_string())));
+        let attr_ty = tvar(0);
+        let constraints =
+            ConstraintSet { constraints: vec![Constraint::HasAttr(obj_ty, "add".to_string(), attr_ty, test_span())] };
+
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            !errors.is_empty(),
+            "None doesn't have 'add' method, should produce an error"
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e.error, TypeError::AttributeNotFound(_, _))),
+            "Expected AttributeNotFound error"
+        );
     }
 }

@@ -160,14 +160,46 @@ impl Unifier {
     }
 
     /// Unify a union type with a non-union type
+    ///
+    /// When unifying `Union[T1, T2, ..., Tn]` with concrete type `C`:
+    /// - Finds which `Ti` can unify with `C`
+    /// - Returns substitution that makes `Ti = C`, including any type variable constraints
+    /// - The first successfully unifying member is selected
+    ///
+    /// # Union Narrowing
+    ///
+    /// When a Union unifies with a concrete type, the Union should conceptually be "narrowed"
+    /// to that type. However, the unifier only returns substitutions for type variables within
+    /// the Union members. The constraint solver must handle Union elimination by recognizing
+    /// when a Union type becomes equivalent to one of its members after substitution.
+    ///
+    /// # Examples
+    ///
+    /// - `Union[Var('t), None]` ~ `int` → `['t ↦ int]`
+    /// - `Union[int, str]` ~ `int` → empty substitution (picks int branch)
+    /// - `Union[Calculator, None]` ~ `None` → empty substitution (picks None branch)
     fn unify_union_with_type(union_types: &[Type], t: &Type) -> Result<Subst> {
+        let mut errors = Vec::new();
+
         for union_member in union_types {
-            if let Ok(subst) = Self::unify_impl(union_member, t) {
-                return Ok(subst);
+            match Self::unify_impl(union_member, t) {
+                Ok(subst) => {
+                    return Ok(subst);
+                }
+                Err(e) => {
+                    errors.push(format!("  {union_member} with {t}: {e}"));
+                }
             }
         }
 
-        Err(TypeError::UnificationError(format!("union {}", Type::Union(union_types.to_vec())), t.to_string()).into())
+        let union_str = Type::Union(union_types.to_vec()).to_string();
+        let error_details = if errors.len() > 1 {
+            format!("\nAttempted unifications:\n{}", errors.join("\n"))
+        } else {
+            String::new()
+        };
+
+        Err(TypeError::UnificationError(format!("union {union_str}{error_details}"), t.to_string()).into())
     }
 
     /// Unify record types (simplified row polymorphism)
@@ -587,6 +619,128 @@ mod tests {
                 assert_eq!(fields.iter().find(|(k, _)| k == "y").unwrap().1, Type::string());
             }
             _ => panic!("Expected concrete record"),
+        }
+    }
+
+    #[test]
+    fn test_union_with_type_var_unifies_with_concrete() {
+        let tv = TypeVar::new(30);
+        let union = Type::union(vec![Type::Var(tv.clone()), Type::none()]);
+        let concrete = Type::int();
+
+        let subst = Unifier::unify(&union, &concrete).unwrap();
+        assert_eq!(subst.get(&tv), Some(&Type::int()));
+
+        let union_after = subst.apply(&union);
+        match union_after {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::none()));
+            }
+            _ => panic!("Expected Union type after substitution"),
+        }
+    }
+
+    #[test]
+    fn test_union_concrete_types_unifies_with_member() {
+        let union = Type::union(vec![Type::int(), Type::string()]);
+        let concrete = Type::int();
+
+        let subst = Unifier::unify(&union, &concrete).unwrap();
+        assert!(subst.is_empty());
+
+        let union2 = Type::union(vec![Type::int(), Type::none()]);
+        let none = Type::none();
+        let subst2 = Unifier::unify(&union2, &none).unwrap();
+        assert!(subst2.is_empty());
+    }
+
+    #[test]
+    fn test_union_fails_when_no_member_matches() {
+        let union = Type::union(vec![Type::int(), Type::string()]);
+        let concrete = Type::bool();
+        let result = Unifier::unify(&union, &concrete);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_optional_type_pattern() {
+        let tv = TypeVar::new(31);
+        let optional_t = Type::union(vec![Type::Var(tv.clone()), Type::none()]);
+
+        let concrete = Type::string();
+        let subst = Unifier::unify(&optional_t, &concrete).unwrap();
+        assert_eq!(subst.get(&tv), Some(&Type::string()));
+
+        let tv2 = TypeVar::new(310);
+        let optional_t2 = Type::union(vec![Type::Var(tv2.clone()), Type::none()]);
+        let none = Type::none();
+        let subst2 = Unifier::unify(&optional_t2, &none).unwrap();
+        assert!(subst2.is_empty() || subst2.get(&tv2) == Some(&Type::none()));
+    }
+
+    #[test]
+    fn test_union_with_multiple_type_vars() {
+        let tv1 = TypeVar::new(32);
+        let tv2 = TypeVar::new(33);
+        let union = Type::union(vec![Type::Var(tv1.clone()), Type::Var(tv2.clone())]);
+        let concrete = Type::int();
+
+        let subst = Unifier::unify(&union, &concrete).unwrap();
+        assert_eq!(subst.get(&tv1), Some(&Type::int()));
+        assert!(!subst.contains_var(&tv2));
+    }
+
+    #[test]
+    fn test_union_type_var_flow() {
+        let tv_union_member = TypeVar::new(34);
+        let tv_result = TypeVar::new(35);
+        let union = Type::union(vec![Type::Var(tv_union_member.clone()), Type::none()]);
+        let subst1 = Unifier::unify(&Type::Var(tv_result.clone()), &union).unwrap();
+
+        assert_eq!(subst1.get(&tv_result), Some(&union));
+
+        let union_type = subst1.get(&tv_result).unwrap();
+        let subst2 = Unifier::unify(union_type, &Type::int()).unwrap();
+        assert_eq!(subst2.get(&tv_union_member), Some(&Type::int()));
+
+        let final_subst = subst2.compose(subst1);
+        let result_type = final_subst.apply(&Type::Var(tv_result));
+
+        match result_type {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::none()));
+            }
+            _ => panic!("Expected Union[int, None] but got: {result_type}"),
+        }
+    }
+
+    #[test]
+    fn test_union_with_complex_types() {
+        let tv = TypeVar::new(36);
+        let list_t = Type::list(Type::Var(tv.clone()));
+        let union = Type::union(vec![list_t, Type::none()]);
+        let list_int = Type::list(Type::int());
+
+        let subst = Unifier::unify(&union, &list_int).unwrap();
+        assert_eq!(subst.get(&tv), Some(&Type::int()));
+    }
+
+    #[test]
+    fn test_union_error_messages() {
+        // Union[int, str] ~ bool should provide detailed error
+        let union = Type::union(vec![Type::int(), Type::string()]);
+        let concrete = Type::bool();
+
+        match Unifier::unify(&union, &concrete) {
+            Err(e) => {
+                let msg = format!("{e}");
+                assert!(msg.contains("union") || msg.contains("Union"));
+            }
+            Ok(_) => panic!("Expected unification to fail"),
         }
     }
 }
