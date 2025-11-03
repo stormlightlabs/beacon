@@ -706,6 +706,12 @@ fn visit_node_with_context(
             let (narrowed_var, narrowed_type) = detect_type_guard(test, &mut env.clone());
             let mut true_env = env.clone();
 
+            if let (Some(var_name), Some(_)) = (narrowed_var.as_ref(), narrowed_type.as_ref()) {
+                if let Some(original_type) = env.lookup(var_name) {
+                    ctx.control_flow.start_tracking(var_name.clone(), original_type);
+                }
+            }
+
             if let (Some(var_name), Some(refined_ty)) = (narrowed_var.as_ref(), narrowed_type.as_ref()) {
                 true_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
 
@@ -717,6 +723,13 @@ fn visit_node_with_context(
                         refined_ty.clone(),
                         span,
                     ));
+
+                    if let Some(original_type) = env.lookup(var_name) {
+                        let eliminated = pred.eliminated_types(&original_type);
+                        for elim_ty in eliminated {
+                            ctx.control_flow.eliminate_type(var_name, elim_ty);
+                        }
+                    }
                 }
             }
 
@@ -727,19 +740,37 @@ fn visit_node_with_context(
             let (inverse_var, inverse_type) = detect_inverse_type_guard(test, &mut env.clone());
             let mut elif_env = env.clone();
 
-            if let (Some(var_name), Some(refined_ty)) = (inverse_var.as_ref(), inverse_type.as_ref()) {
-                elif_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
+            if let (Some(var_name), Some(_)) = (inverse_var.as_ref(), inverse_type.as_ref()) {
+                if let Some(remaining) = ctx.control_flow.get_remaining_types(var_name) {
+                    elif_env.bind(var_name.clone(), TypeScheme::mono(remaining.clone()));
 
-                if let Some(pred) = &predicate {
-                    if pred.has_simple_negation() {
-                        if let Some(inv_pred) = &inverse_predicate {
-                            let span = Span::new(*line, *col);
-                            ctx.constraints.push(Constraint::Narrowing(
-                                var_name.clone(),
-                                inv_pred.clone(),
-                                refined_ty.clone(),
-                                span,
-                            ));
+                    if let Some(pred) = &predicate {
+                        if pred.has_simple_negation() {
+                            if let Some(inv_pred) = &inverse_predicate {
+                                let span = Span::new(*line, *col);
+                                ctx.constraints.push(Constraint::Narrowing(
+                                    var_name.clone(),
+                                    inv_pred.clone(),
+                                    remaining,
+                                    span,
+                                ));
+                            }
+                        }
+                    }
+                } else if let (Some(var_name), Some(refined_ty)) = (inverse_var.as_ref(), inverse_type.as_ref()) {
+                    elif_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
+
+                    if let Some(pred) = &predicate {
+                        if pred.has_simple_negation() {
+                            if let Some(inv_pred) = &inverse_predicate {
+                                let span = Span::new(*line, *col);
+                                ctx.constraints.push(Constraint::Narrowing(
+                                    var_name.clone(),
+                                    inv_pred.clone(),
+                                    refined_ty.clone(),
+                                    span,
+                                ));
+                            }
                         }
                     }
                 }
@@ -748,10 +779,21 @@ fn visit_node_with_context(
             for (elif_test, elif_body) in elif_parts {
                 visit_node_with_context(elif_test, &mut elif_env, ctx, stub_cache, ExprContext::Value)?;
 
+                let elif_predicate = extract_type_predicate(elif_test);
                 let (elif_narrowed_var, elif_narrowed_type) = detect_type_guard(elif_test, &mut elif_env.clone());
                 let mut elif_true_env = elif_env.clone();
+
                 if let (Some(var_name), Some(refined_ty)) = (elif_narrowed_var.as_ref(), elif_narrowed_type.as_ref()) {
                     elif_true_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
+
+                    if let Some(pred) = &elif_predicate {
+                        if let Some(original_type) = env.lookup(var_name) {
+                            let eliminated = pred.eliminated_types(&original_type);
+                            for elim_ty in eliminated {
+                                ctx.control_flow.eliminate_type(var_name, elim_ty);
+                            }
+                        }
+                    }
                 }
 
                 for stmt in elif_body {
@@ -759,8 +801,12 @@ fn visit_node_with_context(
                 }
 
                 let (elif_inverse_var, elif_inverse_type) = detect_inverse_type_guard(elif_test, &mut elif_env.clone());
-                if let (Some(var_name), Some(refined_ty)) = (elif_inverse_var, elif_inverse_type) {
-                    elif_env.bind(var_name, TypeScheme::mono(refined_ty));
+                if let (Some(var_name), Some(_)) = (elif_inverse_var.as_ref(), elif_inverse_type.as_ref()) {
+                    if let Some(remaining) = ctx.control_flow.get_remaining_types(var_name) {
+                        elif_env.bind(var_name.clone(), TypeScheme::mono(remaining));
+                    } else if let (Some(var_name), Some(refined_ty)) = (elif_inverse_var, elif_inverse_type) {
+                        elif_env.bind(var_name, TypeScheme::mono(refined_ty));
+                    }
                 }
             }
 
@@ -769,6 +815,11 @@ fn visit_node_with_context(
                     visit_node_with_context(stmt, &mut elif_env, ctx, stub_cache, expr_ctx)?;
                 }
             }
+
+            if let Some(var_name) = narrowed_var {
+                ctx.control_flow.stop_tracking(&var_name);
+            }
+
             Ok(Type::none())
         }
         AstNode::Import { module, alias, line, col } => {

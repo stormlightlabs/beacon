@@ -1,8 +1,7 @@
 """
-Test cases for Phase 6: Pattern Matching Integration with Flow-Sensitive Narrowing
+Test cases for integrating pattern matching with flow-sensitive narrowing
 
-This file tests the integration of pattern matching with flow-sensitive type narrowing,
-ensuring that:
+We ensure that:
 1. Pattern matches create narrowing scopes
 2. Pattern bindings are tracked in control flow context
 3. Subsequent narrowing within match case bodies works correctly

@@ -41,6 +41,108 @@ pub enum TypePredicate {
 }
 
 impl TypePredicate {
+    /// Compute which types are eliminated by this predicate
+    pub fn eliminated_types(&self, original_type: &Type) -> Vec<Type> {
+        match self {
+            TypePredicate::IsNotNone | TypePredicate::IsTruthy => {
+                if let Type::Union(variants) = original_type {
+                    variants
+                        .iter()
+                        .filter(|v| matches!(v, Type::Con(beacon_core::TypeCtor::NoneType)))
+                        .cloned()
+                        .collect()
+                } else if matches!(original_type, Type::Con(beacon_core::TypeCtor::NoneType)) {
+                    vec![original_type.clone()]
+                } else {
+                    vec![]
+                }
+            }
+            TypePredicate::IsNone => {
+                if let Type::Union(variants) = original_type {
+                    variants
+                        .iter()
+                        .filter(|v| !matches!(v, Type::Con(beacon_core::TypeCtor::NoneType)))
+                        .cloned()
+                        .collect()
+                } else if !matches!(original_type, Type::Con(beacon_core::TypeCtor::NoneType)) {
+                    vec![original_type.clone()]
+                } else {
+                    vec![]
+                }
+            }
+            TypePredicate::IsInstance(target) => {
+                if let Type::Union(variants) = original_type {
+                    let target_types = if let Type::Union(target_variants) = target {
+                        target_variants.clone()
+                    } else {
+                        vec![target.clone()]
+                    };
+
+                    variants.iter().filter(|v| !target_types.contains(v)).cloned().collect()
+                } else if original_type != target {
+                    vec![original_type.clone()]
+                } else {
+                    vec![]
+                }
+            }
+            TypePredicate::IsFalsy => {
+                if let Type::Union(variants) = original_type {
+                    variants.iter().filter(|v| !Self::is_falsy_type(v)).cloned().collect()
+                } else if !Self::is_falsy_type(original_type) {
+                    vec![original_type.clone()]
+                } else {
+                    vec![]
+                }
+            }
+            TypePredicate::MatchesPattern(pattern) => {
+                let narrowed = narrow_type_by_pattern(original_type, pattern);
+                if let Type::Union(orig_variants) = original_type {
+                    let narrowed_variants =
+                        if let Type::Union(n_variants) = &narrowed { n_variants.clone() } else { vec![narrowed] };
+
+                    orig_variants
+                        .iter()
+                        .filter(|v| !narrowed_variants.contains(v))
+                        .cloned()
+                        .collect()
+                } else if &narrowed != original_type {
+                    vec![original_type.clone()]
+                } else {
+                    vec![]
+                }
+            }
+            TypePredicate::And(p1, p2) => {
+                let mut eliminated = p1.eliminated_types(original_type);
+                eliminated.extend(p2.eliminated_types(original_type));
+                eliminated.sort();
+                eliminated.dedup();
+                eliminated
+            }
+            TypePredicate::Or(p1, p2) => {
+                let elim1 = p1.eliminated_types(original_type);
+                let elim2 = p2.eliminated_types(original_type);
+                elim1.into_iter().filter(|t| elim2.contains(t)).collect()
+            }
+            TypePredicate::Not(p) => {
+                let narrowed = p.apply(original_type);
+                if let Type::Union(orig_variants) = original_type {
+                    let narrowed_variants =
+                        if let Type::Union(n_variants) = &narrowed { n_variants.clone() } else { vec![narrowed] };
+
+                    orig_variants
+                        .iter()
+                        .filter(|v| !narrowed_variants.contains(v))
+                        .cloned()
+                        .collect()
+                } else if &narrowed != original_type {
+                    vec![original_type.clone()]
+                } else {
+                    vec![]
+                }
+            }
+        }
+    }
+
     /// Apply the predicate to a type, returning the narrowed type
     ///
     /// This method implements the semantics of each predicate by transforming
@@ -336,6 +438,90 @@ struct JoinPoint {
     span: Span,
 }
 
+/// Tracks type elimination through successive narrowing for exhaustiveness checking
+///
+/// This structure tracks which types have been eliminated from a union through control flow analysis,
+/// allowing us to compute what types remain and detect when all variants have been covered.
+#[derive(Debug, Clone)]
+pub struct TypeSetTracker {
+    /// The variable being tracked
+    variable: String,
+
+    /// Original type before any narrowing
+    original_type: Type,
+
+    /// Types eliminated in branches so far (accumulated)
+    eliminated_types: Vec<Type>,
+}
+
+impl TypeSetTracker {
+    /// Create a new type set tracker for a variable
+    pub fn new(variable: String, original_type: Type) -> Self {
+        Self { variable, original_type, eliminated_types: Vec::new() }
+    }
+
+    /// Record that a type has been eliminated in a branch
+    pub fn eliminate_type(&mut self, ty: Type) {
+        // Only add if not already eliminated
+        if !self.eliminated_types.contains(&ty) {
+            self.eliminated_types.push(ty);
+        }
+    }
+
+    /// Compute the remaining types after eliminations
+    ///
+    /// For a union type, this subtracts all eliminated types from the original union.
+    pub fn remaining_types(&self) -> Type {
+        match &self.original_type {
+            Type::Union(variants) => {
+                let remaining: Vec<Type> = variants
+                    .iter()
+                    .filter(|v| !self.eliminated_types.contains(v))
+                    .cloned()
+                    .collect();
+
+                if remaining.is_empty() {
+                    Type::never()
+                } else if remaining.len() == 1 {
+                    remaining.into_iter().next().unwrap()
+                } else {
+                    Type::union(remaining)
+                }
+            }
+            _ => {
+                if self.eliminated_types.contains(&self.original_type) {
+                    Type::never()
+                } else {
+                    self.original_type.clone()
+                }
+            }
+        }
+    }
+
+    /// Check if all variants have been exhaustively covered
+    pub fn is_exhaustive(&self) -> bool {
+        match &self.original_type {
+            Type::Union(variants) => variants.iter().all(|v| self.eliminated_types.contains(v)),
+            _ => self.eliminated_types.contains(&self.original_type),
+        }
+    }
+
+    /// Get the variable name being tracked
+    pub fn variable(&self) -> &str {
+        &self.variable
+    }
+
+    /// Get the original type
+    pub fn original_type(&self) -> &Type {
+        &self.original_type
+    }
+
+    /// Get the list of eliminated types
+    pub fn eliminated_types(&self) -> &[Type] {
+        &self.eliminated_types
+    }
+}
+
 /// Control flow context for tracking narrowing scope
 ///
 /// Manages the stack of narrowing scopes and pending join points during
@@ -346,12 +532,18 @@ pub struct ControlFlowContext {
     scopes: Vec<NarrowingScope>,
     /// Join points waiting to be resolved
     pending_joins: Vec<JoinPoint>,
+    /// Type set trackers for exhaustiveness checking (variable -> tracker)
+    type_trackers: FxHashMap<String, TypeSetTracker>,
 }
 
 impl ControlFlowContext {
     /// Create a new control flow context with a root scope
     pub fn new() -> Self {
-        Self { scopes: vec![NarrowingScope::default()], pending_joins: Vec::new() }
+        Self {
+            scopes: vec![NarrowingScope::default()],
+            pending_joins: Vec::new(),
+            type_trackers: FxHashMap::default(),
+        }
     }
 
     /// Enter a new narrowing scope (e.g., inside an if body)
@@ -397,6 +589,44 @@ impl ControlFlowContext {
     #[allow(private_interfaces)]
     pub fn take_pending_joins(&mut self) -> Vec<JoinPoint> {
         std::mem::take(&mut self.pending_joins)
+    }
+
+    /// Start tracking type elimination for a variable
+    pub fn start_tracking(&mut self, variable: String, original_type: Type) {
+        self.type_trackers
+            .insert(variable.clone(), TypeSetTracker::new(variable, original_type));
+    }
+
+    /// Record that a type has been eliminated for a variable
+    pub fn eliminate_type(&mut self, variable: &str, eliminated_type: Type) {
+        if let Some(tracker) = self.type_trackers.get_mut(variable) {
+            tracker.eliminate_type(eliminated_type);
+        }
+    }
+
+    /// Get the remaining types for a variable after all eliminations
+    pub fn get_remaining_types(&self, variable: &str) -> Option<Type> {
+        self.type_trackers
+            .get(variable)
+            .map(|tracker| tracker.remaining_types())
+    }
+
+    /// Check if all variants have been exhaustively covered for a variable
+    pub fn is_exhaustive(&self, variable: &str) -> bool {
+        self.type_trackers
+            .get(variable)
+            .map(|tracker| tracker.is_exhaustive())
+            .unwrap_or(false)
+    }
+
+    /// Stop tracking a variable (cleanup after if-elif-else chain)
+    pub fn stop_tracking(&mut self, variable: &str) {
+        self.type_trackers.remove(variable);
+    }
+
+    /// Get a reference to the tracker for a variable
+    pub fn get_tracker(&self, variable: &str) -> Option<&TypeSetTracker> {
+        self.type_trackers.get(variable)
     }
 }
 
@@ -661,5 +891,239 @@ mod tests {
 
         ctx.narrow("x".to_string(), Type::int());
         assert_eq!(ctx.get_narrowed_type("x"), Some(&Type::int()));
+    }
+
+    #[test]
+    fn test_type_set_tracker_new() {
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let tracker = TypeSetTracker::new("x".to_string(), union_type.clone());
+        assert_eq!(tracker.variable(), "x");
+        assert_eq!(tracker.original_type(), &union_type);
+        assert_eq!(tracker.eliminated_types().len(), 0);
+    }
+
+    #[test]
+    fn test_type_set_tracker_eliminate_type() {
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let mut tracker = TypeSetTracker::new("x".to_string(), union_type);
+
+        tracker.eliminate_type(Type::none());
+        assert_eq!(tracker.eliminated_types(), &[Type::none()]);
+
+        tracker.eliminate_type(Type::int());
+        assert_eq!(tracker.eliminated_types().len(), 2);
+        assert!(tracker.eliminated_types().contains(&Type::none()));
+        assert!(tracker.eliminated_types().contains(&Type::int()));
+    }
+
+    #[test]
+    fn test_type_set_tracker_eliminate_type_deduplication() {
+        let union_type = Type::union(vec![Type::int(), Type::string()]);
+        let mut tracker = TypeSetTracker::new("x".to_string(), union_type);
+
+        tracker.eliminate_type(Type::int());
+        tracker.eliminate_type(Type::int());
+        tracker.eliminate_type(Type::int());
+
+        assert_eq!(tracker.eliminated_types(), &[Type::int()]);
+    }
+
+    #[test]
+    fn test_type_set_tracker_remaining_types_union() {
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let mut tracker = TypeSetTracker::new("x".to_string(), union_type);
+        let remaining = tracker.remaining_types();
+        assert_eq!(remaining, Type::union(vec![Type::int(), Type::string(), Type::none()]));
+
+        tracker.eliminate_type(Type::none());
+        let remaining = tracker.remaining_types();
+        assert_eq!(remaining, Type::union(vec![Type::int(), Type::string()]));
+
+        tracker.eliminate_type(Type::int());
+        let remaining = tracker.remaining_types();
+        assert_eq!(remaining, Type::string());
+
+        tracker.eliminate_type(Type::string());
+        let remaining = tracker.remaining_types();
+        assert_eq!(remaining, Type::never());
+    }
+
+    #[test]
+    fn test_type_set_tracker_remaining_types_non_union() {
+        let int_type = Type::int();
+        let mut tracker = TypeSetTracker::new("x".to_string(), int_type.clone());
+
+        assert_eq!(tracker.remaining_types(), int_type);
+
+        tracker.eliminate_type(int_type.clone());
+        assert_eq!(tracker.remaining_types(), Type::never());
+    }
+
+    #[test]
+    fn test_type_set_tracker_is_exhaustive_union() {
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let mut tracker = TypeSetTracker::new("x".to_string(), union_type);
+
+        assert!(!tracker.is_exhaustive());
+
+        tracker.eliminate_type(Type::none());
+        assert!(!tracker.is_exhaustive());
+
+        tracker.eliminate_type(Type::int());
+        assert!(!tracker.is_exhaustive());
+
+        tracker.eliminate_type(Type::string());
+        assert!(tracker.is_exhaustive());
+    }
+
+    #[test]
+    fn test_type_set_tracker_is_exhaustive_non_union() {
+        let int_type = Type::int();
+        let mut tracker = TypeSetTracker::new("x".to_string(), int_type.clone());
+
+        assert!(!tracker.is_exhaustive());
+
+        tracker.eliminate_type(int_type);
+        assert!(tracker.is_exhaustive());
+    }
+
+    #[test]
+    fn test_control_flow_start_and_stop_tracking() {
+        let mut ctx = ControlFlowContext::new();
+        let union_type = Type::union(vec![Type::int(), Type::string()]);
+
+        ctx.start_tracking("x".to_string(), union_type.clone());
+        assert!(ctx.get_tracker("x").is_some());
+
+        ctx.stop_tracking("x");
+        assert!(ctx.get_tracker("x").is_none());
+    }
+
+    #[test]
+    fn test_control_flow_eliminate_type() {
+        let mut ctx = ControlFlowContext::new();
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+
+        ctx.start_tracking("x".to_string(), union_type);
+        ctx.eliminate_type("x", Type::none());
+
+        let tracker = ctx.get_tracker("x").unwrap();
+        assert_eq!(tracker.eliminated_types(), &[Type::none()]);
+    }
+
+    #[test]
+    fn test_control_flow_get_remaining_types() {
+        let mut ctx = ControlFlowContext::new();
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+
+        ctx.start_tracking("x".to_string(), union_type);
+        ctx.eliminate_type("x", Type::none());
+
+        let remaining = ctx.get_remaining_types("x").unwrap();
+        assert_eq!(remaining, Type::union(vec![Type::int(), Type::string()]));
+    }
+
+    #[test]
+    fn test_control_flow_is_exhaustive() {
+        let mut ctx = ControlFlowContext::new();
+        let union_type = Type::union(vec![Type::int(), Type::string()]);
+
+        ctx.start_tracking("x".to_string(), union_type);
+
+        assert!(!ctx.is_exhaustive("x"));
+
+        ctx.eliminate_type("x", Type::int());
+        assert!(!ctx.is_exhaustive("x"));
+
+        ctx.eliminate_type("x", Type::string());
+        assert!(ctx.is_exhaustive("x"));
+    }
+
+    #[test]
+    fn test_control_flow_exhaustiveness_successive_eliminations() {
+        let mut ctx = ControlFlowContext::new();
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+
+        ctx.start_tracking("x".to_string(), union_type);
+
+        ctx.eliminate_type("x", Type::none());
+        let remaining = ctx.get_remaining_types("x").unwrap();
+        assert_eq!(remaining, Type::union(vec![Type::int(), Type::string()]));
+
+        ctx.eliminate_type("x", Type::int());
+        let remaining = ctx.get_remaining_types("x").unwrap();
+        assert_eq!(remaining, Type::string());
+
+        assert!(!ctx.is_exhaustive("x"));
+
+        ctx.eliminate_type("x", Type::string());
+        assert!(ctx.is_exhaustive("x"));
+        assert_eq!(ctx.get_remaining_types("x").unwrap(), Type::never());
+    }
+
+    #[test]
+    fn test_predicate_eliminated_types_is_not_none() {
+        let union_type = Type::union(vec![Type::int(), Type::none()]);
+        let predicate = TypePredicate::IsNotNone;
+        let eliminated = predicate.eliminated_types(&union_type);
+        assert_eq!(eliminated, vec![Type::none()]);
+    }
+
+    #[test]
+    fn test_predicate_eliminated_types_is_none() {
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let predicate = TypePredicate::IsNone;
+        let eliminated = predicate.eliminated_types(&union_type);
+        assert_eq!(eliminated.len(), 2);
+        assert!(eliminated.contains(&Type::int()));
+        assert!(eliminated.contains(&Type::string()));
+    }
+
+    #[test]
+    fn test_predicate_eliminated_types_isinstance() {
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let predicate = TypePredicate::IsInstance(Type::int());
+        let eliminated = predicate.eliminated_types(&union_type);
+        assert_eq!(eliminated.len(), 2);
+        assert!(eliminated.contains(&Type::string()));
+        assert!(eliminated.contains(&Type::none()));
+    }
+
+    #[test]
+    fn test_predicate_eliminated_types_isinstance_union_target() {
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let target_union = Type::union(vec![Type::int(), Type::string()]);
+        let predicate = TypePredicate::IsInstance(target_union);
+        let eliminated = predicate.eliminated_types(&union_type);
+        assert_eq!(eliminated, vec![Type::none()]);
+    }
+
+    #[test]
+    fn test_predicate_eliminated_types_is_truthy() {
+        let union_type = Type::union(vec![Type::int(), Type::none()]);
+        let predicate = TypePredicate::IsTruthy;
+        let eliminated = predicate.eliminated_types(&union_type);
+        assert_eq!(eliminated, vec![Type::none()]);
+    }
+
+    #[test]
+    fn test_predicate_eliminated_types_and() {
+        let union_type = Type::union(vec![Type::int(), Type::none()]);
+        let pred1 = TypePredicate::IsNotNone;
+        let pred2 = TypePredicate::IsTruthy;
+        let predicate = TypePredicate::And(Box::new(pred1), Box::new(pred2));
+        let eliminated = predicate.eliminated_types(&union_type);
+        assert_eq!(eliminated.len(), 1);
+        assert!(eliminated.contains(&Type::none()));
+    }
+
+    #[test]
+    fn test_predicate_eliminated_types_or() {
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let pred1 = TypePredicate::IsInstance(Type::int());
+        let pred2 = TypePredicate::IsInstance(Type::string());
+        let predicate = TypePredicate::Or(Box::new(pred1), Box::new(pred2));
+        let eliminated = predicate.eliminated_types(&union_type);
+        assert_eq!(eliminated, vec![Type::none()]);
     }
 }
