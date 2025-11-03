@@ -20,6 +20,21 @@ pub enum TypePredicate {
     /// Variable is an instance of a type: `isinstance(x, T)`
     /// Can also represent isinstance with multiple types: `isinstance(x, (T1, T2))`
     IsInstance(Type),
+
+    /// Variable is truthy (excludes None, False, 0, "", [], {}, etc.): `if x:`
+    IsTruthy,
+
+    /// Variable is falsy: `if not x:`
+    IsFalsy,
+
+    /// Conjunction of predicates (for `and` expressions): `if x and y:`
+    And(Box<TypePredicate>, Box<TypePredicate>),
+
+    /// Disjunction of predicates (for `or` expressions): `if x or y:`
+    Or(Box<TypePredicate>, Box<TypePredicate>),
+
+    /// Negation of a predicate (for `not` expressions): `if not x:`
+    Not(Box<TypePredicate>),
 }
 
 impl TypePredicate {
@@ -55,15 +70,52 @@ impl TypePredicate {
                 }
                 _ => target.clone(),
             },
+            TypePredicate::IsTruthy => ty.remove_from_union(&Type::none()),
+            TypePredicate::IsFalsy => match ty {
+                Type::Union(variants) => {
+                    let falsy: Vec<Type> = variants.iter().filter(|t| Self::is_falsy_type(t)).cloned().collect();
+
+                    if falsy.is_empty() {
+                        Type::none()
+                    } else if falsy.len() == 1 {
+                        falsy.into_iter().next().unwrap()
+                    } else {
+                        Type::union(falsy)
+                    }
+                }
+                t if Self::is_falsy_type(t) => t.clone(),
+                _ => Type::none(),
+            },
+            TypePredicate::And(p1, p2) => {
+                let t1 = p1.apply(ty);
+                p2.apply(&t1)
+            }
+            TypePredicate::Or(p1, p2) => Type::union(vec![p1.apply(ty), p2.apply(ty)]),
+            TypePredicate::Not(p) => p.negate().apply(ty),
         }
     }
 
+    /// Check if a type is always falsy
+    fn is_falsy_type(ty: &Type) -> bool {
+        use beacon_core::TypeCtor;
+        matches!(ty, Type::Con(TypeCtor::NoneType))
+    }
+
     /// Get the inverse predicate for narrowing in the else branch of an if statement.
+    ///
+    /// De Morgan's law
+    /// - not (A and B) = (not A) or (not B)
+    /// - not (A or B) = (not A) and (not B)
     pub fn negate(&self) -> TypePredicate {
         match self {
             TypePredicate::IsNotNone => TypePredicate::IsNone,
             TypePredicate::IsNone => TypePredicate::IsNotNone,
             TypePredicate::IsInstance(_) => TypePredicate::IsNotNone,
+            TypePredicate::IsTruthy => TypePredicate::IsFalsy,
+            TypePredicate::IsFalsy => TypePredicate::IsTruthy,
+            TypePredicate::And(p1, p2) => TypePredicate::Or(Box::new(p1.negate()), Box::new(p2.negate())),
+            TypePredicate::Or(p1, p2) => TypePredicate::And(Box::new(p1.negate()), Box::new(p2.negate())),
+            TypePredicate::Not(p) => p.as_ref().clone(),
         }
     }
 

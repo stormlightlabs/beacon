@@ -1642,7 +1642,8 @@ fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Opti
 /// It supports:
 /// - None checks: `x is not None`, `x is None`
 /// - isinstance checks: `isinstance(x, Type)`, `isinstance(x, (Type1, Type2))`
-/// - Truthiness checks (future)
+/// - Truthiness checks: `if x:`
+/// - Negation: `if not x:`
 fn extract_type_predicate(test: &AstNode) -> Option<TypePredicate> {
     match test {
         AstNode::Compare { left: _, ops, comparators, .. } if ops.len() == 1 && comparators.len() == 1 => {
@@ -1686,6 +1687,11 @@ fn extract_type_predicate(test: &AstNode) -> Option<TypePredicate> {
             }?;
 
             Some(TypePredicate::IsInstance(target_type))
+        }
+        AstNode::Identifier { .. } => Some(TypePredicate::IsTruthy),
+        AstNode::UnaryOp { op: beacon_parser::UnaryOperator::Not, operand, .. } => {
+            let inner_pred = extract_type_predicate(operand)?;
+            Some(TypePredicate::Not(Box::new(inner_pred)))
         }
         _ => None,
     }

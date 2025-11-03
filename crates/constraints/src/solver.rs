@@ -1993,4 +1993,208 @@ mod tests {
         let narrowed = pred.apply(&original);
         assert_eq!(narrowed, target);
     }
+
+    #[test]
+    fn test_type_predicate_is_truthy() {
+        let optional_int = Type::optional(Type::int());
+        let pred = TypePredicate::IsTruthy;
+        let narrowed = pred.apply(&optional_int);
+        assert_eq!(narrowed, Type::int(), "IsTruthy should remove None from union");
+    }
+
+    #[test]
+    fn test_type_predicate_is_truthy_non_optional() {
+        let int_type = Type::int();
+        let pred = TypePredicate::IsTruthy;
+        let narrowed = pred.apply(&int_type);
+        assert_eq!(narrowed, Type::int(), "IsTruthy on non-optional should be no-op");
+    }
+
+    #[test]
+    fn test_type_predicate_is_falsy() {
+        let optional_int = Type::optional(Type::int());
+        let pred = TypePredicate::IsFalsy;
+        let narrowed = pred.apply(&optional_int);
+        assert_eq!(narrowed, Type::none(), "IsFalsy should narrow Optional to None");
+    }
+
+    #[test]
+    fn test_type_predicate_is_falsy_on_union() {
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let pred = TypePredicate::IsFalsy;
+        let narrowed = pred.apply(&union_type);
+        assert_eq!(narrowed, Type::none(), "IsFalsy should extract only None from union");
+    }
+
+    #[test]
+    fn test_type_predicate_is_falsy_on_non_optional() {
+        let int_type = Type::int();
+        let pred = TypePredicate::IsFalsy;
+        let narrowed = pred.apply(&int_type);
+        assert_eq!(narrowed, Type::none(), "IsFalsy on non-optional type narrows to None");
+    }
+
+    #[test]
+    fn test_type_predicate_truthiness_negate() {
+        let truthy = TypePredicate::IsTruthy;
+        let falsy = TypePredicate::IsFalsy;
+
+        assert_eq!(truthy.negate(), falsy, "Negation of IsTruthy should be IsFalsy");
+        assert_eq!(falsy.negate(), truthy, "Negation of IsFalsy should be IsTruthy");
+    }
+
+    #[test]
+    fn test_type_predicate_truthiness_has_simple_negation() {
+        let truthy = TypePredicate::IsTruthy;
+        assert!(truthy.has_simple_negation(), "IsTruthy should have simple negation");
+    }
+
+    #[test]
+    fn test_type_predicate_and() {
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let pred1 = TypePredicate::IsNotNone;
+        let pred2 = TypePredicate::IsInstance(Type::int());
+        let and_pred = TypePredicate::And(Box::new(pred1), Box::new(pred2));
+        let narrowed = and_pred.apply(&union_type);
+        assert_eq!(narrowed, Type::int(), "And should apply both predicates sequentially");
+    }
+
+    #[test]
+    fn test_type_predicate_or() {
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::bool()]);
+        let pred1 = TypePredicate::IsInstance(Type::int());
+        let pred2 = TypePredicate::IsInstance(Type::string());
+        let or_pred = TypePredicate::Or(Box::new(pred1), Box::new(pred2));
+
+        let narrowed = or_pred.apply(&union_type);
+        match narrowed {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+            }
+            _ => panic!("Expected union, got {narrowed:?}"),
+        }
+    }
+
+    #[test]
+    fn test_type_predicate_not() {
+        let optional_int = Type::optional(Type::int());
+        let truthy = TypePredicate::IsTruthy;
+        let not_truthy = TypePredicate::Not(Box::new(truthy));
+        let narrowed = not_truthy.apply(&optional_int);
+        assert_eq!(narrowed, Type::none(), "Not(IsTruthy) should narrow to None");
+    }
+
+    #[test]
+    fn test_type_predicate_not_isinstance() {
+        let union_type = Type::union(vec![Type::int(), Type::string()]);
+        let isinstance_pred = TypePredicate::IsInstance(Type::int());
+        let not_isinstance = TypePredicate::Not(Box::new(isinstance_pred));
+        let narrowed = not_isinstance.apply(&union_type);
+        match narrowed {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+            }
+            _ => panic!("Expected union type, got {narrowed:?}"),
+        }
+    }
+
+    #[test]
+    fn test_type_predicate_de_morgan_and() {
+        let pred1 = TypePredicate::IsTruthy;
+        let pred2 = TypePredicate::IsNotNone;
+        let and_pred = TypePredicate::And(Box::new(pred1), Box::new(pred2));
+        let negated = and_pred.negate();
+        match negated {
+            TypePredicate::Or(p1, p2) => {
+                assert_eq!(*p1, TypePredicate::IsFalsy);
+                assert_eq!(*p2, TypePredicate::IsNone);
+            }
+            _ => panic!("Expected Or predicate from De Morgan's law"),
+        }
+    }
+
+    #[test]
+    fn test_type_predicate_de_morgan_or() {
+        let pred1 = TypePredicate::IsTruthy;
+        let pred2 = TypePredicate::IsNotNone;
+        let or_pred = TypePredicate::Or(Box::new(pred1), Box::new(pred2));
+        let negated = or_pred.negate();
+        match negated {
+            TypePredicate::And(p1, p2) => {
+                assert_eq!(*p1, TypePredicate::IsFalsy);
+                assert_eq!(*p2, TypePredicate::IsNone);
+            }
+            _ => panic!("Expected And predicate from De Morgan's law"),
+        }
+    }
+
+    #[test]
+    fn test_type_predicate_double_negation() {
+        let truthy = TypePredicate::IsTruthy;
+        let not_not_truthy = TypePredicate::Not(Box::new(TypePredicate::Not(Box::new(truthy.clone()))));
+        let result = not_not_truthy.negate();
+        match result {
+            TypePredicate::Not(inner) => match *inner {
+                TypePredicate::IsTruthy => {}
+                _ => panic!("Expected IsTruthy"),
+            },
+            _ => panic!("Expected Not predicate"),
+        }
+    }
+
+    #[test]
+    fn test_complex_predicate_combination() {
+        let optional_union = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let truthy = TypePredicate::IsTruthy;
+        let isinstance = TypePredicate::IsInstance(Type::int());
+        let combined = TypePredicate::And(Box::new(truthy), Box::new(isinstance));
+        let narrowed = combined.apply(&optional_union);
+        assert_eq!(narrowed, Type::int(), "Complex predicate should narrow to int");
+    }
+
+    #[test]
+    fn test_solve_narrowing_truthiness_constraint() {
+        let var_name = "x".to_string();
+        let pred = TypePredicate::IsTruthy;
+        let narrowed_type = Type::int();
+        let constraints =
+            ConstraintSet { constraints: vec![Constraint::Narrowing(var_name, pred, narrowed_type, test_span())] };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "Truthiness narrowing constraint should not produce errors"
+        );
+    }
+
+    #[test]
+    fn test_solve_narrowing_and_constraint() {
+        let var_name = "x".to_string();
+        let pred = TypePredicate::And(
+            Box::new(TypePredicate::IsNotNone),
+            Box::new(TypePredicate::IsInstance(Type::int())),
+        );
+        let narrowed_type = Type::int();
+
+        let constraints =
+            ConstraintSet { constraints: vec![Constraint::Narrowing(var_name, pred, narrowed_type, test_span())] };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "And predicate narrowing constraint should not produce errors"
+        );
+    }
 }
