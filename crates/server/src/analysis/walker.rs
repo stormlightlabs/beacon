@@ -421,9 +421,25 @@ fn visit_node_with_context(
             Ok(decorated_type)
         }
 
-        AstNode::ClassDef { name, body, decorators, line, col, .. } => {
+        AstNode::ClassDef { name, body, decorators, bases, line, col, .. } => {
             let class_type = Type::Con(TypeCtor::Class(name.clone()));
-            let metadata = extract_class_metadata(name, body, env);
+            let mut metadata = extract_class_metadata(name, body, env);
+
+            for base in bases {
+                metadata.add_base_class(base.clone());
+            }
+
+            let has_dataclass = is_dataclass_decorator(decorators);
+            let has_enum_base = has_enum_base(bases);
+
+            if has_dataclass {
+                synthesize_dataclass_init(&mut metadata, env);
+            }
+
+            if has_enum_base {
+                extract_enum_members(&mut metadata, body, name, env);
+            }
+
             ctx.class_registry.register_class(name.clone(), metadata);
 
             for stmt in body {
@@ -432,8 +448,11 @@ fn visit_node_with_context(
                 }
             }
 
+            let type_transforming_decorators: Vec<&String> =
+                decorators.iter().filter(|d| !is_special_class_decorator(d)).collect();
+
             let mut decorated_type = class_type.clone();
-            for decorator in decorators.iter().rev() {
+            for decorator in type_transforming_decorators.iter().rev() {
                 let decorator_ty = env.lookup(decorator).unwrap_or_else(|| Type::Var(env.fresh_var()));
                 let result_ty = Type::Var(env.fresh_var());
                 let span = Span::new(*line, *col);
@@ -1338,6 +1357,95 @@ fn extract_field_assignments(stmt: &AstNode, metadata: &mut ClassMetadata, env: 
             }
         }
         _ => {}
+    }
+}
+
+/// Check if a decorator is @dataclass or a variant (e.g., dataclasses.dataclass)
+fn is_dataclass_decorator(decorators: &[String]) -> bool {
+    decorators.iter().any(|d| d == "dataclass" || d.ends_with(".dataclass"))
+}
+
+/// Check if any base class is Enum or a variant (e.g., enum.Enum, IntEnum, StrEnum)
+fn has_enum_base(bases: &[String]) -> bool {
+    bases.iter().any(|b| {
+        b == "Enum"
+            || b.ends_with(".Enum")
+            || b == "IntEnum"
+            || b.ends_with(".IntEnum")
+            || b == "StrEnum"
+            || b.ends_with(".StrEnum")
+            || b == "Flag"
+            || b.ends_with(".Flag")
+            || b == "IntFlag"
+            || b.ends_with(".IntFlag")
+    })
+}
+
+/// Check if a decorator is a special class decorator that doesn't transform the type
+///
+/// These decorators modify class behavior but return the same class type:
+/// - @dataclass: adds __init__, __repr__, etc., but type remains the same class
+/// - @unique: enum decorator that enforces unique values
+/// - Other non-type-transforming decorators can be added here
+fn is_special_class_decorator(decorator: &str) -> bool {
+    decorator == "dataclass"
+        || decorator.ends_with(".dataclass")
+        || decorator == "unique"
+        || decorator.ends_with(".unique")
+}
+
+/// Synthesize __init__ method for a @dataclass from class-level fields
+///
+/// For a dataclass with fields `x: int` and `y: str`, this generates `__init__(self, x: int, y: str) -> None`
+fn synthesize_dataclass_init(metadata: &mut ClassMetadata, env: &mut TypeEnvironment) {
+    let _ = env;
+
+    if metadata.init_type.is_some() {
+        return;
+    }
+
+    let mut param_types = vec![Type::any()];
+
+    // TODO: use IndexMap to preserve definition order.
+    for field_type in metadata.fields.values() {
+        param_types.push(field_type.clone());
+    }
+
+    let init_type = Type::fun(param_types, Type::none());
+    metadata.set_init_type(init_type);
+}
+
+/// Extract enum members from class body and register them as class attributes
+///
+/// For an Enum class, class-level assignments like `RED = 1` or `BLUE = auto()`
+/// are enum members, not regular class fields. Each member has the type of the enum class itself.
+///
+/// Example:
+/// ```python
+/// class Color(Enum):
+///     RED = 1
+///     GREEN = 2
+///     BLUE = auto()
+/// ```
+/// This creates attributes: Color.RED, Color.GREEN, Color.BLUE all of type Color
+fn extract_enum_members(metadata: &mut ClassMetadata, body: &[AstNode], class_name: &str, env: &mut TypeEnvironment) {
+    let _ = env;
+    let enum_type = Type::Con(TypeCtor::Class(class_name.to_string()));
+
+    for stmt in body {
+        match stmt {
+            AstNode::Assignment { target, .. } => {
+                if !target.contains('.') && !target.starts_with('_') {
+                    metadata.add_field(target.clone(), enum_type.clone());
+                }
+            }
+            AstNode::AnnotatedAssignment { target, .. } => {
+                if !target.contains('.') && !target.starts_with('_') {
+                    metadata.add_field(target.clone(), enum_type.clone());
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -2963,6 +3071,250 @@ mod tests {
         assert!(
             !metadata.fields.contains_key("inner_field"),
             "Should NOT extract inner_field from nested class"
+        );
+    }
+
+    #[test]
+    fn test_is_dataclass_decorator() {
+        assert!(is_dataclass_decorator(&["dataclass".to_string()]));
+        assert!(is_dataclass_decorator(&["dataclasses.dataclass".to_string()]));
+        assert!(is_dataclass_decorator(&["other".to_string(), "dataclass".to_string()]));
+        assert!(!is_dataclass_decorator(&["property".to_string()]));
+        assert!(!is_dataclass_decorator(&[]));
+    }
+
+    #[test]
+    fn test_has_enum_base() {
+        assert!(has_enum_base(&["Enum".to_string()]));
+        assert!(has_enum_base(&["enum.Enum".to_string()]));
+        assert!(has_enum_base(&["IntEnum".to_string()]));
+        assert!(has_enum_base(&["enum.IntEnum".to_string()]));
+        assert!(has_enum_base(&["StrEnum".to_string()]));
+        assert!(has_enum_base(&["Flag".to_string()]));
+        assert!(has_enum_base(&["IntFlag".to_string()]));
+        assert!(has_enum_base(&["object".to_string(), "Enum".to_string()]));
+        assert!(!has_enum_base(&["object".to_string()]));
+        assert!(!has_enum_base(&[]));
+    }
+
+    #[test]
+    fn test_is_special_class_decorator() {
+        assert!(is_special_class_decorator("dataclass"));
+        assert!(is_special_class_decorator("dataclasses.dataclass"));
+        assert!(is_special_class_decorator("unique"));
+        assert!(is_special_class_decorator("enum.unique"));
+        assert!(!is_special_class_decorator("property"));
+        assert!(!is_special_class_decorator("classmethod"));
+    }
+
+    #[test]
+    fn test_synthesize_dataclass_init() {
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let class_body = vec![
+            AstNode::AnnotatedAssignment {
+                target: "x".to_string(),
+                type_annotation: "int".to_string(),
+                value: None,
+                line: 2,
+                col: 5,
+            },
+            AstNode::AnnotatedAssignment {
+                target: "y".to_string(),
+                type_annotation: "str".to_string(),
+                value: None,
+                line: 3,
+                col: 5,
+            },
+        ];
+
+        let mut metadata = extract_class_metadata("Point", &class_body, &mut env);
+
+        assert!(metadata.init_type.is_none());
+
+        synthesize_dataclass_init(&mut metadata, &mut env);
+
+        assert!(
+            metadata.init_type.is_some(),
+            "Dataclass should have synthesized __init__"
+        );
+
+        if let Some(Type::Fun(params, ret_ty)) = &metadata.init_type {
+            assert!(!params.is_empty(), "__init__ should have at least self parameter");
+            assert!(
+                matches!(ret_ty.as_ref(), Type::Con(TypeCtor::NoneType)),
+                "__init__ should return None"
+            );
+        } else {
+            panic!("Expected function type for __init__");
+        }
+    }
+
+    #[test]
+    fn test_synthesize_dataclass_init_respects_explicit_init() {
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let class_body = vec![
+            AstNode::AnnotatedAssignment {
+                target: "x".to_string(),
+                type_annotation: "int".to_string(),
+                value: None,
+                line: 2,
+                col: 5,
+            },
+            AstNode::FunctionDef {
+                name: "__init__".to_string(),
+                args: vec![],
+                body: vec![],
+                docstring: None,
+                return_type: None,
+                decorators: vec![],
+                is_async: false,
+                line: 3,
+                col: 5,
+            },
+        ];
+
+        let mut metadata = extract_class_metadata("CustomPoint", &class_body, &mut env);
+
+        assert!(metadata.init_type.is_some());
+
+        let original_init = metadata.init_type.clone();
+        synthesize_dataclass_init(&mut metadata, &mut env);
+        assert_eq!(
+            metadata.init_type, original_init,
+            "Should not override explicit __init__"
+        );
+    }
+
+    #[test]
+    fn test_extract_enum_members() {
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let class_body = vec![
+            AstNode::Assignment {
+                target: "RED".to_string(),
+                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(1), line: 2, col: 11 }),
+                line: 2,
+                col: 5,
+            },
+            AstNode::Assignment {
+                target: "GREEN".to_string(),
+                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(2), line: 3, col: 13 }),
+                line: 3,
+                col: 5,
+            },
+            AstNode::Assignment {
+                target: "BLUE".to_string(),
+                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(3), line: 4, col: 12 }),
+                line: 4,
+                col: 5,
+            },
+        ];
+
+        let mut metadata = beacon_core::ClassMetadata::new("Color".to_string());
+        extract_enum_members(&mut metadata, &class_body, "Color", &mut env);
+
+        assert!(metadata.fields.contains_key("RED"), "Should extract RED as enum member");
+        assert!(
+            metadata.fields.contains_key("GREEN"),
+            "Should extract GREEN as enum member"
+        );
+        assert!(
+            metadata.fields.contains_key("BLUE"),
+            "Should extract BLUE as enum member"
+        );
+
+        if let Some(red_type) = metadata.fields.get("RED") {
+            match red_type {
+                Type::Con(TypeCtor::Class(name)) => {
+                    assert_eq!(name, "Color", "Enum member should have enum class type");
+                }
+                _ => panic!("Expected class type for enum member"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_extract_enum_members_ignores_methods() {
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let class_body = vec![
+            AstNode::Assignment {
+                target: "MEMBER".to_string(),
+                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(1), line: 2, col: 14 }),
+                line: 2,
+                col: 5,
+            },
+            AstNode::FunctionDef {
+                name: "some_method".to_string(),
+                args: vec![],
+                body: vec![],
+                docstring: None,
+                return_type: None,
+                decorators: vec![],
+                is_async: false,
+                line: 3,
+                col: 5,
+            },
+        ];
+
+        let mut metadata = beacon_core::ClassMetadata::new("MyEnum".to_string());
+        extract_enum_members(&mut metadata, &class_body, "MyEnum", &mut env);
+
+        assert!(
+            metadata.fields.contains_key("MEMBER"),
+            "Should extract MEMBER as enum member"
+        );
+        assert_eq!(metadata.fields.len(), 1, "Should only extract assignment, not method");
+    }
+
+    #[test]
+    fn test_extract_enum_members_ignores_private() {
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let class_body = vec![
+            AstNode::Assignment {
+                target: "PUBLIC".to_string(),
+                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(1), line: 2, col: 14 }),
+                line: 2,
+                col: 5,
+            },
+            AstNode::Assignment {
+                target: "_private".to_string(),
+                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(2), line: 3, col: 16 }),
+                line: 3,
+                col: 5,
+            },
+        ];
+
+        let mut metadata = beacon_core::ClassMetadata::new("MyEnum".to_string());
+        extract_enum_members(&mut metadata, &class_body, "MyEnum", &mut env);
+
+        assert!(metadata.fields.contains_key("PUBLIC"), "Should extract public member");
+        assert!(
+            !metadata.fields.contains_key("_private"),
+            "Should ignore private members"
         );
     }
 }

@@ -6,28 +6,10 @@ Implementation details and mod-specific tasks.
 
 ### Class Features - Decorators & Fields
 
-**Goal**: Proper handling of @dataclass, class-level annotations, and enums
-
-**Tasks**:
-
-- [ ] Add class-level annotation extraction in extract_class_metadata
-    - Parse annotated assignments at class scope
-    - Store as class fields, not just **init** parameters
-- [ ] Implement @dataclass special handling
-    - Detect @dataclass decorator
-    - Synthesize **init** from class-level annotations
-    - Don't treat decorator as type transformer
-- [ ] Add enum class support
-    - Recognize Enum base class
-    - Extract enum members as class attributes
-    - Handle auto() function calls
-- [ ] Fix decorator constraint generation
-    - Remove generic "decorator as transformer" logic for class decorators
-    - Add special cases: @dataclass, @property, @classmethod, @staticmethod
-- [ ] Add tests for decorated classes
-    - Dataclass instantiation and field access
-    - Enum member access
-    - Property getters/setters
+- [x] Add class-level annotation extraction in extract_class_metadata
+- [x] Implement @dataclass special handling
+- [x] Add enum class support
+- [x] Fix decorator constraint generation
 
 **Impact**: Clears 20+ false positives (CacheEntry/bool, enum attributes, dataclass fields)
 

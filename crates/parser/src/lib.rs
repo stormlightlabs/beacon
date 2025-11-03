@@ -531,7 +531,6 @@ impl PythonParser {
                 let docstring = self.extract_docstring(&node, source);
                 Ok(AstNode::Module { body, docstring })
             }
-            // TODO: extract decorators
             "function_definition" => {
                 let name = self.extract_identifier(&node, source, "name")?;
                 let args = self.extract_function_args(&node, source)?;
@@ -549,7 +548,6 @@ impl PythonParser {
 
                 Ok(AstNode::FunctionDef { name, args, body, docstring, return_type, decorators, is_async, line, col })
             }
-            // TODO: extract decorators
             "class_definition" => {
                 let name = self.extract_identifier(&node, source, "name")?;
                 let bases = self.extract_class_bases(&node, source);
