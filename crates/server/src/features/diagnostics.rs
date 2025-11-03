@@ -858,26 +858,39 @@ fn type_error_to_diagnostic(error_info: &beacon_constraint::TypeErrorInfo) -> Di
         (Some(end_line), Some(end_col)) => {
             Position { line: (end_line.saturating_sub(1)) as u32, character: (end_col.saturating_sub(1)) as u32 }
         }
-        _ => Position { line: start_pos.line, character: start_pos.character + 1 },
+        _ => Position { line: start_pos.line, character: start_pos.character + 10 },
     };
 
     let range = Range { start: start_pos, end: end_pos };
 
     let (code, message) = match &error_info.error {
-        TypeError::UnificationError(t1, t2) => ("HM001", format!("Type mismatch: cannot unify {t1} with {t2}")),
-        TypeError::OccursCheckFailed(tv, ty) => ("HM002", format!("Infinite type: type variable {tv} occurs in {ty}")),
+        TypeError::UnificationError(t1, t2) => {
+            let base_msg = format!("Type mismatch: cannot unify {t1} with {t2}");
+            let enhanced_msg = enhance_unification_error_message(&base_msg, t1, t2);
+            ("HM001", enhanced_msg)
+        }
+        TypeError::OccursCheckFailed(tv, ty) => (
+            "HM002",
+            format!(
+                "Infinite type: type variable {tv} occurs in {ty}. This usually indicates a recursive type definition."
+            ),
+        ),
         TypeError::UndefinedTypeVar(tv) => ("HM003", format!("Undefined type variable: {tv}")),
         TypeError::KindMismatch { expected, found } => {
             ("HM004", format!("Kind mismatch: expected {expected}, found {found}"))
         }
         TypeError::InfiniteType(msg) => ("HM005", format!("Infinite type: {msg}")),
         TypeError::ProtocolNotSatisfied(ty, protocol) => {
-            ("HM006", format!("Type {ty} does not satisfy protocol {protocol}"))
+            let enhanced_msg = enhance_protocol_error_message(ty, protocol);
+            ("HM006", enhanced_msg)
         }
-        TypeError::AttributeNotFound(ty, attr) => ("HM007", format!("Attribute '{attr}' not found on type {ty}")),
+        TypeError::AttributeNotFound(ty, attr) => {
+            let enhanced_msg = enhance_attribute_error_message(ty, attr);
+            ("HM007", enhanced_msg)
+        }
         TypeError::ArgumentCountMismatch { expected, found } => (
             "HM008",
-            format!("Argument count mismatch: expected {expected}, got {found}"),
+            format!("Argument count mismatch: expected {expected} argument(s), got {found}"),
         ),
         TypeError::PatternNonExhaustive(uncovered) => (
             "PM001",
@@ -899,6 +912,49 @@ fn type_error_to_diagnostic(error_info: &beacon_constraint::TypeErrorInfo) -> Di
         tags: None,
         data: None,
         code_description: None,
+    }
+}
+
+/// Enhance unification error messages with contextual hints
+fn enhance_unification_error_message(base_msg: &str, t1: &str, t2: &str) -> String {
+    if t1.contains("str") && t2.contains("int") || t1.contains("int") && t2.contains("str") {
+        format!("{base_msg}. Ensure you're not mixing strings and integers without explicit conversion.")
+    } else if t1.contains("None") || t2.contains("None") {
+        format!("{base_msg}. Consider checking for None before use, or use Optional type annotation.")
+    } else if t1.contains("list") && t2.contains("dict") || t1.contains("dict") && t2.contains("list") {
+        format!("{base_msg}. Collection type mismatch - ensure data structures match expected types.")
+    } else {
+        base_msg.to_string()
+    }
+}
+
+/// Enhance protocol error messages with helpful context
+fn enhance_protocol_error_message(ty: &str, protocol: &str) -> String {
+    let base = format!("Type {ty} does not satisfy protocol {protocol}");
+
+    if protocol.contains("Iterable") {
+        format!("{base}. The value cannot be iterated over in a loop or comprehension.")
+    } else {
+        base
+    }
+}
+
+/// Enhance attribute error messages with suggestions
+fn enhance_attribute_error_message(ty: &str, attr: &str) -> String {
+    let base = format!("Attribute '{attr}' not found on type {ty}");
+
+    if attr == "splitlines" && ty.contains("int") {
+        format!("{base}. Did you mean to use a string? splitlines() is a string method.")
+    } else if attr == "write_text" && !ty.contains("Path") {
+        format!("{base}. Did you mean to use a Path object from pathlib?")
+    } else if attr == "get" && !ty.contains("dict") {
+        format!("{base}. The get() method is available on dictionaries, not {ty}.")
+    } else if (attr == "append" || attr == "extend") && !ty.contains("list") {
+        format!("{base}. The {attr}() method is available on lists, not {ty}.")
+    } else if attr == "load" {
+        format!("{base}. Ensure the object has been properly initialized with the expected type.")
+    } else {
+        format!("{base}. Check that the type is correct or that you've imported the necessary modules.")
     }
 }
 
@@ -1457,5 +1513,55 @@ def test():
         assert!(score_similar >= provider.fuzzy_matcher.threshold());
         assert!(score_typo >= provider.fuzzy_matcher.threshold());
         assert!(score_different < provider.fuzzy_matcher.threshold());
+    }
+
+    #[test]
+    fn test_enhanced_unification_error_message_str_int() {
+        let msg = enhance_unification_error_message("Type mismatch: cannot unify str with int", "str", "int");
+        assert!(msg.contains("mixing strings and integers"));
+    }
+
+    #[test]
+    fn test_enhanced_unification_error_message_none() {
+        let msg = enhance_unification_error_message("Type mismatch: cannot unify str with None", "str", "None");
+        assert!(msg.contains("checking for None") || msg.contains("Optional"));
+    }
+
+    #[test]
+    fn test_enhanced_attribute_error_message_splitlines() {
+        let msg = enhance_attribute_error_message("int", "splitlines");
+        assert!(msg.contains("string method"));
+    }
+
+    #[test]
+    fn test_enhanced_attribute_error_message_write_text() {
+        let msg = enhance_attribute_error_message("int", "write_text");
+        assert!(msg.contains("Path object"));
+    }
+
+    #[test]
+    fn test_enhanced_attribute_error_message_get() {
+        let msg = enhance_attribute_error_message("str", "get");
+        assert!(msg.contains("dictionaries"));
+    }
+
+    #[test]
+    fn test_enhanced_protocol_error_message_iterable() {
+        let msg = enhance_protocol_error_message("int", "Iterable");
+        assert!(msg.contains("iterated over"));
+    }
+
+    #[test]
+    fn test_type_error_diagnostic_span_default() {
+        let error_info = TypeErrorInfo {
+            error: TypeError::UnificationError("int".to_string(), "str".to_string()),
+            span: Span { line: 5, col: 10, end_line: None, end_col: None },
+        };
+
+        let diagnostic = type_error_to_diagnostic(&error_info);
+
+        assert_eq!(diagnostic.range.start.line, 4); // 5 - 1
+        assert_eq!(diagnostic.range.start.character, 9); // 10 - 1
+        assert_eq!(diagnostic.range.end.character, 19); // 9 + 10
     }
 }

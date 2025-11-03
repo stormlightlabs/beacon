@@ -330,7 +330,11 @@ pub fn load_builtins_into_registry(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beacon_core::{Type, TypeCtor};
+    use crate::workspace::StubFile;
+
+    use beacon_core::{ClassRegistry, Type, TypeCtor};
+    use rustc_hash::FxHashMap;
+    use std::path::PathBuf;
 
     #[test]
     fn test_parse_list_with_generic_param() {
@@ -585,5 +589,122 @@ class list(Generic[_T]):
 
         let append_method = list_metadata.methods.get("append");
         assert!(append_method.is_some(), "append method should exist in builtins.pyi");
+    }
+
+    #[test]
+    fn test_stub_loading_typing_module() {
+        let stub_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("stubs/typing.pyi");
+
+        let stub_content = std::fs::read_to_string(&stub_path).unwrap();
+
+        let stub = StubFile {
+            module: "typing".to_string(),
+            path: stub_path,
+            exports: FxHashMap::default(),
+            is_partial: false,
+            reexports: Vec::new(),
+            all_exports: None,
+            content: Some(stub_content),
+        };
+
+        let mut class_registry = ClassRegistry::new();
+        load_builtins_into_registry(&stub, &mut class_registry).unwrap();
+
+        let generator_class = class_registry.get_class("Generator");
+        assert!(
+            generator_class.is_some(),
+            "Generator class should be registered in typing.pyi"
+        );
+
+        let generator_metadata = generator_class.unwrap();
+        assert!(
+            generator_metadata.methods.contains_key("__iter__"),
+            "Generator should have __iter__ method"
+        );
+        assert!(
+            generator_metadata.methods.contains_key("__next__"),
+            "Generator should have __next__ method"
+        );
+        assert!(
+            generator_metadata.methods.contains_key("send"),
+            "Generator should have send method"
+        );
+
+        let iterator_class = class_registry.get_class("Iterator");
+        assert!(
+            iterator_class.is_some(),
+            "Iterator class should be registered in typing.pyi"
+        );
+
+        let iterator_metadata = iterator_class.unwrap();
+        assert!(
+            iterator_metadata.methods.contains_key("__next__"),
+            "Iterator should have __next__ method"
+        );
+        assert!(
+            iterator_metadata.methods.contains_key("__iter__"),
+            "Iterator should have __iter__ method"
+        );
+
+        let iterable_class = class_registry.get_class("Iterable");
+        assert!(
+            iterable_class.is_some(),
+            "Iterable class should be registered in typing.pyi"
+        );
+
+        let iterable_metadata = iterable_class.unwrap();
+        assert!(
+            iterable_metadata.methods.contains_key("__iter__"),
+            "Iterable should have __iter__ method"
+        );
+    }
+
+    #[test]
+    fn test_typing_protocol_types_loaded() {
+        let stub_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("stubs/typing.pyi");
+
+        let stub_content = std::fs::read_to_string(&stub_path).unwrap();
+
+        let stub = StubFile {
+            module: "typing".to_string(),
+            path: stub_path,
+            exports: FxHashMap::default(),
+            is_partial: false,
+            reexports: Vec::new(),
+            all_exports: None,
+            content: Some(stub_content),
+        };
+
+        let mut class_registry = ClassRegistry::new();
+        load_builtins_into_registry(&stub, &mut class_registry).unwrap();
+
+        let protocol_types = vec![
+            "Generator",
+            "Iterator",
+            "Iterable",
+            "AsyncGenerator",
+            "AsyncIterator",
+            "AsyncIterable",
+            "Sequence",
+            "Mapping",
+        ];
+
+        for protocol_name in protocol_types {
+            let protocol_class = class_registry.get_class(protocol_name);
+            assert!(
+                protocol_class.is_some(),
+                "{protocol_name} class should be registered in typing.pyi"
+            );
+        }
     }
 }

@@ -1181,7 +1181,15 @@ impl Workspace {
     pub fn get_stub_type(&self, module_name: &str, symbol_name: &str) -> Option<beacon_core::Type> {
         if let Ok(cache) = self.stubs.read() {
             if let Some(stub) = cache.get(module_name) {
-                return stub.exports.get(symbol_name).cloned();
+                let result = stub.exports.get(symbol_name).cloned();
+                if result.is_none() {
+                    tracing::debug!(
+                        "Symbol '{}' not found in cached stub for module '{}'",
+                        symbol_name,
+                        module_name
+                    );
+                }
+                return result;
             }
         }
 
@@ -1195,6 +1203,13 @@ impl Workspace {
             }
 
             let result = stub.exports.get(symbol_name).cloned();
+            if result.is_none() {
+                tracing::debug!(
+                    "Symbol '{}' not found in stub for module '{}'",
+                    symbol_name,
+                    module_name
+                );
+            }
 
             if let Ok(mut cache) = self.stubs.write() {
                 cache.insert(module_name.to_string(), stub);
@@ -1202,6 +1217,7 @@ impl Workspace {
 
             result
         } else {
+            tracing::debug!("Stub file not found for module '{}'", module_name);
             None
         }
     }
@@ -1234,6 +1250,7 @@ impl Workspace {
             }
         }
 
+        tracing::debug!("Stub exports not found for module '{}'", module_name);
         None
     }
 
@@ -2045,5 +2062,47 @@ def test_function(x: str) -> bool: ...
                 "Stdlib module {module_name} not available without root_uri"
             );
         }
+    }
+
+    #[test]
+    fn test_typing_module_protocol_types_available() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut workspace = Workspace::new(None, config, documents);
+
+        workspace.initialize().unwrap();
+
+        let typing_exports = workspace
+            .get_stub_exports("typing")
+            .expect("typing module should be loaded");
+
+        let protocol_types = vec![
+            "Generator",
+            "Iterator",
+            "Iterable",
+            "AsyncGenerator",
+            "AsyncIterator",
+            "AsyncIterable",
+            "Sequence",
+            "Mapping",
+            "cast",
+            "overload",
+        ];
+
+        for protocol_name in protocol_types {
+            assert!(
+                typing_exports.contains_key(protocol_name),
+                "typing module should export {protocol_name}"
+            );
+        }
+
+        assert!(
+            workspace.get_stub_type("typing", "Generator").is_some(),
+            "typing.Generator should be available"
+        );
+        assert!(
+            workspace.get_stub_type("typing", "Iterator").is_some(),
+            "typing.Iterator should be available"
+        );
     }
 }
