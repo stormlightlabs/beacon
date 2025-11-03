@@ -706,6 +706,51 @@ impl Type {
         }
     }
 
+    /// Extract the base type constructor and its type arguments from a type application
+    ///
+    /// For a type like `list[int]`, this returns `(TypeCtor::List, [int])`.
+    /// For `dict[str, int]`, this returns `(TypeCtor::Dict, [str, int])`.
+    pub fn unapply(&self) -> Option<(&TypeCtor, Vec<Type>)> {
+        match self {
+            Type::App(constructor, arg) => {
+                if let Type::Con(ctor) = constructor.as_ref() {
+                    Some((ctor, vec![arg.as_ref().clone()]))
+                } else if let Type::App(inner_constructor, first_arg) = constructor.as_ref() {
+                    if let Type::Con(ctor) = inner_constructor.as_ref() {
+                        Some((ctor, vec![first_arg.as_ref().clone(), arg.as_ref().clone()]))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract the class name and type arguments from a parameterized class type
+    ///
+    /// For generic user-defined classes like `MyGeneric[int, str]`, this extracts the class name and its type arguments.
+    pub fn unapply_class(&self) -> Option<(&str, Vec<Type>)> {
+        match self {
+            Type::App(constructor, arg) => {
+                if let Type::Con(TypeCtor::Class(name)) = constructor.as_ref() {
+                    Some((name.as_str(), vec![arg.as_ref().clone()]))
+                } else if let Type::App(inner_constructor, first_arg) = constructor.as_ref() {
+                    if let Type::Con(TypeCtor::Class(name)) = inner_constructor.as_ref() {
+                        Some((name.as_str(), vec![first_arg.as_ref().clone(), arg.as_ref().clone()]))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// Simplify a type by applying normalization rules
     ///
     /// Performs post-processing simplifications that may arise after substitution:
@@ -2205,5 +2250,97 @@ mod tests {
             }
             _ => panic!("Expected list type"),
         }
+    }
+
+    #[test]
+    fn test_unapply_list() {
+        let list_int = Type::list(Type::int());
+        let result = list_int.unapply();
+
+        assert!(result.is_some());
+        let (ctor, args) = result.unwrap();
+        assert_eq!(*ctor, TypeCtor::List);
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0], Type::int());
+    }
+
+    #[test]
+    fn test_unapply_dict() {
+        let dict_str_int = Type::App(
+            Box::new(Type::App(Box::new(Type::Con(TypeCtor::Dict)), Box::new(Type::string()))),
+            Box::new(Type::int()),
+        );
+
+        let result = dict_str_int.unapply();
+        assert!(result.is_some());
+        let (ctor, args) = result.unwrap();
+        assert_eq!(*ctor, TypeCtor::Dict);
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], Type::string());
+        assert_eq!(args[1], Type::int());
+    }
+
+    #[test]
+    fn test_unapply_set() {
+        let set_str = Type::App(Box::new(Type::Con(TypeCtor::Set)), Box::new(Type::string()));
+
+        let result = set_str.unapply();
+        assert!(result.is_some());
+        let (ctor, args) = result.unwrap();
+        assert_eq!(*ctor, TypeCtor::Set);
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0], Type::string());
+    }
+
+    #[test]
+    fn test_unapply_non_app() {
+        let int_type = Type::int();
+        let result = int_type.unapply();
+        assert!(result.is_none());
+
+        let var_type = Type::Var(TypeVar::new(0));
+        let result2 = var_type.unapply();
+        assert!(result2.is_none());
+    }
+
+    #[test]
+    fn test_unapply_class() {
+        let generic_class = Type::App(
+            Box::new(Type::Con(TypeCtor::Class("MyGeneric".to_string()))),
+            Box::new(Type::int()),
+        );
+
+        let result = generic_class.unapply_class();
+        assert!(result.is_some());
+        let (class_name, args) = result.unwrap();
+        assert_eq!(class_name, "MyGeneric");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0], Type::int());
+    }
+
+    #[test]
+    fn test_unapply_class_two_params() {
+        let generic_class = Type::App(
+            Box::new(Type::App(
+                Box::new(Type::Con(TypeCtor::Class("Pair".to_string()))),
+                Box::new(Type::string()),
+            )),
+            Box::new(Type::int()),
+        );
+
+        let result = generic_class.unapply_class();
+        assert!(result.is_some());
+        let (class_name, args) = result.unwrap();
+        assert_eq!(class_name, "Pair");
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], Type::string());
+        assert_eq!(args[1], Type::int());
+    }
+
+    #[test]
+    fn test_unapply_class_non_class() {
+        let list_int = Type::list(Type::int());
+        let result = list_int.unapply_class();
+        assert!(result.is_none());
     }
 }

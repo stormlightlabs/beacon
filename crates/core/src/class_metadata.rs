@@ -1,4 +1,4 @@
-use crate::types::{OverloadSet, Type};
+use crate::types::{OverloadSet, Type, TypeCtor};
 
 use std::collections::HashMap;
 
@@ -81,6 +81,9 @@ pub struct ClassMetadata {
 
     /// Base classes for inheritance
     pub base_classes: Vec<String>,
+
+    /// Type parameters for generic classes (e.g., ["_T"] for list, ["_KT", "_VT"] for dict)
+    pub type_params: Vec<String>,
 }
 
 impl ClassMetadata {
@@ -98,6 +101,7 @@ impl ClassMetadata {
             metaclass: None,
             new_type: None,
             base_classes: Vec::new(),
+            type_params: Vec::new(),
         }
     }
 
@@ -216,6 +220,66 @@ impl ClassMetadata {
     /// Add a base class
     pub fn add_base_class(&mut self, base: String) {
         self.base_classes.push(base);
+    }
+
+    /// Add a type parameter for generic classes
+    pub fn add_type_param(&mut self, param: String) {
+        self.type_params.push(param);
+    }
+
+    /// Set all type parameters at once
+    pub fn set_type_params(&mut self, params: Vec<String>) {
+        self.type_params = params;
+    }
+
+    /// Given type arguments that match this class's type parameters, creates a mapping to substitute type variables in method signatures.
+    ///
+    /// For example, for `list[int]`:
+    /// - type_params: ["_T"]
+    /// - type_args: [int]
+    /// - Returns a substitution that maps "_T" → int
+    pub fn create_type_substitution(&self, type_args: &[Type]) -> HashMap<String, Type> {
+        let mut subst = HashMap::new();
+        for (param, arg) in self.type_params.iter().zip(type_args.iter()) {
+            subst.insert(param.clone(), arg.clone());
+        }
+        subst
+    }
+
+    /// Apply type parameter substitution to a type by recursively replacing all
+    /// [TypeCtor::TypeVariable] references with their instantiated types from the substitution map.
+    pub fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
+        match ty {
+            Type::Con(TypeCtor::TypeVariable(name)) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),
+            Type::Var(_) | Type::Con(_) => ty.clone(),
+            Type::App(t1, t2) => Type::App(
+                Box::new(Self::substitute_type_params(t1, subst)),
+                Box::new(Self::substitute_type_params(t2, subst)),
+            ),
+            Type::Fun(args, ret) => Type::Fun(
+                args.iter()
+                    .map(|arg| Self::substitute_type_params(arg, subst))
+                    .collect(),
+                Box::new(Self::substitute_type_params(ret, subst)),
+            ),
+            Type::ForAll(tvs, t) => Type::ForAll(tvs.clone(), Box::new(Self::substitute_type_params(t, subst))),
+            Type::Union(types) => Type::Union(types.iter().map(|t| Self::substitute_type_params(t, subst)).collect()),
+            Type::Intersection(types) => {
+                Type::Intersection(types.iter().map(|t| Self::substitute_type_params(t, subst)).collect())
+            }
+            Type::Record(fields, row_var) => Type::Record(
+                fields
+                    .iter()
+                    .map(|(name, ty)| (name.clone(), Self::substitute_type_params(ty, subst)))
+                    .collect(),
+                row_var.clone(),
+            ),
+            Type::BoundMethod(receiver, method_name, method) => Type::BoundMethod(
+                Box::new(Self::substitute_type_params(receiver, subst)),
+                method_name.clone(),
+                Box::new(Self::substitute_type_params(method, subst)),
+            ),
+        }
     }
 
     /// Get all required method signatures for protocol checking
@@ -543,6 +607,126 @@ mod tests {
             assert!(fields.iter().any(|(name, _)| name == "convert"));
         } else {
             panic!("Expected Record type");
+        }
+    }
+
+    #[test]
+    fn test_type_params_tracking() {
+        let mut meta = ClassMetadata::new("list".to_string());
+        meta.add_type_param("_T".to_string());
+
+        assert_eq!(meta.type_params.len(), 1);
+        assert_eq!(meta.type_params[0], "_T");
+
+        let mut dict_meta = ClassMetadata::new("dict".to_string());
+        dict_meta.set_type_params(vec!["_KT".to_string(), "_VT".to_string()]);
+
+        assert_eq!(dict_meta.type_params.len(), 2);
+        assert_eq!(dict_meta.type_params[0], "_KT");
+        assert_eq!(dict_meta.type_params[1], "_VT");
+    }
+
+    #[test]
+    fn test_create_type_substitution() {
+        let mut meta = ClassMetadata::new("list".to_string());
+        meta.add_type_param("_T".to_string());
+
+        let type_args = vec![Type::Con(TypeCtor::Int)];
+        let subst = meta.create_type_substitution(&type_args);
+
+        assert_eq!(subst.len(), 1);
+        assert_eq!(subst.get("_T"), Some(&Type::Con(TypeCtor::Int)));
+
+        let mut dict_meta = ClassMetadata::new("dict".to_string());
+        dict_meta.set_type_params(vec!["_KT".to_string(), "_VT".to_string()]);
+
+        let dict_args = vec![Type::Con(TypeCtor::String), Type::Con(TypeCtor::Int)];
+        let dict_subst = dict_meta.create_type_substitution(&dict_args);
+
+        assert_eq!(dict_subst.len(), 2);
+        assert_eq!(dict_subst.get("_KT"), Some(&Type::Con(TypeCtor::String)));
+        assert_eq!(dict_subst.get("_VT"), Some(&Type::Con(TypeCtor::Int)));
+    }
+
+    #[test]
+    fn test_substitute_type_params() {
+        let mut subst = HashMap::new();
+        subst.insert("_T".to_string(), Type::Con(TypeCtor::Int));
+
+        let method_type = Type::Fun(
+            vec![Type::any(), Type::Con(TypeCtor::TypeVariable("_T".to_string()))],
+            Box::new(Type::Con(TypeCtor::TypeVariable("_T".to_string()))),
+        );
+
+        let substituted = ClassMetadata::substitute_type_params(&method_type, &subst);
+
+        match substituted {
+            Type::Fun(params, ret) => {
+                assert_eq!(params.len(), 2);
+                assert_eq!(params[1], Type::Con(TypeCtor::Int));
+                assert_eq!(*ret, Type::Con(TypeCtor::Int));
+            }
+            _ => panic!("Expected Fun type"),
+        }
+    }
+
+    #[test]
+    fn test_substitute_nested_types() {
+        let mut subst = HashMap::new();
+        subst.insert("_T".to_string(), Type::Con(TypeCtor::String));
+
+        let method_type = Type::Fun(
+            vec![Type::any()],
+            Box::new(Type::Union(vec![
+                Type::Con(TypeCtor::TypeVariable("_T".to_string())),
+                Type::Con(TypeCtor::NoneType),
+            ])),
+        );
+
+        let substituted = ClassMetadata::substitute_type_params(&method_type, &subst);
+
+        match substituted {
+            Type::Fun(_, ret) => match *ret {
+                Type::Union(types) => {
+                    assert_eq!(types.len(), 2);
+                    assert_eq!(types[0], Type::Con(TypeCtor::String));
+                    assert_eq!(types[1], Type::Con(TypeCtor::NoneType));
+                }
+                _ => panic!("Expected Union type"),
+            },
+            _ => panic!("Expected Fun type"),
+        }
+    }
+
+    #[test]
+    fn test_substitute_multiple_params() {
+        let mut subst = HashMap::new();
+        subst.insert("_KT".to_string(), Type::Con(TypeCtor::String));
+        subst.insert("_VT".to_string(), Type::Con(TypeCtor::Int));
+
+        let method_type = Type::Fun(
+            vec![Type::any(), Type::Con(TypeCtor::TypeVariable("_KT".to_string()))],
+            Box::new(Type::Union(vec![
+                Type::Con(TypeCtor::TypeVariable("_VT".to_string())),
+                Type::Con(TypeCtor::NoneType),
+            ])),
+        );
+
+        let substituted = ClassMetadata::substitute_type_params(&method_type, &subst);
+
+        match substituted {
+            Type::Fun(params, ret) => {
+                assert_eq!(params.len(), 2);
+                assert_eq!(params[1], Type::Con(TypeCtor::String));
+                match *ret {
+                    Type::Union(types) => {
+                        assert_eq!(types[0], Type::Con(TypeCtor::Int));
+                        assert_eq!(types[1], Type::Con(TypeCtor::NoneType));
+                    }
+                    _ => panic!("Expected Union return type"),
+                }
+            }
+            _ => panic!("Expected Fun type"),
         }
     }
 }

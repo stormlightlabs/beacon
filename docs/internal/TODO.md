@@ -44,11 +44,7 @@ Implementation details and mod-specific tasks.
 - [x] Filter module/class docstrings from constraint generation
 - [x] Add return type inference from context
 - [x] Generator/comprehension type construction
-- [ ] Type parameter instantiation for generic types
-    - When looking up methods on `list[T]`, dict[K,V]`, etc., instantiate type parameters
-    - Example: `list[int].__getitem__` should return `int`, not `_T`
-    - Requires: Type parameter tracking and substitution in method signatures
-    - **Note**: Large feature requiring changes to type system and class registry
+- [x] Type parameter instantiation for generic types
 
 **Impact**: Docstring fix clears ANY001 false positives on module/class/function docstrings
 

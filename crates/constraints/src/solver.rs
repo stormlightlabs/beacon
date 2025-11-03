@@ -187,8 +187,42 @@ fn get_attribute_type(ty: &Type, attr_name: &str, class_registry: &ClassRegistry
             };
             class_name.and_then(|name| class_registry.lookup_attribute(name, attr_name).cloned())
         }
-        Type::App(base, _) => {
-            let base_ctor = extract_base_constructor(base);
+        Type::App(_, _) => {
+            if let Some((type_ctor, type_args)) = ty.unapply() {
+                let class_name = match type_ctor {
+                    TypeCtor::List => Some("list"),
+                    TypeCtor::Dict => Some("dict"),
+                    TypeCtor::Set => Some("set"),
+                    TypeCtor::Tuple => Some("tuple"),
+                    _ => None,
+                };
+
+                if let Some(name) = class_name {
+                    if let Some(class_metadata) = class_registry.get_class(name) {
+                        if let Some(attr_type) = class_metadata.lookup_attribute(attr_name) {
+                            if !class_metadata.type_params.is_empty() {
+                                let subst = class_metadata.create_type_substitution(&type_args);
+                                return Some(beacon_core::ClassMetadata::substitute_type_params(attr_type, &subst));
+                            }
+                            return Some(attr_type.clone());
+                        }
+                    }
+                }
+            }
+
+            if let Some((class_name, type_args)) = ty.unapply_class() {
+                if let Some(class_metadata) = class_registry.get_class(class_name) {
+                    if let Some(attr_type) = class_metadata.lookup_attribute(attr_name) {
+                        if !class_metadata.type_params.is_empty() {
+                            let subst = class_metadata.create_type_substitution(&type_args);
+                            return Some(beacon_core::ClassMetadata::substitute_type_params(attr_type, &subst));
+                        }
+                        return Some(attr_type.clone());
+                    }
+                }
+            }
+
+            let base_ctor = extract_base_constructor(ty);
             base_ctor.and_then(|name| class_registry.lookup_attribute(name, attr_name).cloned())
         }
         _ => None,
@@ -496,12 +530,11 @@ pub fn solve_constraints(
                             }
                         }
                     }
-                    Type::App(base, _param) => {
-                        let base_ctor = extract_base_constructor(base);
-
-                        if let Some(class_name) = base_ctor {
-                            if let Some(resolved_attr_ty) = class_registry.lookup_attribute(class_name, &attr_name) {
-                                let final_type = if class_registry.is_method(class_name, &attr_name) {
+                    Type::App(_, _) => {
+                        if let Some(resolved_attr_ty) = get_attribute_type(&applied_obj, &attr_name, class_registry) {
+                            let base_ctor = extract_base_constructor(&applied_obj);
+                            let final_type = if let Some(class_name) = base_ctor {
+                                if class_registry.is_method(class_name, &attr_name) {
                                     Type::BoundMethod(
                                         Box::new(applied_obj.clone()),
                                         attr_name.clone(),
@@ -509,26 +542,25 @@ pub fn solve_constraints(
                                     )
                                 } else {
                                     resolved_attr_ty.clone()
-                                };
-
-                                match Unifier::unify(&subst.apply(&attr_ty), &final_type) {
-                                    Ok(s) => {
-                                        subst = s.compose(subst);
-                                    }
-                                    Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                        type_errors.push(TypeErrorInfo::new(type_err, span));
-                                    }
-                                    Err(_) => {}
                                 }
                             } else {
-                                type_errors.push(TypeErrorInfo::new(
-                                    beacon_core::TypeError::AttributeNotFound(
-                                        applied_obj.to_string(),
-                                        attr_name.clone(),
-                                    ),
-                                    span,
-                                ));
+                                resolved_attr_ty.clone()
+                            };
+
+                            match Unifier::unify(&subst.apply(&attr_ty), &final_type) {
+                                Ok(s) => {
+                                    subst = s.compose(subst);
+                                }
+                                Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                                    type_errors.push(TypeErrorInfo::new(type_err, span));
+                                }
+                                Err(_) => {}
                             }
+                        } else {
+                            type_errors.push(TypeErrorInfo::new(
+                                beacon_core::TypeError::AttributeNotFound(applied_obj.to_string(), attr_name.clone()),
+                                span,
+                            ));
                         }
                     }
                     Type::Var(_) => {}
@@ -1530,5 +1562,143 @@ mod tests {
                 .any(|e| matches!(e.error, TypeError::AttributeNotFound(_, _))),
             "Expected AttributeNotFound error"
         );
+    }
+
+    #[test]
+    fn test_generic_type_parameter_instantiation_list() {
+        let mut registry = ClassRegistry::new();
+        let mut list_meta = ClassMetadata::new("list".to_string());
+
+        list_meta.set_type_params(vec!["_T".to_string()]);
+        list_meta.methods.insert(
+            "__getitem__".to_string(),
+            MethodType::Single(Type::fun(
+                vec![Type::any(), Type::int()],
+                Type::Con(TypeCtor::TypeVariable("_T".to_string())),
+            )),
+        );
+
+        registry.register_class("list".to_string(), list_meta);
+
+        let list_int = Type::list(Type::int());
+        let attr_ty = tvar(0);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::HasAttr(
+                list_int,
+                "__getitem__".to_string(),
+                attr_ty.clone(),
+                test_span(),
+            )],
+        };
+
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(errors.is_empty(), "Should not have errors");
+
+        let resolved = subst.apply(&attr_ty);
+        match resolved {
+            Type::BoundMethod(_, _, method) => match *method {
+                Type::Fun(params, ret) => {
+                    assert_eq!(params.len(), 2); // self + index
+                    assert_eq!(*ret, Type::int(), "Should return int, not _T");
+                }
+                _ => panic!("Expected Fun inside BoundMethod"),
+            },
+            _ => panic!("Expected BoundMethod for __getitem__, got {resolved:?}"),
+        }
+    }
+
+    #[test]
+    fn test_generic_type_parameter_instantiation_dict() {
+        let mut registry = ClassRegistry::new();
+        let mut dict_meta = ClassMetadata::new("dict".to_string());
+
+        dict_meta.set_type_params(vec!["_KT".to_string(), "_VT".to_string()]);
+        dict_meta.methods.insert(
+            "get".to_string(),
+            MethodType::Single(Type::fun(
+                vec![Type::any(), Type::Con(TypeCtor::TypeVariable("_KT".to_string()))],
+                Type::optional(Type::Con(TypeCtor::TypeVariable("_VT".to_string()))),
+            )),
+        );
+
+        registry.register_class("dict".to_string(), dict_meta);
+
+        let dict_str_int = Type::App(
+            Box::new(Type::App(Box::new(Type::Con(TypeCtor::Dict)), Box::new(Type::string()))),
+            Box::new(Type::int()),
+        );
+
+        let attr_ty = tvar(0);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::HasAttr(
+                dict_str_int,
+                "get".to_string(),
+                attr_ty.clone(),
+                test_span(),
+            )],
+        };
+
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(errors.is_empty(), "Should not have errors");
+
+        let resolved = subst.apply(&attr_ty);
+        match resolved {
+            Type::BoundMethod(_, _, method) => match *method {
+                Type::Fun(params, ret) => {
+                    assert_eq!(params.len(), 2); // self + key
+                    assert_eq!(params[1], Type::string(), "Key param should be str");
+                    assert_eq!(*ret, Type::optional(Type::int()), "Should return int | None");
+                }
+                _ => panic!("Expected Fun inside BoundMethod"),
+            },
+            _ => panic!("Expected BoundMethod for get, got {resolved:?}"),
+        }
+    }
+
+    #[test]
+    fn test_generic_type_no_instantiation_when_no_params() {
+        let mut registry = ClassRegistry::new();
+        let mut list_meta = ClassMetadata::new("list".to_string());
+
+        list_meta.methods.insert(
+            "__len__".to_string(),
+            MethodType::Single(Type::fun(vec![Type::any()], Type::int())),
+        );
+
+        registry.register_class("list".to_string(), list_meta);
+
+        let list_int = Type::list(Type::int());
+        let attr_ty = tvar(0);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::HasAttr(
+                list_int,
+                "__len__".to_string(),
+                attr_ty.clone(),
+                test_span(),
+            )],
+        };
+
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(errors.is_empty(), "Should not have errors");
+
+        let resolved = subst.apply(&attr_ty);
+        match resolved {
+            Type::BoundMethod(_, _, method) => match *method {
+                Type::Fun(_, ret) => {
+                    assert_eq!(*ret, Type::int());
+                }
+                _ => panic!("Expected Fun inside BoundMethod"),
+            },
+            _ => panic!("Expected BoundMethod, got {resolved:?}"),
+        }
     }
 }

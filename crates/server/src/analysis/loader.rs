@@ -24,6 +24,13 @@ pub fn extract_stub_classes_into_registry(node: &AstNode, class_registry: &mut C
 
             for base in bases {
                 metadata.add_base_class(base.clone());
+
+                if base.starts_with("Generic[") && base.ends_with(']') {
+                    if let Some(params_str) = extract_generic_params(base) {
+                        let type_params: Vec<String> = params_str.split(',').map(|s| s.trim().to_string()).collect();
+                        metadata.set_type_params(type_params);
+                    }
+                }
             }
 
             if let Some(meta) = metaclass {
