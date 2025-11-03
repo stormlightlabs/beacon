@@ -196,7 +196,7 @@ impl Default for Config {
         Self {
             mode: TypeCheckingMode::default(),
             python_version: PythonVersion::default(),
-            stub_paths: Vec::new(),
+            stub_paths: vec![PathBuf::from("stubs")],
             max_any_depth: default_max_any_depth(),
             decorator_stubs: Vec::new(),
             incremental: default_true(),

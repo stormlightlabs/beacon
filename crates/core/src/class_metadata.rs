@@ -1,6 +1,6 @@
-use crate::types::{OverloadSet, Type, TypeCtor};
+use crate::types::{OverloadSet, Type, TypeCtor, TypeVar};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Represents either a single method signature or an overloaded method with multiple signatures
 #[derive(Debug, Clone, PartialEq)]
@@ -84,6 +84,8 @@ pub struct ClassMetadata {
 
     /// Type parameters for generic classes (e.g., ["_T"] for list, ["_KT", "_VT"] for dict)
     pub type_params: Vec<String>,
+    /// Concrete type variables corresponding to the parameters when available
+    pub type_param_vars: Vec<TypeVar>,
 }
 
 impl ClassMetadata {
@@ -102,6 +104,7 @@ impl ClassMetadata {
             new_type: None,
             base_classes: Vec::new(),
             type_params: Vec::new(),
+            type_param_vars: Vec::new(),
         }
     }
 
@@ -232,6 +235,11 @@ impl ClassMetadata {
         self.type_params = params;
     }
 
+    /// Set the concrete type variables corresponding to generic parameters
+    pub fn set_type_param_vars(&mut self, params: Vec<TypeVar>) {
+        self.type_param_vars = params;
+    }
+
     /// Given type arguments that match this class's type parameters, creates a mapping to substitute type variables in method signatures.
     ///
     /// For example, for `list[int]`:
@@ -251,7 +259,14 @@ impl ClassMetadata {
     pub fn substitute_type_params(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         match ty {
             Type::Con(TypeCtor::TypeVariable(name)) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),
-            Type::Var(_) | Type::Con(_) => ty.clone(),
+            Type::Var(tv) => {
+                if let Some(hint) = &tv.hint {
+                    subst.get(hint).cloned().unwrap_or_else(|| ty.clone())
+                } else {
+                    ty.clone()
+                }
+            }
+            Type::Con(_) => ty.clone(),
             Type::App(t1, t2) => Type::App(
                 Box::new(Self::substitute_type_params(t1, subst)),
                 Box::new(Self::substitute_type_params(t2, subst)),
@@ -428,6 +443,38 @@ impl ClassRegistry {
 
         None
     }
+
+    /// Return true if `derived` matches or inherits from `base`.
+    pub fn is_subclass_of(&self, derived: &str, base: &str) -> bool {
+        if normalize_base_name(derived) == normalize_base_name(base) {
+            return true;
+        }
+
+        let mut stack: Vec<String> = vec![normalize_base_name(derived).to_string()];
+        let mut visited = HashSet::new();
+
+        while let Some(current) = stack.pop() {
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+
+            if let Some(metadata) = self.get_class(&current) {
+                for base_name in &metadata.base_classes {
+                    let normalized = normalize_base_name(base_name);
+                    if normalized == normalize_base_name(base) {
+                        return true;
+                    }
+                    stack.push(normalized.to_string());
+                }
+            }
+        }
+
+        false
+    }
+}
+
+fn normalize_base_name(name: &str) -> &str {
+    name.split(['[', '(']).next().unwrap_or(name).trim()
 }
 
 #[cfg(test)]

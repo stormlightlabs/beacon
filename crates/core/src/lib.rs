@@ -76,28 +76,31 @@ pub fn should_generalize<E: Expansiveness>(expr: &E) -> bool {
 }
 
 /// Type variable generator for creating fresh type variables
+use std::sync::{
+    Arc,
+    atomic::{AtomicU32, Ordering},
+};
+
 #[derive(Debug, Clone)]
 pub struct TypeVarGen {
-    counter: u32,
+    counter: Arc<AtomicU32>,
 }
 
 impl TypeVarGen {
     pub fn new() -> Self {
-        Self { counter: 0 }
+        Self { counter: Arc::new(AtomicU32::new(0)) }
     }
 
     /// Generate a fresh type variable
     pub fn fresh(&mut self) -> TypeVar {
-        let tv = TypeVar::new(self.counter);
-        self.counter += 1;
-        tv
+        let id = self.counter.fetch_add(1, Ordering::Relaxed);
+        TypeVar::new(id)
     }
 
     /// Generate a fresh type variable with a hint name
     pub fn fresh_named(&mut self, hint: &str) -> TypeVar {
-        let tv = TypeVar::named(self.counter, hint);
-        self.counter += 1;
-        tv
+        let id = self.counter.fetch_add(1, Ordering::Relaxed);
+        TypeVar::named(id, hint)
     }
 }
 

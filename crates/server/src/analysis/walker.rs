@@ -298,7 +298,7 @@ pub fn generate_constraints(
     if let Some(stub_cache) = &stub_cache {
         if let Ok(cache) = stub_cache.try_read() {
             if let Some(builtins) = cache.get("builtins") {
-                loader::load_builtins_into_registry(builtins, &mut ctx.class_registry)?;
+                loader::load_stub_into_registry(builtins, &mut ctx.class_registry)?;
             }
         }
     }
@@ -750,24 +750,9 @@ fn visit_node_with_context(
             let (inverse_var, inverse_type) = detect_inverse_type_guard(test, &mut env.clone());
             let mut elif_env = env.clone();
 
-            if let (Some(var_name), Some(_)) = (inverse_var.as_ref(), inverse_type.as_ref()) {
-                if let Some(remaining) = ctx.control_flow.get_remaining_types(var_name) {
-                    elif_env.bind(var_name.clone(), TypeScheme::mono(remaining.clone()));
-
-                    if let Some(pred) = &predicate {
-                        if pred.has_simple_negation() {
-                            if let Some(inv_pred) = &inverse_predicate {
-                                let span = Span::new(*line, *col);
-                                ctx.constraints.push(Constraint::Narrowing(
-                                    var_name.clone(),
-                                    inv_pred.clone(),
-                                    remaining,
-                                    span,
-                                ));
-                            }
-                        }
-                    }
-                } else if let (Some(var_name), Some(refined_ty)) = (inverse_var.as_ref(), inverse_type.as_ref()) {
+            if let Some(var_name) = inverse_var {
+                let fallback = ctx.control_flow.get_remaining_types(&var_name);
+                if let Some(refined_ty) = inverse_type.clone().or(fallback) {
                     elif_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
 
                     if let Some(pred) = &predicate {
@@ -780,6 +765,13 @@ fn visit_node_with_context(
                                     refined_ty.clone(),
                                     span,
                                 ));
+
+                                if let Some(original_type) = env.lookup(&var_name) {
+                                    let eliminated = inv_pred.eliminated_types(&original_type);
+                                    for elim_ty in eliminated {
+                                        ctx.control_flow.eliminate_type(&var_name, elim_ty);
+                                    }
+                                }
                             }
                         }
                     }
@@ -811,10 +803,9 @@ fn visit_node_with_context(
                 }
 
                 let (elif_inverse_var, elif_inverse_type) = detect_inverse_type_guard(elif_test, &mut elif_env.clone());
-                if let (Some(var_name), Some(_)) = (elif_inverse_var.as_ref(), elif_inverse_type.as_ref()) {
-                    if let Some(remaining) = ctx.control_flow.get_remaining_types(var_name) {
-                        elif_env.bind(var_name.clone(), TypeScheme::mono(remaining));
-                    } else if let (Some(var_name), Some(refined_ty)) = (elif_inverse_var, elif_inverse_type) {
+                if let Some(var_name) = elif_inverse_var {
+                    let fallback = ctx.control_flow.get_remaining_types(&var_name);
+                    if let Some(refined_ty) = elif_inverse_type.or(fallback) {
                         elif_env.bind(var_name, TypeScheme::mono(refined_ty));
                     }
                 }
@@ -826,8 +817,15 @@ fn visit_node_with_context(
                 }
             }
 
-            if let Some(var_name) = narrowed_var {
-                ctx.control_flow.stop_tracking(&var_name);
+            env.merge_from_conditional(&true_env, &elif_env);
+
+            if let Some(var_name) = narrowed_var.as_ref() {
+                if let Some(existing_scheme) = env.get_scheme(var_name) {
+                    if let Some(refined_ty) = ctx.control_flow.apply_remaining_types(var_name, &existing_scheme.ty) {
+                        env.bind(var_name.clone(), TypeScheme::mono(refined_ty));
+                    }
+                }
+                ctx.control_flow.stop_tracking(var_name);
             }
 
             Ok(Type::none())
@@ -835,6 +833,17 @@ fn visit_node_with_context(
         AstNode::Import { module, alias, line, col } => {
             let module_name = alias.as_ref().unwrap_or(module);
             let module_type = Type::Con(TypeCtor::Module(module.clone()));
+            if let Some(cache_arc) = stub_cache {
+                if let Ok(cache) = cache_arc.read() {
+                    if let Some(stub) = cache.get(module) {
+                        if !ctx.loaded_stub_modules.contains(module) {
+                            loader::load_stub_into_registry(stub, &mut ctx.class_registry)?;
+                            ctx.loaded_stub_modules.insert(module.clone());
+                        }
+                    }
+                }
+            }
+
             env.bind(module_name.clone(), TypeScheme::mono(module_type.clone()));
             ctx.record_type(*line, *col, module_type.clone());
             Ok(module_type)
@@ -842,6 +851,12 @@ fn visit_node_with_context(
         AstNode::ImportFrom { module, names, line, col } => {
             if let Some(cache_arc) = stub_cache {
                 if let Ok(cache) = cache_arc.read() {
+                    if let Some(stub) = cache.get(module) {
+                        if !ctx.loaded_stub_modules.contains(module) {
+                            loader::load_stub_into_registry(stub, &mut ctx.class_registry)?;
+                            ctx.loaded_stub_modules.insert(module.clone());
+                        }
+                    }
                     for name in names {
                         let ty = cache
                             .get(module)
@@ -2124,6 +2139,47 @@ mod tests {
             col: 5,
         }];
         assert_eq!(detect_function_kind(&body, true), FunctionKind::Coroutine);
+    }
+
+    #[test]
+    fn test_conditional_assignment_merges_branch_types() {
+        let mut ctx = ConstraintGenContext::new();
+        let mut env = super::super::type_env::TypeEnvironment::new();
+
+        env.bind("provider".to_string(), TypeScheme::mono(Type::optional(Type::string())));
+
+        let condition = AstNode::Compare {
+            left: Box::new(AstNode::Identifier { name: "provider".to_string(), line: 1, col: 1 }),
+            ops: vec![beacon_parser::CompareOperator::Is],
+            comparators: vec![AstNode::Literal { value: LiteralValue::None, line: 1, col: 15 }],
+            line: 1,
+            col: 1,
+        };
+
+        let reassignment = AstNode::Assignment {
+            target: "provider".to_string(),
+            value: Box::new(AstNode::Literal {
+                value: LiteralValue::String { value: "fallback".to_string(), prefix: String::new() },
+                line: 2,
+                col: 4,
+            }),
+            line: 2,
+            col: 4,
+        };
+
+        let if_node = AstNode::If {
+            test: Box::new(condition),
+            body: vec![reassignment],
+            elif_parts: vec![],
+            else_body: None,
+            line: 1,
+            col: 1,
+        };
+
+        visit_node_with_context(&if_node, &mut env, &mut ctx, None, ExprContext::Void).unwrap();
+
+        let scheme = env.get_scheme("provider").expect("provider binding");
+        assert_eq!(scheme.ty, Type::string());
     }
 
     #[test]

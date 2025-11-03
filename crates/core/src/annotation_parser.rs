@@ -474,11 +474,35 @@ impl Parser {
                 }
             }
             _ => {
-                if name.len() == 1 && name.chars().next().unwrap().is_uppercase() {
+                let mut result = if name.len() == 1 && name.chars().next().unwrap().is_uppercase() {
                     Type::Con(TypeCtor::TypeVariable(name.to_string()))
                 } else {
                     Type::Con(TypeCtor::Class(name.to_string()))
+                };
+
+                if matches!(self.peek(), Some(Token::LBracket)) {
+                    self.advance();
+                    let mut args = Vec::new();
+
+                    if !matches!(self.peek(), Some(Token::RBracket)) {
+                        args.push(self.parse_type()?);
+                        while matches!(self.peek(), Some(Token::Comma)) {
+                            self.advance();
+                            if matches!(self.peek(), Some(Token::RBracket)) {
+                                break;
+                            }
+                            args.push(self.parse_type()?);
+                        }
+                    }
+
+                    self.expect(Token::RBracket)?;
+
+                    for arg in args {
+                        result = Type::App(Box::new(result), Box::new(arg));
+                    }
                 }
+
+                result
             }
         };
 
@@ -602,6 +626,21 @@ mod tests {
             parser.parse("MyClass").unwrap(),
             Type::Con(TypeCtor::Class("MyClass".to_string()))
         );
+    }
+
+    #[test]
+    fn test_parse_user_defined_generic() {
+        let parser = AnnotationParser::new();
+        let ty = parser.parse("MyGeneric[int, str]").unwrap();
+        match ty {
+            Type::App(base, second) => {
+                assert!(
+                    matches!(*base, Type::App(ref inner, ref first_arg) if matches!(**inner, Type::Con(TypeCtor::Class(ref name)) if name == "MyGeneric") && matches!(**first_arg, Type::Con(TypeCtor::Int)))
+                );
+                assert!(matches!(*second, Type::Con(TypeCtor::String)));
+            }
+            other => panic!("Expected generic application, got {other:?}"),
+        }
     }
 
     #[test]

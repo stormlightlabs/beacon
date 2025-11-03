@@ -1,33 +1,186 @@
 use crate::analysis::MethodInfo;
-use beacon_core::TypeCtor;
+use beacon_core::{AnnotationParser, TypeCtor, TypeVar, TypeVarGen};
 use beacon_core::{
-    ClassMetadata, ClassRegistry, Type,
+    ClassMetadata, ClassRegistry, MethodType, Type,
     errors::{AnalysisError, Result},
 };
 use beacon_parser::AstNode;
+use rustc_hash::FxHashSet;
 use std::collections::HashMap;
 
-/// Extract class metadata from stub AST and register them in the ClassRegistry
-pub fn extract_stub_classes_into_registry(node: &AstNode, class_registry: &mut ClassRegistry) {
+#[derive(Debug)]
+pub struct StubTypeContext {
+    type_vars: FxHashSet<String>,
+    var_map: HashMap<String, TypeVar>,
+    var_gen: TypeVarGen,
+}
+
+impl StubTypeContext {
+    pub fn new() -> Self {
+        Self { type_vars: FxHashSet::default(), var_map: HashMap::default(), var_gen: TypeVarGen::new() }
+    }
+
+    pub fn register_type_var(&mut self, name: &str) {
+        self.type_vars.insert(name.to_string());
+    }
+
+    pub fn is_type_var(&self, name: &str) -> bool {
+        self.type_vars.contains(name)
+    }
+
+    pub fn get_or_create_type_var(&mut self, name: &str) -> TypeVar {
+        if let Some(tv) = self.var_map.get(name) {
+            tv.clone()
+        } else {
+            let tv = self.var_gen.fresh_named(name);
+            self.var_map.insert(name.to_string(), tv.clone());
+            tv
+        }
+    }
+}
+
+pub fn collect_stub_type_vars(node: &AstNode, ctx: &mut StubTypeContext) {
     match node {
         AstNode::Module { body, .. } => {
             for stmt in body {
-                extract_stub_classes_into_registry(stmt, class_registry);
+                collect_stub_type_vars(stmt, ctx);
+            }
+        }
+        AstNode::Assignment { target, value, .. } => {
+            if let AstNode::Call { function, .. } = value.as_ref() {
+                if function == "TypeVar" || function.ends_with(".TypeVar") {
+                    ctx.register_type_var(target);
+                }
+            }
+        }
+        AstNode::ClassDef { body, .. } => {
+            for stmt in body {
+                collect_stub_type_vars(stmt, ctx);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_type_vars_from_type(ty: &Type, acc: &mut FxHashSet<String>) {
+    match ty {
+        Type::Con(TypeCtor::TypeVariable(name)) => {
+            acc.insert(name.clone());
+        }
+        Type::Var(tv) => {
+            if let Some(hint) = &tv.hint {
+                acc.insert(hint.clone());
+            }
+        }
+        Type::App(t1, t2) => {
+            collect_type_vars_from_type(t1, acc);
+            collect_type_vars_from_type(t2, acc);
+        }
+        Type::Fun(params, ret) => {
+            for param in params {
+                collect_type_vars_from_type(param, acc);
+            }
+            collect_type_vars_from_type(ret, acc);
+        }
+        Type::ForAll(_, inner) => collect_type_vars_from_type(inner, acc),
+        Type::Union(types) | Type::Intersection(types) => {
+            for ty in types {
+                collect_type_vars_from_type(ty, acc);
+            }
+        }
+        Type::Record(fields, _) => {
+            for (_, field_ty) in fields {
+                collect_type_vars_from_type(field_ty, acc);
+            }
+        }
+        Type::BoundMethod(receiver, _, method) => {
+            collect_type_vars_from_type(receiver, acc);
+            collect_type_vars_from_type(method, acc);
+        }
+        _ => {}
+    }
+}
+
+fn collect_type_vars_from_metadata(metadata: &ClassMetadata) -> FxHashSet<String> {
+    let mut vars = FxHashSet::default();
+
+    for ty in metadata.fields.values() {
+        collect_type_vars_from_type(ty, &mut vars);
+    }
+
+    for ty in metadata.properties.values() {
+        collect_type_vars_from_type(ty, &mut vars);
+    }
+
+    for ty in metadata.classmethods.values() {
+        collect_type_vars_from_type(ty, &mut vars);
+    }
+
+    for ty in metadata.staticmethods.values() {
+        collect_type_vars_from_type(ty, &mut vars);
+    }
+
+    for method in metadata.methods.values() {
+        match method {
+            MethodType::Single(ty) => collect_type_vars_from_type(ty, &mut vars),
+            MethodType::Overloaded(overload_set) => {
+                for sig in &overload_set.signatures {
+                    collect_type_vars_from_type(sig, &mut vars);
+                }
+                if let Some(implementation) = &overload_set.implementation {
+                    collect_type_vars_from_type(implementation, &mut vars);
+                }
+            }
+        }
+    }
+
+    if let Some(init_ty) = &metadata.init_type {
+        collect_type_vars_from_type(init_ty, &mut vars);
+    }
+
+    if let Some(new_ty) = &metadata.new_type {
+        collect_type_vars_from_type(new_ty, &mut vars);
+    }
+
+    vars
+}
+
+/// Extract class metadata from stub AST and register them in the ClassRegistry
+pub fn extract_stub_classes_into_registry(
+    node: &AstNode, class_registry: &mut ClassRegistry, ctx: &mut StubTypeContext,
+    base_map: &std::collections::HashMap<String, Vec<String>>,
+) {
+    match node {
+        AstNode::Module { body, .. } => {
+            for stmt in body {
+                extract_stub_classes_into_registry(stmt, class_registry, ctx, base_map);
             }
         }
         AstNode::ClassDef { name, bases, metaclass, body, .. } => {
             let mut metadata = ClassMetadata::new(name.clone());
-            let is_protocol = bases
-                .iter()
-                .any(|base| base == "Protocol" || base.ends_with(".Protocol") || base == "typing.Protocol");
+            let resolved_bases =
+                if bases.is_empty() { base_map.get(name).cloned().unwrap_or_default() } else { bases.clone() };
+
+            let is_protocol = resolved_bases.iter().any(|base| {
+                base == "Protocol"
+                    || base.starts_with("Protocol[")
+                    || base.ends_with(".Protocol")
+                    || base == "typing.Protocol"
+                    || base.starts_with("typing.Protocol[")
+            });
             metadata.set_protocol(is_protocol);
 
-            for base in bases {
+            for base in &resolved_bases {
                 metadata.add_base_class(base.clone());
 
-                if base.starts_with("Generic[") && base.ends_with(']') {
-                    if let Some(params_str) = extract_generic_params(base) {
-                        let type_params: Vec<String> = params_str.split(',').map(|s| s.trim().to_string()).collect();
+                if let Some(params_str) = extract_generic_params(base) {
+                    let type_params: Vec<String> = params_str.split(',').map(|s| s.trim().to_string()).collect();
+                    for param in &type_params {
+                        ctx.register_type_var(param);
+                    }
+
+                    let is_generic_base = base.starts_with("Generic[") && base.ends_with(']');
+                    if is_generic_base || metadata.type_params.is_empty() {
                         metadata.set_type_params(type_params);
                     }
                 }
@@ -37,7 +190,28 @@ pub fn extract_stub_classes_into_registry(node: &AstNode, class_registry: &mut C
                 metadata.set_metaclass(meta.clone());
             }
 
-            process_class_methods(body, &mut metadata);
+            process_class_methods(body, &mut metadata, ctx);
+
+            if metadata.type_params.is_empty() {
+                let inferred = collect_type_vars_from_metadata(&metadata);
+                if !inferred.is_empty() {
+                    let mut params: Vec<String> = inferred.into_iter().collect();
+                    params.sort();
+                    metadata.set_type_params(params.clone());
+                    for param in params {
+                        ctx.register_type_var(&param);
+                    }
+                }
+            }
+
+            if !metadata.type_params.is_empty() {
+                let vars: Vec<TypeVar> = metadata
+                    .type_params
+                    .iter()
+                    .map(|param| ctx.get_or_create_type_var(param))
+                    .collect();
+                metadata.set_type_param_vars(vars);
+            }
 
             class_registry.register_class(name.clone(), metadata);
         }
@@ -50,7 +224,7 @@ pub fn extract_stub_classes_into_registry(node: &AstNode, class_registry: &mut C
 /// Handles @overload decorators by collecting multiple signatures for the same method name.
 /// Functions with @overload are signature declarations only; the function without @overload
 /// (if present) becomes the implementation signature.
-pub fn process_class_methods(body: &[AstNode], metadata: &mut ClassMetadata) {
+pub fn process_class_methods(body: &[AstNode], metadata: &mut ClassMetadata, ctx: &mut StubTypeContext) {
     let mut methods_by_name: HashMap<String, Vec<MethodInfo>> = HashMap::new();
 
     for stmt in body {
@@ -67,7 +241,7 @@ pub fn process_class_methods(body: &[AstNode], metadata: &mut ClassMetadata) {
             let start_idx = if has_self || has_cls { 1 } else { 0 };
             for param in params.iter().skip(start_idx) {
                 if let Some(ann) = &param.type_annotation {
-                    if let Some(ty) = parse_type_annotation(ann) {
+                    if let Some(ty) = parse_type_annotation(ann, ctx) {
                         param_types.push(ty);
                     }
                 }
@@ -75,7 +249,7 @@ pub fn process_class_methods(body: &[AstNode], metadata: &mut ClassMetadata) {
 
             let ret_type = return_type
                 .as_ref()
-                .and_then(|ann| parse_type_annotation(ann))
+                .and_then(|ann| parse_type_annotation(ann, ctx))
                 .unwrap_or_else(beacon_core::Type::any);
 
             let is_overload = decorators.iter().any(|d| d == "overload");
@@ -189,7 +363,7 @@ fn extract_generic_params(annotation: &str) -> Option<String> {
 /// Parse comma-separated generic parameters, respecting nested brackets
 /// e.g., "str, int" → [Type::string(), Type::int()]
 /// e.g., "dict[str, int], list[str]" → [Type::App(...), Type::App(...)]
-fn parse_generic_params(params_str: &str) -> Vec<beacon_core::Type> {
+fn parse_generic_params(params_str: &str, ctx: &mut StubTypeContext) -> Vec<beacon_core::Type> {
     let mut types = Vec::new();
     let mut current = String::new();
     let mut bracket_depth = 0;
@@ -205,7 +379,7 @@ fn parse_generic_params(params_str: &str) -> Vec<beacon_core::Type> {
                 current.push(ch);
             }
             ',' if bracket_depth == 0 => {
-                if let Some(ty) = parse_type_annotation(current.trim()) {
+                if let Some(ty) = parse_type_annotation(current.trim(), ctx) {
                     types.push(ty);
                 }
                 current.clear();
@@ -217,7 +391,7 @@ fn parse_generic_params(params_str: &str) -> Vec<beacon_core::Type> {
     }
 
     if !current.is_empty() {
-        if let Some(ty) = parse_type_annotation(current.trim()) {
+        if let Some(ty) = parse_type_annotation(current.trim(), ctx) {
             types.push(ty);
         }
     }
@@ -227,22 +401,32 @@ fn parse_generic_params(params_str: &str) -> Vec<beacon_core::Type> {
 
 /// Parse a type annotation string into a Type
 /// This is a simplified version for stub parsing
-pub fn parse_type_annotation(annotation: &str) -> Option<beacon_core::Type> {
+pub fn parse_type_annotation(annotation: &str, ctx: &mut StubTypeContext) -> Option<beacon_core::Type> {
     let annotation = annotation.trim();
 
-    if annotation.contains(" | ") {
-        let parts: Vec<&str> = annotation.split(" | ").collect();
-        let types: Vec<beacon_core::Type> = parts.iter().filter_map(|p| parse_type_annotation(p)).collect();
-        if types.len() > 1 {
-            return Some(beacon_core::Type::Union(types));
-        }
+    if ctx.is_type_var(annotation) {
+        return Some(beacon_core::Type::Con(TypeCtor::TypeVariable(annotation.to_string())));
+    }
+
+    let parser = AnnotationParser::new();
+    if let Ok(parsed) = parser.parse(annotation) {
+        return Some(convert_type_vars(parsed, ctx));
+    }
+
+    if annotation.contains('|') {
+        let parts = annotation.split('|').map(|s| s.trim()).collect::<Vec<_>>();
+        let types = parts
+            .into_iter()
+            .filter_map(|p| parse_type_annotation(p, ctx))
+            .collect();
+        return Some(Type::Union(types));
     }
 
     if let Some(idx) = annotation.find('[') {
         let base = &annotation[..idx];
 
         if let Some(params_str) = extract_generic_params(annotation) {
-            let type_params = parse_generic_params(&params_str);
+            let type_params = parse_generic_params(&params_str, ctx);
 
             if type_params.is_empty() {
                 let base_type = match base {
@@ -313,9 +497,40 @@ pub fn parse_type_annotation(annotation: &str) -> Option<beacon_core::Type> {
     }
 }
 
-pub fn load_builtins_into_registry(
-    stub: &crate::workspace::StubFile, class_registry: &mut ClassRegistry,
-) -> Result<()> {
+fn convert_type_vars(ty: beacon_core::Type, ctx: &mut StubTypeContext) -> beacon_core::Type {
+    match ty {
+        beacon_core::Type::Con(TypeCtor::Class(name)) if ctx.is_type_var(&name) => {
+            beacon_core::Type::Var(ctx.get_or_create_type_var(&name))
+        }
+        beacon_core::Type::App(base, arg) => beacon_core::Type::App(
+            Box::new(convert_type_vars(*base, ctx)),
+            Box::new(convert_type_vars(*arg, ctx)),
+        ),
+        beacon_core::Type::Fun(params, ret) => beacon_core::Type::Fun(
+            params.into_iter().map(|p| convert_type_vars(p, ctx)).collect(),
+            Box::new(convert_type_vars(*ret, ctx)),
+        ),
+        beacon_core::Type::Union(types) => {
+            beacon_core::Type::union(types.into_iter().map(|t| convert_type_vars(t, ctx)).collect())
+        }
+        beacon_core::Type::Intersection(types) => {
+            beacon_core::Type::intersection(types.into_iter().map(|t| convert_type_vars(t, ctx)).collect())
+        }
+        beacon_core::Type::ForAll(vars, inner) => {
+            beacon_core::Type::ForAll(vars, Box::new(convert_type_vars(*inner, ctx)))
+        }
+        beacon_core::Type::Record(fields, row) => beacon_core::Type::Record(
+            fields
+                .into_iter()
+                .map(|(name, t)| (name, convert_type_vars(t, ctx)))
+                .collect(),
+            row,
+        ),
+        other => other,
+    }
+}
+
+pub fn load_stub_into_registry(stub: &crate::workspace::StubFile, class_registry: &mut ClassRegistry) -> Result<()> {
     let content = match &stub.content {
         Some(embedded_content) => embedded_content.clone(),
         None => std::fs::read_to_string(&stub.path).map_err(AnalysisError::from)?,
@@ -323,8 +538,40 @@ pub fn load_builtins_into_registry(
 
     let mut parser = crate::parser::LspParser::new()?;
     let parse_result = parser.parse(&content)?;
-    extract_stub_classes_into_registry(&parse_result.ast, class_registry);
+    let mut ctx = StubTypeContext::new();
+    collect_stub_type_vars(&parse_result.ast, &mut ctx);
+    let base_map = parse_class_bases(&content);
+    extract_stub_classes_into_registry(&parse_result.ast, class_registry, &mut ctx, &base_map);
     Ok(())
+}
+
+fn parse_class_bases(source: &str) -> std::collections::HashMap<String, Vec<String>> {
+    let mut map = std::collections::HashMap::new();
+
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("class ") {
+            if let Some(rest) = trimmed.strip_prefix("class ") {
+                if let Some((name_part, _)) = rest.split_once(':') {
+                    let name_part = name_part.trim();
+                    if let Some(idx) = name_part.find('(') {
+                        let name = name_part[..idx].trim();
+                        if let Some(end_idx) = name_part.rfind(')') {
+                            let bases_str = &name_part[idx + 1..end_idx];
+                            let bases: Vec<String> = bases_str
+                                .split(',')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+                            map.insert(name.to_string(), bases);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    map
 }
 
 #[cfg(test)]
@@ -332,13 +579,18 @@ mod tests {
     use super::*;
     use crate::workspace::StubFile;
 
-    use beacon_core::{ClassRegistry, Type, TypeCtor};
+    use beacon_core::{ClassRegistry, MethodType, Type, TypeCtor};
     use rustc_hash::FxHashMap;
     use std::path::PathBuf;
 
+    fn new_ctx() -> StubTypeContext {
+        StubTypeContext::new()
+    }
+
     #[test]
     fn test_parse_list_with_generic_param() {
-        let result = parse_type_annotation("list[str]").unwrap();
+        let mut ctx = new_ctx();
+        let result = parse_type_annotation("list[str]", &mut ctx).unwrap();
 
         match &result {
             Type::App(ctor, elem) => {
@@ -351,7 +603,8 @@ mod tests {
 
     #[test]
     fn test_parse_dict_with_generic_params() {
-        let result = parse_type_annotation("dict[str, int]").unwrap();
+        let mut ctx = new_ctx();
+        let result = parse_type_annotation("dict[str, int]", &mut ctx).unwrap();
 
         match &result {
             Type::App(outer, val_ty) => {
@@ -370,7 +623,8 @@ mod tests {
 
     #[test]
     fn test_parse_set_with_generic_param() {
-        let result = parse_type_annotation("set[int]").unwrap();
+        let mut ctx = new_ctx();
+        let result = parse_type_annotation("set[int]", &mut ctx).unwrap();
 
         match &result {
             Type::App(ctor, elem) => {
@@ -383,7 +637,8 @@ mod tests {
 
     #[test]
     fn test_parse_tuple_with_generic_param() {
-        let result = parse_type_annotation("tuple[str]").unwrap();
+        let mut ctx = new_ctx();
+        let result = parse_type_annotation("tuple[str]", &mut ctx).unwrap();
 
         match &result {
             Type::App(ctor, elem) => {
@@ -396,7 +651,8 @@ mod tests {
 
     #[test]
     fn test_parse_nested_generic() {
-        let result = parse_type_annotation("list[dict[str, int]]").unwrap();
+        let mut ctx = new_ctx();
+        let result = parse_type_annotation("list[dict[str, int]]", &mut ctx).unwrap();
 
         match &result {
             Type::App(list_ctor, dict_ty) => {
@@ -422,21 +678,25 @@ mod tests {
 
     #[test]
     fn test_parse_union_with_generics() {
-        let result = parse_type_annotation("list[str] | None").unwrap();
+        let mut ctx = new_ctx();
+        let result = parse_type_annotation("list[str] | None", &mut ctx).unwrap();
 
         match &result {
             Type::Union(types) => {
                 assert_eq!(types.len(), 2);
 
-                match &types[0] {
-                    Type::App(ctor, elem) => {
-                        assert!(matches!(**ctor, Type::Con(TypeCtor::List)));
-                        assert!(matches!(**elem, Type::Con(TypeCtor::String)));
-                    }
-                    _ => panic!("Expected Type::App for first union member"),
-                }
+                let has_list = types.iter().any(|t| {
+                    matches!(
+                        t,
+                        Type::App(ctor, elem)
+                            if matches!(**ctor, Type::Con(TypeCtor::List))
+                                && matches!(**elem, Type::Con(TypeCtor::String))
+                    )
+                });
+                let has_none = types.iter().any(|t| matches!(t, Type::Con(TypeCtor::NoneType)));
 
-                assert!(matches!(types[1], Type::Con(TypeCtor::NoneType)));
+                assert!(has_list, "Expected list[str] in union");
+                assert!(has_none, "Expected None in union");
             }
             _ => panic!("Expected Union type, got {result:?}"),
         }
@@ -455,14 +715,16 @@ mod tests {
 
     #[test]
     fn test_parse_generic_params_simple() {
-        let params = parse_generic_params("str");
+        let mut ctx = new_ctx();
+        let params = parse_generic_params("str", &mut ctx);
         assert_eq!(params.len(), 1);
         assert!(matches!(params[0], Type::Con(TypeCtor::String)));
     }
 
     #[test]
     fn test_parse_generic_params_multiple() {
-        let params = parse_generic_params("str, int");
+        let mut ctx = new_ctx();
+        let params = parse_generic_params("str, int", &mut ctx);
         assert_eq!(params.len(), 2);
         assert!(matches!(params[0], Type::Con(TypeCtor::String)));
         assert!(matches!(params[1], Type::Con(TypeCtor::Int)));
@@ -470,7 +732,8 @@ mod tests {
 
     #[test]
     fn test_parse_generic_params_nested() {
-        let params = parse_generic_params("dict[str, int], list[str]");
+        let mut ctx = new_ctx();
+        let params = parse_generic_params("dict[str, int], list[str]", &mut ctx);
         assert_eq!(params.len(), 2);
 
         match &params[0] {
@@ -524,7 +787,7 @@ class list(Generic[_T]):
         };
 
         let mut class_registry = ClassRegistry::new();
-        load_builtins_into_registry(&stub, &mut class_registry).unwrap();
+        load_stub_into_registry(&stub, &mut class_registry).unwrap();
 
         let list_class = class_registry.get_class("list");
         assert!(list_class.is_some(), "list class should be registered");
@@ -580,7 +843,7 @@ class list(Generic[_T]):
         };
 
         let mut class_registry = ClassRegistry::new();
-        load_builtins_into_registry(&stub, &mut class_registry).unwrap();
+        load_stub_into_registry(&stub, &mut class_registry).unwrap();
 
         let list_class = class_registry.get_class("list");
         assert!(list_class.is_some(), "list class should be registered in builtins.pyi");
@@ -613,7 +876,7 @@ class list(Generic[_T]):
         };
 
         let mut class_registry = ClassRegistry::new();
-        load_builtins_into_registry(&stub, &mut class_registry).unwrap();
+        load_stub_into_registry(&stub, &mut class_registry).unwrap();
 
         let generator_class = class_registry.get_class("Generator");
         assert!(
@@ -665,6 +928,60 @@ class list(Generic[_T]):
     }
 
     #[test]
+    fn test_capabilities_support_stub_generics() {
+        let stub_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("stubs/capabilities_support.pyi");
+
+        let stub_content = std::fs::read_to_string(&stub_path).unwrap();
+
+        let stub = StubFile {
+            module: "capabilities_support".to_string(),
+            path: stub_path,
+            exports: FxHashMap::default(),
+            is_partial: false,
+            reexports: Vec::new(),
+            all_exports: None,
+            content: Some(stub_content),
+        };
+
+        let mut class_registry = ClassRegistry::new();
+        load_stub_into_registry(&stub, &mut class_registry).unwrap();
+
+        let provider_meta = class_registry
+            .get_class("DataProvider")
+            .expect("DataProvider should be registered");
+        assert_eq!(provider_meta.type_params, vec!["T".to_string()]);
+
+        let load_method = provider_meta
+            .lookup_method_type("load")
+            .expect("DataProvider.load should exist");
+
+        if let MethodType::Single(Type::Fun(params, ret)) = load_method {
+            assert!(!params.is_empty(), "load should include self parameter");
+            assert!(matches!(params[0], Type::Con(TypeCtor::Any)));
+
+            match ret.as_ref() {
+                Type::App(iter_ctor, item_ty) => {
+                    assert!(matches!(**iter_ctor, Type::Con(TypeCtor::Class(_))));
+                    assert!(matches!(**item_ty, Type::Con(TypeCtor::TypeVariable(ref var)) if var == "T"));
+                }
+                other => panic!("Expected Iterable[T] return type, got {other:?}"),
+            }
+        } else {
+            panic!("DataProvider.load should have a single method signature");
+        }
+
+        let provider_impl = class_registry
+            .get_class("InMemoryProvider")
+            .expect("InMemoryProvider should be registered");
+        assert!(provider_impl.type_params.contains(&"T".to_string()));
+    }
+
+    #[test]
     fn test_typing_protocol_types_loaded() {
         let stub_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -686,7 +1003,7 @@ class list(Generic[_T]):
         };
 
         let mut class_registry = ClassRegistry::new();
-        load_builtins_into_registry(&stub, &mut class_registry).unwrap();
+        load_stub_into_registry(&stub, &mut class_registry).unwrap();
 
         let protocol_types = vec![
             "Generator",

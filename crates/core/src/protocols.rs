@@ -347,13 +347,13 @@ impl ProtocolChecker {
     }
 
     /// Extract element type from a type that satisfies Iterable[T]
-    ///
-    /// Returns the element type T if the type is iterable, otherwise returns Any.
     pub fn extract_iterable_element(ty: &Type) -> Type {
         match ty {
             Type::App(ctor, elem) if matches!(ctor.as_ref(), Type::Con(TypeCtor::List)) => elem.as_ref().clone(),
             Type::App(ctor, elem) if matches!(ctor.as_ref(), Type::Con(TypeCtor::Set)) => elem.as_ref().clone(),
             Type::App(ctor, elem) if matches!(ctor.as_ref(), Type::Con(TypeCtor::Tuple)) => elem.as_ref().clone(),
+            Type::App(ctor, elem) if matches!(ctor.as_ref(), Type::Con(TypeCtor::Iterable)) => elem.as_ref().clone(),
+            Type::App(ctor, elem) if matches!(ctor.as_ref(), Type::Con(TypeCtor::Iterator)) => elem.as_ref().clone(),
             Type::App(inner, _) => {
                 if let Type::App(ctor, key) = inner.as_ref() {
                     if matches!(ctor.as_ref(), Type::Con(TypeCtor::Dict)) {

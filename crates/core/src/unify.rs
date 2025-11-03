@@ -85,6 +85,16 @@ impl Unifier {
             }
             (Type::BoundMethod(_, _, method), fun @ Type::Fun(_, _)) => Self::unify_impl(method, fun),
             (fun @ Type::Fun(_, _), Type::BoundMethod(_, _, method)) => Self::unify_impl(fun, method),
+            (Type::BoundMethod(_, _, method), other)
+                if !matches!(other, Type::BoundMethod(_, _, _) | Type::Fun(_, _)) =>
+            {
+                Self::unify_impl(method, other)
+            }
+            (other, Type::BoundMethod(_, _, method))
+                if !matches!(other, Type::BoundMethod(_, _, _) | Type::Fun(_, _)) =>
+            {
+                Self::unify_impl(other, method)
+            }
             (Type::ForAll(_, _), _) | (_, Type::ForAll(_, _)) => {
                 Err(TypeError::UnificationError("polymorphic type".to_string(), "monomorphic type".to_string()).into())
             }
@@ -731,7 +741,6 @@ mod tests {
 
     #[test]
     fn test_union_error_messages() {
-        // Union[int, str] ~ bool should provide detailed error
         let union = Type::union(vec![Type::int(), Type::string()]);
         let concrete = Type::bool();
 

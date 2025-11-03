@@ -11,7 +11,7 @@
 
 use beacon_core::{AnnotationParser, Subst, Type, TypeScheme, TypeVar, TypeVarGen, Unifier};
 use beacon_parser::{AstNode, Parameter, SymbolTable};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Type environment for a module
 ///
@@ -156,6 +156,51 @@ impl TypeEnvironment {
     pub fn generalize(&self, ty: Type) -> TypeScheme {
         let env_vars = self.free_vars();
         TypeScheme::generalize(ty, &env_vars)
+    }
+
+    /// Get the stored type scheme for a symbol without instantiating it.
+    pub fn get_scheme(&self, name: &str) -> Option<&TypeScheme> {
+        self.bindings.get(name)
+    }
+
+    /// Iterate over all bindings in the environment.
+    pub fn iter_bindings(&self) -> impl Iterator<Item = (&String, &TypeScheme)> {
+        self.bindings.iter()
+    }
+
+    /// Merge bindings from the true/false branches of a conditional back into this environment.
+    pub fn merge_from_conditional(&mut self, true_env: &TypeEnvironment, false_env: &TypeEnvironment) {
+        let mut candidates: FxHashSet<String> = FxHashSet::default();
+
+        candidates.extend(true_env.bindings.keys().cloned());
+        candidates.extend(false_env.bindings.keys().cloned());
+
+        for name in candidates {
+            let true_scheme = true_env.get_scheme(&name).cloned();
+            let false_scheme = false_env.get_scheme(&name).cloned();
+            let mut branch_schemes: Vec<TypeScheme> = Vec::new();
+            if let Some(scheme) = true_scheme {
+                branch_schemes.push(scheme);
+            }
+            if let Some(scheme) = false_scheme {
+                branch_schemes.push(scheme);
+            }
+
+            if branch_schemes.is_empty() {
+                continue;
+            }
+
+            let all_same = branch_schemes.iter().skip(1).all(|scheme| scheme == &branch_schemes[0]);
+
+            if all_same {
+                self.bind(name.clone(), branch_schemes.into_iter().next().unwrap());
+                continue;
+            }
+
+            let union_members: Vec<Type> = branch_schemes.iter().map(|scheme| scheme.ty.clone()).collect();
+            let merged = TypeScheme::mono(Type::union(union_members));
+            self.bind(name, merged);
+        }
     }
 
     /// Get all free type variables in the environment

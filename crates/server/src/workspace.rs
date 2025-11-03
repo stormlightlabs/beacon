@@ -8,6 +8,7 @@
 use crate::config::Config;
 use crate::document::DocumentManager;
 
+use beacon_core::{Type, TypeCtor};
 use beacon_parser::AstNode;
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -957,25 +958,30 @@ impl Workspace {
                     if ext == "pyi" {
                         if let Some(module_name) = self.path_to_module_name_from_base(entry.path(), directory) {
                             let is_partial = self.check_if_partial_stub(directory);
-                            let stub = StubFile {
-                                module: module_name.clone(),
-                                path: entry.path().to_path_buf(),
-                                exports: FxHashMap::default(),
-                                is_partial,
-                                reexports: Vec::new(),
-                                all_exports: None,
-                                content: None,
-                            };
+                            match self.parse_stub_file(entry.path()) {
+                                Ok(mut stub) => {
+                                    stub.module = module_name.clone();
+                                    stub.is_partial = is_partial;
+                                    stub.path = entry.path().to_path_buf();
 
-                            if let Ok(mut cache) = self.stubs.write() {
-                                cache.insert(module_name.clone(), stub);
-                            }
+                                    if let Ok(mut cache) = self.stubs.write() {
+                                        cache.insert(module_name.clone(), stub);
+                                    }
 
-                            if let Ok(uri) = Url::from_file_path(entry.path()) {
-                                let module_info =
-                                    ModuleInfo::new(uri.clone(), module_name.clone(), directory.to_path_buf(), false);
-                                self.index.insert(module_info);
-                                tracing::debug!("Registered stub module '{}' at {}", module_name, uri);
+                                    if let Ok(uri) = Url::from_file_path(entry.path()) {
+                                        let module_info = ModuleInfo::new(
+                                            uri.clone(),
+                                            module_name.clone(),
+                                            directory.to_path_buf(),
+                                            false,
+                                        );
+                                        self.index.insert(module_info);
+                                        tracing::debug!("Registered stub module '{}' at {}", module_name, uri);
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to parse stub '{}': {e}", entry.path().display());
+                                }
                             }
                         }
                     }
@@ -1079,7 +1085,7 @@ impl Workspace {
 
                 for stmt in body {
                     if let AstNode::FunctionDef { name: method_name, args: params, return_type, .. } = stmt {
-                        let param_types: Vec<beacon_core::Type> = params
+                        let param_types: Vec<Type> = params
                             .iter()
                             .filter_map(|p| p.type_annotation.as_ref())
                             .filter_map(|ann| self.parse_annotation_string(ann))
@@ -1088,9 +1094,9 @@ impl Workspace {
                         let ret_type = return_type
                             .as_ref()
                             .and_then(|ann| self.parse_annotation_string(ann))
-                            .unwrap_or_else(beacon_core::Type::any);
+                            .unwrap_or_else(Type::any);
 
-                        let func_type = beacon_core::Type::fun(param_types, ret_type);
+                        let func_type = Type::fun(param_types, ret_type);
 
                         if method_name == "__init__" {
                             metadata.set_init_type(func_type);
@@ -1108,8 +1114,8 @@ impl Workspace {
 
     /// Extract type signatures from stub AST
     fn extract_stub_signatures(
-        &self, node: &beacon_parser::AstNode, exports: &mut FxHashMap<String, beacon_core::Type>,
-        reexports: &mut Vec<String>, all_exports: &mut Option<Vec<String>>,
+        &self, node: &beacon_parser::AstNode, exports: &mut FxHashMap<String, Type>, reexports: &mut Vec<String>,
+        all_exports: &mut Option<Vec<String>>,
     ) {
         match node {
             AstNode::Module { body, .. } => {
@@ -1118,25 +1124,36 @@ impl Workspace {
                 }
             }
             AstNode::FunctionDef { name, args: params, return_type, .. } => {
-                let param_types: Vec<beacon_core::Type> = params
+                let param_types: Vec<Type> = params
                     .iter()
-                    .filter_map(|p| p.type_annotation.as_ref())
-                    .filter_map(|ann| self.parse_annotation_string(ann))
+                    .map(|p| {
+                        p.type_annotation
+                            .as_ref()
+                            .and_then(|ann| self.parse_annotation_string(ann))
+                            .unwrap_or_else(Type::any)
+                    })
                     .collect();
 
                 let ret_type = return_type
                     .as_ref()
                     .and_then(|ann| self.parse_annotation_string(ann))
-                    .unwrap_or_else(beacon_core::Type::any);
+                    .unwrap_or_else(Type::any);
 
-                let func_type = beacon_core::Type::fun(param_types, ret_type);
+                let func_type = Type::fun(param_types.clone(), ret_type.clone());
+
+                // Debug log to verify fix is active
+                if name == "register_provider" {
+                    tracing::info!(
+                        "Loading register_provider stub: params={:?}, return={:?}",
+                        param_types,
+                        ret_type
+                    );
+                }
+
                 exports.insert(name.clone(), func_type);
             }
             AstNode::ClassDef { name, body, .. } => {
-                exports.insert(
-                    name.clone(),
-                    beacon_core::Type::Con(beacon_core::TypeCtor::Class(name.clone())),
-                );
+                exports.insert(name.clone(), Type::Con(TypeCtor::Class(name.clone())));
 
                 for stmt in body {
                     self.extract_stub_signatures(stmt, exports, reexports, all_exports);
@@ -1169,7 +1186,7 @@ impl Workspace {
     }
 
     /// Parse an annotation string into a Type
-    fn parse_annotation_string(&self, annotation: &str) -> Option<beacon_core::Type> {
+    fn parse_annotation_string(&self, annotation: &str) -> Option<Type> {
         let parser = beacon_core::AnnotationParser::new();
         parser.parse(annotation).ok()
     }
@@ -1178,7 +1195,7 @@ impl Workspace {
     ///
     /// This method integrates stub lookups into the type resolution process.
     /// It follows PEP 561 resolution order and parses stubs on-demand.
-    pub fn get_stub_type(&self, module_name: &str, symbol_name: &str) -> Option<beacon_core::Type> {
+    pub fn get_stub_type(&self, module_name: &str, symbol_name: &str) -> Option<Type> {
         if let Ok(cache) = self.stubs.read() {
             if let Some(stub) = cache.get(module_name) {
                 let result = stub.exports.get(symbol_name).cloned();
@@ -1223,7 +1240,7 @@ impl Workspace {
     }
 
     /// Get all exported symbols from a module's stub
-    pub fn get_stub_exports(&self, module_name: &str) -> Option<FxHashMap<String, beacon_core::Type>> {
+    pub fn get_stub_exports(&self, module_name: &str) -> Option<FxHashMap<String, Type>> {
         if let Ok(cache) = self.stubs.read() {
             if let Some(stub) = cache.get(module_name) {
                 if !stub.exports.is_empty() {
@@ -1561,7 +1578,7 @@ pub struct StubFile {
     /// File path to the stub
     pub path: PathBuf,
     /// Exported symbols and their types
-    pub exports: FxHashMap<String, beacon_core::Type>,
+    pub exports: FxHashMap<String, Type>,
     /// Whether this is a partial stub
     pub is_partial: bool,
     /// Re-exported modules (from X import Y as Y)
@@ -1591,6 +1608,7 @@ pub enum WorkspaceError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use beacon_core::{Type, TypeCtor};
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -1609,6 +1627,54 @@ mod tests {
     #[test]
     fn test_stub_cache_creation() {
         let _cache = StubCache::new();
+    }
+
+    #[test]
+    fn test_discover_stubs_populates_exports() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .expect("crate dir parent")
+            .parent()
+            .expect("workspace root");
+        let stubs_dir = repo_root.join("stubs");
+
+        let config = Config { stub_paths: vec![stubs_dir], ..Default::default() };
+        let documents = DocumentManager::new().unwrap();
+        let mut workspace = Workspace::new(None, config, documents);
+        workspace.discover_stubs();
+
+        let cache = workspace.stub_cache();
+        let cache = cache.read().expect("stub cache");
+        let stub = cache.get("capabilities_support").expect("capabilities_support stub");
+        assert!(
+            stub.exports.contains_key("register_provider"),
+            "register_provider export missing: {:?}",
+            stub.exports.keys().collect::<Vec<_>>()
+        );
+
+        let register_ty = stub.exports.get("register_provider").expect("register_provider type");
+        match register_ty {
+            Type::Fun(params, ret) => {
+                assert_eq!(params.len(), 2, "register_provider parameter count");
+                assert_eq!(params[0], Type::string(), "first param should be str");
+                match &params[1] {
+                    Type::App(ctor, arg) => {
+                        assert!(
+                            matches!(**ctor,  Type::Con( TypeCtor::Class(ref name)) if name == "DataProvider"),
+                            "expected DataProvider constructor, got {ctor:?}"
+                        );
+                        assert!(
+                            matches!(**arg,  Type::Con( TypeCtor::Class(ref name)) if name == "object"),
+                            "expected object type argument, got {arg:?}"
+                        );
+                    }
+                    other => panic!("expected DataProvider[object], got {other:?}"),
+                }
+                assert_eq!(ret.as_ref(), &Type::none(), "register_provider returns None");
+            }
+            other => panic!("register_provider should be a function, got {other:?}"),
+        }
     }
 
     #[test]
@@ -1840,7 +1906,7 @@ mod tests {
         assert!(stub.exports.contains_key("foo"));
 
         if let Some(ty) = stub.exports.get("foo") {
-            assert!(matches!(ty, beacon_core::Type::Fun(_, _)));
+            assert!(matches!(ty, Type::Fun(_, _)));
         }
 
         assert!(stub.exports.contains_key("MyClass"));

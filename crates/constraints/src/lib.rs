@@ -7,7 +7,7 @@ mod predicate;
 pub use predicate::TypePredicate;
 
 use beacon_core::{ClassRegistry, Type, TypeCtor, TypeError};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Check if a type is a sequence type (list, tuple)
 pub fn is_sequence_type(ty: &Type) -> bool {
@@ -183,7 +183,6 @@ impl TypeSetTracker {
 
     /// Record that a type has been eliminated in a branch
     pub fn eliminate_type(&mut self, ty: Type) {
-        // Only add if not already eliminated
         if !self.eliminated_types.contains(&ty) {
             self.eliminated_types.push(ty);
         }
@@ -325,6 +324,24 @@ impl ControlFlowContext {
             .map(|tracker| tracker.remaining_types())
     }
 
+    /// Apply recorded eliminations to the provided type, removing variants that were ruled out.
+    pub fn apply_remaining_types(&self, variable: &str, current_type: &Type) -> Option<Type> {
+        self.type_trackers.get(variable).and_then(|tracker| {
+            let refined = tracker
+                .eliminated_types()
+                .iter()
+                .fold(current_type.clone(), |acc, eliminated| {
+                    acc.remove_from_union(eliminated)
+                });
+
+            if matches!(refined, Type::Con(TypeCtor::Never)) || refined == *current_type {
+                None
+            } else {
+                Some(refined)
+            }
+        })
+    }
+
     /// Check if all variants have been exhaustively covered for a variable
     pub fn is_exhaustive(&self, variable: &str) -> bool {
         self.type_trackers
@@ -363,6 +380,8 @@ pub struct ConstraintGenContext {
     pub class_registry: ClassRegistry,
     /// Control flow context for flow-sensitive type narrowing
     pub control_flow: ControlFlowContext,
+    /// Tracks which stub modules have been loaded into the class registry
+    pub loaded_stub_modules: FxHashSet<String>,
 }
 
 impl ConstraintGenContext {
@@ -389,6 +408,7 @@ impl Default for ConstraintGenContext {
             position_map: FxHashMap::default(),
             class_registry: ClassRegistry::new(),
             control_flow: ControlFlowContext::new(),
+            loaded_stub_modules: FxHashSet::default(),
         }
     }
 }

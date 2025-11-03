@@ -4,8 +4,8 @@ use crate::{
 };
 
 use beacon_core::{
-    ClassRegistry, MethodSignature, ProtocolChecker, ProtocolName, Result, Subst, Type, TypeCtor, TypeError, TypeVar,
-    Unifier,
+    ClassMetadata, ClassRegistry, MethodSignature, ProtocolChecker, ProtocolName, Result, Subst, Type, TypeCtor,
+    TypeError, TypeVar, Unifier,
 };
 
 /// Extract the base type constructor from a type application
@@ -70,12 +70,41 @@ fn check_user_defined_protocol(ty: &Type, protocol_name: &str, class_registry: &
                     }
                 }
 
-                let protocol_def = beacon_core::protocols::ProtocolDef {
-                    name: beacon_core::protocols::ProtocolName::UserDefined(protocol_name.to_string()),
-                    required_methods: required_sigs,
-                };
+                let mut all_methods_ok = true;
+                for required in &required_sigs {
+                    let provided = available_sigs.iter().find(|(name, _)| name == &required.name);
+                    let Some((_, provided_sig)) = provided else {
+                        all_methods_ok = false;
+                        break;
+                    };
 
-                protocol_def.check_method_signatures(&available_sigs).is_ok()
+                    if provided_sig.params.len() != required.params.len() {
+                        all_methods_ok = false;
+                        break;
+                    }
+
+                    for (req_param, prov_param) in required.params.iter().zip(&provided_sig.params) {
+                        let contravariant_ok = req_param.is_subtype_of(prov_param)
+                            || types_compatible(prov_param, req_param, class_registry);
+                        if !contravariant_ok {
+                            all_methods_ok = false;
+                            break;
+                        }
+                    }
+
+                    if !all_methods_ok {
+                        break;
+                    }
+
+                    let covariant_ok = provided_sig.return_type.is_subtype_of(&required.return_type)
+                        || types_compatible(&provided_sig.return_type, &required.return_type, class_registry);
+                    if !covariant_ok {
+                        all_methods_ok = false;
+                        break;
+                    }
+                }
+
+                all_methods_ok
             } else {
                 false
             }
@@ -229,6 +258,184 @@ fn get_attribute_type(ty: &Type, attr_name: &str, class_registry: &ClassRegistry
     }
 }
 
+fn classes_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegistry) -> bool {
+    if matches!(expected, Type::Con(TypeCtor::Any)) || matches!(actual, Type::Con(TypeCtor::Any)) {
+        return true;
+    }
+
+    if let Some((expected_name, expected_args)) = class_info(expected) {
+        if let Some(metadata) = class_registry.get_class(&expected_name) {
+            if metadata.is_protocol {
+                return check_user_defined_protocol(actual, &expected_name, class_registry);
+            }
+        }
+
+        if let Some((actual_name, actual_args)) = class_info(actual) {
+            if class_registry.is_subclass_of(&actual_name, &expected_name) {
+                if !expected_args.is_empty() && actual_args.len() == expected_args.len() {
+                    for (actual_arg, expected_arg) in actual_args.iter().zip(expected_args.iter()) {
+                        if Unifier::unify(actual_arg, expected_arg).is_err() {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn class_info(ty: &Type) -> Option<(String, Vec<Type>)> {
+    match ty {
+        Type::Con(TypeCtor::Class(name)) => Some((name.clone(), Vec::new())),
+        _ => ty.unapply_class().map(|(name, args)| (name.to_string(), args)),
+    }
+}
+
+fn iterable_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegistry) -> bool {
+    if let Some((yield_ty, _send_ty, _return_ty)) = actual.extract_generator_params() {
+        if let Some((expected_ctor, expected_args)) = expected.unapply() {
+            let expects_iterable = matches!(expected_ctor, TypeCtor::Iterable)
+                || matches!(expected_ctor, TypeCtor::Class(name) if name == "Iterable");
+
+            if expects_iterable {
+                if let Some(elem_ty) = expected_args.first() {
+                    return types_compatible(yield_ty, elem_ty, class_registry);
+                }
+                return true;
+            }
+        }
+    }
+
+    if let Some((actual_ctor, actual_args)) = actual.unapply() {
+        if let Some((expected_ctor, expected_args)) = expected.unapply() {
+            if actual_args.len() != expected_args.len() {
+                return false;
+            }
+
+            let bases_match = match (actual_ctor, expected_ctor) {
+                (TypeCtor::List, TypeCtor::Iterable) => true,
+                (TypeCtor::List, TypeCtor::Class(name)) if name == "Iterable" => true,
+                (TypeCtor::Class(name), TypeCtor::Iterable) if name == "list" => true,
+                (TypeCtor::Class(name), TypeCtor::Class(exp_name)) if name == "list" && exp_name == "Iterable" => true,
+                _ => false,
+            };
+
+            bases_match
+                && actual_args
+                    .iter()
+                    .zip(expected_args.iter())
+                    .all(|(a, e)| types_compatible(a, e, class_registry))
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
+
+fn function_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegistry) -> bool {
+    match (actual, expected) {
+        (Type::Fun(params_a, ret_a), Type::Fun(params_e, ret_e)) => {
+            params_a.len() == params_e.len()
+                && params_a
+                    .iter()
+                    .zip(params_e.iter())
+                    .all(|(a, e)| types_compatible(a, e, class_registry))
+                && types_compatible(ret_a, ret_e, class_registry)
+        }
+        _ => false,
+    }
+}
+
+fn types_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegistry) -> bool {
+    if matches!(expected, Type::Con(TypeCtor::Any)) || matches!(actual, Type::Con(TypeCtor::Any)) {
+        return true;
+    }
+
+    if matches!(expected, Type::Con(TypeCtor::TypeVariable(_)))
+        || matches!(actual, Type::Con(TypeCtor::TypeVariable(_)))
+    {
+        return true;
+    }
+
+    if function_compatible(actual, expected, class_registry) {
+        return true;
+    }
+
+    if classes_compatible(actual, expected, class_registry) {
+        return true;
+    }
+
+    if iterable_compatible(actual, expected, class_registry) {
+        return true;
+    }
+
+    false
+}
+
+fn generator_iterable_subst(actual: &Type, expected: &Type) -> Option<Subst> {
+    if let (Type::Fun(actual_params, actual_ret), Type::Fun(expected_params, expected_ret)) = (actual, expected) {
+        if actual_params.len() == expected_params.len() {
+            let mut combined = Subst::empty();
+            for (param_actual, param_expected) in actual_params.iter().zip(expected_params.iter()) {
+                if let Some(sub) = generator_iterable_subst(param_actual, param_expected) {
+                    combined = sub.compose(combined);
+                }
+            }
+
+            if let Some(ret_subst) = generator_iterable_subst(actual_ret, expected_ret) {
+                return Some(ret_subst.compose(combined));
+            }
+
+            return if combined.is_empty() { None } else { Some(combined) };
+        }
+
+        return generator_iterable_subst(actual_ret, expected_ret);
+    }
+
+    if let Type::Union(variants) = actual {
+        for variant in variants {
+            if let Some(sub) = generator_iterable_subst(variant, expected) {
+                return Some(sub);
+            }
+        }
+        return None;
+    }
+
+    if let Type::Union(variants) = expected {
+        for variant in variants {
+            if let Some(sub) = generator_iterable_subst(actual, variant) {
+                return Some(sub);
+            }
+        }
+        return None;
+    }
+
+    let (yield_ty, _send_ty, _ret_ty) = actual.extract_generator_params()?;
+    let (expected_ctor, expected_args) = expected.unapply()?;
+    let expects_iterable = matches!(expected_ctor, TypeCtor::Iterable)
+        || matches!(expected_ctor, TypeCtor::Class(name) if name == "Iterable");
+    if !expects_iterable {
+        return None;
+    }
+    let elem_ty = expected_args.first()?;
+    Unifier::unify(yield_ty, elem_ty).ok()
+}
+
+fn instantiate_class_type(metadata: &ClassMetadata, class_name: &str, subst: &Subst) -> Type {
+    let mut class_ty = Type::Con(TypeCtor::Class(class_name.to_string()));
+    if !metadata.type_param_vars.is_empty() {
+        for tv in &metadata.type_param_vars {
+            let arg = subst.apply(&Type::Var(tv.clone()));
+            class_ty = Type::App(Box::new(class_ty), Box::new(arg));
+        }
+    }
+    class_ty
+}
+
 /// Solve a set of constraints using beacon-core's unification algorithm
 ///
 /// Errors are accumulated rather than failing fast to provide comprehensive feedback.
@@ -252,7 +459,11 @@ pub fn solve_constraints(
                             subst = s.compose(subst);
                         }
                         Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                            type_errors.push(TypeErrorInfo::new(type_err, span));
+                            if !types_compatible(&applied_t1, &applied_t2, class_registry)
+                                && !types_compatible(&applied_t2, &applied_t1, class_registry)
+                            {
+                                type_errors.push(TypeErrorInfo::new(type_err, span));
+                            }
                         }
                         Err(_) => {}
                     }
@@ -269,12 +480,19 @@ pub fn solve_constraints(
                                 let ctor_params: Vec<Type> = params.iter().skip(1).cloned().collect();
                                 if arg_types.len() <= ctor_params.len() {
                                     for (provided_arg, expected_param) in arg_types.iter().zip(ctor_params.iter()) {
-                                        match Unifier::unify(&subst.apply(provided_arg), &subst.apply(expected_param)) {
+                                        let provided_ty = subst.apply(provided_arg);
+                                        let expected_ty = subst.apply(expected_param);
+                                        match Unifier::unify(&provided_ty, &expected_ty) {
                                             Ok(s) => {
                                                 subst = s.compose(subst);
                                             }
                                             Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                                type_errors.push(TypeErrorInfo::new(type_err, span));
+                                                if let Some(s) = generator_iterable_subst(&provided_ty, &expected_ty) {
+                                                    subst = s.compose(subst);
+                                                } else if !types_compatible(&provided_ty, &expected_ty, class_registry)
+                                                {
+                                                    type_errors.push(TypeErrorInfo::new(type_err, span));
+                                                }
                                             }
                                             Err(_) => {}
                                         }
@@ -290,7 +508,8 @@ pub fn solve_constraints(
                                 }
                             }
 
-                            match Unifier::unify(&subst.apply(&ret_ty), &applied_func) {
+                            let class_result_ty = instantiate_class_type(metadata, class_name, &subst);
+                            match Unifier::unify(&subst.apply(&ret_ty), &class_result_ty) {
                                 Ok(s) => {
                                     subst = s.compose(subst);
                                 }
@@ -300,7 +519,8 @@ pub fn solve_constraints(
                                 Err(_) => {}
                             }
                         } else {
-                            match Unifier::unify(&subst.apply(&ret_ty), &applied_func) {
+                            let class_result_ty = instantiate_class_type(metadata, class_name, &subst);
+                            match Unifier::unify(&subst.apply(&ret_ty), &class_result_ty) {
                                 Ok(s) => {
                                     subst = s.compose(subst);
                                 }
@@ -331,12 +551,18 @@ pub fn solve_constraints(
                         let bound_params: Vec<Type> = params.iter().skip(1).cloned().collect();
                         if arg_types.len() <= bound_params.len() {
                             for (provided_arg, expected_param) in arg_types.iter().zip(bound_params.iter()) {
-                                match Unifier::unify(&subst.apply(provided_arg), &subst.apply(expected_param)) {
+                                let provided_ty = subst.apply(provided_arg);
+                                let expected_ty = subst.apply(expected_param);
+                                match Unifier::unify(&provided_ty, &expected_ty) {
                                     Ok(s) => {
                                         subst = s.compose(subst);
                                     }
                                     Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                        type_errors.push(TypeErrorInfo::new(type_err, span));
+                                        if let Some(s) = generator_iterable_subst(&provided_ty, &expected_ty) {
+                                            subst = s.compose(subst);
+                                        } else if !types_compatible(&provided_ty, &expected_ty, class_registry) {
+                                            type_errors.push(TypeErrorInfo::new(type_err, span));
+                                        }
                                     }
                                     Err(_) => {}
                                 }
@@ -378,12 +604,18 @@ pub fn solve_constraints(
                     if let Type::Fun(params, fn_ret) = &applied_func {
                         if arg_types.len() <= params.len() {
                             for (provided_arg, expected_param) in arg_types.iter().zip(params.iter()) {
-                                match Unifier::unify(&subst.apply(provided_arg), &subst.apply(expected_param)) {
+                                let provided_ty = subst.apply(provided_arg);
+                                let expected_ty = subst.apply(expected_param);
+                                match Unifier::unify(&provided_ty, &expected_ty) {
                                     Ok(s) => {
                                         subst = s.compose(subst);
                                     }
                                     Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                        type_errors.push(TypeErrorInfo::new(type_err, span));
+                                        if let Some(s) = generator_iterable_subst(&provided_ty, &expected_ty) {
+                                            subst = s.compose(subst);
+                                        } else if !types_compatible(&provided_ty, &expected_ty, class_registry) {
+                                            type_errors.push(TypeErrorInfo::new(type_err, span));
+                                        }
                                     }
                                     Err(_) => {}
                                 }
@@ -542,20 +774,44 @@ pub fn solve_constraints(
                         }
                     }
                     Type::App(_, _) => {
-                        if let Some(resolved_attr_ty) = get_attribute_type(&applied_obj, &attr_name, class_registry) {
-                            let base_ctor = extract_base_constructor(&applied_obj);
-                            let final_type = if let Some(class_name) = base_ctor {
-                                if class_registry.is_method(class_name, &attr_name) {
-                                    Type::BoundMethod(
-                                        Box::new(applied_obj.clone()),
-                                        attr_name.clone(),
-                                        Box::new(resolved_attr_ty.clone()),
-                                    )
+                        let (resolved_attr_ty, is_method, _class_name_opt) = if let Some((class_name, type_args)) =
+                            applied_obj.unapply_class()
+                        {
+                            if let Some(class_metadata) = class_registry.get_class(class_name) {
+                                if let Some(attr_type) = class_metadata.lookup_attribute(&attr_name) {
+                                    let substituted_ty = if !class_metadata.type_params.is_empty() {
+                                        let subst_map = class_metadata.create_type_substitution(&type_args);
+                                        beacon_core::ClassMetadata::substitute_type_params(attr_type, &subst_map)
+                                    } else {
+                                        attr_type.clone()
+                                    };
+                                    let is_method = class_registry.is_method(class_name, &attr_name);
+                                    (Some(substituted_ty), is_method, Some(class_name.to_string()))
                                 } else {
-                                    resolved_attr_ty.clone()
+                                    (None, false, None)
                                 }
                             } else {
-                                resolved_attr_ty.clone()
+                                (None, false, None)
+                            }
+                        } else if let Some(resolved) = get_attribute_type(&applied_obj, &attr_name, class_registry) {
+                            let base_ctor = extract_base_constructor(&applied_obj);
+                            let is_method = base_ctor
+                                .map(|name| class_registry.is_method(name, &attr_name))
+                                .unwrap_or(false);
+                            (Some(resolved), is_method, base_ctor.map(String::from))
+                        } else {
+                            (None, false, None)
+                        };
+
+                        if let Some(resolved_ty) = resolved_attr_ty {
+                            let final_type = if is_method {
+                                Type::BoundMethod(
+                                    Box::new(applied_obj.clone()),
+                                    attr_name.clone(),
+                                    Box::new(resolved_ty.clone()),
+                                )
+                            } else {
+                                resolved_ty.clone()
                             };
 
                             match Unifier::unify(&subst.apply(&attr_ty), &final_type) {
@@ -1603,6 +1859,7 @@ mod tests {
         let mut list_meta = ClassMetadata::new("list".to_string());
 
         list_meta.set_type_params(vec!["_T".to_string()]);
+        list_meta.set_type_param_vars(vec![TypeVar::named(0, "_T")]);
         list_meta.methods.insert(
             "__getitem__".to_string(),
             MethodType::Single(Type::fun(
@@ -1649,6 +1906,7 @@ mod tests {
         let mut dict_meta = ClassMetadata::new("dict".to_string());
 
         dict_meta.set_type_params(vec!["_KT".to_string(), "_VT".to_string()]);
+        dict_meta.set_type_param_vars(vec![TypeVar::named(1, "_KT"), TypeVar::named(2, "_VT")]);
         dict_meta.methods.insert(
             "get".to_string(),
             MethodType::Single(Type::fun(
@@ -2661,6 +2919,94 @@ mod tests {
         assert!(
             !errors.is_empty(),
             "Union[int, str] should not unify with float when not a subtype"
+        );
+    }
+
+    #[test]
+    fn test_classes_compatible_with_inheritance() {
+        let mut registry = ClassRegistry::new();
+        let base_meta = ClassMetadata::new("Base".to_string());
+        registry.register_class("Base".to_string(), base_meta);
+
+        let mut derived_meta = ClassMetadata::new("Derived".to_string());
+        derived_meta.add_base_class("Base".to_string());
+        registry.register_class("Derived".to_string(), derived_meta);
+
+        let derived_ty = Type::Con(TypeCtor::Class("Derived".to_string()));
+        let base_ty = Type::Con(TypeCtor::Class("Base".to_string()));
+
+        assert!(
+            classes_compatible(&derived_ty, &base_ty, &registry),
+            "Derived class should be compatible with Base class"
+        );
+    }
+
+    #[test]
+    fn test_classes_compatible_with_protocol() {
+        let mut registry = ClassRegistry::new();
+        let mut protocol_meta = ClassMetadata::new("MyProtocol".to_string());
+        protocol_meta.is_protocol = true;
+        protocol_meta.methods.insert(
+            "my_method".to_string(),
+            MethodType::Single(Type::fun(vec![Type::any()], Type::int())),
+        );
+        registry.register_class("MyProtocol".to_string(), protocol_meta);
+
+        let mut impl_meta = ClassMetadata::new("MyImpl".to_string());
+        impl_meta.methods.insert(
+            "my_method".to_string(),
+            MethodType::Single(Type::fun(vec![Type::any()], Type::int())),
+        );
+        registry.register_class("MyImpl".to_string(), impl_meta);
+
+        let impl_ty = Type::Con(TypeCtor::Class("MyImpl".to_string()));
+        let protocol_ty = Type::Con(TypeCtor::Class("MyProtocol".to_string()));
+
+        assert!(
+            classes_compatible(&impl_ty, &protocol_ty, &registry),
+            "Class implementing protocol methods should be compatible with protocol"
+        );
+    }
+
+    #[test]
+    fn test_types_compatible_any() {
+        let registry = ClassRegistry::new();
+        let any_ty = Type::any();
+        let int_ty = Type::int();
+
+        assert!(
+            types_compatible(&int_ty, &any_ty, &registry),
+            "Any type should be compatible with int"
+        );
+        assert!(
+            types_compatible(&any_ty, &int_ty, &registry),
+            "int should be compatible with Any type"
+        );
+    }
+
+    #[test]
+    fn test_types_compatible_handles_inheritance() {
+        let mut registry = ClassRegistry::new();
+        let mut data_provider_meta = ClassMetadata::new("DataProvider".to_string());
+        data_provider_meta.is_protocol = true;
+        data_provider_meta.add_base_class("Protocol[T]".to_string());
+        data_provider_meta.type_params.push("T".to_string());
+        registry.register_class("DataProvider".to_string(), data_provider_meta);
+
+        let mut in_memory_meta = ClassMetadata::new("InMemoryProvider".to_string());
+        in_memory_meta.add_base_class("DataProvider[T]".to_string());
+        in_memory_meta.type_params.push("T".to_string());
+        registry.register_class("InMemoryProvider".to_string(), in_memory_meta);
+
+        let in_memory_ty = Type::Con(TypeCtor::Class("InMemoryProvider".to_string()));
+        let data_provider_ty = Type::App(
+            Box::new(Type::Con(TypeCtor::Class("DataProvider".to_string()))),
+            Box::new(Type::Con(TypeCtor::Class("object".to_string()))),
+        );
+
+        assert!(
+            types_compatible(&in_memory_ty, &data_provider_ty, &registry),
+            "InMemoryProvider should be compatible with DataProvider[object]"
         );
     }
 }
