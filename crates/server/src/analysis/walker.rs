@@ -2,7 +2,10 @@ use super::loader;
 use super::pattern::extract_pattern_bindings;
 use super::type_env::TypeEnvironment;
 
-use beacon_constraint::{Constraint, ConstraintGenContext, ConstraintResult, ConstraintSet, Span, TypePredicate};
+use beacon_constraint::{
+    Constraint, ConstraintGenContext, ConstraintResult, ConstraintSet, Span, TypeGuardInfo, TypeGuardKind,
+    TypePredicate,
+};
 use beacon_core::{ClassMetadata, Type, TypeScheme, errors::Result};
 use beacon_core::{TypeCtor, TypeVarGen};
 use beacon_parser::{AstNode, LiteralValue, SymbolTable};
@@ -354,9 +357,16 @@ fn visit_node_with_context(
             let function_kind = detect_function_kind(body, *is_async);
             let return_analysis = analyze_return_paths(body);
 
+            let type_guard_info = if let Some(ann) = return_type { extract_type_guard_info(ann, args) } else { None };
+
+            if let Some(guard_info) = &type_guard_info {
+                env.register_type_guard(name.clone(), guard_info.clone());
+            }
+
             let (ret_type, gen_params) = if matches!(function_kind, FunctionKind::Regular) {
                 let ret = if let Some(ann) = return_type {
-                    env.parse_annotation_or_any(ann)
+                    let parsed = env.parse_annotation_or_any(ann);
+                    if type_guard_info.is_some() { Type::bool() } else { parsed }
                 } else if return_analysis.should_infer_optional() {
                     let inner_ty = Type::Var(env.fresh_var());
                     Type::Union(vec![inner_ty, Type::none()])
@@ -700,7 +710,7 @@ fn visit_node_with_context(
             let is_main = is_main_guard(test);
             let body_context = if is_main { ExprContext::Void } else { expr_ctx };
 
-            let predicate = extract_type_predicate(test);
+            let predicate = extract_type_predicate(test, env);
             let inverse_predicate = predicate.as_ref().map(|p| p.negate());
 
             let (narrowed_var, narrowed_type) = detect_type_guard(test, &mut env.clone());
@@ -779,7 +789,7 @@ fn visit_node_with_context(
             for (elif_test, elif_body) in elif_parts {
                 visit_node_with_context(elif_test, &mut elif_env, ctx, stub_cache, ExprContext::Value)?;
 
-                let elif_predicate = extract_type_predicate(elif_test);
+                let elif_predicate = extract_type_predicate(elif_test, env);
                 let (elif_narrowed_var, elif_narrowed_type) = detect_type_guard(elif_test, &mut elif_env.clone());
                 let mut elif_true_env = elif_env.clone();
 
@@ -888,7 +898,7 @@ fn visit_node_with_context(
         AstNode::While { test, body, else_body, line, col } => {
             visit_node_with_context(test, env, ctx, stub_cache, ExprContext::Value)?;
 
-            let predicate = extract_type_predicate(test);
+            let predicate = extract_type_predicate(test, env);
             let inverse_predicate = predicate.as_ref().map(|p| p.negate());
 
             let (narrowed_var, narrowed_type) = detect_type_guard(test, &mut env.clone());
@@ -1771,6 +1781,38 @@ fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Opti
     (None, None)
 }
 
+/// Extract type guard information from a function's return annotation
+///
+/// Detects `TypeGuard[T]` or `TypeIs[T]` annotations and extracts the guarded type.
+/// The annotation parser marks these with format `_TypeGuard_<type>` or `_TypeIs_<type>`.
+fn extract_type_guard_info(
+    return_annotation: &str, _params: &[beacon_parser::Parameter],
+) -> Option<beacon_constraint::TypeGuardInfo> {
+    if return_annotation.starts_with("_TypeGuard_") || return_annotation.starts_with("_TypeIs_") {
+        let kind = if return_annotation.starts_with("_TypeGuard_") {
+            TypeGuardKind::TypeGuard
+        } else {
+            TypeGuardKind::TypeIs
+        };
+
+        let type_str = if kind == TypeGuardKind::TypeGuard {
+            return_annotation.strip_prefix("_TypeGuard_").unwrap_or("")
+        } else {
+            return_annotation.strip_prefix("_TypeIs_").unwrap_or("")
+        };
+
+        let parser = beacon_core::AnnotationParser::new();
+        if let Ok(guarded_type) = parser.parse(type_str) {
+            // TODO: Support guarding specific parameters via more sophisticated detection
+            let param_index = 0;
+
+            return Some(TypeGuardInfo::new(param_index, guarded_type, kind));
+        }
+    }
+
+    None
+}
+
 /// Extract a type predicate from a test expression for flow-sensitive narrowing
 ///
 /// It supports:
@@ -1778,7 +1820,8 @@ fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Opti
 /// - isinstance checks: `isinstance(x, Type)`, `isinstance(x, (Type1, Type2))`
 /// - Truthiness checks: `if x:`
 /// - Negation: `if not x:`
-fn extract_type_predicate(test: &AstNode) -> Option<TypePredicate> {
+/// - User-defined type guards: `is_str(x)` where `is_str` returns `TypeGuard[str]`
+fn extract_type_predicate(test: &AstNode, env: &TypeEnvironment) -> Option<TypePredicate> {
     match test {
         AstNode::Compare { left: _, ops, comparators, .. } if ops.len() == 1 && comparators.len() == 1 => {
             if let AstNode::Literal { value: LiteralValue::None, .. } = &comparators[0] {
@@ -1822,9 +1865,17 @@ fn extract_type_predicate(test: &AstNode) -> Option<TypePredicate> {
 
             Some(TypePredicate::IsInstance(target_type))
         }
+        AstNode::Call { function, args, .. } if !args.is_empty() => {
+            if let Some(guard_info) = env.get_type_guard(function) {
+                if args.len() > guard_info.param_index {
+                    return Some(TypePredicate::UserDefinedGuard(guard_info.guarded_type.clone()));
+                }
+            }
+            None
+        }
         AstNode::Identifier { .. } => Some(TypePredicate::IsTruthy),
         AstNode::UnaryOp { op: beacon_parser::UnaryOperator::Not, operand, .. } => {
-            let inner_pred = extract_type_predicate(operand)?;
+            let inner_pred = extract_type_predicate(operand, env)?;
             Some(TypePredicate::Not(Box::new(inner_pred)))
         }
         _ => None,

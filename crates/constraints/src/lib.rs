@@ -1,322 +1,16 @@
 pub mod exhaustiveness;
 pub mod solver;
 
+mod pattern;
+mod predicate;
+
+pub use predicate::TypePredicate;
+
 use beacon_core::{ClassRegistry, Type, TypeCtor, TypeError};
 use rustc_hash::FxHashMap;
 
-/// Type predicates for flow-sensitive narrowing
-///
-/// Represents conditions that can refine types through control flow analysis.
-/// Each predicate describes a runtime check that, when true, allows the type
-/// checker to narrow the type of a variable.
-#[derive(Debug, Clone, PartialEq)]
-pub enum TypePredicate {
-    /// Variable is not None: `x is not None`
-    IsNotNone,
-
-    /// Variable is None: `x is None`
-    IsNone,
-
-    /// Variable is an instance of a type: `isinstance(x, T)`
-    /// Can also represent isinstance with multiple types: `isinstance(x, (T1, T2))`
-    IsInstance(Type),
-
-    /// Variable is truthy (excludes None, False, 0, "", [], {}, etc.): `if x:`
-    IsTruthy,
-
-    /// Variable is falsy: `if not x:`
-    IsFalsy,
-
-    /// Conjunction of predicates (for `and` expressions): `if x and y:`
-    And(Box<TypePredicate>, Box<TypePredicate>),
-
-    /// Disjunction of predicates (for `or` expressions): `if x or y:`
-    Or(Box<TypePredicate>, Box<TypePredicate>),
-
-    /// Negation of a predicate (for `not` expressions): `if not x:`
-    Not(Box<TypePredicate>),
-
-    /// Variable matches a pattern: `case Pattern:`
-    MatchesPattern(beacon_parser::Pattern),
-}
-
-impl TypePredicate {
-    /// Compute which types are eliminated by this predicate
-    pub fn eliminated_types(&self, original_type: &Type) -> Vec<Type> {
-        match self {
-            TypePredicate::IsNotNone | TypePredicate::IsTruthy => {
-                if let Type::Union(variants) = original_type {
-                    variants
-                        .iter()
-                        .filter(|v| matches!(v, Type::Con(beacon_core::TypeCtor::NoneType)))
-                        .cloned()
-                        .collect()
-                } else if matches!(original_type, Type::Con(beacon_core::TypeCtor::NoneType)) {
-                    vec![original_type.clone()]
-                } else {
-                    vec![]
-                }
-            }
-            TypePredicate::IsNone => {
-                if let Type::Union(variants) = original_type {
-                    variants
-                        .iter()
-                        .filter(|v| !matches!(v, Type::Con(beacon_core::TypeCtor::NoneType)))
-                        .cloned()
-                        .collect()
-                } else if !matches!(original_type, Type::Con(beacon_core::TypeCtor::NoneType)) {
-                    vec![original_type.clone()]
-                } else {
-                    vec![]
-                }
-            }
-            TypePredicate::IsInstance(target) => {
-                if let Type::Union(variants) = original_type {
-                    let target_types = if let Type::Union(target_variants) = target {
-                        target_variants.clone()
-                    } else {
-                        vec![target.clone()]
-                    };
-
-                    variants.iter().filter(|v| !target_types.contains(v)).cloned().collect()
-                } else if original_type != target {
-                    vec![original_type.clone()]
-                } else {
-                    vec![]
-                }
-            }
-            TypePredicate::IsFalsy => {
-                if let Type::Union(variants) = original_type {
-                    variants.iter().filter(|v| !Self::is_falsy_type(v)).cloned().collect()
-                } else if !Self::is_falsy_type(original_type) {
-                    vec![original_type.clone()]
-                } else {
-                    vec![]
-                }
-            }
-            TypePredicate::MatchesPattern(pattern) => {
-                let narrowed = narrow_type_by_pattern(original_type, pattern);
-                if let Type::Union(orig_variants) = original_type {
-                    let narrowed_variants =
-                        if let Type::Union(n_variants) = &narrowed { n_variants.clone() } else { vec![narrowed] };
-
-                    orig_variants
-                        .iter()
-                        .filter(|v| !narrowed_variants.contains(v))
-                        .cloned()
-                        .collect()
-                } else if &narrowed != original_type {
-                    vec![original_type.clone()]
-                } else {
-                    vec![]
-                }
-            }
-            TypePredicate::And(p1, p2) => {
-                let mut eliminated = p1.eliminated_types(original_type);
-                eliminated.extend(p2.eliminated_types(original_type));
-                eliminated.sort();
-                eliminated.dedup();
-                eliminated
-            }
-            TypePredicate::Or(p1, p2) => {
-                let elim1 = p1.eliminated_types(original_type);
-                let elim2 = p2.eliminated_types(original_type);
-                elim1.into_iter().filter(|t| elim2.contains(t)).collect()
-            }
-            TypePredicate::Not(p) => {
-                let narrowed = p.apply(original_type);
-                if let Type::Union(orig_variants) = original_type {
-                    let narrowed_variants =
-                        if let Type::Union(n_variants) = &narrowed { n_variants.clone() } else { vec![narrowed] };
-
-                    orig_variants
-                        .iter()
-                        .filter(|v| !narrowed_variants.contains(v))
-                        .cloned()
-                        .collect()
-                } else if &narrowed != original_type {
-                    vec![original_type.clone()]
-                } else {
-                    vec![]
-                }
-            }
-        }
-    }
-
-    /// Apply the predicate to a type, returning the narrowed type
-    ///
-    /// This method implements the semantics of each predicate by transforming
-    /// the input type according to the runtime check the predicate represents.
-    pub fn apply(&self, ty: &Type) -> Type {
-        match self {
-            TypePredicate::IsNotNone => ty.remove_from_union(&Type::none()),
-            TypePredicate::IsNone => Type::none(),
-            TypePredicate::IsInstance(target) => match ty {
-                Type::Union(variants) => {
-                    if variants.contains(target) {
-                        target.clone()
-                    } else if let Type::Union(target_variants) = target {
-                        let intersection: Vec<Type> = variants
-                            .iter()
-                            .filter(|v| target_variants.contains(v))
-                            .cloned()
-                            .collect();
-
-                        if intersection.is_empty() {
-                            target.clone()
-                        } else if intersection.len() == 1 {
-                            intersection.into_iter().next().unwrap()
-                        } else {
-                            Type::union(intersection)
-                        }
-                    } else {
-                        target.clone()
-                    }
-                }
-                _ => target.clone(),
-            },
-            TypePredicate::IsTruthy => ty.remove_from_union(&Type::none()),
-            TypePredicate::IsFalsy => match ty {
-                Type::Union(variants) => {
-                    let falsy: Vec<Type> = variants.iter().filter(|t| Self::is_falsy_type(t)).cloned().collect();
-
-                    if falsy.is_empty() {
-                        Type::none()
-                    } else if falsy.len() == 1 {
-                        falsy.into_iter().next().unwrap()
-                    } else {
-                        Type::union(falsy)
-                    }
-                }
-                t if Self::is_falsy_type(t) => t.clone(),
-                _ => Type::none(),
-            },
-            TypePredicate::And(p1, p2) => {
-                let t1 = p1.apply(ty);
-                p2.apply(&t1)
-            }
-            TypePredicate::Or(p1, p2) => Type::union(vec![p1.apply(ty), p2.apply(ty)]),
-            TypePredicate::Not(p) => p.negate().apply(ty),
-            TypePredicate::MatchesPattern(pattern) => narrow_type_by_pattern(ty, pattern),
-        }
-    }
-
-    /// Check if a type is always falsy
-    fn is_falsy_type(ty: &Type) -> bool {
-        matches!(ty, Type::Con(TypeCtor::NoneType))
-    }
-
-    /// Get the inverse predicate for narrowing in the else branch of an if statement.
-    ///
-    /// De Morgan's law
-    /// - not (A and B) = (not A) or (not B)
-    /// - not (A or B) = (not A) and (not B)
-    pub fn negate(&self) -> TypePredicate {
-        match self {
-            TypePredicate::IsNotNone => TypePredicate::IsNone,
-            TypePredicate::IsNone => TypePredicate::IsNotNone,
-            TypePredicate::IsInstance(_) => TypePredicate::IsNotNone,
-            TypePredicate::IsTruthy => TypePredicate::IsFalsy,
-            TypePredicate::IsFalsy => TypePredicate::IsTruthy,
-            TypePredicate::And(p1, p2) => TypePredicate::Or(Box::new(p1.negate()), Box::new(p2.negate())),
-            TypePredicate::Or(p1, p2) => TypePredicate::And(Box::new(p1.negate()), Box::new(p2.negate())),
-            TypePredicate::Not(p) => p.as_ref().clone(),
-            // TODO: full pattern analysis
-            TypePredicate::MatchesPattern(_) => TypePredicate::Not(Box::new(self.clone())),
-        }
-    }
-
-    /// Check if this predicate has a meaningful negation for constraint generation
-    ///
-    /// Some predicates like isinstance don't have simple inverse predicates,
-    /// and their negation is handled by type subtraction in detect_inverse_type_guard.
-    pub fn has_simple_negation(&self) -> bool {
-        !matches!(self, TypePredicate::IsInstance(_) | TypePredicate::MatchesPattern(_))
-    }
-}
-
-/// Narrow a type based on a pattern match
-///
-/// For example, matching `case int(x):` narrows a `int | str` union to just `int`.
-fn narrow_type_by_pattern(ty: &Type, pattern: &beacon_parser::Pattern) -> Type {
-    use beacon_parser::Pattern;
-
-    match pattern {
-        Pattern::MatchValue(_) => ty.clone(),
-        Pattern::MatchSequence(_) => match ty {
-            Type::Union(variants) => {
-                let sequence_types: Vec<Type> = variants.iter().filter(|t| is_sequence_type(t)).cloned().collect();
-
-                if sequence_types.is_empty() {
-                    ty.clone()
-                } else if sequence_types.len() == 1 {
-                    sequence_types.into_iter().next().unwrap()
-                } else {
-                    Type::union(sequence_types)
-                }
-            }
-            t if is_sequence_type(t) => t.clone(),
-            _ => ty.clone(),
-        },
-        Pattern::MatchMapping { .. } => match ty {
-            Type::Union(variants) => {
-                let dict_types: Vec<Type> = variants.iter().filter(|t| is_dict_type(t)).cloned().collect();
-
-                if dict_types.is_empty() {
-                    ty.clone()
-                } else if dict_types.len() == 1 {
-                    dict_types.into_iter().next().unwrap()
-                } else {
-                    Type::union(dict_types)
-                }
-            }
-            t if is_dict_type(t) => t.clone(),
-            _ => ty.clone(),
-        },
-        Pattern::MatchClass { cls, .. } => {
-            let target_type = Type::Con(TypeCtor::Class(cls.clone()));
-
-            match ty {
-                Type::Union(variants) => {
-                    if variants.contains(&target_type) {
-                        target_type
-                    } else {
-                        let compatible: Vec<Type> = variants
-                            .iter()
-                            .filter(|v| type_compatible_with_class(v, cls))
-                            .cloned()
-                            .collect();
-
-                        if compatible.is_empty() {
-                            target_type
-                        } else if compatible.len() == 1 {
-                            compatible.into_iter().next().unwrap()
-                        } else {
-                            Type::union(compatible)
-                        }
-                    }
-                }
-                _ => target_type,
-            }
-        }
-        Pattern::MatchAs { pattern: Some(sub_pattern), .. } => narrow_type_by_pattern(ty, sub_pattern),
-        Pattern::MatchAs { pattern: None, .. } => ty.clone(),
-        Pattern::MatchOr(alternatives) => {
-            let narrowed_types: Vec<Type> = alternatives.iter().map(|alt| narrow_type_by_pattern(ty, alt)).collect();
-
-            if narrowed_types.is_empty() {
-                ty.clone()
-            } else if narrowed_types.len() == 1 {
-                narrowed_types.into_iter().next().unwrap()
-            } else {
-                Type::union(narrowed_types)
-            }
-        }
-    }
-}
-
 /// Check if a type is a sequence type (list, tuple)
-fn is_sequence_type(ty: &Type) -> bool {
+pub fn is_sequence_type(ty: &Type) -> bool {
     match ty {
         Type::App(ctor, _) => matches!(ctor.as_ref(), Type::Con(TypeCtor::List) | Type::Con(TypeCtor::Tuple)),
         Type::Con(TypeCtor::List | TypeCtor::Tuple) => true,
@@ -325,7 +19,7 @@ fn is_sequence_type(ty: &Type) -> bool {
 }
 
 /// Check if a type is a dict type
-fn is_dict_type(ty: &Type) -> bool {
+pub fn is_dict_type(ty: &Type) -> bool {
     match ty {
         Type::App(ctor, _) => matches!(ctor.as_ref(), Type::Con(TypeCtor::Dict)),
         Type::Con(TypeCtor::Dict) => true,
@@ -334,10 +28,40 @@ fn is_dict_type(ty: &Type) -> bool {
 }
 
 /// Check if a type is compatible with a class pattern
-fn type_compatible_with_class(ty: &Type, cls: &str) -> bool {
+pub fn type_compatible_with_class(ty: &Type, cls: &str) -> bool {
     match ty {
         Type::Con(TypeCtor::Class(name)) => name == cls,
         _ => false,
+    }
+}
+
+/// Type guard kind for user-defined type guard functions
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeGuardKind {
+    /// TypeGuard[T] - narrows but maintains original type relationship
+    TypeGuard,
+    /// TypeIs[T] - asserts exact type (PEP 742)
+    TypeIs,
+}
+
+/// Stores metadata for functions with `TypeGuard[T]` or `TypeIs[T]` return annotations (user-defined type guard function).
+#[derive(Debug, Clone)]
+pub struct TypeGuardInfo {
+    /// Which parameter (by index) is being guarded
+    /// For example, in `def is_str(x: object) -> TypeGuard[str]`, param_index is 0
+    pub param_index: usize,
+
+    /// The type being guarded to (the T in TypeGuard[T])
+    pub guarded_type: Type,
+
+    /// Whether this is TypeGuard (narrow) or TypeIs (assert exact type)
+    pub kind: TypeGuardKind,
+}
+
+impl TypeGuardInfo {
+    /// Create a new type guard info
+    pub fn new(param_index: usize, guarded_type: Type, kind: TypeGuardKind) -> Self {
+        Self { param_index, guarded_type, kind }
     }
 }
 
@@ -439,9 +163,6 @@ struct JoinPoint {
 }
 
 /// Tracks type elimination through successive narrowing for exhaustiveness checking
-///
-/// This structure tracks which types have been eliminated from a union through control flow analysis,
-/// allowing us to compute what types remain and detect when all variants have been covered.
 #[derive(Debug, Clone)]
 pub struct TypeSetTracker {
     /// The variable being tracked
@@ -523,9 +244,6 @@ impl TypeSetTracker {
 }
 
 /// Control flow context for tracking narrowing scope
-///
-/// Manages the stack of narrowing scopes and pending join points during
-/// constraint generation for flow-sensitive type narrowing.
 #[derive(Debug, Clone)]
 pub struct ControlFlowContext {
     /// Stack of active narrowing scopes (for nested ifs, loops, etc.)
@@ -539,11 +257,7 @@ pub struct ControlFlowContext {
 impl ControlFlowContext {
     /// Create a new control flow context with a root scope
     pub fn new() -> Self {
-        Self {
-            scopes: vec![NarrowingScope::default()],
-            pending_joins: Vec::new(),
-            type_trackers: FxHashMap::default(),
-        }
+        Self::default()
     }
 
     /// Enter a new narrowing scope (e.g., inside an if body)
@@ -632,7 +346,11 @@ impl ControlFlowContext {
 
 impl Default for ControlFlowContext {
     fn default() -> Self {
-        Self::new()
+        Self {
+            scopes: vec![NarrowingScope::default()],
+            pending_joins: Vec::new(),
+            type_trackers: FxHashMap::default(),
+        }
     }
 }
 
@@ -709,47 +427,44 @@ impl Span {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beacon_parser::{AstNode, LiteralValue, Pattern};
+    use beacon_parser::Pattern;
 
     #[test]
     fn test_is_sequence_type() {
-        let list_type = Type::Con(beacon_core::TypeCtor::List);
+        let list_type = Type::Con(TypeCtor::List);
         assert!(is_sequence_type(&list_type));
 
-        let tuple_type = Type::Con(beacon_core::TypeCtor::Tuple);
+        let tuple_type = Type::Con(TypeCtor::Tuple);
         assert!(is_sequence_type(&tuple_type));
 
-        let list_int = Type::App(Box::new(Type::Con(beacon_core::TypeCtor::List)), Box::new(Type::int()));
+        let list_int = Type::App(Box::new(Type::Con(TypeCtor::List)), Box::new(Type::int()));
         assert!(is_sequence_type(&list_int));
 
         let int_type = Type::int();
         assert!(!is_sequence_type(&int_type));
 
-        let dict_type = Type::Con(beacon_core::TypeCtor::Dict);
+        let dict_type = Type::Con(TypeCtor::Dict);
         assert!(!is_sequence_type(&dict_type));
     }
 
     #[test]
     fn test_is_dict_type() {
-        let dict_type = Type::Con(beacon_core::TypeCtor::Dict);
+        let dict_type = Type::Con(TypeCtor::Dict);
         assert!(is_dict_type(&dict_type));
 
-        let dict_type_app = Type::App(
-            Box::new(Type::Con(beacon_core::TypeCtor::Dict)),
-            Box::new(Type::string()),
-        );
+        let dict_type_app = Type::App(Box::new(Type::Con(TypeCtor::Dict)), Box::new(Type::string()));
         assert!(is_dict_type(&dict_type_app));
 
         let int_type = Type::int();
         assert!(!is_dict_type(&int_type));
 
-        let list_type = Type::Con(beacon_core::TypeCtor::List);
+        let list_type = Type::Con(TypeCtor::List);
         assert!(!is_dict_type(&list_type));
     }
 
     #[test]
     fn test_type_compatible_with_class() {
-        let point_type = Type::Con(beacon_core::TypeCtor::Class("Point".to_string()));
+        let point_type = Type::Con(TypeCtor::Class("Point".to_string()));
         assert!(type_compatible_with_class(&point_type, "Point"));
         assert!(!type_compatible_with_class(&point_type, "Circle"));
 
@@ -758,84 +473,12 @@ mod tests {
     }
 
     #[test]
-    fn test_narrow_type_by_pattern_match_value() {
-        let union_type = Type::union(vec![Type::int(), Type::string()]);
-        let literal = AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 1 };
-        let pattern = Pattern::MatchValue(literal);
-
-        let result = narrow_type_by_pattern(&union_type, &pattern);
-        assert_eq!(result, union_type);
-    }
-
-    #[test]
-    fn test_narrow_type_by_pattern_sequence() {
-        let union_type = Type::union(vec![Type::Con(beacon_core::TypeCtor::List), Type::string()]);
-        let pattern = Pattern::MatchSequence(vec![]);
-        let result = narrow_type_by_pattern(&union_type, &pattern);
-        assert_eq!(result, Type::Con(beacon_core::TypeCtor::List));
-    }
-
-    #[test]
-    fn test_narrow_type_by_pattern_mapping() {
-        let union_type = Type::union(vec![
-            Type::Con(beacon_core::TypeCtor::Dict),
-            Type::Con(beacon_core::TypeCtor::List),
-        ]);
-        let pattern = Pattern::MatchMapping { keys: vec![], patterns: vec![] };
-        let result = narrow_type_by_pattern(&union_type, &pattern);
-        assert_eq!(result, Type::Con(beacon_core::TypeCtor::Dict));
-    }
-
-    #[test]
-    fn test_narrow_type_by_pattern_class() {
-        let point_type = Type::Con(beacon_core::TypeCtor::Class("Point".to_string()));
-        let circle_type = Type::Con(beacon_core::TypeCtor::Class("Circle".to_string()));
-        let union_type = Type::union(vec![point_type.clone(), circle_type]);
-        let pattern = Pattern::MatchClass { cls: "Point".to_string(), patterns: vec![] };
-        let result = narrow_type_by_pattern(&union_type, &pattern);
-        assert_eq!(result, point_type);
-    }
-
-    #[test]
-    fn test_narrow_type_by_pattern_as_with_subpattern() {
-        let union_type = Type::union(vec![Type::int(), Type::string()]);
-        let sub_pattern = Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] };
-        let pattern = Pattern::MatchAs { pattern: Some(Box::new(sub_pattern)), name: Some("x".to_string()) };
-        let result = narrow_type_by_pattern(&union_type, &pattern);
-        let expected = Type::Con(beacon_core::TypeCtor::Class("int".to_string()));
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn test_narrow_type_by_pattern_as_without_subpattern() {
-        let union_type = Type::union(vec![Type::int(), Type::string()]);
-        let pattern = Pattern::MatchAs { pattern: None, name: Some("x".to_string()) };
-        let result = narrow_type_by_pattern(&union_type, &pattern);
-        assert_eq!(result, union_type);
-    }
-
-    #[test]
-    fn test_narrow_type_by_pattern_or() {
-        let int_type = Type::Con(beacon_core::TypeCtor::Class("int".to_string()));
-        let float_type = Type::Con(beacon_core::TypeCtor::Class("float".to_string()));
-        let union_type = Type::union(vec![int_type.clone(), float_type.clone(), Type::string()]);
-
-        let pattern1 = Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] };
-        let pattern2 = Pattern::MatchClass { cls: "float".to_string(), patterns: vec![] };
-        let or_pattern = Pattern::MatchOr(vec![pattern1, pattern2]);
-
-        let result = narrow_type_by_pattern(&union_type, &or_pattern);
-        let expected = Type::union(vec![int_type, float_type]);
-        assert_eq!(result, expected);
-    }
-
-    #[test]
     fn test_type_predicate_matches_pattern_apply() {
-        let union_type = Type::union(vec![Type::Con(beacon_core::TypeCtor::List), Type::string()]);
+        let union_type = Type::union(vec![Type::Con(TypeCtor::List), Type::string()]);
         let pattern = Pattern::MatchSequence(vec![]);
         let predicate = TypePredicate::MatchesPattern(pattern);
         let result = predicate.apply(&union_type);
-        assert_eq!(result, Type::Con(beacon_core::TypeCtor::List));
+        assert_eq!(result, Type::Con(TypeCtor::List));
     }
 
     #[test]

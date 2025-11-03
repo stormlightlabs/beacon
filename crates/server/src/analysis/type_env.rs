@@ -28,6 +28,9 @@ pub struct TypeEnvironment {
     generator_params: Option<(Type, Type, Type)>,
     /// Expected return type for the current function (used to constrain return statements)
     expected_return_type: Option<Type>,
+    /// Type guard information for functions with TypeGuard/TypeIs return types
+    /// Maps function name to type guard metadata
+    type_guards: FxHashMap<String, beacon_constraint::TypeGuardInfo>,
 }
 
 impl TypeEnvironment {
@@ -39,6 +42,7 @@ impl TypeEnvironment {
             annotation_parser: AnnotationParser::new(),
             generator_params: None,
             expected_return_type: None,
+            type_guards: FxHashMap::default(),
         };
 
         env.add_builtins();
@@ -329,6 +333,16 @@ impl TypeEnvironment {
     /// Clear the expected return type when exiting a function
     pub fn clear_expected_return_type(&mut self) {
         self.expected_return_type = None;
+    }
+
+    /// Register a type guard function by storing metadata for functions with `TypeGuard[T]` or `TypeIs[T]` return annotations.
+    pub fn register_type_guard(&mut self, func_name: String, guard_info: beacon_constraint::TypeGuardInfo) {
+        self.type_guards.insert(func_name, guard_info);
+    }
+
+    /// Get type guard information for a function
+    pub fn get_type_guard(&self, func_name: &str) -> Option<&beacon_constraint::TypeGuardInfo> {
+        self.type_guards.get(func_name)
     }
 }
 

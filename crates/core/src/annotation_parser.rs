@@ -23,11 +23,12 @@
 //! ```
 
 use crate::{Result, Type, TypeCtor, TypeError};
+
 use std::iter::Peekable;
 use std::str::Chars;
 
 /// Parser for Python type annotations
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct AnnotationParser;
 
 impl AnnotationParser {
@@ -64,12 +65,6 @@ impl AnnotationParser {
     /// Parse a type annotation, returning Any if parsing fails
     pub fn parse_or_any(&self, annotation: &str) -> Type {
         self.parse(annotation).unwrap_or(Type::any())
-    }
-}
-
-impl Default for AnnotationParser {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -466,6 +461,16 @@ impl Parser {
                     Type::coroutine(yield_ty, send_ty, return_ty)
                 } else {
                     Type::coroutine(Type::any(), Type::none(), Type::any())
+                }
+            }
+            "TypeGuard" | "TypeIs" => {
+                if matches!(self.peek(), Some(Token::LBracket)) {
+                    self.advance();
+                    let inner_ty = self.parse_type()?;
+                    self.expect(Token::RBracket)?;
+                    Type::Con(TypeCtor::Class(format!("_{name}_{inner_ty}")))
+                } else {
+                    Type::bool()
                 }
             }
             _ => {

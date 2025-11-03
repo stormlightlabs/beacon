@@ -695,7 +695,7 @@ fn simplify_substitution(subst: Subst) -> Subst {
 mod tests {
     use super::*;
     use crate::Span;
-    use crate::TypePredicate;
+    use crate::predicate::TypePredicate;
     use beacon_core::{ClassMetadata, MethodType, TypeVar};
     use beacon_parser::{AstNode, LiteralValue, Pattern};
 
@@ -1734,8 +1734,6 @@ mod tests {
 
     #[test]
     fn test_type_predicate_is_none_apply() {
-        use crate::TypePredicate;
-
         let optional_int = Type::optional(Type::int());
         let pred = TypePredicate::IsNone;
 
@@ -1745,8 +1743,6 @@ mod tests {
 
     #[test]
     fn test_type_predicate_negate_is_not_none() {
-        use crate::TypePredicate;
-
         let pred = TypePredicate::IsNotNone;
         let negated = pred.negate();
 
