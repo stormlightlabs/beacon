@@ -352,7 +352,8 @@ pub fn solve_constraints(
                         }
                     } else {
                         let expected_fn_ty = Type::fun(arg_types, ret_ty);
-                        match Unifier::unify(&subst.apply(&func_ty), &subst.apply(&expected_fn_ty)) {
+                        let resolved_method_ty = subst.apply(&resolved_method.clone());
+                        match Unifier::unify(&resolved_method_ty, &subst.apply(&expected_fn_ty)) {
                             Ok(s) => {
                                 subst = s.compose(subst);
                             }
@@ -601,7 +602,8 @@ pub fn solve_constraints(
                         _ => Type::any(),
                     };
 
-                    match Unifier::unify(&subst.apply(&elem_ty), &extracted_elem) {
+                    let applied_extracted = subst.apply(&extracted_elem);
+                    match Unifier::unify(&subst.apply(&elem_ty), &applied_extracted) {
                         Ok(s) => {
                             subst = s.compose(subst);
                         }
@@ -2300,5 +2302,253 @@ mod tests {
 
         let (_, errors) = result.unwrap();
         assert!(errors.is_empty(), "Multiple narrowing constraints should work together");
+    }
+
+    #[test]
+    fn test_protocol_extract_list_element() {
+        let list_int = Type::list(Type::int());
+        let elem_ty = tvar(0);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Protocol(
+                list_int,
+                beacon_core::ProtocolName::Iterable,
+                elem_ty.clone(),
+                test_span(),
+            )],
+        };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(errors.is_empty(), "list[int] should satisfy Iterable protocol");
+
+        let resolved_elem = subst.apply(&elem_ty);
+        assert_eq!(resolved_elem, Type::int(), "Element type should be extracted as int");
+    }
+
+    #[test]
+    fn test_protocol_extract_dict_key() {
+        let dict_str_int = Type::dict(Type::string(), Type::int());
+        let elem_ty = tvar(0);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Protocol(
+                dict_str_int,
+                beacon_core::ProtocolName::Iterable,
+                elem_ty.clone(),
+                test_span(),
+            )],
+        };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(errors.is_empty(), "dict should satisfy Iterable protocol");
+
+        let resolved_elem = subst.apply(&elem_ty);
+        assert_eq!(resolved_elem, Type::string(), "Iterating dict should yield keys (str)");
+    }
+
+    #[test]
+    fn test_protocol_extract_set_element() {
+        let set_float = Type::App(Box::new(Type::Con(TypeCtor::Set)), Box::new(Type::float()));
+        let elem_ty = tvar(0);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Protocol(
+                set_float,
+                beacon_core::ProtocolName::Iterable,
+                elem_ty.clone(),
+                test_span(),
+            )],
+        };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(errors.is_empty(), "set[float] should satisfy Iterable protocol");
+
+        let resolved_elem = subst.apply(&elem_ty);
+        assert_eq!(
+            resolved_elem,
+            Type::float(),
+            "Element type should be extracted as float"
+        );
+    }
+
+    #[test]
+    fn test_protocol_extract_tuple_element() {
+        let tuple_bool = Type::App(Box::new(Type::Con(TypeCtor::Tuple)), Box::new(Type::bool()));
+        let elem_ty = tvar(0);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Protocol(
+                tuple_bool,
+                beacon_core::ProtocolName::Iterable,
+                elem_ty.clone(),
+                test_span(),
+            )],
+        };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(errors.is_empty(), "tuple[bool] should satisfy Iterable protocol");
+
+        let resolved_elem = subst.apply(&elem_ty);
+        assert_eq!(resolved_elem, Type::bool(), "Element type should be extracted as bool");
+    }
+
+    #[test]
+    fn test_protocol_non_iterable_type() {
+        let int_ty = Type::int();
+        let elem_ty = tvar(0);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Protocol(
+                int_ty,
+                beacon_core::ProtocolName::Iterable,
+                elem_ty,
+                test_span(),
+            )],
+        };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(!errors.is_empty(), "int should not satisfy Iterable protocol");
+        assert!(
+            errors[0].error.to_string().contains("does not satisfy protocol"),
+            "Error should mention protocol not satisfied"
+        );
+    }
+
+    #[test]
+    fn test_bound_method_call_with_args() {
+        let mut registry = ClassRegistry::new();
+        let mut class_meta = ClassMetadata::new("MyClass".to_string());
+        class_meta.methods.insert(
+            "process".to_string(),
+            MethodType::Single(Type::fun(vec![Type::any(), Type::int()], Type::string())),
+        );
+        registry.register_class("MyClass".to_string(), class_meta);
+
+        let obj_ty = Type::Con(TypeCtor::Class("MyClass".to_string()));
+        let method_ty = Type::BoundMethod(
+            Box::new(obj_ty),
+            "process".to_string(),
+            Box::new(Type::fun(vec![Type::any(), Type::int()], Type::string())),
+        );
+
+        let ret_ty = tvar(0);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Call(
+                method_ty,
+                vec![Type::int()],
+                ret_ty.clone(),
+                test_span(),
+            )],
+        };
+
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(errors.is_empty(), "BoundMethod call should succeed");
+
+        let resolved_ret = subst.apply(&ret_ty);
+        assert_eq!(resolved_ret, Type::string(), "Return type should be string");
+    }
+
+    #[test]
+    fn test_bound_method_call_wrong_arg_count() {
+        let obj_ty = Type::Con(TypeCtor::Class("MyClass".to_string()));
+        let method_ty = Type::BoundMethod(
+            Box::new(obj_ty),
+            "process".to_string(),
+            Box::new(Type::fun(vec![Type::any(), Type::int()], Type::string())),
+        );
+
+        let ret_ty = tvar(0);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Call(
+                method_ty,
+                vec![Type::int(), Type::bool()],
+                ret_ty,
+                test_span(),
+            )],
+        };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            !errors.is_empty(),
+            "BoundMethod call with wrong arg count should produce error"
+        );
+    }
+
+    #[test]
+    fn test_bound_method_call_wrong_arg_type() {
+        let obj_ty = Type::Con(TypeCtor::Class("MyClass".to_string()));
+        let method_ty = Type::BoundMethod(
+            Box::new(obj_ty),
+            "process".to_string(),
+            Box::new(Type::fun(vec![Type::any(), Type::int()], Type::string())),
+        );
+
+        let ret_ty = tvar(0);
+        let constraints =
+            ConstraintSet { constraints: vec![Constraint::Call(method_ty, vec![Type::string()], ret_ty, test_span())] };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            !errors.is_empty(),
+            "BoundMethod call with wrong arg type should produce error"
+        );
+    }
+
+    #[test]
+    fn test_protocol_with_type_variables() {
+        let elem_inner = tvar(0);
+        let list_ty = Type::list(elem_inner.clone());
+        let elem_outer = tvar(1);
+
+        let mut subst = beacon_core::Subst::empty();
+        subst.insert(TypeVar { id: 0, hint: None }, Type::string());
+
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Protocol(
+                list_ty,
+                beacon_core::ProtocolName::Iterable,
+                elem_outer.clone(),
+                test_span(),
+            )],
+        };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (final_subst, errors) = result.unwrap();
+        assert!(errors.is_empty(), "Protocol with type variables should work");
+
+        let resolved_outer = final_subst.apply(&elem_outer);
+        assert!(
+            matches!(resolved_outer, Type::Var(_)) || resolved_outer == Type::string(),
+            "Element type should be resolved correctly"
+        );
     }
 }
