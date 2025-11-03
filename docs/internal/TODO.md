@@ -41,20 +41,16 @@ Implementation details and mod-specific tasks.
 
 **Tasks**:
 
-- [ ] Filter module/class docstrings from constraint generation
-    - Skip string literals at module/class level
-    - Don't generate ANY constraints for them
-- [ ] Fix generator/comprehension type construction
-    - Correct type nesting for Generator types
-    - Ensure comprehensions produce proper container types
-- [ ] Improve BoundMethod call handling in solver
-    - When calling BoundMethod, return method's return type
-    - Fix unification to unwrap BoundMethod properly
-- [ ] Add return type inference from context
-    - Use function signature context for return statements
-    - Propagate expected types downward
+- [x] Filter module/class docstrings from constraint generation
+- [x] Add return type inference from context
+- [x] Generator/comprehension type construction
+- [ ] Type parameter instantiation for generic types
+    - When looking up methods on `list[T]`, dict[K,V]`, etc., instantiate type parameters
+    - Example: `list[int].__getitem__` should return `int`, not `_T`
+    - Requires: Type parameter tracking and substitution in method signatures
+    - **Note**: Large feature requiring changes to type system and class registry
 
-**Impact**: Clears 5+ false positives (ANY detection, generator types, return type mismatches)
+**Impact**: Docstring fix clears ANY001 false positives on module/class/function docstrings
 
 ### Flow-Sensitive Type Narrowing
 
@@ -76,8 +72,6 @@ if calc is not None:
 - [ ] Extend to isinstance() checks
 - [ ] Handle truthiness narrowing
 - [ ] Add tests for flow-sensitive narrowing
-
-**Dependencies**: Complete Milestones 1-4 first to ensure solid foundation
 
 ### Polish & Validation
 

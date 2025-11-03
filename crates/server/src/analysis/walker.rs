@@ -50,6 +50,14 @@ fn detect_function_kind(body: &[AstNode], is_async: bool) -> FunctionKind {
     }
 }
 
+/// Check if a statement is a docstring (string literal expression)
+///
+/// Note that docstrings are standalone string literals that appear as expression statements.
+/// They are metadata and should not generate type constraints.
+fn is_docstring(node: &AstNode) -> bool {
+    matches!(node, AstNode::Literal { value: LiteralValue::String { .. }, .. })
+}
+
 /// Check if the AST nodes contain yield or yield from expressions in the current scope.
 ///
 /// This correctly excludes yields that appear in nested function definitions, lambdas,
@@ -323,7 +331,10 @@ fn visit_node_with_context(
 ) -> Result<Type> {
     match node {
         AstNode::Module { body, .. } => {
-            for stmt in body {
+            for (i, stmt) in body.iter().enumerate() {
+                if i == 0 && is_docstring(stmt) {
+                    continue;
+                }
                 visit_node_with_context(stmt, env, ctx, stub_cache, ExprContext::Void)?;
             }
             Ok(Type::Con(TypeCtor::Module("".into())))
@@ -395,7 +406,10 @@ fn visit_node_with_context(
 
             body_env.set_expected_return_type(ret_type.clone());
 
-            for stmt in body {
+            for (i, stmt) in body.iter().enumerate() {
+                if i == 0 && is_docstring(stmt) {
+                    continue;
+                }
                 visit_node_with_context(stmt, &mut body_env, ctx, stub_cache, ExprContext::Void)?;
             }
 
@@ -442,7 +456,10 @@ fn visit_node_with_context(
 
             ctx.class_registry.register_class(name.clone(), metadata);
 
-            for stmt in body {
+            for (i, stmt) in body.iter().enumerate() {
+                if i == 0 && is_docstring(stmt) {
+                    continue;
+                }
                 if !matches!(stmt, AstNode::FunctionDef { .. }) {
                     visit_node_with_env(stmt, env, ctx, stub_cache)?;
                 }
@@ -3315,6 +3332,58 @@ mod tests {
         assert!(
             !metadata.fields.contains_key("_private"),
             "Should ignore private members"
+        );
+    }
+
+    #[test]
+    fn test_docstring_filtering() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let module_with_docstring = AstNode::Module {
+            body: vec![
+                AstNode::Literal {
+                    value: LiteralValue::String { value: "Module docstring".to_string(), prefix: "".to_string() },
+                    line: 1,
+                    col: 1,
+                },
+                AstNode::Assignment {
+                    target: "x".to_string(),
+                    value: Box::new(AstNode::Literal { value: LiteralValue::Integer(42), line: 2, col: 5 }),
+                    line: 2,
+                    col: 1,
+                },
+            ],
+            docstring: Some("Module docstring".to_string()),
+        };
+
+        visit_node_with_env(&module_with_docstring, &mut env, &mut ctx, None).unwrap();
+
+        let string_type_count = ctx
+            .type_map
+            .values()
+            .filter(|t| matches!(t, Type::Con(TypeCtor::String)))
+            .count();
+
+        assert_eq!(
+            string_type_count, 0,
+            "Docstring should not generate string type in type_map"
+        );
+
+        let has_string_constraints = ctx.constraints.iter().any(|c| match c {
+            beacon_constraint::Constraint::Equal(t1, t2, _) => {
+                matches!(t1, Type::Con(TypeCtor::String)) || matches!(t2, Type::Con(TypeCtor::String))
+            }
+            _ => false,
+        });
+
+        assert!(
+            !has_string_constraints,
+            "Docstring should not generate constraints involving string type"
         );
     }
 }
