@@ -948,6 +948,9 @@ fn visit_node_with_context(
                 span,
             ));
 
+            let subject_var =
+                if let AstNode::Identifier { name, .. } = subject.as_ref() { Some(name.clone()) } else { None };
+
             let mut previous_patterns = Vec::new();
             for case in cases {
                 ctx.constraints.push(Constraint::PatternReachable(
@@ -967,8 +970,27 @@ fn visit_node_with_context(
                     span,
                 ));
 
+                let pattern_predicate = TypePredicate::MatchesPattern(case.pattern.clone());
+                ctx.control_flow.push_scope(Some(pattern_predicate.clone()));
+
+                if let Some(ref var_name) = subject_var {
+                    let narrowed_type = pattern_predicate.apply(&subject_ty);
+
+                    ctx.constraints.push(Constraint::Narrowing(
+                        var_name.clone(),
+                        pattern_predicate.clone(),
+                        narrowed_type.clone(),
+                        span,
+                    ));
+
+                    ctx.control_flow.narrow(var_name.clone(), narrowed_type.clone());
+                    case_env.bind(var_name.clone(), beacon_core::TypeScheme::mono(narrowed_type));
+                }
+
                 for (var_name, var_type) in bindings {
-                    case_env.bind(var_name, beacon_core::TypeScheme::mono(var_type));
+                    case_env.bind(var_name.clone(), beacon_core::TypeScheme::mono(var_type.clone()));
+
+                    ctx.control_flow.narrow(var_name, var_type);
                 }
 
                 if let Some(ref guard) = case.guard {
@@ -978,6 +1000,8 @@ fn visit_node_with_context(
                 for stmt in &case.body {
                     visit_node_with_env(stmt, &mut case_env, ctx, stub_cache)?;
                 }
+
+                ctx.control_flow.pop_scope();
 
                 previous_patterns.push(case.pattern.clone());
             }
