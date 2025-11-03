@@ -2,7 +2,7 @@ use super::loader;
 use super::pattern::extract_pattern_bindings;
 use super::type_env::TypeEnvironment;
 
-use beacon_constraint::{Constraint, ConstraintGenContext, ConstraintResult, ConstraintSet, Span};
+use beacon_constraint::{Constraint, ConstraintGenContext, ConstraintResult, ConstraintSet, Span, TypePredicate};
 use beacon_core::{ClassMetadata, Type, TypeScheme, errors::Result};
 use beacon_core::{TypeCtor, TypeVarGen};
 use beacon_parser::{AstNode, LiteralValue, SymbolTable};
@@ -694,17 +694,30 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, result_ty.clone());
             Ok(result_ty)
         }
-        AstNode::If { test, body, elif_parts, else_body, .. } => {
+        AstNode::If { test, body, elif_parts, else_body, line, col, .. } => {
             visit_node_with_context(test, env, ctx, stub_cache, ExprContext::Value)?;
 
             let is_main = is_main_guard(test);
             let body_context = if is_main { ExprContext::Void } else { expr_ctx };
 
-            let (narrowed_var, narrowed_type) = detect_type_guard(test, &mut env.clone());
+            let predicate = extract_type_predicate(test);
+            let inverse_predicate = predicate.as_ref().map(|p| p.negate());
 
+            let (narrowed_var, narrowed_type) = detect_type_guard(test, &mut env.clone());
             let mut true_env = env.clone();
+
             if let (Some(var_name), Some(refined_ty)) = (narrowed_var.as_ref(), narrowed_type.as_ref()) {
                 true_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
+
+                if let Some(pred) = &predicate {
+                    let span = Span::new(*line, *col);
+                    ctx.constraints.push(Constraint::Narrowing(
+                        var_name.clone(),
+                        pred.clone(),
+                        refined_ty.clone(),
+                        span,
+                    ));
+                }
             }
 
             for stmt in body {
@@ -712,10 +725,20 @@ fn visit_node_with_context(
             }
 
             let (inverse_var, inverse_type) = detect_inverse_type_guard(test, &mut env.clone());
-
             let mut elif_env = env.clone();
+
             if let (Some(var_name), Some(refined_ty)) = (inverse_var.as_ref(), inverse_type.as_ref()) {
                 elif_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
+
+                if let Some(inv_pred) = &inverse_predicate {
+                    let span = Span::new(*line, *col);
+                    ctx.constraints.push(Constraint::Narrowing(
+                        var_name.clone(),
+                        inv_pred.clone(),
+                        refined_ty.clone(),
+                        span,
+                    ));
+                }
             }
 
             for (elif_test, elif_body) in elif_parts {
@@ -1608,6 +1631,51 @@ fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Opti
     }
 
     (None, None)
+}
+
+/// Extract a type predicate from a test expression for flow-sensitive narrowing
+///
+/// It supports:
+/// - None checks: `x is not None`, `x is None`
+/// - isinstance checks (future)
+/// - Truthiness checks (future)
+fn extract_type_predicate(test: &AstNode) -> Option<TypePredicate> {
+    match test {
+        AstNode::Compare { left: _, ops, comparators, .. } if ops.len() == 1 && comparators.len() == 1 => {
+            if let AstNode::Literal { value: LiteralValue::None, .. } = &comparators[0] {
+                match &ops[0] {
+                    beacon_parser::CompareOperator::IsNot | beacon_parser::CompareOperator::NotEq => {
+                        return Some(TypePredicate::IsNotNone);
+                    }
+                    beacon_parser::CompareOperator::Is | beacon_parser::CompareOperator::Eq => {
+                        return Some(TypePredicate::IsNone);
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Extract the variable being guarded by a test expression (TODO)
+#[allow(dead_code)]
+fn extract_guarded_variable(test: &AstNode, env: &mut TypeEnvironment) -> Option<(String, Type)> {
+    let var_name = match test {
+        AstNode::Compare { left, .. } => {
+            if let AstNode::Identifier { name, .. } = left.as_ref() {
+                Some(name.clone())
+            } else {
+                None
+            }
+        }
+        AstNode::Identifier { name, .. } => Some(name.clone()),
+        _ => None,
+    }?;
+
+    let original_type = env.lookup(&var_name)?;
+    Some((var_name, original_type))
 }
 
 /// Convert a type name string to a Type

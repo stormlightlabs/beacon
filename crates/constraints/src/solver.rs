@@ -647,6 +647,26 @@ pub fn solve_constraints(
                     }
                 }
             }
+            Constraint::Narrowing(_var, _predicate, _narrowed_type, _span) => {}
+            Constraint::Join(_var, incoming_types, result_type, span) => {
+                let union_type = if incoming_types.is_empty() {
+                    Type::Con(TypeCtor::NoneType)
+                } else if incoming_types.len() == 1 {
+                    incoming_types[0].clone()
+                } else {
+                    Type::union(incoming_types.clone())
+                };
+
+                match Unifier::unify(&subst.apply(&result_type), &subst.apply(&union_type)) {
+                    Ok(s) => {
+                        subst = s.compose(subst);
+                    }
+                    Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                        type_errors.push(TypeErrorInfo::new(type_err, span));
+                    }
+                    Err(_) => {}
+                }
+            }
         }
     }
 
@@ -675,6 +695,7 @@ fn simplify_substitution(subst: Subst) -> Subst {
 mod tests {
     use super::*;
     use crate::Span;
+    use crate::TypePredicate;
     use beacon_core::{ClassMetadata, MethodType, TypeVar};
     use beacon_parser::{AstNode, LiteralValue, Pattern};
 
@@ -1700,5 +1721,174 @@ mod tests {
             },
             _ => panic!("Expected BoundMethod, got {resolved:?}"),
         }
+    }
+
+    #[test]
+    fn test_type_predicate_is_not_none_apply() {
+        let optional_int = Type::optional(Type::int());
+        let pred = TypePredicate::IsNotNone;
+
+        let narrowed = pred.apply(&optional_int);
+        assert_eq!(narrowed, Type::int(), "IsNotNone should remove None from union");
+    }
+
+    #[test]
+    fn test_type_predicate_is_none_apply() {
+        use crate::TypePredicate;
+
+        let optional_int = Type::optional(Type::int());
+        let pred = TypePredicate::IsNone;
+
+        let narrowed = pred.apply(&optional_int);
+        assert_eq!(narrowed, Type::none(), "IsNone should narrow to None");
+    }
+
+    #[test]
+    fn test_type_predicate_negate_is_not_none() {
+        use crate::TypePredicate;
+
+        let pred = TypePredicate::IsNotNone;
+        let negated = pred.negate();
+
+        assert_eq!(negated, TypePredicate::IsNone, "Negation of IsNotNone should be IsNone");
+    }
+
+    #[test]
+    fn test_type_predicate_negate_is_none() {
+        let pred = TypePredicate::IsNone;
+        let negated = pred.negate();
+
+        assert_eq!(
+            negated,
+            TypePredicate::IsNotNone,
+            "Negation of IsNone should be IsNotNone"
+        );
+    }
+
+    #[test]
+    fn test_solve_narrowing_constraint() {
+        let var_name = "x".to_string();
+        let pred = TypePredicate::IsNotNone;
+        let narrowed_type = Type::int();
+
+        let constraints =
+            ConstraintSet { constraints: vec![Constraint::Narrowing(var_name, pred, narrowed_type, test_span())] };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(errors.is_empty(), "Narrowing constraint should not produce errors");
+    }
+
+    #[test]
+    fn test_solve_join_constraint_single_type() {
+        let var_name = "x".to_string();
+        let incoming_types = vec![Type::int()];
+        let result_type = tvar(0);
+
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Join(
+                var_name,
+                incoming_types,
+                result_type.clone(),
+                test_span(),
+            )],
+        };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(errors.is_empty(), "Join with single type should not produce errors");
+
+        let resolved = subst.apply(&result_type);
+        assert_eq!(resolved, Type::int(), "Join of single type should be that type");
+    }
+
+    #[test]
+    fn test_solve_join_constraint_multiple_types() {
+        let var_name = "x".to_string();
+        let incoming_types = vec![Type::int(), Type::string()];
+        let result_type = tvar(0);
+
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Join(
+                var_name,
+                incoming_types.clone(),
+                result_type.clone(),
+                test_span(),
+            )],
+        };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(errors.is_empty(), "Join with multiple types should not produce errors");
+
+        let resolved = subst.apply(&result_type);
+        match resolved {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2, "Join should create union of both types");
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+            }
+            _ => panic!("Expected union type, got {resolved:?}"),
+        }
+    }
+
+    #[test]
+    fn test_solve_join_constraint_empty() {
+        let var_name = "x".to_string();
+        let incoming_types = vec![];
+        let result_type = tvar(0);
+
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Join(
+                var_name,
+                incoming_types,
+                result_type.clone(),
+                test_span(),
+            )],
+        };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (subst, errors) = result.unwrap();
+        assert!(errors.is_empty(), "Join with empty types should not produce errors");
+
+        let resolved = subst.apply(&result_type);
+        assert_eq!(resolved, Type::none(), "Join of no types should be None");
+    }
+
+    #[test]
+    fn test_narrowing_with_union_type() {
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let pred = TypePredicate::IsNotNone;
+        let narrowed = pred.apply(&union_type);
+
+        match narrowed {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2, "Should have 2 types after removing None");
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+                assert!(!types.iter().any(|t| matches!(t, Type::Con(TypeCtor::NoneType))));
+            }
+            _ => panic!("Expected union type after narrowing, got {narrowed:?}"),
+        }
+    }
+
+    #[test]
+    fn test_narrowing_already_non_optional() {
+        let int_type = Type::int();
+        let pred = TypePredicate::IsNotNone;
+        let narrowed = pred.apply(&int_type);
+        assert_eq!(narrowed, Type::int(), "Narrowing non-optional type should be no-op");
     }
 }
