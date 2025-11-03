@@ -1891,4 +1891,106 @@ mod tests {
         let narrowed = pred.apply(&int_type);
         assert_eq!(narrowed, Type::int(), "Narrowing non-optional type should be no-op");
     }
+
+    #[test]
+    fn test_type_predicate_isinstance_single_type() {
+        let union_type = Type::union(vec![Type::int(), Type::string()]);
+        let pred = TypePredicate::IsInstance(Type::int());
+        let narrowed = pred.apply(&union_type);
+        assert_eq!(narrowed, Type::int(), "isinstance(x, int) should narrow to int");
+    }
+
+    #[test]
+    fn test_type_predicate_isinstance_union_target() {
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::bool()]);
+        let target = Type::union(vec![Type::int(), Type::string()]);
+        let pred = TypePredicate::IsInstance(target.clone());
+        let narrowed = pred.apply(&union_type);
+        match narrowed {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2, "Should narrow to union of int and str");
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+                assert!(!types.contains(&Type::bool()));
+            }
+            _ => panic!("Expected union type after narrowing, got {narrowed:?}"),
+        }
+    }
+
+    #[test]
+    fn test_type_predicate_isinstance_non_union() {
+        let int_type = Type::int();
+        let pred = TypePredicate::IsInstance(Type::string());
+        let narrowed = pred.apply(&int_type);
+        assert_eq!(narrowed, Type::string(), "isinstance narrows to target type");
+    }
+
+    #[test]
+    fn test_type_predicate_isinstance_target_in_union() {
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let pred = TypePredicate::IsInstance(Type::string());
+        let narrowed = pred.apply(&union_type);
+        assert_eq!(narrowed, Type::string(), "Should narrow to exact type in union");
+    }
+
+    #[test]
+    fn test_type_predicate_isinstance_target_not_in_union() {
+        let union_type = Type::union(vec![Type::int(), Type::string()]);
+        let pred = TypePredicate::IsInstance(Type::bool());
+        let narrowed = pred.apply(&union_type);
+        assert_eq!(narrowed, Type::bool(), "Should narrow to target even if not in union");
+    }
+
+    #[test]
+    fn test_type_predicate_isinstance_has_no_simple_negation() {
+        let pred = TypePredicate::IsInstance(Type::int());
+        assert!(
+            !pred.has_simple_negation(),
+            "isinstance should not have simple negation"
+        );
+    }
+
+    #[test]
+    fn test_solve_narrowing_isinstance_constraint() {
+        let var_name = "x".to_string();
+        let pred = TypePredicate::IsInstance(Type::int());
+        let narrowed_type = Type::int();
+        let constraints =
+            ConstraintSet { constraints: vec![Constraint::Narrowing(var_name, pred, narrowed_type, test_span())] };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "isinstance narrowing constraint should not produce errors"
+        );
+    }
+
+    #[test]
+    fn test_isinstance_with_multiple_types() {
+        let original = Type::union(vec![Type::int(), Type::string(), Type::bool(), Type::none()]);
+        let target = Type::union(vec![Type::int(), Type::string()]);
+        let pred = TypePredicate::IsInstance(target);
+        let narrowed = pred.apply(&original);
+        match narrowed {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+            }
+            _ => panic!("Expected union, got {narrowed:?}"),
+        }
+    }
+
+    #[test]
+    fn test_isinstance_empty_intersection() {
+        let original = Type::union(vec![Type::int(), Type::string()]);
+        let target = Type::union(vec![Type::bool(), Type::float()]);
+        let pred = TypePredicate::IsInstance(target.clone());
+        let narrowed = pred.apply(&original);
+        assert_eq!(narrowed, target);
+    }
 }

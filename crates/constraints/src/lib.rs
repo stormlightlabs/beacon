@@ -13,8 +13,13 @@ use rustc_hash::FxHashMap;
 pub enum TypePredicate {
     /// Variable is not None: `x is not None`
     IsNotNone,
+
     /// Variable is None: `x is None`
     IsNone,
+
+    /// Variable is an instance of a type: `isinstance(x, T)`
+    /// Can also represent isinstance with multiple types: `isinstance(x, (T1, T2))`
+    IsInstance(Type),
 }
 
 impl TypePredicate {
@@ -26,6 +31,30 @@ impl TypePredicate {
         match self {
             TypePredicate::IsNotNone => ty.remove_from_union(&Type::none()),
             TypePredicate::IsNone => Type::none(),
+            TypePredicate::IsInstance(target) => match ty {
+                Type::Union(variants) => {
+                    if variants.contains(target) {
+                        target.clone()
+                    } else if let Type::Union(target_variants) = target {
+                        let intersection: Vec<Type> = variants
+                            .iter()
+                            .filter(|v| target_variants.contains(v))
+                            .cloned()
+                            .collect();
+
+                        if intersection.is_empty() {
+                            target.clone()
+                        } else if intersection.len() == 1 {
+                            intersection.into_iter().next().unwrap()
+                        } else {
+                            Type::union(intersection)
+                        }
+                    } else {
+                        target.clone()
+                    }
+                }
+                _ => target.clone(),
+            },
         }
     }
 
@@ -34,7 +63,16 @@ impl TypePredicate {
         match self {
             TypePredicate::IsNotNone => TypePredicate::IsNone,
             TypePredicate::IsNone => TypePredicate::IsNotNone,
+            TypePredicate::IsInstance(_) => TypePredicate::IsNotNone,
         }
+    }
+
+    /// Check if this predicate has a meaningful negation for constraint generation
+    ///
+    /// Some predicates like isinstance don't have simple inverse predicates,
+    /// and their negation is handled by type subtraction in detect_inverse_type_guard.
+    pub fn has_simple_negation(&self) -> bool {
+        !matches!(self, TypePredicate::IsInstance(_))
     }
 }
 

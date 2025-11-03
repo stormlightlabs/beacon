@@ -730,14 +730,18 @@ fn visit_node_with_context(
             if let (Some(var_name), Some(refined_ty)) = (inverse_var.as_ref(), inverse_type.as_ref()) {
                 elif_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
 
-                if let Some(inv_pred) = &inverse_predicate {
-                    let span = Span::new(*line, *col);
-                    ctx.constraints.push(Constraint::Narrowing(
-                        var_name.clone(),
-                        inv_pred.clone(),
-                        refined_ty.clone(),
-                        span,
-                    ));
+                if let Some(pred) = &predicate {
+                    if pred.has_simple_negation() {
+                        if let Some(inv_pred) = &inverse_predicate {
+                            let span = Span::new(*line, *col);
+                            ctx.constraints.push(Constraint::Narrowing(
+                                var_name.clone(),
+                                inv_pred.clone(),
+                                refined_ty.clone(),
+                                span,
+                            ));
+                        }
+                    }
                 }
             }
 
@@ -1637,7 +1641,7 @@ fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Opti
 ///
 /// It supports:
 /// - None checks: `x is not None`, `x is None`
-/// - isinstance checks (future)
+/// - isinstance checks: `isinstance(x, Type)`, `isinstance(x, (Type1, Type2))`
 /// - Truthiness checks (future)
 fn extract_type_predicate(test: &AstNode) -> Option<TypePredicate> {
     match test {
@@ -1654,6 +1658,34 @@ fn extract_type_predicate(test: &AstNode) -> Option<TypePredicate> {
                 }
             }
             None
+        }
+        AstNode::Call { function, args, .. } if function == "isinstance" && args.len() == 2 => {
+            let target_type = match &args[1] {
+                AstNode::Identifier { name: type_name, .. } => Some(type_name_to_type(type_name)),
+                AstNode::Tuple { elements, .. } => {
+                    let types: Vec<Type> = elements
+                        .iter()
+                        .filter_map(|elem| {
+                            if let AstNode::Identifier { name: type_name, .. } = elem {
+                                Some(type_name_to_type(type_name))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+
+                    if types.is_empty() {
+                        None
+                    } else if types.len() == 1 {
+                        Some(types.into_iter().next().unwrap())
+                    } else {
+                        Some(Type::union(types))
+                    }
+                }
+                _ => None,
+            }?;
+
+            Some(TypePredicate::IsInstance(target_type))
         }
         _ => None,
     }
