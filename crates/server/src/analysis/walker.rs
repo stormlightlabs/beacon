@@ -835,15 +835,56 @@ fn visit_node_with_context(
         }
 
         AstNode::While { test, body, else_body, line, col } => {
-            visit_node_with_env(test, env, ctx, stub_cache)?;
+            visit_node_with_context(test, env, ctx, stub_cache, ExprContext::Value)?;
+
+            let predicate = extract_type_predicate(test);
+            let inverse_predicate = predicate.as_ref().map(|p| p.negate());
+
+            let (narrowed_var, narrowed_type) = detect_type_guard(test, &mut env.clone());
+            let mut loop_env = env.clone();
+
+            if let (Some(var_name), Some(refined_ty)) = (narrowed_var.as_ref(), narrowed_type.as_ref()) {
+                loop_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
+
+                if let Some(pred) = &predicate {
+                    let span = Span::new(*line, *col);
+                    ctx.constraints.push(Constraint::Narrowing(
+                        var_name.clone(),
+                        pred.clone(),
+                        refined_ty.clone(),
+                        span,
+                    ));
+                }
+            }
 
             for stmt in body {
-                visit_node_with_env(stmt, env, ctx, stub_cache)?;
+                visit_node_with_context(stmt, &mut loop_env, ctx, stub_cache, ExprContext::Void)?;
             }
 
             if let Some(else_stmts) = else_body {
+                let (inverse_var, inverse_type) = detect_inverse_type_guard(test, &mut env.clone());
+                let mut else_env = env.clone();
+
+                if let (Some(var_name), Some(refined_ty)) = (inverse_var.as_ref(), inverse_type.as_ref()) {
+                    else_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
+
+                    if let Some(pred) = &predicate {
+                        if pred.has_simple_negation() {
+                            if let Some(inv_pred) = &inverse_predicate {
+                                let span = Span::new(*line, *col);
+                                ctx.constraints.push(Constraint::Narrowing(
+                                    var_name.clone(),
+                                    inv_pred.clone(),
+                                    refined_ty.clone(),
+                                    span,
+                                ));
+                            }
+                        }
+                    }
+                }
+
                 for stmt in else_stmts {
-                    visit_node_with_env(stmt, env, ctx, stub_cache)?;
+                    visit_node_with_context(stmt, &mut else_env, ctx, stub_cache, ExprContext::Void)?;
                 }
             }
 
@@ -853,31 +894,42 @@ fn visit_node_with_context(
 
         AstNode::Try { body, handlers, else_body, finally_body, line, col } => {
             for stmt in body {
-                visit_node_with_env(stmt, env, ctx, stub_cache)?;
+                visit_node_with_context(stmt, env, ctx, stub_cache, ExprContext::Void)?;
             }
 
             for handler in handlers {
                 let mut handler_env = env.clone();
                 if let Some(ref name) = handler.name {
-                    // TODO: Use proper exception type hierarchy when available
-                    let exc_ty = Type::Var(env.fresh_var());
-                    handler_env.bind(name.clone(), TypeScheme::mono(exc_ty));
+                    let exc_ty = if let Some(ref exc_type_name) = handler.exception_type {
+                        type_name_to_type(exc_type_name)
+                    } else {
+                        Type::Var(env.fresh_var())
+                    };
+                    handler_env.bind(name.clone(), TypeScheme::mono(exc_ty.clone()));
+
+                    let span = Span::new(*line, *col);
+                    ctx.constraints.push(Constraint::Narrowing(
+                        name.clone(),
+                        TypePredicate::IsInstance(exc_ty.clone()),
+                        exc_ty,
+                        span,
+                    ));
                 }
 
                 for stmt in &handler.body {
-                    visit_node_with_env(stmt, &mut handler_env, ctx, stub_cache)?;
+                    visit_node_with_context(stmt, &mut handler_env, ctx, stub_cache, ExprContext::Void)?;
                 }
             }
 
             if let Some(else_stmts) = else_body {
                 for stmt in else_stmts {
-                    visit_node_with_env(stmt, env, ctx, stub_cache)?;
+                    visit_node_with_context(stmt, env, ctx, stub_cache, ExprContext::Void)?;
                 }
             }
 
             if let Some(finally_stmts) = finally_body {
                 for stmt in finally_stmts {
-                    visit_node_with_env(stmt, env, ctx, stub_cache)?;
+                    visit_node_with_context(stmt, env, ctx, stub_cache, ExprContext::Void)?;
                 }
             }
 
@@ -947,7 +999,7 @@ fn visit_node_with_context(
                 if *is_async { ("__aenter__", "__aexit__") } else { ("__enter__", "__exit__") };
 
             for item in items {
-                let context_ty = visit_node_with_env(&item.context_expr, env, ctx, stub_cache)?;
+                let context_ty = visit_node_with_context(&item.context_expr, env, ctx, stub_cache, ExprContext::Value)?;
 
                 let enter_ty = Type::Var(env.fresh_var());
                 let span = Span::new(*line, *col);
@@ -963,12 +1015,19 @@ fn visit_node_with_context(
                     .push(Constraint::HasAttr(context_ty, exit_method.to_string(), exit_ty, span));
 
                 if let Some(ref target) = item.optional_vars {
-                    env.bind(target.clone(), TypeScheme::mono(enter_ty));
+                    env.bind(target.clone(), TypeScheme::mono(enter_ty.clone()));
+
+                    ctx.constraints.push(Constraint::Narrowing(
+                        target.clone(),
+                        TypePredicate::IsInstance(enter_ty.clone()),
+                        enter_ty,
+                        span,
+                    ));
                 }
             }
 
             for stmt in body {
-                visit_node_with_env(stmt, env, ctx, stub_cache)?;
+                visit_node_with_context(stmt, env, ctx, stub_cache, ExprContext::Void)?;
             }
 
             ctx.record_type(*line, *col, Type::none());

@@ -2197,4 +2197,112 @@ mod tests {
             "And predicate narrowing constraint should not produce errors"
         );
     }
+
+    #[test]
+    fn test_while_loop_narrowing_constraint() {
+        let var_name = "x".to_string();
+        let pred = TypePredicate::IsNotNone;
+        let narrowed_type = Type::int();
+
+        let constraints =
+            ConstraintSet { constraints: vec![Constraint::Narrowing(var_name, pred, narrowed_type, test_span())] };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(errors.is_empty(), "While loop narrowing should work like If narrowing");
+    }
+
+    #[test]
+    fn test_try_except_exception_narrowing() {
+        let exc_var = "e".to_string();
+        let exception_type = Type::Var(TypeVar::new(0));
+        let pred = TypePredicate::IsInstance(exception_type.clone());
+
+        let constraints =
+            ConstraintSet { constraints: vec![Constraint::Narrowing(exc_var, pred, exception_type, test_span())] };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "Exception variable narrowing should not produce errors"
+        );
+    }
+
+    #[test]
+    fn test_with_statement_context_manager_narrowing() {
+        let target_var = "f".to_string();
+        let file_type = Type::Var(TypeVar::new(0));
+        let pred = TypePredicate::IsInstance(file_type.clone());
+
+        let constraints =
+            ConstraintSet { constraints: vec![Constraint::Narrowing(target_var, pred, file_type, test_span())] };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(errors.is_empty(), "Context manager narrowing should not produce errors");
+    }
+
+    #[test]
+    fn test_while_loop_with_truthiness() {
+        let optional_int = Type::optional(Type::int());
+        let pred = TypePredicate::IsTruthy;
+
+        let narrowed = pred.apply(&optional_int);
+        assert_eq!(
+            narrowed,
+            Type::int(),
+            "While loop with truthiness should narrow Optional to non-None"
+        );
+    }
+
+    #[test]
+    fn test_while_loop_with_isinstance() {
+        let union_type = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let pred = TypePredicate::And(
+            Box::new(TypePredicate::IsNotNone),
+            Box::new(TypePredicate::IsInstance(Type::int())),
+        );
+
+        let narrowed = pred.apply(&union_type);
+        assert_eq!(
+            narrowed,
+            Type::int(),
+            "While loop with complex guard should narrow correctly"
+        );
+    }
+
+    #[test]
+    fn test_multiple_narrowing_constraints() {
+        let var1 = "x".to_string();
+        let var2 = "y".to_string();
+
+        let constraints = ConstraintSet {
+            constraints: vec![
+                Constraint::Narrowing(var1, TypePredicate::IsNotNone, Type::int(), test_span()),
+                Constraint::Narrowing(
+                    var2,
+                    TypePredicate::IsInstance(Type::string()),
+                    Type::string(),
+                    test_span(),
+                ),
+            ],
+        };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(errors.is_empty(), "Multiple narrowing constraints should work together");
+    }
 }
