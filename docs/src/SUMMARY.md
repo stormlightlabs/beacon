@@ -12,6 +12,7 @@
         - [Interpreter](./lsp/python_docs.md)
     - [Static Analysis](./lsp/static_analysis.md)
         - [Rules](./lsp/lint_rules.md)
+        - [Type Checker](./lsp/type_checking.md)
     - [Testing Strategy](./lsp/testing.md)
     - [Current Limitations](./lsp/limitations.md)
         - [Next Steps](./lsp/next_steps.md)

@@ -2,113 +2,6 @@
 
 Implementation details and mod-specific tasks.
 
-## Type System
-
-### Class Features - Decorators & Fields
-
-- [x] Add class-level annotation extraction in extract_class_metadata
-- [x] Implement @dataclass special handling
-- [x] Add enum class support
-- [x] Fix decorator constraint generation
-
-**Impact**: Clears 20+ false positives (CacheEntry/bool, enum attributes, dataclass fields)
-
-### Stdlib Integration
-
-**Goal**: Complete method signatures for builtin types
-
-**Tasks**:
-
-- [ ] Expand builtins.pyi stub
-    - str methods: splitlines, strip, replace, format, etc.
-    - list methods: append, extend, pop, etc.
-    - dict methods: get, items, keys, values, etc.
-- [ ] Add pathlib.pyi stub
-    - Path class with **init**, read_text, write_text, exists, etc.
-    - PurePath methods
-- [ ] Add typing.pyi improvements
-    - Generator, Iterator protocol methods
-    - Ensure TypeVar, Generic properly defined
-- [ ] Fix stub loading to ensure all modules loaded
-    - Verify builtins always loaded
-    - Add logging for missing stubs
-
-**Impact**: Clears 10+ false positives (splitlines not found, Path.write_text, etc.)
-
-### Type Inference
-
-**Goal**: Fix complex type inference issues
-
-**Tasks**:
-
-- [x] Filter module/class docstrings from constraint generation
-- [x] Add return type inference from context
-- [x] Generator/comprehension type construction
-- [x] Type parameter instantiation for generic types
-
-**Impact**: Docstring fix clears ANY001 false positives on module/class/function docstrings
-
-### Flow-Sensitive Type Narrowing
-
-**Location**: `crates/server/src/analysis/walker.rs`, `crates/constraints/src/lib.rs`
-
-**Goal**: Implement type narrowing after None checks and type guards to support patterns like:
-
-```python
-calc = maybe_calc()  # calc: Calculator | None
-if calc is not None:
-    calc.add(1, 2)  # calc narrowed to Calculator here
-```
-
-**Tasks**:
-
-- [ ] Design control flow tracking system in constraint generator
-- [ ] Implement None-check narrowing
-- [ ] Add Narrowing constraint type
-- [ ] Extend to isinstance() checks
-- [ ] Handle truthiness narrowing
-- [ ] Add tests for flow-sensitive narrowing
-
-### Polish & Validation
-
-**Goal**: Zero false positives on test files
-
-**Tasks**:
-
-- [ ] Run full diagnostic pass on all sample files
-    - Verify bugs.json is empty
-    - Check for new edge cases
-- [ ] Add missing linter suppressions
-    - Implement `# type: ignore` support
-    - Handle intentional test cases (unused variables, etc.)
-- [ ] Improve error messages
-    - Show clearer messages for decorator issues
-    - Better formatting for union type mismatches
-    - Add "did you mean?" suggestions
-- [ ] Update TODO.md with remaining enhancements
-    - Flow-sensitive type narrowing (separate from false positive fixes)
-    - Pattern matching support
-    - Performance optimizations
-- [ ] Documentation update
-    - Document known limitations
-    - Add troubleshooting guide for type errors
-
-## Integration Test Cases
-
-- [ ] `with open('file') as f:` infers file type (requires _IO stub integration)
-- [ ] `lst[0]` where `lst: list[int]` infers `int` (requires full test harness)
-- [ ] Class inheritance with method override
-
-### Pattern Matching
-
-- [ ] Sequence patterns `[x, y, *rest]`
-- [ ] Mapping patterns `{"key": value}`
-- [ ] Class patterns `Point(x, y)`
-- [ ] OR patterns with consistent bindings `case 1 | 2 | 3:`
-- [ ] AS patterns `case [x, *rest] as full:`
-- [ ] Guard expressions `case x if x > 0:`
-- [ ] Nested patterns
-
 ## Pattern Matching
 
 ### LSP Features
@@ -198,3 +91,16 @@ Tasks:
 - [ ] Track inter-scope dependencies (e.g., function calls, imports)
 - [ ] Selective invalidation: only reanalyze changed scopes and dependents
 - [ ] Benchmark incremental analysis with large files (target: <50ms for single-scope change)
+
+## Error & Warning Span Position Accuracy
+
+Parser doesn't provide end positions for AST nodes, causing single-character error markers.
+
+**Location**: `crates/parser` (AST node definitions) &`crates/server/src/analysis/walker.rs` (Span creation)
+
+**Tasks**:
+
+- [ ] Add end_line and end_col to all AstNode variants
+- [ ] Update parser to track end positions
+- [ ] Update constraint generation to use full spans
+- [ ] Test error highlighting covers full expressions
