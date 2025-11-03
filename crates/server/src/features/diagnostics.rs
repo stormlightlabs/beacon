@@ -915,17 +915,30 @@ fn type_error_to_diagnostic(error_info: &beacon_constraint::TypeErrorInfo) -> Di
     }
 }
 
-/// Enhance unification error messages with contextual hints
+/// Enhance unification error messages with contextual hints based on common type mismatches
 fn enhance_unification_error_message(base_msg: &str, t1: &str, t2: &str) -> String {
-    if t1.contains("str") && t2.contains("int") || t1.contains("int") && t2.contains("str") {
-        format!("{base_msg}. Ensure you're not mixing strings and integers without explicit conversion.")
-    } else if t1.contains("None") || t2.contains("None") {
-        format!("{base_msg}. Consider checking for None before use, or use Optional type annotation.")
-    } else if t1.contains("list") && t2.contains("dict") || t1.contains("dict") && t2.contains("list") {
-        format!("{base_msg}. Collection type mismatch - ensure data structures match expected types.")
-    } else {
-        base_msg.to_string()
+    if (t1.contains("str") && t2.contains("int")) || (t1.contains("int") && t2.contains("str")) {
+        return format!("{base_msg}. Ensure you're not mixing strings and integers without explicit conversion.");
     }
+
+    if (t1.contains("list") && t2.contains("dict")) || (t1.contains("dict") && t2.contains("list")) {
+        return format!("{base_msg}. Collection type mismatch - ensure data structures match expected types.");
+    }
+
+    if t1.contains("Union") || t2.contains("Union") {
+        if (t1.contains("None") && t2.contains("Union")) || (t2.contains("None") && t1.contains("Union")) {
+            return format!("{base_msg}. You may need to narrow the type with an isinstance() check or type guard.");
+        }
+        return format!("{base_msg}. Union types require all branches to be compatible with the target type.");
+    }
+
+    if t1.contains("None") || t2.contains("None") {
+        return format!(
+            "{base_msg}. One value is None where a different type is expected. Consider using Optional[T] or adding a None check."
+        );
+    }
+
+    base_msg.to_string()
 }
 
 /// Enhance protocol error messages with helpful context
@@ -1524,7 +1537,7 @@ def test():
     #[test]
     fn test_enhanced_unification_error_message_none() {
         let msg = enhance_unification_error_message("Type mismatch: cannot unify str with None", "str", "None");
-        assert!(msg.contains("checking for None") || msg.contains("Optional"));
+        assert!(msg.contains("None where a different type is expected") && msg.contains("Optional"));
     }
 
     #[test]

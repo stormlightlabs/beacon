@@ -239,15 +239,25 @@ pub fn solve_constraints(
     let mut type_errors = Vec::new();
     for constraint in constraint_set.constraints {
         match constraint {
-            Constraint::Equal(t1, t2, span) => match Unifier::unify(&subst.apply(&t1), &subst.apply(&t2)) {
-                Ok(s) => {
-                    subst = s.compose(subst);
+            Constraint::Equal(t1, t2, span) => {
+                let applied_t1 = subst.apply(&t1);
+                let applied_t2 = subst.apply(&t2);
+
+                let involves_union = matches!(applied_t1, Type::Union(_)) || matches!(applied_t2, Type::Union(_));
+
+                if !(involves_union && (applied_t1.is_subtype_of(&applied_t2) || applied_t2.is_subtype_of(&applied_t1)))
+                {
+                    match Unifier::unify(&applied_t1, &applied_t2) {
+                        Ok(s) => {
+                            subst = s.compose(subst);
+                        }
+                        Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                            type_errors.push(TypeErrorInfo::new(type_err, span));
+                        }
+                        Err(_) => {}
+                    }
                 }
-                Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                    type_errors.push(TypeErrorInfo::new(type_err, span));
-                }
-                Err(_) => {}
-            },
+            }
 
             Constraint::Call(func_ty, arg_types, ret_ty, span) => {
                 let applied_func = subst.apply(&func_ty);
@@ -2549,6 +2559,108 @@ mod tests {
         assert!(
             matches!(resolved_outer, Type::Var(_)) || resolved_outer == Type::string(),
             "Element type should be resolved correctly"
+        );
+    }
+
+    #[test]
+    fn test_optional_unifies_with_none_via_subtyping() {
+        let optional_int = Type::optional(Type::int());
+        let none_ty = Type::none();
+        let constraints = ConstraintSet { constraints: vec![Constraint::Equal(optional_int, none_ty, test_span())] };
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "Optional[int] should unify with None via subtyping, got {} errors",
+            errors.len()
+        );
+    }
+
+    #[test]
+    fn test_union_unifies_with_member_via_subtyping() {
+        let union_ty = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let str_ty = Type::string();
+
+        let constraints = ConstraintSet { constraints: vec![Constraint::Equal(union_ty, str_ty, test_span())] };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "Union[int, str, None] should unify with str via subtyping, got {} errors",
+            errors.len()
+        );
+    }
+
+    #[test]
+    fn test_none_unifies_with_optional_via_subtyping() {
+        let none_ty = Type::none();
+        let optional_str = Type::optional(Type::string());
+        let constraints = ConstraintSet { constraints: vec![Constraint::Equal(none_ty, optional_str, test_span())] };
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "None should unify with Optional[str] via subtyping, got {} errors",
+            errors.len()
+        );
+    }
+
+    #[test]
+    fn test_union_member_unifies_with_union_via_subtyping() {
+        let int_ty = Type::int();
+        let union_ty = Type::union(vec![Type::int(), Type::string()]);
+        let constraints = ConstraintSet { constraints: vec![Constraint::Equal(int_ty, union_ty, test_span())] };
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "int should unify with Union[int, str] via subtyping, got {} errors",
+            errors.len()
+        );
+    }
+
+    #[test]
+    fn test_non_union_types_still_use_unification() {
+        let int_ty = Type::int();
+        let str_ty = Type::string();
+        let constraints = ConstraintSet { constraints: vec![Constraint::Equal(int_ty, str_ty, test_span())] };
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            !errors.is_empty(),
+            "Non-union types should still fail unification when incompatible"
+        );
+    }
+
+    #[test]
+    fn test_union_fails_when_not_subtype() {
+        let union_ty = Type::union(vec![Type::int(), Type::string()]);
+        let float_ty = Type::float();
+        let constraints = ConstraintSet { constraints: vec![Constraint::Equal(union_ty, float_ty, test_span())] };
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            !errors.is_empty(),
+            "Union[int, str] should not unify with float when not a subtype"
         );
     }
 }
