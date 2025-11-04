@@ -264,12 +264,6 @@ fn classes_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegi
     }
 
     if let Some((expected_name, expected_args)) = class_info(expected) {
-        if let Some(metadata) = class_registry.get_class(&expected_name) {
-            if metadata.is_protocol {
-                return check_user_defined_protocol(actual, &expected_name, class_registry);
-            }
-        }
-
         if let Some((actual_name, actual_args)) = class_info(actual) {
             if class_registry.is_subclass_of(&actual_name, &expected_name) {
                 if !expected_args.is_empty() && actual_args.len() == expected_args.len() {
@@ -280,6 +274,12 @@ fn classes_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegi
                     }
                 }
                 return true;
+            }
+        }
+
+        if let Some(metadata) = class_registry.get_class(&expected_name) {
+            if metadata.is_protocol {
+                return check_user_defined_protocol(actual, &expected_name, class_registry);
             }
         }
     }

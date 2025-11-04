@@ -228,6 +228,13 @@ pub fn process_class_methods(body: &[AstNode], metadata: &mut ClassMetadata, ctx
     let mut methods_by_name: HashMap<String, Vec<MethodInfo>> = HashMap::new();
 
     for stmt in body {
+        if let AstNode::AnnotatedAssignment { target, type_annotation, .. } = stmt {
+            if let Some(attr_type) = parse_type_annotation(type_annotation, ctx) {
+                metadata.add_field(target.clone(), attr_type);
+            }
+            continue;
+        }
+
         if let AstNode::FunctionDef { name: method_name, args: params, return_type, decorators, .. } = stmt {
             let mut param_types: Vec<beacon_core::Type> = Vec::new();
 

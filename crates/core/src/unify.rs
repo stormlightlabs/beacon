@@ -98,6 +98,7 @@ impl Unifier {
             (Type::ForAll(_, _), _) | (_, Type::ForAll(_, _)) => {
                 Err(TypeError::UnificationError("polymorphic type".to_string(), "monomorphic type".to_string()).into())
             }
+            (Type::Con(TypeCtor::TypeVariable(_)), _) | (_, Type::Con(TypeCtor::TypeVariable(_))) => Ok(Subst::empty()),
             _ => Err(TypeError::UnificationError(t1.to_string(), t2.to_string()).into()),
         }
     }
