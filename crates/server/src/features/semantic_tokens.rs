@@ -288,7 +288,7 @@ impl SemanticTokensProvider {
                 }
             }
 
-            AstNode::Call { function, args, line, col } => {
+            AstNode::Call { function, args, keywords, line, col } => {
                 if function.contains('.') {
                     let parts: Vec<&str> = function.split('.').collect();
                     let mut current_col = *col;
@@ -316,6 +316,10 @@ impl SemanticTokensProvider {
 
                 for arg in args {
                     self.collect_tokens_from_node(arg, symbol_table, current_scope, text, raw_tokens);
+                }
+
+                for (_name, value) in keywords {
+                    self.collect_tokens_from_node(value, symbol_table, current_scope, text, raw_tokens);
                 }
             }
 

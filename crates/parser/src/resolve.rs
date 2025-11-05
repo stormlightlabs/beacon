@@ -513,7 +513,7 @@ impl NameResolver {
                     self.track_references(val)?;
                 }
             }
-            AstNode::Call { function, args, line, col } => {
+            AstNode::Call { function, args, keywords, line, col } => {
                 let byte_offset = self.line_col_to_byte_offset(*line, *col);
                 let scope = self.symbol_table.find_scope_at_position(byte_offset);
                 self.symbol_table
@@ -521,6 +521,10 @@ impl NameResolver {
 
                 for arg in args {
                     self.track_references(arg)?;
+                }
+
+                for (_name, value) in keywords {
+                    self.track_references(value)?;
                 }
             }
             AstNode::Identifier { name, line, col } => {
@@ -2044,6 +2048,7 @@ mod tests {
                     args: vec![AstNode::Identifier { name: "y".to_string(), line: 3, col: 7 }],
                     line: 3,
                     col: 1,
+                    keywords: Vec::new(),
                 },
             ],
             docstring: None,

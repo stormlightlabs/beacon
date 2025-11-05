@@ -1,5 +1,6 @@
 use crate::types::{OverloadSet, Type, TypeCtor, TypeVar};
 
+use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
 
 /// Represents either a single method signature or an overloaded method with multiple signatures
@@ -52,7 +53,8 @@ pub struct ClassMetadata {
     pub name: String,
 
     /// Field types discovered from __init__ and class body, mapping field name to its type
-    pub fields: HashMap<String, Type>,
+    /// Uses IndexMap to preserve field definition order for dataclass constructors
+    pub fields: IndexMap<String, Type>,
 
     /// Maps method name to its method type (single signature or overload set)
     pub methods: HashMap<String, MethodType>,
@@ -93,7 +95,7 @@ impl ClassMetadata {
     pub fn new(name: String) -> Self {
         Self {
             name,
-            fields: HashMap::new(),
+            fields: IndexMap::new(),
             methods: HashMap::new(),
             init_type: None,
             is_protocol: false,

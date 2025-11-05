@@ -107,7 +107,9 @@ fn check_node_for_yield(node: &AstNode) -> bool {
         AstNode::DictComp { .. } => false,
         AstNode::SetComp { .. } => false,
         AstNode::GeneratorExp { .. } => false,
-        AstNode::Call { args, .. } => args.iter().any(check_node_for_yield),
+        AstNode::Call { args, keywords, .. } => {
+            args.iter().any(check_node_for_yield) || keywords.iter().any(|(_, v)| check_node_for_yield(v))
+        }
         AstNode::BinaryOp { left, right, .. } => check_node_for_yield(left) || check_node_for_yield(right),
         AstNode::UnaryOp { operand, .. } => check_node_for_yield(operand),
         AstNode::Compare { left, comparators, .. } => {
@@ -518,7 +520,7 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, annotated_ty.clone());
             Ok(annotated_ty)
         }
-        AstNode::Call { function, args, line, col } => {
+        AstNode::Call { function, args, keywords, line, col } => {
             let func_ty = if function.contains('.') {
                 if let Some(last_dot_idx) = function.rfind('.') {
                     let (object_part, method_part) = function.split_at(last_dot_idx);
@@ -546,6 +548,12 @@ fn visit_node_with_context(
             for arg in args {
                 arg_types.push(visit_node_with_env(arg, env, ctx, stub_cache)?);
             }
+
+            // TODO: Handle keyword arg parsing with parameter name matching
+            for (_name, value) in keywords {
+                arg_types.push(visit_node_with_env(value, env, ctx, stub_cache)?);
+            }
+
             let ret_ty = Type::Var(env.fresh_var());
             let span = Span::new(*line, *col);
             ctx.constraints
@@ -1286,8 +1294,6 @@ fn visit_node_with_context(
             Ok(generator_ty)
         }
         AstNode::Tuple { elements, line, col } => {
-            let span = Span::new(*line, *col);
-
             if elements.is_empty() {
                 let elem_ty = Type::Var(env.fresh_var());
                 let tuple_ty = Type::tuple(elem_ty);
@@ -1299,13 +1305,10 @@ fn visit_node_with_context(
                     .map(|elem| visit_node_with_env(elem, env, ctx, stub_cache))
                     .collect::<std::result::Result<Vec<Type>, _>>()?;
 
-                let unified_ty = Type::Var(env.fresh_var());
-                for elem_ty in &element_types {
-                    ctx.constraints
-                        .push(Constraint::Equal(elem_ty.clone(), unified_ty.clone(), span));
-                }
+                // TODO: Heterogeneous tuple support with tuple[T1, T2, T3] notation
+                let tuple_elem_ty = if element_types.len() == 1 { element_types[0].clone() } else { Type::any() };
 
-                let tuple_ty = Type::tuple(unified_ty);
+                let tuple_ty = Type::tuple(tuple_elem_ty);
                 ctx.record_type(*line, *col, tuple_ty.clone());
                 Ok(tuple_ty)
             }
@@ -1674,8 +1677,8 @@ fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<Strin
         return (None, None);
     }
 
-    if let AstNode::Call { function, args, .. } = test {
-        if function == "isinstance" && args.len() == 2 {
+    if let AstNode::Call { function, args, keywords, .. } = test {
+        if function == "isinstance" && args.len() == 2 && keywords.is_empty() {
             if let AstNode::Identifier { name: var_name, .. } = &args[0] {
                 if let AstNode::Identifier { name: type_name, .. } = &args[1] {
                     let refined_type = type_name_to_type(type_name);
@@ -1745,8 +1748,8 @@ fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Opti
         return (None, None);
     }
 
-    if let AstNode::Call { function, args, .. } = test {
-        if function == "isinstance" && args.len() == 2 {
+    if let AstNode::Call { function, args, keywords, .. } = test {
+        if function == "isinstance" && args.len() == 2 && keywords.is_empty() {
             if let AstNode::Identifier { name: var_name, .. } = &args[0] {
                 if let Some(current_type) = env.lookup(var_name) {
                     if let AstNode::Identifier { name: type_name, .. } = &args[1] {
@@ -1852,7 +1855,9 @@ fn extract_type_predicate(test: &AstNode, env: &TypeEnvironment) -> Option<TypeP
             }
             None
         }
-        AstNode::Call { function, args, .. } if function == "isinstance" && args.len() == 2 => {
+        AstNode::Call { function, args, keywords, .. }
+            if function == "isinstance" && args.len() == 2 && keywords.is_empty() =>
+        {
             let target_type = match &args[1] {
                 AstNode::Identifier { name: type_name, .. } => Some(type_name_to_type(type_name)),
                 AstNode::Tuple { elements, .. } => {
@@ -2260,7 +2265,13 @@ mod tests {
         visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
 
         let module = AstNode::Module {
-            body: vec![AstNode::Call { function: "create_calculator".to_string(), args: vec![], line: 2, col: 1 }],
+            body: vec![AstNode::Call {
+                function: "create_calculator".to_string(),
+                args: vec![],
+                keywords: vec![],
+                line: 2,
+                col: 1,
+            }],
             docstring: None,
         };
 
@@ -2324,7 +2335,7 @@ mod tests {
                 line: 3,
                 col: 4,
             }),
-            body: vec![AstNode::Call { function: "main".to_string(), args: vec![], line: 4, col: 5 }],
+            body: vec![AstNode::Call { function: "main".to_string(), args: vec![], keywords: vec![], line: 4, col: 5 }],
             elif_parts: vec![],
             else_body: None,
             line: 3,
@@ -2842,7 +2853,7 @@ mod tests {
                 line: 5,
                 col: 4,
             }),
-            body: vec![AstNode::Call { function: "main".to_string(), args: vec![], line: 6, col: 5 }],
+            body: vec![AstNode::Call { function: "main".to_string(), args: vec![], keywords: vec![], line: 6, col: 5 }],
             elif_parts: vec![],
             else_body: None,
             line: 5,
@@ -3063,15 +3074,19 @@ mod tests {
             "Tuple literal should create tuple type, got {tuple_ty:?}"
         );
 
-        let equal_constraints = ctx
-            .constraints
-            .iter()
-            .filter(|c| matches!(c, Constraint::Equal(_, _, _)))
-            .count();
-        assert!(
-            equal_constraints >= 3,
-            "Should have equality constraints for unifying element types"
-        );
+        match &tuple_ty {
+            Type::App(inner, elem) => {
+                assert!(
+                    matches!(**inner, Type::Con(TypeCtor::Tuple)),
+                    "Should be Tuple constructor"
+                );
+                assert!(
+                    matches!(**elem, Type::Con(TypeCtor::Any)),
+                    "Should use Any for heterogeneous elements, got {elem:?}"
+                );
+            }
+            _ => panic!("Expected tuple type, got {tuple_ty:?}"),
+        }
     }
 
     #[test]

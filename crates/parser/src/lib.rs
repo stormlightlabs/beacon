@@ -78,6 +78,7 @@ pub enum AstNode {
     Call {
         function: String,
         args: Vec<AstNode>,
+        keywords: Vec<(String, AstNode)>,
         line: usize,
         col: usize,
     },
@@ -429,6 +430,8 @@ struct InfoTry(
 
 struct InfoFor(String, AstNode, Vec<AstNode>, Option<Vec<AstNode>>, bool);
 
+struct InfoArgsKwargs(Vec<AstNode>, Vec<(String, AstNode)>);
+
 impl PythonParser {
     pub fn new() -> Result<Self> {
         let language = tree_sitter_python::LANGUAGE;
@@ -589,8 +592,8 @@ impl PythonParser {
             }
             "call" => {
                 let function = self.extract_call_function(&node, source)?;
-                let args = self.extract_call_args(&node, source)?;
-                Ok(AstNode::Call { function, args, line, col })
+                let InfoArgsKwargs(args, keywords) = self.extract_call_args_and_kwargs(&node, source)?;
+                Ok(AstNode::Call { function, args, keywords, line, col })
             }
             "identifier" => {
                 let name = node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
@@ -977,7 +980,7 @@ impl PythonParser {
         Ok(function.to_string())
     }
 
-    fn extract_call_args(&self, node: &Node, source: &str) -> Result<Vec<AstNode>> {
+    fn _extract_call_args(&self, node: &Node, source: &str) -> Result<Vec<AstNode>> {
         let args_node = node.child_by_field_name("arguments");
         let mut args = Vec::new();
 
@@ -991,6 +994,39 @@ impl PythonParser {
         }
 
         Ok(args)
+    }
+
+    /// Extract both positional arguments and keyword arguments from a call node
+    fn extract_call_args_and_kwargs(&self, node: &Node, source: &str) -> Result<InfoArgsKwargs> {
+        let args_node = node.child_by_field_name("arguments");
+        let mut args = Vec::new();
+        let mut keywords = Vec::new();
+
+        if let Some(arguments) = args_node {
+            let mut cursor = arguments.walk();
+            for child in arguments.children(&mut cursor) {
+                if !child.is_extra() && child.kind() != "(" && child.kind() != ")" && child.kind() != "," {
+                    match child.kind() {
+                        "keyword_argument" => {
+                            if let Some(name_node) = child.child_by_field_name("name") {
+                                let name = name_node
+                                    .utf8_text(source.as_bytes())
+                                    .map_err(|_| ParseError::InvalidUtf8)?
+                                    .to_string();
+
+                                if let Some(value_node) = child.child_by_field_name("value") {
+                                    let value = self.node_to_ast(value_node, source)?;
+                                    keywords.push((name, value));
+                                }
+                            }
+                        }
+                        _ => args.push(self.node_to_ast(child, source)?),
+                    }
+                }
+            }
+        }
+
+        Ok(InfoArgsKwargs(args, keywords))
     }
 
     fn extract_literal_value(&self, node: &Node, source: &str) -> Result<LiteralValue> {
@@ -2068,6 +2104,68 @@ mod tests {
                                 assert_eq!(s, "hello");
                             }
                             _ => panic!("Expected string literal"),
+                        }
+                    }
+                    _ => panic!("Expected call expression"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_call_with_keyword_args() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "Point(x=5, y=10)";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::Call { function, args, keywords, .. } => {
+                        assert_eq!(function, "Point");
+                        assert_eq!(args.len(), 0, "Should have no positional args");
+                        assert_eq!(keywords.len(), 2, "Should have 2 keyword args");
+                        assert_eq!(keywords[0].0, "x");
+                        match &keywords[0].1 {
+                            AstNode::Literal { value: LiteralValue::Integer(5), .. } => {}
+                            _ => panic!("Expected integer literal 5 for x"),
+                        }
+
+                        assert_eq!(keywords[1].0, "y");
+                        match &keywords[1].1 {
+                            AstNode::Literal { value: LiteralValue::Integer(10), .. } => {}
+                            _ => panic!("Expected integer literal 10 for y"),
+                        }
+                    }
+                    _ => panic!("Expected call expression"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_call_with_mixed_args() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "func(1, 2, key=3)";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::Call { function, args, keywords, .. } => {
+                        assert_eq!(function, "func");
+                        assert_eq!(args.len(), 2, "Should have 2 positional args");
+                        assert_eq!(keywords.len(), 1, "Should have 1 keyword arg");
+                        assert_eq!(keywords[0].0, "key");
+                        match &keywords[0].1 {
+                            AstNode::Literal { value: LiteralValue::Integer(3), .. } => {}
+                            _ => panic!("Expected integer literal 3 for key"),
                         }
                     }
                     _ => panic!("Expected call expression"),

@@ -268,6 +268,7 @@ result = hello()"#;
             args: vec![AstNode::Identifier { name: "x".to_string(), line: 1, col: 7 }],
             line: 1,
             col: 1,
+            keywords: Vec::new(),
         };
 
         let mut highlights = Vec::new();

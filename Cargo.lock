@@ -119,6 +119,7 @@ dependencies = [
 name = "beacon-core"
 version = "0.1.0"
 dependencies = [
+ "indexmap",
  "lsp-types",
  "rustc-hash",
  "thiserror 2.0.17",

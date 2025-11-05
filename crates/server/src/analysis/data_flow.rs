@@ -428,10 +428,14 @@ impl<'a> DataFlowAnalyzer<'a> {
             AstNode::Identifier { name, line, col } => {
                 uses.push((name.clone(), *line, *col));
             }
-            AstNode::Call { function, args, line, col } => {
+            AstNode::Call { function, args, keywords, line, col } => {
                 uses.push((function.clone(), *line, *col));
                 for arg in args {
                     Self::collect_uses(arg, uses);
+                }
+
+                for (_name, value) in keywords {
+                    Self::collect_uses(value, uses);
                 }
             }
             AstNode::BinaryOp { left, right, .. } => {
@@ -905,6 +909,7 @@ mod tests {
                     args: vec![AstNode::Identifier { name: "x".to_string(), line: 4, col: 11 }],
                     line: 4,
                     col: 5,
+                    keywords: Vec::new(),
                 },
             ],
             docstring: None,
@@ -978,6 +983,7 @@ mod tests {
                     args: vec![AstNode::Identifier { name: "x".to_string(), line: 6, col: 11 }],
                     line: 6,
                     col: 5,
+                    keywords: Vec::new(),
                 },
             ],
             docstring: None,
@@ -1226,12 +1232,14 @@ mod tests {
                     args: vec![AstNode::Literal { value: beacon_parser::LiteralValue::Integer(10), line: 2, col: 20 }],
                     line: 2,
                     col: 14,
+                    keywords: Vec::new(),
                 }),
                 body: vec![AstNode::Call {
                     function: "print".to_string(),
                     args: vec![AstNode::Identifier { name: "i".to_string(), line: 3, col: 15 }],
                     line: 3,
                     col: 9,
+                    keywords: Vec::new(),
                 }],
                 else_body: None,
                 is_async: false,
@@ -1636,7 +1644,13 @@ mod tests {
             body: vec![
                 AstNode::Assignment {
                     target: "result".to_string(),
-                    value: Box::new(AstNode::Call { function: "inner".to_string(), args: vec![], line: 2, col: 14 }),
+                    value: Box::new(AstNode::Call {
+                        function: "inner".to_string(),
+                        args: vec![],
+                        line: 2,
+                        col: 14,
+                        keywords: Vec::new(),
+                    }),
                     line: 2,
                     col: 5,
                 },
@@ -1711,7 +1725,13 @@ mod tests {
             body: vec![
                 AstNode::Assignment {
                     target: "obj".to_string(),
-                    value: Box::new(AstNode::Call { function: "MyClass".to_string(), args: vec![], line: 2, col: 11 }),
+                    value: Box::new(AstNode::Call {
+                        function: "MyClass".to_string(),
+                        args: vec![],
+                        line: 2,
+                        col: 11,
+                        keywords: Vec::new(),
+                    }),
                     line: 2,
                     col: 5,
                 },
@@ -1778,7 +1798,13 @@ mod tests {
             body: vec![
                 AstNode::Assignment {
                     target: "result".to_string(),
-                    value: Box::new(AstNode::Call { function: "helper".to_string(), args: vec![], line: 2, col: 14 }),
+                    value: Box::new(AstNode::Call {
+                        function: "helper".to_string(),
+                        args: vec![],
+                        line: 2,
+                        col: 14,
+                        keywords: Vec::new(),
+                    }),
                     line: 2,
                     col: 5,
                 },
@@ -1926,7 +1952,13 @@ mod tests {
                 AstNode::ImportFrom { module: "bar".to_string(), names: vec!["baz".to_string()], line: 2, col: 5 },
                 AstNode::Assignment {
                     target: "result".to_string(),
-                    value: Box::new(AstNode::Call { function: "baz".to_string(), args: vec![], line: 3, col: 14 }),
+                    value: Box::new(AstNode::Call {
+                        function: "baz".to_string(),
+                        args: vec![],
+                        line: 3,
+                        col: 14,
+                        keywords: Vec::new(),
+                    }),
                     line: 3,
                     col: 5,
                 },
@@ -2033,6 +2065,7 @@ mod tests {
                         }],
                         line: 3,
                         col: 11,
+                        keywords: Vec::new(),
                     }),
                     line: 3,
                     col: 5,
@@ -2100,6 +2133,7 @@ mod tests {
                     args: vec![],
                     line: 5,
                     col: 12,
+                    keywords: Vec::new(),
                 })),
                 line: 5,
                 col: 5,
@@ -2166,7 +2200,13 @@ mod tests {
         let main_def = AstNode::FunctionDef {
             name: "main".to_string(),
             args: vec![],
-            body: vec![AstNode::Call { function: "helper".to_string(), args: vec![], line: 5, col: 5 }],
+            body: vec![AstNode::Call {
+                function: "helper".to_string(),
+                args: vec![],
+                line: 5,
+                col: 5,
+                keywords: Vec::new(),
+            }],
             docstring: None,
             return_type: None,
             decorators: Vec::new(),

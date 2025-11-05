@@ -194,7 +194,7 @@ impl InlayHintsProvider {
         node: &AstNode, range: Range, _text: &str, ast_root: &AstNode, hints: &mut Vec<InlayHint>,
     ) {
         match node {
-            AstNode::Call { function, args, line, col } => {
+            AstNode::Call { function, args, line, col, .. } => {
                 if Self::is_in_range(*line, *col, range) && !args.is_empty() {
                     if let Some(param_names) = Self::get_parameter_names(function, ast_root) {
                         for (i, arg) in args.iter().enumerate() {

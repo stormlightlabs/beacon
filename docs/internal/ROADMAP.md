@@ -59,10 +59,7 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 
 ### LSP
 
-- [ ] Folding / code-regions (`textDocument/foldingRange`): Provide collapse/expand ranges for the editor to display code folding
-
----
-
+- [x] Folding / code-regions (`textDocument/foldingRange`): Provide collapse/expand ranges for the editor to display code folding
 - [ ] Go to definition (`textDocument/definition`): The client asks for the location(s) where the symbol at a cursor position is defined; the server responds with URI/position(s).
 - [ ] Find references (`textDocument/references`): Find all occurrences of the symbol (in code/workspace) and return a list of reference locations.
 
