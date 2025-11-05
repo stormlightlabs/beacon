@@ -10,7 +10,8 @@ use crate::{analysis, cache, features::*, interpreter};
 use lsp_types::{
     CodeActionProviderCapability, CompletionOptions, HoverProviderCapability, InitializeParams, InitializeResult,
     InlayHintServerCapabilities, OneOf, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
-    ServerCapabilities, ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, WorkDoneProgressOptions,
+    ServerCapabilities, ServerInfo, SignatureHelpOptions, TextDocumentSyncCapability, TextDocumentSyncKind,
+    WorkDoneProgressOptions,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -54,6 +55,7 @@ struct Features {
     rename: RenameProvider,
     workspace_symbols: WorkspaceSymbolsProvider,
     folding_range: FoldingRangeProvider,
+    signature_help: SignatureHelpProvider,
 }
 
 impl Features {
@@ -75,7 +77,8 @@ impl Features {
             document_highlight: DocumentHighlightProvider::new(documents.clone()),
             rename: RenameProvider::new(documents.clone()),
             workspace_symbols: WorkspaceSymbolsProvider::new(documents.clone(), workspace),
-            folding_range: FoldingRangeProvider::new(documents),
+            folding_range: FoldingRangeProvider::new(documents.clone()),
+            signature_help: SignatureHelpProvider::new(documents),
         }
     }
 }
@@ -132,6 +135,11 @@ impl LanguageServer for Backend {
                 completion_provider: Some(CompletionOptions {
                     trigger_characters: Some(vec![".".to_string()]),
                     ..Default::default()
+                }),
+                signature_help_provider: Some(SignatureHelpOptions {
+                    trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+                    retrigger_characters: None,
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
                 }),
                 definition_provider: Some(OneOf::Left(true)),
                 type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
@@ -262,6 +270,11 @@ impl LanguageServer for Backend {
         Ok(self.features.hover.hover(params, &mut analyzer))
     }
 
+    async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
+        let mut analyzer = self.analyzer.write().await;
+        Ok(self.features.signature_help.signature_help(params, &mut analyzer))
+    }
+
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         Ok(self.features.completion.completion(params).await)
     }
@@ -353,6 +366,7 @@ mod tests {
         let _ = &backend.features.rename;
         let _ = &backend.features.workspace_symbols;
         let _ = &backend.features.folding_range;
+        let _ = &backend.features.signature_help;
     }
 
     #[tokio::test]
@@ -372,6 +386,7 @@ mod tests {
         assert!(init_result.capabilities.text_document_sync.is_some());
         assert!(init_result.capabilities.hover_provider.is_some());
         assert!(init_result.capabilities.completion_provider.is_some());
+        assert!(init_result.capabilities.signature_help_provider.is_some());
         assert!(init_result.capabilities.definition_provider.is_some());
         assert!(init_result.capabilities.references_provider.is_some());
         assert!(init_result.capabilities.document_highlight_provider.is_some());
@@ -510,6 +525,34 @@ mod tests {
         };
 
         let result = backend.hover(params).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_signature_help() {
+        let service = create_backend();
+        let backend = service.inner();
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        backend
+            .documents
+            .open_document(
+                uri.clone(),
+                1,
+                "def greet(name: str) -> str:\n    return f\"Hello {name}\"\n\ngreet(".to_string(),
+            )
+            .unwrap();
+
+        let params = SignatureHelpParams {
+            text_document_position_params: TextDocumentPositionParams {
+                text_document: TextDocumentIdentifier { uri },
+                position: Position { line: 3, character: 6 },
+            },
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            context: None,
+        };
+
+        let result = backend.signature_help(params).await;
         assert!(result.is_ok());
     }
 
@@ -899,6 +942,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_signature_help_trigger_characters() {
+        let service = create_backend();
+        let backend = service.inner();
+        let params = InitializeParams::default();
+
+        let result = backend.initialize(params).await.unwrap();
+        let signature_help = result.capabilities.signature_help_provider.unwrap();
+
+        assert!(signature_help.trigger_characters.is_some());
+        let triggers = signature_help.trigger_characters.unwrap();
+        assert!(triggers.contains(&"(".to_string()));
+        assert!(triggers.contains(&",".to_string()));
+    }
+
+    #[tokio::test]
     async fn test_inlay_hint_capability() {
         let service = create_backend();
         let backend = service.inner();
@@ -942,6 +1000,7 @@ mod tests {
         let _ = &backend.features.document_highlight;
         let _ = &backend.features.rename;
         let _ = &backend.features.workspace_symbols;
+        let _ = &backend.features.signature_help;
     }
 
     #[test]

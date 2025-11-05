@@ -29,6 +29,7 @@ pub mod inlay_hints;
 pub mod references;
 pub mod rename;
 pub mod semantic_tokens;
+pub mod signature_help;
 pub mod workspace_symbols;
 
 pub use code_actions::CodeActionsProvider;
@@ -43,4 +44,5 @@ pub use inlay_hints::InlayHintsProvider;
 pub use references::ReferencesProvider;
 pub use rename::RenameProvider;
 pub use semantic_tokens::{SUPPORTED_MODIFIERS, SUPPORTED_TYPES, SemanticTokensProvider};
+pub use signature_help::SignatureHelpProvider;
 pub use workspace_symbols::WorkspaceSymbolsProvider;
