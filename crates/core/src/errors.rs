@@ -34,6 +34,12 @@ pub enum TypeError {
 
     #[error("Pattern is unreachable (subsumed by earlier pattern)")]
     PatternUnreachable,
+
+    #[error("Keyword argument error: {0}")]
+    KeywordArgumentError(String),
+
+    #[error("Error: {0}")]
+    Other(String),
 }
 
 /// Analysis errors

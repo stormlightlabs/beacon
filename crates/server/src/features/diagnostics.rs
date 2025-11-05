@@ -145,7 +145,7 @@ impl DiagnosticProvider {
             Type::Con(TypeCtor::Any) => true,
             Type::App(t1, t2) => Self::contains_any_type(t1, _depth + 1) || Self::contains_any_type(t2, _depth + 1),
             Type::Fun(args, ret) => {
-                args.iter().any(|arg| Self::contains_any_type(arg, _depth + 1))
+                args.iter().any(|(_, arg)| Self::contains_any_type(arg, _depth + 1))
                     || Self::contains_any_type(ret, _depth + 1)
             }
             Type::Union(types) => types.iter().any(|t| Self::contains_any_type(t, _depth + 1)),
@@ -900,6 +900,8 @@ fn type_error_to_diagnostic(error_info: &beacon_constraint::TypeErrorInfo) -> Di
             "PM002",
             "This pattern is unreachable (subsumed by an earlier pattern)".to_string(),
         ),
+        TypeError::KeywordArgumentError(msg) => ("HM011", format!("Keyword argument error: {msg}")),
+        TypeError::Other(msg) => ("HM012", format!("Type error: {msg}")),
     };
 
     Diagnostic {
@@ -1074,10 +1076,16 @@ mod tests {
 
     #[test]
     fn test_contains_any_type_function() {
-        let fun_any = Type::Fun(vec![Type::Con(TypeCtor::Int)], Box::new(Type::Con(TypeCtor::Any)));
+        let fun_any = Type::Fun(
+            vec![(String::new(), Type::Con(TypeCtor::Int))],
+            Box::new(Type::Con(TypeCtor::Any)),
+        );
         assert!(DiagnosticProvider::contains_any_type(&fun_any, 0));
 
-        let fun_normal = Type::Fun(vec![Type::Con(TypeCtor::Int)], Box::new(Type::Con(TypeCtor::String)));
+        let fun_normal = Type::Fun(
+            vec![(String::new(), Type::Con(TypeCtor::Int))],
+            Box::new(Type::Con(TypeCtor::String)),
+        );
         assert!(!DiagnosticProvider::contains_any_type(&fun_normal, 0));
     }
 

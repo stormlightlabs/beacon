@@ -88,7 +88,8 @@ impl Subst {
             Type::Con(_) => ty.clone(),
             Type::App(t1, t2) => Type::App(Box::new(self.apply(t1)), Box::new(self.apply(t2))),
             Type::Fun(args, ret) => {
-                let new_args: Vec<Type> = args.iter().map(|arg| self.apply(arg)).collect();
+                let new_args: Vec<(String, Type)> =
+                    args.iter().map(|(name, ty)| (name.clone(), self.apply(ty))).collect();
                 Type::Fun(new_args, Box::new(self.apply(ret)))
             }
             Type::ForAll(tvs, t) => {
@@ -242,8 +243,8 @@ mod tests {
         subst.insert(tv1.clone(), Type::int());
         subst.insert(tv2.clone(), Type::string());
 
-        let fun_type = Type::fun(vec![Type::Var(tv1)], Type::Var(tv2));
-        let expected = Type::fun(vec![Type::int()], Type::string());
+        let fun_type = Type::fun_unnamed(vec![Type::Var(tv1)], Type::Var(tv2));
+        let expected = Type::fun_unnamed(vec![Type::int()], Type::string());
 
         assert_eq!(subst.apply(&fun_type), expected);
     }
@@ -428,13 +429,14 @@ mod tests {
         map.insert(tv.clone(), Type::int());
         let subst = Subst { map };
 
-        let fn_type = Type::fun(vec![Type::Var(tv)], Type::string());
+        let fn_type = Type::fun_unnamed(vec![Type::Var(tv)], Type::string());
         let result = subst.apply(&fn_type);
 
         match result {
             Type::Fun(args, _ret) => {
                 assert_eq!(args.len(), 1);
-                assert!(matches!(args[0], Type::Con(TypeCtor::Int)));
+                let (_, ty) = &args[0];
+                assert!(matches!(ty, Type::Con(TypeCtor::Int)));
             }
             _ => panic!("Expected function type"),
         }

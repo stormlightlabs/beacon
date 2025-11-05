@@ -275,7 +275,7 @@ impl ClassMetadata {
             ),
             Type::Fun(args, ret) => Type::Fun(
                 args.iter()
-                    .map(|arg| Self::substitute_type_params(arg, subst))
+                    .map(|(name, ty)| (name.clone(), Self::substitute_type_params(ty, subst)))
                     .collect(),
                 Box::new(Self::substitute_type_params(ret, subst)),
             ),
@@ -534,7 +534,7 @@ mod tests {
     #[test]
     fn test_method_type_single() {
         let method_type = MethodType::Single(Type::Fun(
-            vec![Type::Con(TypeCtor::Int)],
+            vec![(String::new(), Type::Con(TypeCtor::Int))],
             Box::new(Type::Con(TypeCtor::String)),
         ));
 
@@ -546,11 +546,17 @@ mod tests {
     fn test_method_type_overloaded() {
         let overload_set = OverloadSet {
             signatures: vec![
-                Type::Fun(vec![Type::Con(TypeCtor::Int)], Box::new(Type::Con(TypeCtor::String))),
-                Type::Fun(vec![Type::Con(TypeCtor::String)], Box::new(Type::Con(TypeCtor::Int))),
+                Type::Fun(
+                    vec![(String::new(), Type::Con(TypeCtor::Int))],
+                    Box::new(Type::Con(TypeCtor::String)),
+                ),
+                Type::Fun(
+                    vec![(String::new(), Type::Con(TypeCtor::String))],
+                    Box::new(Type::Con(TypeCtor::Int)),
+                ),
             ],
             implementation: Some(Type::Fun(
-                vec![Type::Con(TypeCtor::Top)],
+                vec![(String::new(), Type::Con(TypeCtor::Top))],
                 Box::new(Type::Con(TypeCtor::Top)),
             )),
         };
@@ -564,8 +570,14 @@ mod tests {
     fn test_add_method_signature_creates_overload() {
         let mut meta = ClassMetadata::new("Example".to_string());
 
-        let sig1 = Type::Fun(vec![Type::Con(TypeCtor::Int)], Box::new(Type::Con(TypeCtor::String)));
-        let sig2 = Type::Fun(vec![Type::Con(TypeCtor::String)], Box::new(Type::Con(TypeCtor::Int)));
+        let sig1 = Type::Fun(
+            vec![(String::new(), Type::Con(TypeCtor::Int))],
+            Box::new(Type::Con(TypeCtor::String)),
+        );
+        let sig2 = Type::Fun(
+            vec![(String::new(), Type::Con(TypeCtor::String))],
+            Box::new(Type::Con(TypeCtor::Int)),
+        );
 
         meta.add_method_signature("convert".to_string(), sig1);
         meta.add_method_signature("convert".to_string(), sig2);
@@ -584,8 +596,14 @@ mod tests {
 
         let overload_set = OverloadSet {
             signatures: vec![
-                Type::Fun(vec![Type::Con(TypeCtor::Int)], Box::new(Type::Con(TypeCtor::String))),
-                Type::Fun(vec![Type::Con(TypeCtor::String)], Box::new(Type::Con(TypeCtor::Int))),
+                Type::Fun(
+                    vec![(String::new(), Type::Con(TypeCtor::Int))],
+                    Box::new(Type::Con(TypeCtor::String)),
+                ),
+                Type::Fun(
+                    vec![(String::new(), Type::Con(TypeCtor::String))],
+                    Box::new(Type::Con(TypeCtor::Int)),
+                ),
             ],
             implementation: None,
         };
@@ -609,13 +627,22 @@ mod tests {
     fn test_get_all_method_signatures() {
         let mut meta = ClassMetadata::new("Example".to_string());
 
-        let single_method = Type::Fun(vec![Type::Con(TypeCtor::Int)], Box::new(Type::Con(TypeCtor::Bool)));
+        let single_method = Type::Fun(
+            vec![(String::new(), Type::Con(TypeCtor::Int))],
+            Box::new(Type::Con(TypeCtor::Bool)),
+        );
         meta.add_method("check".to_string(), single_method);
 
         let overload_set = OverloadSet {
             signatures: vec![
-                Type::Fun(vec![Type::Con(TypeCtor::Int)], Box::new(Type::Con(TypeCtor::String))),
-                Type::Fun(vec![Type::Con(TypeCtor::String)], Box::new(Type::Con(TypeCtor::Int))),
+                Type::Fun(
+                    vec![(String::new(), Type::Con(TypeCtor::Int))],
+                    Box::new(Type::Con(TypeCtor::String)),
+                ),
+                Type::Fun(
+                    vec![(String::new(), Type::Con(TypeCtor::String))],
+                    Box::new(Type::Con(TypeCtor::Int)),
+                ),
             ],
             implementation: None,
         };
@@ -639,11 +666,11 @@ mod tests {
 
         let overload_set = OverloadSet {
             signatures: vec![Type::Fun(
-                vec![Type::Con(TypeCtor::Int)],
+                vec![(String::new(), Type::Con(TypeCtor::Int))],
                 Box::new(Type::Con(TypeCtor::String)),
             )],
             implementation: Some(Type::Fun(
-                vec![Type::Con(TypeCtor::Top)],
+                vec![(String::new(), Type::Con(TypeCtor::Top))],
                 Box::new(Type::Con(TypeCtor::String)),
             )),
         };
@@ -703,7 +730,10 @@ mod tests {
         subst.insert("_T".to_string(), Type::Con(TypeCtor::Int));
 
         let method_type = Type::Fun(
-            vec![Type::any(), Type::Con(TypeCtor::TypeVariable("_T".to_string()))],
+            vec![
+                (String::new(), Type::any()),
+                (String::new(), Type::Con(TypeCtor::TypeVariable("_T".to_string()))),
+            ],
             Box::new(Type::Con(TypeCtor::TypeVariable("_T".to_string()))),
         );
 
@@ -712,7 +742,7 @@ mod tests {
         match substituted {
             Type::Fun(params, ret) => {
                 assert_eq!(params.len(), 2);
-                assert_eq!(params[1], Type::Con(TypeCtor::Int));
+                assert_eq!(params[1].1, Type::Con(TypeCtor::Int));
                 assert_eq!(*ret, Type::Con(TypeCtor::Int));
             }
             _ => panic!("Expected Fun type"),
@@ -725,7 +755,7 @@ mod tests {
         subst.insert("_T".to_string(), Type::Con(TypeCtor::String));
 
         let method_type = Type::Fun(
-            vec![Type::any()],
+            vec![(String::new(), Type::any())],
             Box::new(Type::Union(vec![
                 Type::Con(TypeCtor::TypeVariable("_T".to_string())),
                 Type::Con(TypeCtor::NoneType),
@@ -754,7 +784,10 @@ mod tests {
         subst.insert("_VT".to_string(), Type::Con(TypeCtor::Int));
 
         let method_type = Type::Fun(
-            vec![Type::any(), Type::Con(TypeCtor::TypeVariable("_KT".to_string()))],
+            vec![
+                (String::new(), Type::any()),
+                (String::new(), Type::Con(TypeCtor::TypeVariable("_KT".to_string()))),
+            ],
             Box::new(Type::Union(vec![
                 Type::Con(TypeCtor::TypeVariable("_VT".to_string())),
                 Type::Con(TypeCtor::NoneType),
@@ -766,7 +799,7 @@ mod tests {
         match substituted {
             Type::Fun(params, ret) => {
                 assert_eq!(params.len(), 2);
-                assert_eq!(params[1], Type::Con(TypeCtor::String));
+                assert_eq!(params[1].1, Type::Con(TypeCtor::String));
                 match *ret {
                     Type::Union(types) => {
                         assert_eq!(types[0], Type::Con(TypeCtor::Int));

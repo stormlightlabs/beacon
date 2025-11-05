@@ -65,8 +65,8 @@ impl Unifier {
                 }
 
                 let mut subst = Subst::empty();
-                for (arg1, arg2) in args1.iter().zip(args2.iter()) {
-                    let s = Self::unify_impl(&subst.apply(arg1), &subst.apply(arg2))?;
+                for ((_, ty1), (_, ty2)) in args1.iter().zip(args2.iter()) {
+                    let s = Self::unify_impl(&subst.apply(ty1), &subst.apply(ty2))?;
                     subst = s.compose(subst);
                 }
 
@@ -123,7 +123,9 @@ impl Unifier {
             Type::Var(tv2) => tv == tv2,
             Type::Con(_) => false,
             Type::App(t1, t2) => Self::occurs_check(tv, t1) || Self::occurs_check(tv, t2),
-            Type::Fun(args, ret) => args.iter().any(|arg| Self::occurs_check(tv, arg)) || Self::occurs_check(tv, ret),
+            Type::Fun(args, ret) => {
+                args.iter().any(|(_, ty)| Self::occurs_check(tv, ty)) || Self::occurs_check(tv, ret)
+            }
             Type::ForAll(quantified, t_inner) => {
                 if quantified.contains(tv) {
                     false
@@ -323,8 +325,8 @@ mod tests {
 
     #[test]
     fn test_unify_function_types() {
-        let t1 = Type::fun(vec![Type::int()], Type::string());
-        let t2 = Type::fun(vec![Type::int()], Type::string());
+        let t1 = Type::fun_unnamed(vec![Type::int()], Type::string());
+        let t2 = Type::fun_unnamed(vec![Type::int()], Type::string());
         let subst = Unifier::unify(&t1, &t2).unwrap();
         assert!(subst.is_empty());
     }
@@ -333,8 +335,8 @@ mod tests {
     fn test_unify_function_with_variables() {
         let tv1 = TypeVar::new(0);
         let tv2 = TypeVar::new(1);
-        let t1 = Type::fun(vec![Type::Var(tv1.clone())], Type::Var(tv2.clone()));
-        let t2 = Type::fun(vec![Type::int()], Type::string());
+        let t1 = Type::fun_unnamed(vec![Type::Var(tv1.clone())], Type::Var(tv2.clone()));
+        let t2 = Type::fun_unnamed(vec![Type::int()], Type::string());
 
         let subst = Unifier::unify(&t1, &t2).unwrap();
 
@@ -370,7 +372,7 @@ mod tests {
     #[test]
     fn test_occurs_check_in_function_args() {
         let tv = TypeVar::new(0);
-        let fun_type = Type::fun(vec![Type::Var(tv.clone())], Type::int());
+        let fun_type = Type::fun_unnamed(vec![Type::Var(tv.clone())], Type::int());
         let result = Unifier::unify(&Type::Var(tv.clone()), &fun_type);
         assert!(result.is_err());
     }
@@ -378,7 +380,7 @@ mod tests {
     #[test]
     fn test_occurs_check_in_function_return() {
         let tv = TypeVar::new(0);
-        let fun_type = Type::fun(vec![Type::int()], Type::Var(tv.clone()));
+        let fun_type = Type::fun_unnamed(vec![Type::int()], Type::Var(tv.clone()));
         let result = Unifier::unify(&Type::Var(tv.clone()), &fun_type);
         assert!(result.is_err());
     }
@@ -492,7 +494,7 @@ mod tests {
         let subst = Unifier::unify(&Type::any(), &Type::list(Type::int())).unwrap();
         assert!(subst.is_empty());
 
-        let subst = Unifier::unify(&Type::fun(vec![Type::int()], Type::string()), &Type::any()).unwrap();
+        let subst = Unifier::unify(&Type::fun_unnamed(vec![Type::int()], Type::string()), &Type::any()).unwrap();
         assert!(subst.is_empty());
     }
 
@@ -540,8 +542,8 @@ mod tests {
 
     #[test]
     fn test_any_in_complex_types() {
-        let f1 = Type::fun(vec![Type::any()], Type::int());
-        let f2 = Type::fun(vec![Type::string()], Type::int());
+        let f1 = Type::fun_unnamed(vec![Type::any()], Type::int());
+        let f2 = Type::fun_unnamed(vec![Type::string()], Type::int());
         let subst = Unifier::unify(&f1, &f2).unwrap();
         assert!(subst.is_empty());
 

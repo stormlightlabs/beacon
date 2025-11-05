@@ -377,7 +377,7 @@ impl Parser {
                     let return_type = self.parse_type()?;
                     self.expect(Token::RBracket)?;
 
-                    Type::fun(arg_types, return_type)
+                    Type::fun_unnamed(arg_types, return_type)
                 } else {
                     Type::Con(TypeCtor::Function)
                 }
@@ -602,21 +602,24 @@ mod tests {
     fn test_parse_callable() {
         let parser = AnnotationParser::new();
         let callable = parser.parse("Callable[[int, str], bool]").unwrap();
-        assert_eq!(callable, Type::fun(vec![Type::int(), Type::string()], Type::bool()));
+        assert_eq!(
+            callable,
+            Type::fun_unnamed(vec![Type::int(), Type::string()], Type::bool())
+        );
     }
 
     #[test]
     fn test_parse_callable_no_args() {
         let parser = AnnotationParser::new();
         let callable = parser.parse("Callable[[], int]").unwrap();
-        assert_eq!(callable, Type::fun(vec![], Type::int()));
+        assert_eq!(callable, Type::fun_unnamed(vec![], Type::int()));
     }
 
     #[test]
     fn test_parse_callable_ellipsis() {
         let parser = AnnotationParser::new();
         let callable = parser.parse("Callable[..., int]").unwrap();
-        assert_eq!(callable, Type::fun(vec![], Type::int()));
+        assert_eq!(callable, Type::fun_unnamed(vec![], Type::int()));
     }
 
     #[test]
@@ -699,8 +702,8 @@ mod tests {
         match ty {
             Type::Fun(args, ret) => {
                 assert_eq!(args.len(), 2);
-                assert_eq!(args[0], Type::list(Type::int()));
-                assert_eq!(args[1], Type::dict(Type::string(), Type::bool()));
+                assert_eq!(args[0].1, Type::list(Type::int()));
+                assert_eq!(args[1].1, Type::dict(Type::string(), Type::bool()));
                 assert_eq!(ret.as_ref(), &Type::optional(Type::string()));
             }
             _ => panic!("Expected function type"),
@@ -825,7 +828,7 @@ mod tests {
         match ty {
             Type::Fun(args, ret) => {
                 assert_eq!(args.len(), 1);
-                assert_eq!(args[0], Type::Con(TypeCtor::TypeVariable("T".to_string())));
+                assert_eq!(args[0].1, Type::Con(TypeCtor::TypeVariable("T".to_string())));
                 assert_eq!(*ret, Type::Con(TypeCtor::TypeVariable("T".to_string())));
             }
             _ => panic!("Expected function type"),

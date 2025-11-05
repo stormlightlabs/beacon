@@ -39,7 +39,7 @@ use url::Url;
 
 #[derive(Debug)]
 struct MethodInfo {
-    params: Vec<Type>,
+    params: Vec<(String, Type)>,
     return_type: Type,
     decorators: Vec<String>,
     is_overload: bool,

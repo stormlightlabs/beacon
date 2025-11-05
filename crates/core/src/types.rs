@@ -73,7 +73,7 @@
 //!     // Create the identity function type: 'a -> 'a
 //!     let mut var_gen = TypeVarGen::new();
 //!     let tv_a = var_gen.fresh();
-//!     let identity_type = Type::fun(
+//!     let identity_type = Type::fun_unnamed(
 //!         vec![Type::Var(tv_a.clone())],
 //!         Type::Var(tv_a.clone())
 //!     );
@@ -347,7 +347,8 @@ pub enum Type {
     App(Box<Type>, Box<Type>),
     /// Function types (syntactic sugar for Type application)
     /// args -> return
-    Fun(Vec<Type>, Box<Type>),
+    /// Each parameter is a (name, type) pair where name is used for keyword argument matching
+    Fun(Vec<(String, Type)>, Box<Type>),
     /// Forall quantification (type schemes)
     ForAll(Vec<TypeVar>, Box<Type>),
     /// Union types (for Python's Union[A, B])
@@ -381,15 +382,35 @@ impl fmt::Display for Type {
             Type::Fun(args, ret) => {
                 if args.is_empty() {
                     write!(f, "() -> {ret}")
-                } else if args.len() == 1 {
-                    write!(f, "{} -> {}", args[0], ret)
                 } else {
-                    write!(
-                        f,
-                        "({}) -> {}",
-                        args.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", "),
-                        ret
-                    )
+                    let all_auto_generated = args.iter().all(|(name, _)| {
+                        name.is_empty() || (name.starts_with('_') && name[1..].chars().all(|c| c.is_ascii_digit()))
+                    });
+
+                    if all_auto_generated {
+                        if args.len() == 1 {
+                            write!(f, "{} -> {}", args[0].1, ret)
+                        } else {
+                            write!(
+                                f,
+                                "({}) -> {}",
+                                args.iter().map(|(_, t)| t.to_string()).collect::<Vec<_>>().join(", "),
+                                ret
+                            )
+                        }
+                    } else if args.len() == 1 {
+                        write!(f, "({}: {}) -> {}", args[0].0, args[0].1, ret)
+                    } else {
+                        write!(
+                            f,
+                            "({}) -> {}",
+                            args.iter()
+                                .map(|(name, t)| format!("{name}: {t}"))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            ret
+                        )
+                    }
                 }
             }
             Type::ForAll(tvs, t) => {
@@ -586,8 +607,21 @@ impl Type {
         }
     }
 
-    /// Create a function type
-    pub fn fun(args: Vec<Type>, ret: Type) -> Self {
+    /// Create a function type with named parameters
+    pub fn fun(args: Vec<(String, Type)>, ret: Type) -> Self {
+        Type::Fun(args, Box::new(ret))
+    }
+
+    /// Create a function type with unnamed parameters (generates default names _0, _1, etc.)
+    ///
+    /// This is a convenience method for creating function types when parameter
+    /// names are not available, such as in tests or when parsing Callable types.
+    pub fn fun_unnamed(arg_types: Vec<Type>, ret: Type) -> Self {
+        let args = arg_types
+            .into_iter()
+            .enumerate()
+            .map(|(i, ty)| (format!("_{i}"), ty))
+            .collect();
         Type::Fun(args, Box::new(ret))
     }
 
@@ -770,7 +804,7 @@ impl Type {
             }
             Type::App(f, a) => Type::App(Box::new(f.simplify()), Box::new(a.simplify())),
             Type::Fun(args, ret) => Type::Fun(
-                args.into_iter().map(|a| a.simplify()).collect(),
+                args.into_iter().map(|(name, ty)| (name, ty.simplify())).collect(),
                 Box::new(ret.simplify()),
             ),
             Type::ForAll(tvs, t) => Type::ForAll(tvs, Box::new(t.simplify())),
@@ -853,8 +887,8 @@ impl Type {
                 t2.collect_free_vars(vars, bound);
             }
             Type::Fun(args, ret) => {
-                for arg in args {
-                    arg.collect_free_vars(vars, bound);
+                for (_, ty) in args {
+                    ty.collect_free_vars(vars, bound);
                 }
                 ret.collect_free_vars(vars, bound);
             }
@@ -918,8 +952,8 @@ impl Type {
     /// assert!(Type::int().is_subtype_of(&Type::top()));
     ///
     /// // Function parameter contravariance
-    /// let f1 = Type::fun(vec![Type::int()], Type::string());
-    /// let f2 = Type::fun(vec![Type::any()], Type::string());
+    /// let f1 = Type::fun_unnamed(vec![Type::int()], Type::string());
+    /// let f2 = Type::fun_unnamed(vec![Type::any()], Type::string());
     /// assert!(f2.is_subtype_of(&f1)); // Can substitute f2 for f1
     /// ```
     pub fn is_subtype_of(&self, other: &Type) -> bool {
@@ -959,7 +993,11 @@ impl Type {
                 return false;
             }
 
-            let params_ok = self_params.iter().zip(other_params).all(|(s, o)| o.is_subtype_of(s));
+            let params_ok = self_params
+                .iter()
+                .zip(other_params)
+                .all(|((_s_name, s_ty), (_o_name, o_ty))| o_ty.is_subtype_of(s_ty));
+
             if !params_ok {
                 return false;
             }
@@ -1130,7 +1168,7 @@ impl OverloadSet {
                 let all_match = arg_types
                     .iter()
                     .zip(params.iter())
-                    .all(|(arg, param)| arg.is_subtype_of(param));
+                    .all(|(arg, (_, param))| arg.is_subtype_of(param));
 
                 if all_match {
                     return Some(signature);
@@ -1194,10 +1232,13 @@ mod tests {
 
     #[test]
     fn test_function_types() {
-        let fun_type = Type::fun(vec![Type::int(), Type::string()], Type::bool());
+        let fun_type = Type::fun_unnamed(vec![Type::int(), Type::string()], Type::bool());
         assert_eq!(
             fun_type,
-            Type::Fun(vec![Type::int(), Type::string()], Box::new(Type::bool()))
+            Type::Fun(
+                vec![("_0".to_string(), Type::int()), ("_1".to_string(), Type::string())],
+                Box::new(Type::bool())
+            )
         );
         assert_eq!(fun_type.to_string(), "(int, str) -> bool");
     }
@@ -1230,7 +1271,7 @@ mod tests {
     fn test_free_vars() {
         let tv1 = TypeVar::new(0);
         let tv2 = TypeVar::new(1);
-        let t = Type::fun(vec![Type::Var(tv1.clone())], Type::Var(tv2.clone()));
+        let t = Type::fun_unnamed(vec![Type::Var(tv1.clone())], Type::Var(tv2.clone()));
 
         let free_vars = t.free_vars();
         assert_eq!(free_vars.len(), 2);
@@ -1242,7 +1283,7 @@ mod tests {
     fn test_type_scheme_generalization() {
         let tv1 = TypeVar::new(0);
         let tv2 = TypeVar::new(1);
-        let ty = Type::fun(vec![Type::Var(tv1.clone())], Type::Var(tv1.clone()));
+        let ty = Type::fun_unnamed(vec![Type::Var(tv1.clone())], Type::Var(tv1.clone()));
 
         let mut env_vars = FxHashMap::default();
         env_vars.insert(tv2, ()); // tv2 is bound in environment
@@ -1259,7 +1300,7 @@ mod tests {
         assert_eq!(Type::list(Type::string()).to_string(), "list[str]");
         assert_eq!(Type::dict(Type::string(), Type::int()).to_string(), "dict[str, int]");
 
-        let fun = Type::fun(vec![Type::int()], Type::bool());
+        let fun = Type::fun_unnamed(vec![Type::int()], Type::bool());
         assert_eq!(fun.to_string(), "int -> bool");
     }
 
@@ -1313,13 +1354,13 @@ mod tests {
 
     #[test]
     fn test_function_type_display() {
-        let no_args = Type::fun(vec![], Type::int());
+        let no_args = Type::fun_unnamed(vec![], Type::int());
         assert_eq!(no_args.to_string(), "() -> int");
 
-        let one_arg = Type::fun(vec![Type::string()], Type::bool());
+        let one_arg = Type::fun_unnamed(vec![Type::string()], Type::bool());
         assert_eq!(one_arg.to_string(), "str -> bool");
 
-        let multi_args = Type::fun(vec![Type::int(), Type::string(), Type::bool()], Type::none());
+        let multi_args = Type::fun_unnamed(vec![Type::int(), Type::string(), Type::bool()], Type::none());
         assert_eq!(multi_args.to_string(), "(int, str, bool) -> None");
     }
 
@@ -1333,7 +1374,7 @@ mod tests {
 
         let multi_forall = Type::ForAll(
             vec![tv1.clone(), tv2.clone()],
-            Box::new(Type::fun(vec![Type::Var(tv1)], Type::Var(tv2))),
+            Box::new(Type::fun_unnamed(vec![Type::Var(tv1)], Type::Var(tv2))),
         );
         assert_eq!(multi_forall.to_string(), "∀'t0 't1. 't0 -> 't1");
     }
@@ -1374,7 +1415,10 @@ mod tests {
         let mono_scheme = TypeScheme::mono(Type::int());
         assert_eq!(mono_scheme.to_string(), "int");
 
-        let poly_scheme = TypeScheme::new(vec![tv.clone()], Type::fun(vec![Type::Var(tv.clone())], Type::Var(tv)));
+        let poly_scheme = TypeScheme::new(
+            vec![tv.clone()],
+            Type::fun_unnamed(vec![Type::Var(tv.clone())], Type::Var(tv)),
+        );
         assert_eq!(poly_scheme.to_string(), "∀'t0. 't0 -> 't0");
     }
 
@@ -1493,7 +1537,7 @@ mod tests {
 
     #[test]
     fn test_kind_of_function_types() {
-        let fun_type = Type::fun(vec![Type::int(), Type::string()], Type::bool());
+        let fun_type = Type::fun_unnamed(vec![Type::int(), Type::string()], Type::bool());
         assert_eq!(fun_type.kind_of().unwrap(), Kind::Star);
         assert!(fun_type.check_well_kinded().is_ok());
     }
@@ -1681,7 +1725,7 @@ mod tests {
     #[test]
     fn test_type_scheme_generalization_basic() {
         let tv = TypeVar::new(0);
-        let ty = Type::fun(vec![Type::Var(tv.clone())], Type::Var(tv.clone()));
+        let ty = Type::fun_unnamed(vec![Type::Var(tv.clone())], Type::Var(tv.clone()));
 
         let env_vars = FxHashMap::default();
         let scheme = TypeScheme::generalize(ty.clone(), &env_vars);
@@ -1695,7 +1739,7 @@ mod tests {
     fn test_type_scheme_generalization_respects_environment() {
         let tv_a = TypeVar::new(0);
         let tv_b = TypeVar::new(1);
-        let ty = Type::fun(vec![Type::Var(tv_a.clone())], Type::Var(tv_b.clone()));
+        let ty = Type::fun_unnamed(vec![Type::Var(tv_a.clone())], Type::Var(tv_b.clone()));
 
         let mut env_vars = FxHashMap::default();
         env_vars.insert(tv_a, ()); // 'a is bound in environment
@@ -1718,7 +1762,7 @@ mod tests {
     #[test]
     fn test_type_scheme_display_polymorphic() {
         let tv = TypeVar::new(0);
-        let ty = Type::fun(vec![Type::Var(tv.clone())], Type::Var(tv.clone()));
+        let ty = Type::fun_unnamed(vec![Type::Var(tv.clone())], Type::Var(tv.clone()));
         let scheme = TypeScheme::new(vec![tv], ty);
 
         let display = scheme.to_string();
@@ -1763,7 +1807,7 @@ mod tests {
     #[test]
     fn test_generalization_excludes_concrete_types() {
         let tv = TypeVar::new(20);
-        let ty = Type::fun(vec![Type::int()], Type::Var(tv.clone()));
+        let ty = Type::fun_unnamed(vec![Type::int()], Type::Var(tv.clone()));
 
         let env_vars = FxHashMap::default();
         let scheme = TypeScheme::generalize(ty, &env_vars);
@@ -1775,7 +1819,7 @@ mod tests {
     #[test]
     fn test_value_restriction_prevents_generalization() {
         let tv = TypeVar::new(30);
-        let ty = Type::fun(vec![Type::Var(tv.clone())], Type::Var(tv.clone()));
+        let ty = Type::fun_unnamed(vec![Type::Var(tv.clone())], Type::Var(tv.clone()));
 
         let env_vars = FxHashMap::default();
         let scheme_non_expansive = TypeScheme::generalize_with_restriction(ty.clone(), &env_vars, true);
@@ -1793,7 +1837,7 @@ mod tests {
     fn test_value_restriction_with_free_vars() {
         let tv_a = TypeVar::new(40);
         let tv_b = TypeVar::new(41);
-        let ty = Type::fun(vec![Type::Var(tv_a.clone())], Type::Var(tv_b.clone()));
+        let ty = Type::fun_unnamed(vec![Type::Var(tv_a.clone())], Type::Var(tv_b.clone()));
 
         let env_vars = FxHashMap::default();
 
@@ -1890,8 +1934,8 @@ mod tests {
     /// A function accepting only int cannot substitute for one accepting Any
     #[test]
     fn test_subtype_function_contravariance() {
-        let f_any_str = Type::fun(vec![Type::any()], Type::string());
-        let f_int_str = Type::fun(vec![Type::int()], Type::string());
+        let f_any_str = Type::fun_unnamed(vec![Type::any()], Type::string());
+        let f_int_str = Type::fun_unnamed(vec![Type::int()], Type::string());
 
         assert!(f_any_str.is_subtype_of(&f_int_str));
         assert!(!f_int_str.is_subtype_of(&f_any_str));
@@ -1899,18 +1943,18 @@ mod tests {
 
     #[test]
     fn test_subtype_function_return_covariance() {
-        let f_int_never = Type::fun(vec![Type::int()], Type::never());
-        let f_int_str = Type::fun(vec![Type::int()], Type::string());
+        let f_int_never = Type::fun_unnamed(vec![Type::int()], Type::never());
+        let f_int_str = Type::fun_unnamed(vec![Type::int()], Type::string());
         assert!(f_int_never.is_subtype_of(&f_int_str));
 
-        let f_int_top = Type::fun(vec![Type::int()], Type::top());
+        let f_int_top = Type::fun_unnamed(vec![Type::int()], Type::top());
         assert!(!f_int_top.is_subtype_of(&f_int_str));
     }
 
     #[test]
     fn test_subtype_function_arity_mismatch() {
-        let f_one_arg = Type::fun(vec![Type::int()], Type::string());
-        let f_two_args = Type::fun(vec![Type::int(), Type::int()], Type::string());
+        let f_one_arg = Type::fun_unnamed(vec![Type::int()], Type::string());
+        let f_two_args = Type::fun_unnamed(vec![Type::int(), Type::int()], Type::string());
 
         assert!(!f_one_arg.is_subtype_of(&f_two_args));
         assert!(!f_two_args.is_subtype_of(&f_one_arg));
@@ -1918,10 +1962,10 @@ mod tests {
 
     #[test]
     fn test_subtype_function_complex_variance() {
-        let inner1 = Type::fun(vec![Type::int()], Type::string());
-        let inner2 = Type::fun(vec![Type::any()], Type::string());
-        let outer1 = Type::fun(vec![inner1.clone()], Type::bool());
-        let outer2 = Type::fun(vec![inner2.clone()], Type::bool());
+        let inner1 = Type::fun_unnamed(vec![Type::int()], Type::string());
+        let inner2 = Type::fun_unnamed(vec![Type::any()], Type::string());
+        let outer1 = Type::fun_unnamed(vec![inner1.clone()], Type::bool());
+        let outer2 = Type::fun_unnamed(vec![inner2.clone()], Type::bool());
 
         assert!(inner2.is_subtype_of(&inner1));
         assert!(!inner1.is_subtype_of(&inner2));
@@ -1974,17 +2018,17 @@ mod tests {
         let bm1 = Type::BoundMethod(
             Box::new(Type::int()),
             "test".to_string(),
-            Box::new(Type::fun(vec![], Type::string())),
+            Box::new(Type::fun_unnamed(vec![], Type::string())),
         );
         let bm2 = Type::BoundMethod(
             Box::new(Type::int()),
             "test".to_string(),
-            Box::new(Type::fun(vec![], Type::string())),
+            Box::new(Type::fun_unnamed(vec![], Type::string())),
         );
         let bm3 = Type::BoundMethod(
             Box::new(Type::string()),
             "test".to_string(),
-            Box::new(Type::fun(vec![], Type::string())),
+            Box::new(Type::fun_unnamed(vec![], Type::string())),
         );
 
         assert!(bm1.is_subtype_of(&bm2));
@@ -2090,8 +2134,8 @@ mod tests {
 
     #[test]
     fn test_overload_set_creation() {
-        let sig1 = Type::fun(vec![Type::int()], Type::string());
-        let sig2 = Type::fun(vec![Type::string()], Type::string());
+        let sig1 = Type::fun_unnamed(vec![Type::int()], Type::string());
+        let sig2 = Type::fun_unnamed(vec![Type::string()], Type::string());
         let overload = OverloadSet::new(vec![sig1, sig2]);
 
         assert_eq!(overload.signatures.len(), 2);
@@ -2100,9 +2144,9 @@ mod tests {
 
     #[test]
     fn test_overload_set_with_implementation() {
-        let sig1 = Type::fun(vec![Type::int()], Type::string());
-        let sig2 = Type::fun(vec![Type::string()], Type::string());
-        let impl_sig = Type::fun(vec![Type::any()], Type::string());
+        let sig1 = Type::fun_unnamed(vec![Type::int()], Type::string());
+        let sig2 = Type::fun_unnamed(vec![Type::string()], Type::string());
+        let impl_sig = Type::fun_unnamed(vec![Type::any()], Type::string());
         let overload = OverloadSet::with_implementation(vec![sig1, sig2], impl_sig.clone());
 
         assert_eq!(overload.signatures.len(), 2);
@@ -2111,8 +2155,8 @@ mod tests {
 
     #[test]
     fn test_overload_resolution_exact_match() {
-        let sig1 = Type::fun(vec![Type::int()], Type::string());
-        let sig2 = Type::fun(vec![Type::string()], Type::bool());
+        let sig1 = Type::fun_unnamed(vec![Type::int()], Type::string());
+        let sig2 = Type::fun_unnamed(vec![Type::string()], Type::bool());
         let overload = OverloadSet::new(vec![sig1.clone(), sig2]);
 
         let resolved = overload.resolve(&[Type::int()]);
@@ -2121,8 +2165,8 @@ mod tests {
 
     #[test]
     fn test_overload_resolution_subtype_match() {
-        let sig1 = Type::fun(vec![Type::any()], Type::string());
-        let sig2 = Type::fun(vec![Type::int()], Type::bool());
+        let sig1 = Type::fun_unnamed(vec![Type::any()], Type::string());
+        let sig2 = Type::fun_unnamed(vec![Type::int()], Type::bool());
         let overload = OverloadSet::new(vec![sig1.clone(), sig2.clone()]);
 
         let resolved = overload.resolve(&[Type::int()]);
@@ -2131,8 +2175,8 @@ mod tests {
 
     #[test]
     fn test_overload_resolution_first_match_wins() {
-        let sig1 = Type::fun(vec![Type::any()], Type::string());
-        let sig2 = Type::fun(vec![Type::int()], Type::bool());
+        let sig1 = Type::fun_unnamed(vec![Type::any()], Type::string());
+        let sig2 = Type::fun_unnamed(vec![Type::int()], Type::bool());
         let overload = OverloadSet::new(vec![sig1.clone(), sig2]);
 
         let resolved = overload.resolve(&[Type::int()]);
@@ -2141,8 +2185,8 @@ mod tests {
 
     #[test]
     fn test_overload_resolution_no_match() {
-        let sig1 = Type::fun(vec![Type::int()], Type::string());
-        let sig2 = Type::fun(vec![Type::string()], Type::bool());
+        let sig1 = Type::fun_unnamed(vec![Type::int()], Type::string());
+        let sig2 = Type::fun_unnamed(vec![Type::string()], Type::bool());
         let overload = OverloadSet::new(vec![sig1, sig2]);
 
         let resolved = overload.resolve(&[Type::bool()]);
@@ -2151,8 +2195,8 @@ mod tests {
 
     #[test]
     fn test_overload_resolution_fallback_to_implementation() {
-        let sig1 = Type::fun(vec![Type::int()], Type::string());
-        let impl_sig = Type::fun(vec![Type::any()], Type::string());
+        let sig1 = Type::fun_unnamed(vec![Type::int()], Type::string());
+        let impl_sig = Type::fun_unnamed(vec![Type::any()], Type::string());
         let mut overload = OverloadSet::new(vec![sig1]);
         overload.set_implementation(impl_sig.clone());
 
@@ -2162,8 +2206,8 @@ mod tests {
 
     #[test]
     fn test_overload_resolution_arity_mismatch() {
-        let sig1 = Type::fun(vec![Type::int()], Type::string());
-        let sig2 = Type::fun(vec![Type::int(), Type::int()], Type::bool());
+        let sig1 = Type::fun_unnamed(vec![Type::int()], Type::string());
+        let sig2 = Type::fun_unnamed(vec![Type::int(), Type::int()], Type::bool());
         let overload = OverloadSet::new(vec![sig1, sig2.clone()]);
 
         let resolved = overload.resolve(&[Type::int(), Type::int()]);
@@ -2172,8 +2216,8 @@ mod tests {
 
     #[test]
     fn test_overload_display() {
-        let sig1 = Type::fun(vec![Type::int()], Type::string());
-        let sig2 = Type::fun(vec![Type::string()], Type::bool());
+        let sig1 = Type::fun_unnamed(vec![Type::int()], Type::string());
+        let sig2 = Type::fun_unnamed(vec![Type::string()], Type::bool());
         let overload = OverloadSet::new(vec![sig1, sig2]);
 
         let display = overload.to_string();
@@ -2219,7 +2263,7 @@ mod tests {
 
     #[test]
     fn test_simplify_nested_types() {
-        let fun_type = Type::fun(
+        let fun_type = Type::fun_unnamed(
             vec![Type::union(vec![Type::int(), Type::any()])],
             Type::union(vec![Type::string(), Type::bool()]),
         );
@@ -2227,7 +2271,7 @@ mod tests {
 
         match simplified {
             Type::Fun(args, ret) => {
-                assert_eq!(args[0], Type::any());
+                assert_eq!(args[0].1, Type::any());
                 match ret.as_ref() {
                     Type::Union(types) => {
                         assert_eq!(types.len(), 2);

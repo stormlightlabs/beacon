@@ -1085,10 +1085,16 @@ impl Workspace {
 
                 for stmt in body {
                     if let AstNode::FunctionDef { name: method_name, args: params, return_type, .. } = stmt {
-                        let param_types: Vec<Type> = params
+                        let param_types: Vec<(String, Type)> = params
                             .iter()
-                            .filter_map(|p| p.type_annotation.as_ref())
-                            .filter_map(|ann| self.parse_annotation_string(ann))
+                            .map(|p| {
+                                let ty = p
+                                    .type_annotation
+                                    .as_ref()
+                                    .and_then(|ann| self.parse_annotation_string(ann))
+                                    .unwrap_or_else(Type::any);
+                                (p.name.clone(), ty)
+                            })
                             .collect();
 
                         let ret_type = return_type
@@ -1124,13 +1130,15 @@ impl Workspace {
                 }
             }
             AstNode::FunctionDef { name, args: params, return_type, .. } => {
-                let param_types: Vec<Type> = params
+                let param_types: Vec<(String, Type)> = params
                     .iter()
                     .map(|p| {
-                        p.type_annotation
+                        let ty = p
+                            .type_annotation
                             .as_ref()
                             .and_then(|ann| self.parse_annotation_string(ann))
-                            .unwrap_or_else(Type::any)
+                            .unwrap_or_else(Type::any);
+                        (p.name.clone(), ty)
                     })
                     .collect();
 
@@ -1657,8 +1665,8 @@ mod tests {
         match register_ty {
             Type::Fun(params, ret) => {
                 assert_eq!(params.len(), 2, "register_provider parameter count");
-                assert_eq!(params[0], Type::string(), "first param should be str");
-                match &params[1] {
+                assert_eq!(params[0].1, Type::string(), "first param should be str");
+                match &params[1].1 {
                     Type::App(ctor, arg) => {
                         assert!(
                             matches!(**ctor,  Type::Con( TypeCtor::Class(ref name)) if name == "DataProvider"),

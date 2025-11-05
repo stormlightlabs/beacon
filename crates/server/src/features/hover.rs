@@ -586,11 +586,17 @@ mod tests {
     fn test_format_type_function() {
         let documents = DocumentManager::new().unwrap();
         let provider = HoverProvider::new(documents);
-        let fun1 = Type::fun(vec![Type::Con(TypeCtor::Int)], Type::Con(TypeCtor::String));
+        let fun1 = Type::fun(
+            vec![(String::new(), Type::Con(TypeCtor::Int))],
+            Type::Con(TypeCtor::String),
+        );
         assert_eq!(provider.format_type(&fun1), "int -> str");
 
         let fun2 = Type::fun(
-            vec![Type::Con(TypeCtor::Int), Type::Con(TypeCtor::String)],
+            vec![
+                (String::new(), Type::Con(TypeCtor::Int)),
+                (String::new(), Type::Con(TypeCtor::String)),
+            ],
             Type::Con(TypeCtor::Bool),
         );
         assert_eq!(provider.format_type(&fun2), "(int, str) -> bool");
@@ -919,7 +925,10 @@ p = Person("Alice")"#;
         let provider = HoverProvider::new(documents);
 
         let tv = beacon_core::TypeVar::new(0);
-        let inner = Type::Fun(vec![Type::Var(tv.clone())], Box::new(Type::Var(tv.clone())));
+        let inner = Type::Fun(
+            vec![(String::new(), Type::Var(tv.clone()))],
+            Box::new(Type::Var(tv.clone())),
+        );
         let forall = Type::ForAll(vec![tv], Box::new(inner));
 
         let formatted = provider.format_type(&forall);

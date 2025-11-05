@@ -53,38 +53,41 @@ impl TypeEnvironment {
     fn add_builtins(&mut self) {
         self.bindings.insert(
             "print".to_string(),
-            TypeScheme::mono(Type::fun(vec![Type::any()], Type::none())),
+            TypeScheme::mono(Type::fun(vec![(String::new(), Type::any())], Type::none())),
         );
 
         let tv = self.var_gen.fresh();
         self.bindings.insert(
             "len".to_string(),
-            TypeScheme::new(vec![tv.clone()], Type::fun(vec![Type::Var(tv)], Type::int())),
+            TypeScheme::new(
+                vec![tv.clone()],
+                Type::fun(vec![(String::new(), Type::Var(tv))], Type::int()),
+            ),
         );
 
         self.bindings.insert(
             "range".to_string(),
-            TypeScheme::mono(Type::fun(vec![Type::int()], Type::list(Type::int()))),
+            TypeScheme::mono(Type::fun(vec![(String::new(), Type::int())], Type::list(Type::int()))),
         );
 
         self.bindings.insert(
             "str".to_string(),
-            TypeScheme::mono(Type::fun(vec![Type::any()], Type::string())),
+            TypeScheme::mono(Type::fun(vec![(String::new(), Type::any())], Type::string())),
         );
 
         self.bindings.insert(
             "int".to_string(),
-            TypeScheme::mono(Type::fun(vec![Type::any()], Type::int())),
+            TypeScheme::mono(Type::fun(vec![(String::new(), Type::any())], Type::int())),
         );
 
         self.bindings.insert(
             "float".to_string(),
-            TypeScheme::mono(Type::fun(vec![Type::any()], Type::float())),
+            TypeScheme::mono(Type::fun(vec![(String::new(), Type::any())], Type::float())),
         );
 
         self.bindings.insert(
             "bool".to_string(),
-            TypeScheme::mono(Type::fun(vec![Type::any()], Type::bool())),
+            TypeScheme::mono(Type::fun(vec![(String::new(), Type::any())], Type::bool())),
         );
 
         let elem_tv = self.var_gen.fresh();
@@ -92,7 +95,10 @@ impl TypeEnvironment {
             "list".to_string(),
             TypeScheme::new(
                 vec![elem_tv.clone()],
-                Type::fun(vec![Type::Var(elem_tv.clone())], Type::list(Type::Var(elem_tv))),
+                Type::fun(
+                    vec![(String::new(), Type::Var(elem_tv.clone()))],
+                    Type::list(Type::Var(elem_tv)),
+                ),
             ),
         );
 
@@ -123,7 +129,10 @@ impl TypeEnvironment {
 
         self.bindings.insert(
             "isinstance".to_string(),
-            TypeScheme::mono(Type::fun(vec![Type::any(), Type::any()], Type::bool())),
+            TypeScheme::mono(Type::fun(
+                vec![(String::new(), Type::any()), (String::new(), Type::any())],
+                Type::bool(),
+            )),
         );
     }
 
@@ -233,15 +242,16 @@ impl TypeEnvironment {
     }
 
     /// Extract type from function parameters
-    pub fn function_param_types(&self, params: &[Parameter]) -> Vec<Type> {
+    pub fn function_param_types(&self, params: &[Parameter]) -> Vec<(String, Type)> {
         params
             .iter()
             .map(|param| {
-                param
+                let ty = param
                     .type_annotation
                     .as_ref()
                     .map(|ann| self.parse_annotation_or_any(ann))
-                    .unwrap_or(Type::any())
+                    .unwrap_or(Type::any());
+                (param.name.clone(), ty)
             })
             .collect()
     }
@@ -435,15 +445,18 @@ mod tests {
     fn test_instantiation() {
         let mut env = TypeEnvironment::new();
         let tv = env.fresh_var();
-        let scheme = TypeScheme::new(vec![tv.clone()], Type::fun(vec![Type::Var(tv.clone())], Type::Var(tv)));
+        let scheme = TypeScheme::new(
+            vec![tv.clone()],
+            Type::fun(vec![(String::new(), Type::Var(tv.clone()))], Type::Var(tv)),
+        );
 
         let inst1 = env.instantiate(&scheme);
         let inst2 = env.instantiate(&scheme);
 
         match (&inst1, &inst2) {
             (Type::Fun(args1, ret1), Type::Fun(args2, ret2)) => {
-                assert_eq!(args1[0], *ret1.as_ref());
-                assert_eq!(args2[0], *ret2.as_ref());
+                assert_eq!(args1[0].1, *ret1.as_ref());
+                assert_eq!(args2[0].1, *ret2.as_ref());
                 assert_ne!(args1[0], args2[0]);
             }
             _ => panic!("Expected function types"),
@@ -454,7 +467,7 @@ mod tests {
     fn test_generalization() {
         let mut env = TypeEnvironment::new();
         let tv = env.fresh_var();
-        let ty = Type::fun(vec![Type::Var(tv.clone())], Type::Var(tv.clone()));
+        let ty = Type::fun(vec![(String::new(), Type::Var(tv.clone()))], Type::Var(tv.clone()));
         let scheme = env.generalize(ty.clone());
         assert_eq!(scheme.quantified_vars.len(), 1);
         assert_eq!(scheme.quantified_vars[0], tv);
@@ -488,7 +501,10 @@ mod tests {
         ];
 
         let types = env.function_param_types(&params);
-        assert_eq!(types, vec![Type::int(), Type::string()]);
+        assert_eq!(
+            types,
+            vec![("x".to_string(), Type::int()), ("y".to_string(), Type::string())]
+        );
     }
 
     #[test]
@@ -524,7 +540,7 @@ mod tests {
         match foo_type {
             Type::Fun(args, ret) => {
                 assert_eq!(args.len(), 1);
-                assert_eq!(args[0], Type::int());
+                assert_eq!(args[0].1, Type::int());
                 assert_eq!(ret.as_ref(), &Type::string());
             }
             _ => panic!("Expected function type"),

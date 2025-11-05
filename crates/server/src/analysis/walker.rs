@@ -345,14 +345,15 @@ fn visit_node_with_context(
             Ok(Type::Con(TypeCtor::Module("".into())))
         }
         AstNode::FunctionDef { name, args, return_type, body, decorators, is_async, line, col, .. } => {
-            let param_types: Vec<Type> = args
+            let params: Vec<(String, Type)> = args
                 .iter()
                 .map(|param| {
-                    param
+                    let param_type = param
                         .type_annotation
                         .as_ref()
                         .map(|ann| env.parse_annotation_or_any(ann))
-                        .unwrap_or_else(|| Type::Var(env.fresh_var()))
+                        .unwrap_or_else(|| Type::Var(env.fresh_var()));
+                    (param.name.clone(), param_type)
                 })
                 .collect();
 
@@ -387,7 +388,7 @@ fn visit_node_with_context(
                 let yield_var = Type::Var(env.fresh_var());
                 let send_var = Type::Var(env.fresh_var());
 
-                let (ret, params) = match function_kind {
+                let (ret, gen_params) = match function_kind {
                     FunctionKind::Generator => {
                         let ret = Type::generator(yield_var.clone(), send_var.clone(), annotated_ret.clone());
                         (ret, Some((yield_var, send_var, annotated_ret)))
@@ -402,14 +403,14 @@ fn visit_node_with_context(
                     }
                     FunctionKind::Regular => unreachable!(),
                 };
-                (ret, params)
+                (ret, gen_params)
             };
 
-            let fn_type = Type::fun(param_types.clone(), ret_type.clone());
+            let fn_type = Type::fun(params.clone(), ret_type.clone());
 
             let mut body_env = env.clone();
-            for (param, param_type) in args.iter().zip(param_types.iter()) {
-                body_env.bind(param.name.clone(), TypeScheme::mono(param_type.clone()));
+            for (param_name, param_type) in &params {
+                body_env.bind(param_name.clone(), TypeScheme::mono(param_type.clone()));
             }
 
             if let Some((y, s, r)) = gen_params {
@@ -434,6 +435,7 @@ fn visit_node_with_context(
                 ctx.constraints.push(Constraint::Call(
                     decorator_ty,
                     vec![decorated_type],
+                    vec![],
                     result_ty.clone(),
                     span,
                 ));
@@ -489,6 +491,7 @@ fn visit_node_with_context(
                 ctx.constraints.push(Constraint::Call(
                     decorator_ty,
                     vec![decorated_type],
+                    vec![],
                     result_ty.clone(),
                     span,
                 ));
@@ -544,20 +547,26 @@ fn visit_node_with_context(
                 env.lookup(function).unwrap_or_else(|| Type::Var(env.fresh_var()))
             };
 
-            let mut arg_types = Vec::new();
+            let mut positional_arg_types = Vec::new();
             for arg in args {
-                arg_types.push(visit_node_with_env(arg, env, ctx, stub_cache)?);
+                positional_arg_types.push(visit_node_with_env(arg, env, ctx, stub_cache)?);
             }
 
-            // TODO: Handle keyword arg parsing with parameter name matching
-            for (_name, value) in keywords {
-                arg_types.push(visit_node_with_env(value, env, ctx, stub_cache)?);
+            let mut keyword_arg_types = Vec::new();
+            for (name, value) in keywords {
+                let kw_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
+                keyword_arg_types.push((name.clone(), kw_ty));
             }
 
             let ret_ty = Type::Var(env.fresh_var());
             let span = Span::new(*line, *col);
-            ctx.constraints
-                .push(Constraint::Call(func_ty, arg_types, ret_ty.clone(), span));
+            ctx.constraints.push(Constraint::Call(
+                func_ty,
+                positional_arg_types,
+                keyword_arg_types,
+                ret_ty.clone(),
+                span,
+            ));
 
             ctx.record_type(*line, *col, ret_ty.clone());
             Ok(ret_ty)
@@ -705,6 +714,7 @@ fn visit_node_with_context(
             ctx.constraints.push(Constraint::Call(
                 getitem_method_ty,
                 vec![slice_ty],
+                vec![],
                 result_ty.clone(),
                 span,
             ));
@@ -1142,24 +1152,27 @@ fn visit_node_with_context(
             Ok(Type::none())
         }
         AstNode::Lambda { args, body, line, col } => {
-            let param_types: Vec<Type> = args
+            let params: Vec<(String, Type)> = args
                 .iter()
-                .map(|param| {
-                    param
+                .enumerate()
+                .map(|(i, param)| {
+                    let param_type = param
                         .type_annotation
                         .as_ref()
                         .map(|ann| env.parse_annotation_or_any(ann))
-                        .unwrap_or_else(|| Type::Var(env.fresh_var()))
+                        .unwrap_or_else(|| Type::Var(env.fresh_var()));
+                    let param_name = if param.name.is_empty() { format!("_{i}") } else { param.name.clone() };
+                    (param_name, param_type)
                 })
                 .collect();
 
             let mut lambda_env = env.clone();
-            for (param, param_type) in args.iter().zip(param_types.iter()) {
-                lambda_env.bind(param.name.clone(), TypeScheme::mono(param_type.clone()));
+            for (param_name, param_type) in &params {
+                lambda_env.bind(param_name.clone(), TypeScheme::mono(param_type.clone()));
             }
 
             let body_ty = visit_node_with_env(body, &mut lambda_env, ctx, stub_cache)?;
-            let lambda_ty = Type::fun(param_types, body_ty);
+            let lambda_ty = Type::fun(params, body_ty);
 
             ctx.record_type(*line, *col, lambda_ty.clone());
             Ok(lambda_ty)
@@ -1452,14 +1465,15 @@ fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnvironmen
 
     for stmt in body {
         if let AstNode::FunctionDef { name: method_name, args, return_type, body: method_body, decorators, .. } = stmt {
-            let param_types: Vec<Type> = args
+            let params: Vec<(String, Type)> = args
                 .iter()
                 .map(|param| {
-                    param
+                    let param_type = param
                         .type_annotation
                         .as_ref()
                         .map(|ann| env.parse_annotation_or_any(ann))
-                        .unwrap_or_else(|| Type::Var(env.fresh_var()))
+                        .unwrap_or_else(|| Type::Var(env.fresh_var()));
+                    (param.name.clone(), param_type)
                 })
                 .collect();
 
@@ -1473,27 +1487,24 @@ fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnvironmen
             let has_classmethod = decorators.iter().any(|d| d == "classmethod");
 
             if method_name == "__init__" {
-                let method_type = Type::fun(param_types.clone(), ret_type);
+                let method_type = Type::fun(params.clone(), ret_type);
                 metadata.set_init_type(method_type);
 
                 for body_stmt in method_body {
                     extract_field_assignments(body_stmt, &mut metadata, env);
                 }
             } else if method_name == "__new__" {
-                metadata.set_new_type(Type::fun(param_types.clone(), ret_type));
+                metadata.set_new_type(Type::fun(params.clone(), ret_type));
             } else if has_property {
                 metadata.add_property(method_name.clone(), ret_type);
             } else if has_staticmethod {
-                let static_param_types: Vec<Type> = if !param_types.is_empty() {
-                    param_types.iter().skip(1).cloned().collect()
-                } else {
-                    param_types.clone()
-                };
-                metadata.add_staticmethod(method_name.clone(), Type::fun(static_param_types, ret_type));
+                let static_params: Vec<(String, Type)> =
+                    if !params.is_empty() { params.iter().skip(1).cloned().collect() } else { params.clone() };
+                metadata.add_staticmethod(method_name.clone(), Type::fun(static_params, ret_type));
             } else if has_classmethod {
-                metadata.add_classmethod(method_name.clone(), Type::fun(param_types.clone(), ret_type));
+                metadata.add_classmethod(method_name.clone(), Type::fun(params.clone(), ret_type));
             } else {
-                metadata.add_method(method_name.clone(), Type::fun(param_types.clone(), ret_type));
+                metadata.add_method(method_name.clone(), Type::fun(params.clone(), ret_type));
             }
         }
     }
@@ -1610,14 +1621,13 @@ fn synthesize_dataclass_init(metadata: &mut ClassMetadata, env: &mut TypeEnviron
         return;
     }
 
-    let mut param_types = vec![Type::any()];
+    let mut params = vec![("self".to_string(), Type::any())];
 
-    // TODO: use IndexMap to preserve definition order.
-    for field_type in metadata.fields.values() {
-        param_types.push(field_type.clone());
+    for (field_name, field_type) in &metadata.fields {
+        params.push((field_name.clone(), field_type.clone()));
     }
 
-    let init_type = Type::fun(param_types, Type::none());
+    let init_type = Type::fun(params, Type::none());
     metadata.set_init_type(init_type);
 }
 
@@ -2293,7 +2303,7 @@ mod tests {
         let has_call_constraint = ctx
             .constraints
             .iter()
-            .any(|c| matches!(c, Constraint::Call(_, _, _, _)));
+            .any(|c| matches!(c, Constraint::Call(_, _, _, _, _)));
 
         assert!(
             has_call_constraint,
@@ -2360,7 +2370,7 @@ mod tests {
         let has_call_constraint = ctx
             .constraints
             .iter()
-            .any(|c| matches!(c, Constraint::Call(_, _, _, _)));
+            .any(|c| matches!(c, Constraint::Call(_, _, _, _, _)));
 
         assert!(has_call_constraint, "Should still type-check the main() call");
     }
@@ -2877,7 +2887,7 @@ mod tests {
         );
 
         let has_call_to_main = ctx.constraints.iter().any(|c| {
-            if let Constraint::Call(func_ty, args, _, _) = c {
+            if let Constraint::Call(func_ty, args, _, _, _) = c {
                 args.is_empty() && matches!(func_ty, Type::Fun(_, _))
             } else {
                 false
@@ -3130,7 +3140,7 @@ mod tests {
         let call_count = ctx
             .constraints
             .iter()
-            .filter(|c| matches!(c, Constraint::Call(_, args, _, _) if args.len() == 1))
+            .filter(|c| matches!(c, Constraint::Call(_, args, _, _, _) if args.len() == 1))
             .count();
         assert!(call_count >= 1, "Should generate Call constraint to invoke __getitem__");
     }

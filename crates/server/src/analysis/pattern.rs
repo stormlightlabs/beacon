@@ -165,7 +165,7 @@ fn extract_class_bindings(
             }
 
             for (pattern, param_type) in patterns.iter().zip(param_types.iter()) {
-                let pattern_bindings = extract_pattern_bindings(pattern, param_type, env, class_registry)?;
+                let pattern_bindings = extract_pattern_bindings(pattern, &param_type.1, env, class_registry)?;
                 bindings.extend(pattern_bindings);
             }
 
@@ -183,7 +183,7 @@ fn extract_class_bindings(
 }
 
 /// Extract constructor parameter types from an __init__ function type
-fn extract_constructor_params(init_type: &Type) -> Vec<Type> {
+fn extract_constructor_params(init_type: &Type) -> Vec<(String, Type)> {
     match init_type {
         Type::Fun(params, _ret) => {
             if params.len() > 1 {
@@ -504,9 +504,9 @@ mod tests {
         let mut point_meta = ClassMetadata::new("Point".to_string());
         point_meta.init_type = Some(Type::Fun(
             vec![
-                Type::Con(TypeCtor::Class("Point".to_string())),
-                Type::int(),
-                Type::int(),
+                (String::new(), Type::Con(TypeCtor::Class("Point".to_string()))),
+                (String::new(), Type::int()),
+                (String::new(), Type::int()),
             ],
             Box::new(Type::none()),
         ));
@@ -537,9 +537,9 @@ mod tests {
         let mut point_meta = ClassMetadata::new("Point".to_string());
         point_meta.init_type = Some(Type::Fun(
             vec![
-                Type::Con(TypeCtor::Class("Point".to_string())),
-                Type::int(),
-                Type::int(),
+                (String::new(), Type::Con(TypeCtor::Class("Point".to_string()))),
+                (String::new(), Type::int()),
+                (String::new(), Type::int()),
             ],
             Box::new(Type::none()),
         ));
@@ -578,9 +578,9 @@ mod tests {
         let mut point_meta = ClassMetadata::new("Point".to_string());
         point_meta.init_type = Some(Type::Fun(
             vec![
-                Type::Con(TypeCtor::Class("Point".to_string())),
-                Type::int(),
-                Type::int(),
+                (String::new(), Type::Con(TypeCtor::Class("Point".to_string()))),
+                (String::new(), Type::int()),
+                (String::new(), Type::int()),
             ],
             Box::new(Type::none()),
         ));
@@ -615,8 +615,8 @@ mod tests {
         let mut container_meta = ClassMetadata::new("Container".to_string());
         container_meta.init_type = Some(Type::Fun(
             vec![
-                Type::Con(TypeCtor::Class("Container".to_string())),
-                Type::list(Type::int()),
+                (String::new(), Type::Con(TypeCtor::Class("Container".to_string()))),
+                (String::new(), Type::list(Type::int())),
             ],
             Box::new(Type::none()),
         ));

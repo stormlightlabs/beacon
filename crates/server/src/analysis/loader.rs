@@ -78,7 +78,7 @@ fn collect_type_vars_from_type(ty: &Type, acc: &mut FxHashSet<String>) {
         }
         Type::Fun(params, ret) => {
             for param in params {
-                collect_type_vars_from_type(param, acc);
+                collect_type_vars_from_type(&param.1, acc);
             }
             collect_type_vars_from_type(ret, acc);
         }
@@ -236,20 +236,22 @@ pub fn process_class_methods(body: &[AstNode], metadata: &mut ClassMetadata, ctx
         }
 
         if let AstNode::FunctionDef { name: method_name, args: params, return_type, decorators, .. } = stmt {
-            let mut param_types: Vec<beacon_core::Type> = Vec::new();
+            let mut param_list: Vec<(String, beacon_core::Type)> = Vec::new();
 
             let has_self = params.first().map(|p| p.name == "self").unwrap_or(false);
             let has_cls = params.first().map(|p| p.name == "cls").unwrap_or(false);
 
-            if has_self || has_cls {
-                param_types.push(beacon_core::Type::any());
+            if has_self {
+                param_list.push(("self".to_string(), beacon_core::Type::any()));
+            } else if has_cls {
+                param_list.push(("cls".to_string(), beacon_core::Type::any()));
             }
 
             let start_idx = if has_self || has_cls { 1 } else { 0 };
             for param in params.iter().skip(start_idx) {
                 if let Some(ann) = &param.type_annotation {
                     if let Some(ty) = parse_type_annotation(ann, ctx) {
-                        param_types.push(ty);
+                        param_list.push((param.name.clone(), ty));
                     }
                 }
             }
@@ -265,7 +267,7 @@ pub fn process_class_methods(body: &[AstNode], metadata: &mut ClassMetadata, ctx
                 .entry(method_name.clone())
                 .or_default()
                 .push(MethodInfo {
-                    params: param_types,
+                    params: param_list,
                     return_type: ret_type,
                     decorators: decorators.clone(),
                     is_overload,
@@ -514,7 +516,7 @@ fn convert_type_vars(ty: beacon_core::Type, ctx: &mut StubTypeContext) -> beacon
             Box::new(convert_type_vars(*arg, ctx)),
         ),
         beacon_core::Type::Fun(params, ret) => beacon_core::Type::Fun(
-            params.into_iter().map(|p| convert_type_vars(p, ctx)).collect(),
+            params.into_iter().map(|p| (p.0, convert_type_vars(p.1, ctx))).collect(),
             Box::new(convert_type_vars(*ret, ctx)),
         ),
         beacon_core::Type::Union(types) => {
@@ -969,7 +971,7 @@ class list(Generic[_T]):
 
         if let MethodType::Single(Type::Fun(params, ret)) = load_method {
             assert!(!params.is_empty(), "load should include self parameter");
-            assert!(matches!(params[0], Type::Con(TypeCtor::Any)));
+            assert!(matches!(params[0].1, Type::Con(TypeCtor::Any)));
 
             match ret.as_ref() {
                 Type::App(iter_ctor, item_ty) => {
