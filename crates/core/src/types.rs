@@ -364,6 +364,9 @@ pub enum Type {
     ///
     /// e.g., for `f = obj.method` where obj: MyClass and method: (self, int) -> str stores BoundMethod(MyClass, "method", (self, int) -> str)
     BoundMethod(Box<Type>, String, Box<Type>),
+    /// Heterogeneous tuple type: tuple[T1, T2, ..., Tn]
+    /// For homogeneous tuples, use Type::App(Type::Con(TypeCtor::Tuple), element_type)
+    Tuple(Vec<Type>),
 }
 
 impl fmt::Display for Type {
@@ -449,6 +452,13 @@ impl fmt::Display for Type {
             Type::BoundMethod(receiver, method_name, method) => {
                 write!(f, "BoundMethod[{receiver}, {method_name}, {method}]")
             }
+            Type::Tuple(types) => {
+                write!(
+                    f,
+                    "tuple[{}]",
+                    types.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(", ")
+                )
+            }
         }
     }
 }
@@ -524,9 +534,14 @@ impl Type {
         Type::App(Box::new(Type::Con(TypeCtor::Set)), Box::new(element_type))
     }
 
-    /// Create a tuple type (homogeneous for now)
+    /// Create a homogeneous tuple type: tuple[T]
     pub fn tuple(element_type: Type) -> Self {
         Type::App(Box::new(Type::Con(TypeCtor::Tuple)), Box::new(element_type))
+    }
+
+    /// Create a heterogeneous tuple type: tuple[T1, T2, ..., Tn]
+    pub fn tuple_heterogeneous(element_types: Vec<Type>) -> Self {
+        Type::Tuple(element_types)
     }
 
     /// Create a Generator type: Generator[YieldType, SendType, ReturnType]
@@ -857,6 +872,7 @@ impl Type {
             Type::Intersection(_) => Ok(Kind::Star),
             Type::Record(_, _) => Ok(Kind::Star),
             Type::BoundMethod(_, _, _) => Ok(Kind::Star),
+            Type::Tuple(_) => Ok(Kind::Star),
         }
     }
 
@@ -922,6 +938,11 @@ impl Type {
             Type::BoundMethod(receiver, _, method) => {
                 receiver.collect_free_vars(vars, bound);
                 method.collect_free_vars(vars, bound);
+            }
+            Type::Tuple(types) => {
+                for t in types {
+                    t.collect_free_vars(vars, bound);
+                }
             }
         }
     }

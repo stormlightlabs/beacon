@@ -36,6 +36,7 @@
 //! ```
 
 use crate::{Type, TypeVar};
+
 use rustc_hash::FxHashMap;
 use std::fmt;
 
@@ -120,6 +121,7 @@ impl Subst {
                 method_name.into(),
                 Box::new(self.apply(method)),
             ),
+            Type::Tuple(types) => Type::Tuple(types.iter().map(|t| self.apply(t)).collect()),
         }
     }
 

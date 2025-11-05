@@ -31,6 +31,7 @@
 //! The occurs check prevents infinite types by rejecting unifications like `'a ~ list['a]`.
 
 use crate::{Result, Subst, Type, TypeError, TypeVar};
+
 use rustc_hash::FxHashSet;
 
 /// Unification algorithm for Hindley-Milner type system
@@ -95,6 +96,22 @@ impl Unifier {
             {
                 Self::unify_impl(other, method)
             }
+            (Type::Tuple(types1), Type::Tuple(types2)) => {
+                if types1.len() != types2.len() {
+                    return Err(TypeError::UnificationError(
+                        format!("tuple with {} elements", types1.len()),
+                        format!("tuple with {} elements", types2.len()),
+                    )
+                    .into());
+                }
+
+                let mut subst = Subst::empty();
+                for (t1, t2) in types1.iter().zip(types2.iter()) {
+                    let s = Self::unify_impl(&subst.apply(t1), &subst.apply(t2))?;
+                    subst = s.compose(subst);
+                }
+                Ok(subst)
+            }
             (Type::ForAll(_, _), _) | (_, Type::ForAll(_, _)) => {
                 Err(TypeError::UnificationError("polymorphic type".to_string(), "monomorphic type".to_string()).into())
             }
@@ -142,6 +159,7 @@ impl Unifier {
             Type::BoundMethod(receiver, _, method) => {
                 Self::occurs_check(tv, receiver) || Self::occurs_check(tv, method)
             }
+            Type::Tuple(types) => types.iter().any(|t_inner| Self::occurs_check(tv, t_inner)),
         }
     }
 
@@ -754,5 +772,61 @@ mod tests {
             }
             Ok(_) => panic!("Expected unification to fail"),
         }
+    }
+
+    #[test]
+    fn test_heterogeneous_tuple_unify_same() {
+        let tuple1 = Type::tuple_heterogeneous(vec![Type::int(), Type::string(), Type::bool()]);
+        let tuple2 = Type::tuple_heterogeneous(vec![Type::int(), Type::string(), Type::bool()]);
+        let subst = Unifier::unify(&tuple1, &tuple2).unwrap();
+        assert!(subst.is_empty());
+    }
+
+    #[test]
+    fn test_heterogeneous_tuple_unify_with_vars() {
+        let tv1 = TypeVar::new(0);
+        let tv2 = TypeVar::new(1);
+        let tuple1 = Type::tuple_heterogeneous(vec![Type::Var(tv1.clone()), Type::Var(tv2.clone())]);
+        let tuple2 = Type::tuple_heterogeneous(vec![Type::int(), Type::string()]);
+        let subst = Unifier::unify(&tuple1, &tuple2).unwrap();
+        assert_eq!(subst.get(&tv1), Some(&Type::int()));
+        assert_eq!(subst.get(&tv2), Some(&Type::string()));
+    }
+
+    #[test]
+    fn test_heterogeneous_tuple_length_mismatch() {
+        let tuple1 = Type::tuple_heterogeneous(vec![Type::int(), Type::string()]);
+        let tuple2 = Type::tuple_heterogeneous(vec![Type::int(), Type::string(), Type::bool()]);
+        let result = Unifier::unify(&tuple1, &tuple2);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_heterogeneous_tuple_element_type_mismatch() {
+        let tuple1 = Type::tuple_heterogeneous(vec![Type::int(), Type::string()]);
+        let tuple2 = Type::tuple_heterogeneous(vec![Type::int(), Type::bool()]);
+        let result = Unifier::unify(&tuple1, &tuple2);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_heterogeneous_tuple_occurs_check() {
+        let tv = TypeVar::new(0);
+        let tuple_with_var = Type::tuple_heterogeneous(vec![Type::Var(tv.clone()), Type::int()]);
+        let result = Unifier::unify(&Type::Var(tv.clone()), &tuple_with_var);
+        assert!(result.is_err(), "Occurs check should prevent recursive type");
+    }
+
+    #[test]
+    fn test_heterogeneous_tuple_nested() {
+        let tv1 = TypeVar::new(0);
+        let tv2 = TypeVar::new(1);
+        let inner_tuple = Type::tuple_heterogeneous(vec![Type::Var(tv1.clone()), Type::int()]);
+        let outer_tuple1 = Type::tuple_heterogeneous(vec![inner_tuple.clone(), Type::Var(tv2.clone())]);
+        let inner_concrete = Type::tuple_heterogeneous(vec![Type::string(), Type::int()]);
+        let outer_tuple2 = Type::tuple_heterogeneous(vec![inner_concrete, Type::bool()]);
+        let subst = Unifier::unify(&outer_tuple1, &outer_tuple2).unwrap();
+        assert_eq!(subst.get(&tv1), Some(&Type::string()));
+        assert_eq!(subst.get(&tv2), Some(&Type::bool()));
     }
 }

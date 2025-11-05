@@ -1318,10 +1318,12 @@ fn visit_node_with_context(
                     .map(|elem| visit_node_with_env(elem, env, ctx, stub_cache))
                     .collect::<std::result::Result<Vec<Type>, _>>()?;
 
-                // TODO: Heterogeneous tuple support with tuple[T1, T2, T3] notation
-                let tuple_elem_ty = if element_types.len() == 1 { element_types[0].clone() } else { Type::any() };
+                let tuple_ty = if element_types.len() == 1 {
+                    Type::tuple(element_types[0].clone())
+                } else {
+                    Type::tuple_heterogeneous(element_types)
+                };
 
-                let tuple_ty = Type::tuple(tuple_elem_ty);
                 ctx.record_type(*line, *col, tuple_ty.clone());
                 Ok(tuple_ty)
             }
@@ -3079,23 +3081,26 @@ mod tests {
         };
         let tuple_ty = visit_node_with_env(&tuple_node, &mut env, &mut ctx, None).unwrap();
 
-        assert!(
-            matches!(&tuple_ty, Type::App(inner, _) if matches!(**inner, Type::Con(TypeCtor::Tuple))),
-            "Tuple literal should create tuple type, got {tuple_ty:?}"
-        );
-
         match &tuple_ty {
-            Type::App(inner, elem) => {
+            Type::Tuple(types) => {
+                assert_eq!(types.len(), 3, "Tuple should have 3 elements");
                 assert!(
-                    matches!(**inner, Type::Con(TypeCtor::Tuple)),
-                    "Should be Tuple constructor"
+                    matches!(types[0], Type::Con(TypeCtor::Int)),
+                    "First element should be int, got {:?}",
+                    types[0]
                 );
                 assert!(
-                    matches!(**elem, Type::Con(TypeCtor::Any)),
-                    "Should use Any for heterogeneous elements, got {elem:?}"
+                    matches!(types[1], Type::Con(TypeCtor::String)),
+                    "Second element should be str, got {:?}",
+                    types[1]
+                );
+                assert!(
+                    matches!(types[2], Type::Con(TypeCtor::Bool)),
+                    "Third element should be bool, got {:?}",
+                    types[2]
                 );
             }
-            _ => panic!("Expected tuple type, got {tuple_ty:?}"),
+            _ => panic!("Expected heterogeneous tuple type, got {tuple_ty:?}"),
         }
     }
 

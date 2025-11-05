@@ -296,6 +296,7 @@ impl ClassMetadata {
                 method_name.clone(),
                 Box::new(Self::substitute_type_params(method, subst)),
             ),
+            Type::Tuple(types) => Type::Tuple(types.iter().map(|t| Self::substitute_type_params(t, subst)).collect()),
         }
     }
 

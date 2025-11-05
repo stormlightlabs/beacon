@@ -4,16 +4,14 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 
 ## LSP Features
 
-- [ ] Signature help (`textDocument/signatureHelp`):
-      While typing a function call, the server provides parameter lists, overloads, and hints
-- [ ] Code actions / quick-fixes (`textDocument/codeAction`):
-      Given a range or diagnostic, the server returns actionable fixes (insert import, refactor, etc.)
-    - [ ] Auto-import / import management (`textDocument/codeAction`):
-          The server suggests or inserts missing imports or optimizes them via code actions.
+- [x] Signature help (`textDocument/signatureHelp`) - function calls provide parameter lists, overloads, and hints
+- [ ] Code actions / quick-fixes (`textDocument/codeAction`) - given a range or diagnostic,
+      the server returns actionable fixes (insert import, refactor, etc.)
+    - [ ] Auto-import / import management (`textDocument/codeAction`)
 - [ ] Formatting (`textDocument/formatting`, `textDocument/rangeFormatting`):
-      Format the entire document or a selected range according to style rules.
+      Format the entire document or a selected range according to style rules (black rules).
 - [ ] Workspace/folder support (`workspace/didChangeWorkspaceFolders`):
-      Allows the server to handle multiple folders/projects in a single workspace.
+      Allow the server to handle multiple folders/projects in a single workspace.
 
 ### Hover & Diagnostics
 
@@ -22,7 +20,7 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 - [ ] "Did you mean" suggestions and annotation fixes
 - [ ] Code actions for refactoring (insert annotations, adjust Optional)
 
-## Infrastructure (Can Proceed Independently)
+## Infrastructure
 
 ### Static Analysis & Linting
 
