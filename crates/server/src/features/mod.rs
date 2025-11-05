@@ -13,6 +13,7 @@
 //! - Document highlight: highlight symbol occurrences
 //! - Rename: rename symbols across workspace
 //! - Workspace symbols: search symbols across workspace
+//! - Folding range: code folding for blocks and structures
 
 pub mod builtin_docs;
 pub mod code_actions;
@@ -21,6 +22,7 @@ pub mod diagnostics;
 pub mod document_highlight;
 pub mod document_symbols;
 pub mod dunders;
+pub mod folding_range;
 pub mod goto_definition;
 pub mod hover;
 pub mod inlay_hints;
@@ -34,6 +36,7 @@ pub use completion::CompletionProvider;
 pub use diagnostics::DiagnosticProvider;
 pub use document_highlight::DocumentHighlightProvider;
 pub use document_symbols::DocumentSymbolsProvider;
+pub use folding_range::FoldingRangeProvider;
 pub use goto_definition::GotoDefinitionProvider;
 pub use hover::HoverProvider;
 pub use inlay_hints::InlayHintsProvider;

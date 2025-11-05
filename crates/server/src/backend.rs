@@ -53,6 +53,7 @@ struct Features {
     document_highlight: DocumentHighlightProvider,
     rename: RenameProvider,
     workspace_symbols: WorkspaceSymbolsProvider,
+    folding_range: FoldingRangeProvider,
 }
 
 impl Features {
@@ -73,7 +74,8 @@ impl Features {
             document_symbols: DocumentSymbolsProvider::new(documents.clone()),
             document_highlight: DocumentHighlightProvider::new(documents.clone()),
             rename: RenameProvider::new(documents.clone()),
-            workspace_symbols: WorkspaceSymbolsProvider::new(documents, workspace),
+            workspace_symbols: WorkspaceSymbolsProvider::new(documents.clone(), workspace),
+            folding_range: FoldingRangeProvider::new(documents),
         }
     }
 }
@@ -152,6 +154,7 @@ impl LanguageServer for Backend {
                     },
                 )),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -309,6 +312,10 @@ impl LanguageServer for Backend {
     async fn symbol_resolve(&self, params: WorkspaceSymbol) -> Result<WorkspaceSymbol> {
         Ok(self.features.workspace_symbols.symbol_resolve(params))
     }
+
+    async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
+        Ok(self.features.folding_range.folding_range(params))
+    }
 }
 
 #[cfg(test)]
@@ -345,6 +352,7 @@ mod tests {
         let _ = &backend.features.document_highlight;
         let _ = &backend.features.rename;
         let _ = &backend.features.workspace_symbols;
+        let _ = &backend.features.folding_range;
     }
 
     #[tokio::test]

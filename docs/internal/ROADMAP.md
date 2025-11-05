@@ -56,3 +56,23 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 - [ ] Add more comprehensive stdlib stubs (os, sys, pathlib, etc.)
 - [ ] Implement type checking mode awareness (strict/balanced/loose)
 - [ ] Auto-generate stubs from Python runtime introspection
+
+### LSP
+
+- [ ] Folding / code-regions (`textDocument/foldingRange`): Provide collapse/expand ranges for the editor to display code folding
+
+---
+
+- [ ] Go to definition (`textDocument/definition`): The client asks for the location(s) where the symbol at a cursor position is defined; the server responds with URI/position(s).
+- [ ] Find references (`textDocument/references`): Find all occurrences of the symbol (in code/workspace) and return a list of reference locations.
+
+---
+
+- [ ] Signature help (`textDocument/signatureHelp`): While typing a function call, the server provides parameter lists, overloads, and hints
+- [ ] Inlay hints / parameter names (`textDocument/inlayHint`): Provide inline hints (e.g., parameter names, inferred types) at specific positions
+
+---
+
+- Code actions / quick-fixes (`textDocument/codeAction`): Given a range or diagnostic, the server returns actionable fixes (insert import, refactor, etc.)
+    - Auto-import / import management (`textDocument/codeAction`): The server suggests or inserts missing imports or optimizes them via code actions. (Not always a named method in the base spec.)
+- Rename symbol (`textDocument/rename`): Request to rename a symbol; server returns workspace edits to update symbol and its usages
