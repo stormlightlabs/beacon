@@ -297,12 +297,24 @@ mod tests {
 
     /// Helper to create a boolean literal pattern
     fn bool_pattern(value: bool) -> Pattern {
-        Pattern::MatchValue(AstNode::Literal { value: LiteralValue::Boolean(value), line: 1, col: 1 })
+        Pattern::MatchValue(AstNode::Literal {
+            value: LiteralValue::Boolean(value),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 1,
+        })
     }
 
     /// Helper to create an integer literal pattern
     fn int_pattern(value: i64) -> Pattern {
-        Pattern::MatchValue(AstNode::Literal { value: LiteralValue::Integer(value), line: 1, col: 1 })
+        Pattern::MatchValue(AstNode::Literal {
+            value: LiteralValue::Integer(value),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 1,
+        })
     }
 
     /// Helper to create a catch-all pattern
@@ -346,7 +358,13 @@ mod tests {
     fn test_exhaustiveness_union_complete() {
         let subject = Type::union(vec![Type::int(), Type::string()]);
         let patterns = vec![
-            Pattern::MatchValue(AstNode::Literal { value: LiteralValue::Integer(0), line: 1, col: 1 }),
+            Pattern::MatchValue(AstNode::Literal {
+                value: LiteralValue::Integer(0),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 1,
+            }),
             catch_all("rest"),
         ];
 
@@ -361,11 +379,19 @@ mod tests {
     fn test_exhaustiveness_union_incomplete() {
         let subject = Type::union(vec![Type::int(), Type::string(), Type::bool()]);
         let patterns = vec![
-            Pattern::MatchValue(AstNode::Literal { value: LiteralValue::Integer(0), line: 1, col: 1 }),
+            Pattern::MatchValue(AstNode::Literal {
+                value: LiteralValue::Integer(0),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 1,
+            }),
             Pattern::MatchValue(AstNode::Literal {
                 value: LiteralValue::String { value: "".to_string(), prefix: String::new() },
                 line: 1,
                 col: 1,
+                end_col: 1,
+                end_line: 1,
             }),
         ];
 

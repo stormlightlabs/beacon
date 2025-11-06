@@ -99,7 +99,7 @@ impl DocumentSymbolsProvider {
                 })
             }
 
-            AstNode::Assignment { target, value, line, col } => {
+            AstNode::Assignment { target, value, line, col, .. } => {
                 let range = self.assignment_range(*line, *col, value);
                 let selection_range = self.identifier_range(*line, *col, target.len());
 
@@ -219,9 +219,9 @@ impl DocumentSymbolsProvider {
             | AstNode::Lambda { line, col, .. }
             | AstNode::Subscript { line, col, .. }
             | AstNode::Match { line, col, .. }
-            | AstNode::Pass { line, col }
-            | AstNode::Break { line, col }
-            | AstNode::Continue { line, col }
+            | AstNode::Pass { line, col, .. }
+            | AstNode::Break { line, col, .. }
+            | AstNode::Continue { line, col, .. }
             | AstNode::Raise { line, col, .. } => {
                 Position { line: (*line).saturating_sub(1) as u32, character: (*col + 10).saturating_sub(1) as u32 }
             }

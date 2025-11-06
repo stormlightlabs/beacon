@@ -107,8 +107,8 @@ pub enum Constraint {
     /// HasAttr constraint: τ has attribute "name" : τ'
     HasAttr(Type, String, Type, Span),
     /// Call constraint: f(positional_args, keyword_args) -> ret
-    /// Stores function type, positional arguments, keyword arguments (name, type), return type, and span
-    Call(Type, Vec<Type>, Vec<(String, Type)>, Type, Span),
+    /// Stores function type, positional arguments (type, span), keyword arguments (name, type, span), return type, and call span
+    Call(Type, Vec<(Type, Span)>, Vec<(String, Type, Span)>, Type, Span),
     /// Protocol constraint: τ satisfies protocol P
     /// The type parameter is the element type extracted from satisfying the protocol
     Protocol(Type, beacon_core::ProtocolName, Type, Span),

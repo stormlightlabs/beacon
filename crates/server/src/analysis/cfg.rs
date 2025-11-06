@@ -496,12 +496,14 @@ mod tests {
     fn test_cfg_if_statement() {
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::If {
-            test: Box::new(AstNode::Identifier { name: "cond".to_string(), line: 1, col: 4 }),
-            body: vec![AstNode::Pass { line: 2, col: 5 }],
+            test: Box::new(AstNode::Identifier { name: "cond".to_string(), line: 1, col: 4, end_line: 1, end_col: 4 }),
+            body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
             elif_parts: vec![],
             else_body: None,
             line: 1,
+            end_line: 1,
             col: 1,
+            end_col: 1,
         }];
 
         builder.build_function(&body);
@@ -525,12 +527,14 @@ mod tests {
     fn test_cfg_if_else_statement() {
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::If {
-            test: Box::new(AstNode::Identifier { name: "cond".to_string(), line: 1, col: 4 }),
-            body: vec![AstNode::Pass { line: 2, col: 5 }],
+            test: Box::new(AstNode::Identifier { name: "cond".to_string(), line: 1, col: 4, end_line: 1, end_col: 8 }),
+            body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
             elif_parts: vec![],
-            else_body: Some(vec![AstNode::Pass { line: 4, col: 5 }]),
+            else_body: Some(vec![AstNode::Pass { line: 4, col: 5, end_line: 4, end_col: 9 }]),
             line: 1,
+            end_line: 1,
             col: 1,
+            end_col: 1,
         }];
 
         builder.build_function(&body);
@@ -553,12 +557,20 @@ mod tests {
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::For {
             target: "i".to_string(),
-            iter: Box::new(AstNode::Identifier { name: "items".to_string(), line: 1, col: 14 }),
-            body: vec![AstNode::Pass { line: 2, col: 5 }],
+            iter: Box::new(AstNode::Identifier {
+                name: "items".to_string(),
+                line: 1,
+                col: 14,
+                end_line: 1,
+                end_col: 19,
+            }),
+            body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
             else_body: None,
             is_async: false,
             line: 1,
+            end_line: 1,
             col: 1,
+            end_col: 1,
         }];
 
         builder.build_function(&body);
@@ -576,12 +588,20 @@ mod tests {
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::For {
             target: "i".to_string(),
-            iter: Box::new(AstNode::Identifier { name: "items".to_string(), line: 1, col: 14 }),
-            body: vec![AstNode::Break { line: 2, col: 5 }],
+            iter: Box::new(AstNode::Identifier {
+                name: "items".to_string(),
+                line: 1,
+                col: 14,
+                end_line: 1,
+                end_col: 19,
+            }),
+            body: vec![AstNode::Break { line: 2, col: 5, end_line: 2, end_col: 10 }],
             else_body: None,
             is_async: false,
             line: 1,
+            end_line: 1,
             col: 1,
+            end_col: 1,
         }];
 
         builder.build_function(&body);
@@ -599,12 +619,20 @@ mod tests {
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::For {
             target: "i".to_string(),
-            iter: Box::new(AstNode::Identifier { name: "items".to_string(), line: 1, col: 14 }),
-            body: vec![AstNode::Continue { line: 2, col: 5 }],
+            iter: Box::new(AstNode::Identifier {
+                name: "items".to_string(),
+                line: 1,
+                col: 14,
+                end_line: 1,
+                end_col: 19,
+            }),
+            body: vec![AstNode::Continue { line: 2, col: 5, end_line: 2, end_col: 13 }],
             else_body: None,
             is_async: false,
             line: 1,
+            end_line: 1,
             col: 1,
+            end_col: 1,
         }];
 
         builder.build_function(&body);
@@ -619,15 +647,15 @@ mod tests {
 
     #[test]
     fn test_cfg_while_loop() {
-        use beacon_parser::AstNode;
-
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::While {
-            test: Box::new(AstNode::Identifier { name: "cond".to_string(), line: 1, col: 7 }),
-            body: vec![AstNode::Pass { line: 2, col: 5 }],
+            test: Box::new(AstNode::Identifier { name: "cond".to_string(), line: 1, col: 7, end_line: 1, end_col: 11 }),
+            body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
             else_body: None,
             line: 1,
+            end_line: 1,
             col: 1,
+            end_col: 1,
         }];
 
         builder.build_function(&body);
@@ -643,18 +671,22 @@ mod tests {
     fn test_cfg_try_except() {
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::Try {
-            body: vec![AstNode::Pass { line: 2, col: 5 }],
+            body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
             handlers: vec![ExceptHandler {
                 exception_type: None,
                 name: None,
-                body: vec![AstNode::Pass { line: 4, col: 5 }],
+                body: vec![AstNode::Pass { line: 4, col: 5, end_col: 9, end_line: 4 }],
                 line: 3,
                 col: 1,
+                end_line: 3,
+                end_col: 1,
             }],
             else_body: None,
             finally_body: None,
             line: 1,
             col: 1,
+            end_col: 1,
+            end_line: 1,
         }];
 
         builder.build_function(&body);
@@ -671,12 +703,14 @@ mod tests {
     fn test_cfg_try_finally() {
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::Try {
-            body: vec![AstNode::Pass { line: 2, col: 5 }],
+            body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
             handlers: vec![],
             else_body: None,
-            finally_body: Some(vec![AstNode::Pass { line: 4, col: 5 }]),
+            finally_body: Some(vec![AstNode::Pass { line: 4, col: 5, end_line: 4, end_col: 9 }]),
             line: 1,
             col: 1,
+            end_col: 1,
+            end_line: 1,
         }];
 
         builder.build_function(&body);
@@ -694,13 +728,15 @@ mod tests {
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::With {
             items: vec![WithItem {
-                context_expr: AstNode::Identifier { name: "ctx".to_string(), line: 1, col: 6 },
+                context_expr: AstNode::Identifier { name: "ctx".to_string(), line: 1, col: 6, end_col: 9, end_line: 1 },
                 optional_vars: None,
             }],
-            body: vec![AstNode::Pass { line: 2, col: 5 }],
+            body: vec![AstNode::Pass { line: 2, col: 5, end_col: 9, end_line: 2 }],
             is_async: false,
             line: 1,
             col: 1,
+            end_col: 1,
+            end_line: 1,
         }];
 
         builder.build_function(&body);
@@ -719,29 +755,35 @@ mod tests {
 
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::Match {
-            subject: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 7 }),
+            subject: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 7, end_col: 8, end_line: 1 }),
             cases: vec![
                 MatchCase {
                     pattern: Pattern::MatchValue(AstNode::Literal {
                         value: LiteralValue::Integer(1),
                         line: 2,
                         col: 10,
+                        end_line: 2,
+                        end_col: 11,
                     }),
                     guard: None,
-                    body: vec![AstNode::Pass { line: 3, col: 9 }],
+                    body: vec![AstNode::Pass { line: 3, col: 9, end_col: 13, end_line: 3 }],
                 },
                 MatchCase {
                     pattern: Pattern::MatchValue(AstNode::Literal {
                         value: LiteralValue::Integer(2),
                         line: 4,
                         col: 10,
+                        end_col: 11,
+                        end_line: 4,
                     }),
                     guard: None,
-                    body: vec![AstNode::Pass { line: 5, col: 9 }],
+                    body: vec![AstNode::Pass { line: 5, col: 9, end_line: 5, end_col: 13 }],
                 },
             ],
             line: 1,
             col: 1,
+            end_col: 1,
+            end_line: 1,
         }];
 
         builder.build_function(&body);
@@ -758,12 +800,10 @@ mod tests {
 
     #[test]
     fn test_cfg_return_creates_unreachable_block() {
-        use beacon_parser::AstNode;
-
         let mut builder = CfgBuilder::new();
         let body = vec![
-            AstNode::Return { value: None, line: 1, col: 1 },
-            AstNode::Pass { line: 2, col: 1 },
+            AstNode::Return { value: None, line: 1, col: 1, end_col: 7, end_line: 1 },
+            AstNode::Pass { line: 2, col: 1, end_col: 5, end_line: 2 },
         ];
 
         builder.build_function(&body);
@@ -775,23 +815,31 @@ mod tests {
 
     #[test]
     fn test_cfg_nested_if_statements() {
-        use beacon_parser::AstNode;
-
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::If {
-            test: Box::new(AstNode::Identifier { name: "cond1".to_string(), line: 1, col: 4 }),
+            test: Box::new(AstNode::Identifier { name: "cond1".to_string(), line: 1, col: 4, end_col: 9, end_line: 1 }),
             body: vec![AstNode::If {
-                test: Box::new(AstNode::Identifier { name: "cond2".to_string(), line: 2, col: 8 }),
-                body: vec![AstNode::Pass { line: 3, col: 9 }],
+                test: Box::new(AstNode::Identifier {
+                    name: "cond2".to_string(),
+                    line: 2,
+                    col: 8,
+                    end_col: 0,
+                    end_line: 0,
+                }),
+                body: vec![AstNode::Pass { line: 3, col: 9, end_col: 0, end_line: 0 }],
                 elif_parts: vec![],
                 else_body: None,
                 line: 2,
                 col: 5,
+                end_col: 0,
+                end_line: 0,
             }],
             elif_parts: vec![],
             else_body: None,
             line: 1,
             col: 1,
+            end_col: 0,
+            end_line: 0,
         }];
 
         builder.build_function(&body);
@@ -813,33 +861,55 @@ mod tests {
 
     #[test]
     fn test_cfg_complex_control_flow() {
-        use beacon_parser::AstNode;
-
         let mut builder = CfgBuilder::new();
         let body = vec![
             AstNode::Assignment {
                 target: "x".to_string(),
-                value: Box::new(AstNode::Literal { value: beacon_parser::LiteralValue::Integer(1), line: 1, col: 5 }),
+                value: Box::new(AstNode::Literal {
+                    value: beacon_parser::LiteralValue::Integer(1),
+                    line: 1,
+                    col: 5,
+                    end_col: 0,
+                    end_line: 0,
+                }),
                 line: 1,
                 col: 1,
+                end_line: 1,
+                end_col: 1,
             },
             AstNode::For {
                 target: "i".to_string(),
-                iter: Box::new(AstNode::Identifier { name: "range(10)".to_string(), line: 2, col: 14 }),
+                iter: Box::new(AstNode::Identifier {
+                    name: "range(10)".to_string(),
+                    line: 2,
+                    col: 14,
+                    end_col: 0,
+                    end_line: 0,
+                }),
                 body: vec![AstNode::If {
-                    test: Box::new(AstNode::Identifier { name: "cond".to_string(), line: 3, col: 12 }),
-                    body: vec![AstNode::Break { line: 4, col: 13 }],
+                    test: Box::new(AstNode::Identifier {
+                        name: "cond".to_string(),
+                        line: 3,
+                        col: 12,
+                        end_col: 0,
+                        end_line: 0,
+                    }),
+                    body: vec![AstNode::Break { line: 4, col: 13, end_line: 4, end_col: 18 }],
                     elif_parts: vec![],
-                    else_body: Some(vec![AstNode::Continue { line: 6, col: 13 }]),
+                    else_body: Some(vec![AstNode::Continue { line: 6, col: 13, end_line: 6, end_col: 21 }]),
                     line: 3,
                     col: 9,
+                    end_line: 3,
+                    end_col: 11,
                 }],
                 else_body: None,
                 is_async: false,
                 line: 2,
                 col: 1,
+                end_line: 2,
+                end_col: 1,
             },
-            AstNode::Return { value: None, line: 7, col: 1 },
+            AstNode::Return { value: None, line: 7, col: 1, end_line: 7, end_col: 7 },
         ];
 
         builder.build_function(&body);

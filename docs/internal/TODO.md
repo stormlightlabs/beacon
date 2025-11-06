@@ -94,13 +94,11 @@ Tasks:
 
 ## Error & Warning Span Position Accuracy
 
-Parser doesn't provide end positions for AST nodes, causing single-character error markers.
+Parser doesn't provide end positions for AST nodes, causing diagnostics to estimate span length (defaults to +10 chars).
 
-**Location**: `crates/parser` (AST node definitions) &`crates/server/src/analysis/walker.rs` (Span creation)
-
-**Tasks**:
+**Location**: `crates/parser` (AST node definitions) & `crates/server/src/analysis/walker.rs` (Span creation)
 
 - [ ] Add end_line and end_col to all AstNode variants
-- [ ] Update parser to track end positions
-- [ ] Update constraint generation to use full spans
-- [ ] Test error highlighting covers full expressions
+- [ ] Update parser to track end positions during tree-sitter traversal
+- [ ] Update constraint generation to use `Span::with_end()` instead of `Span::new()`
+- [ ] Test error highlighting covers full expressions (exact character ranges)

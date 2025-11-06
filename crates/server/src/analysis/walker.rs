@@ -61,6 +61,53 @@ fn is_docstring(node: &AstNode) -> bool {
     matches!(node, AstNode::Literal { value: LiteralValue::String { .. }, .. })
 }
 
+/// Get the line and column position from any AstNode.
+///
+/// Extracts the source position from the node for error reporting and span tracking.
+fn get_node_position(node: &AstNode) -> (usize, usize, usize, usize) {
+    match node {
+        AstNode::Module { .. } => (1, 1, 1, 1),
+        AstNode::FunctionDef { line, col, end_line, end_col, .. }
+        | AstNode::ClassDef { line, col, end_line, end_col, .. }
+        | AstNode::If { line, col, end_line, end_col, .. }
+        | AstNode::For { line, col, end_line, end_col, .. }
+        | AstNode::While { line, col, end_line, end_col, .. }
+        | AstNode::Try { line, col, end_line, end_col, .. }
+        | AstNode::With { line, col, end_line, end_col, .. }
+        | AstNode::Match { line, col, end_line, end_col, .. }
+        | AstNode::Assignment { line, col, end_line, end_col, .. }
+        | AstNode::AnnotatedAssignment { line, col, end_line, end_col, .. }
+        | AstNode::Call { line, col, end_line, end_col, .. }
+        | AstNode::Identifier { line, col, end_line, end_col, .. }
+        | AstNode::Literal { line, col, end_line, end_col, .. }
+        | AstNode::Return { line, col, end_line, end_col, .. }
+        | AstNode::BinaryOp { line, col, end_line, end_col, .. }
+        | AstNode::UnaryOp { line, col, end_line, end_col, .. }
+        | AstNode::Compare { line, col, end_line, end_col, .. }
+        | AstNode::Attribute { line, col, end_line, end_col, .. }
+        | AstNode::Subscript { line, col, end_line, end_col, .. }
+        | AstNode::List { line, col, end_line, end_col, .. }
+        | AstNode::Tuple { line, col, end_line, end_col, .. }
+        | AstNode::Set { line, col, end_line, end_col, .. }
+        | AstNode::Dict { line, col, end_line, end_col, .. }
+        | AstNode::ListComp { line, col, end_line, end_col, .. }
+        | AstNode::DictComp { line, col, end_line, end_col, .. }
+        | AstNode::SetComp { line, col, end_line, end_col, .. }
+        | AstNode::GeneratorExp { line, col, end_line, end_col, .. }
+        | AstNode::NamedExpr { line, col, end_line, end_col, .. }
+        | AstNode::Lambda { line, col, end_line, end_col, .. }
+        | AstNode::Yield { line, col, end_line, end_col, .. }
+        | AstNode::YieldFrom { line, col, end_line, end_col, .. }
+        | AstNode::Await { line, col, end_line, end_col, .. }
+        | AstNode::Import { line, col, end_line, end_col, .. }
+        | AstNode::ImportFrom { line, col, end_line, end_col, .. }
+        | AstNode::Raise { line, col, end_line, end_col, .. }
+        | AstNode::Pass { line, col, end_line, end_col, .. }
+        | AstNode::Break { line, col, end_line, end_col, .. }
+        | AstNode::Continue { line, col, end_line, end_col, .. } => (*line, *col, *end_line, *end_col),
+    }
+}
+
 /// Check if the AST nodes contain yield or yield from expressions in the current scope.
 ///
 /// This correctly excludes yields that appear in nested function definitions, lambdas,
@@ -344,7 +391,19 @@ fn visit_node_with_context(
             }
             Ok(Type::Con(TypeCtor::Module("".into())))
         }
-        AstNode::FunctionDef { name, args, return_type, body, decorators, is_async, line, col, .. } => {
+        AstNode::FunctionDef {
+            name,
+            args,
+            return_type,
+            body,
+            decorators,
+            is_async,
+            line,
+            col,
+            end_line,
+            end_col,
+            ..
+        } => {
             let params: Vec<(String, Type)> = args
                 .iter()
                 .map(|param| {
@@ -431,10 +490,10 @@ fn visit_node_with_context(
                 let decorator_ty = env.lookup(decorator).unwrap_or_else(|| Type::Var(env.fresh_var()));
                 let result_ty = Type::Var(env.fresh_var());
 
-                let span = Span::new(*line, *col);
+                let span = Span::with_end(*line, *col, *end_line, *end_col);
                 ctx.constraints.push(Constraint::Call(
                     decorator_ty,
-                    vec![decorated_type],
+                    vec![(decorated_type, span)],
                     vec![],
                     result_ty.clone(),
                     span,
@@ -449,7 +508,7 @@ fn visit_node_with_context(
             Ok(decorated_type)
         }
 
-        AstNode::ClassDef { name, body, decorators, bases, line, col, .. } => {
+        AstNode::ClassDef { name, body, decorators, bases, line, col, end_line, end_col, .. } => {
             let class_type = Type::Con(TypeCtor::Class(name.clone()));
             let mut metadata = extract_class_metadata(name, body, env);
 
@@ -486,11 +545,11 @@ fn visit_node_with_context(
             for decorator in type_transforming_decorators.iter().rev() {
                 let decorator_ty = env.lookup(decorator).unwrap_or_else(|| Type::Var(env.fresh_var()));
                 let result_ty = Type::Var(env.fresh_var());
-                let span = Span::new(*line, *col);
+                let span = Span::with_end(*line, *col, *end_line, *end_col);
 
                 ctx.constraints.push(Constraint::Call(
                     decorator_ty,
-                    vec![decorated_type],
+                    vec![(decorated_type, span)],
                     vec![],
                     result_ty.clone(),
                     span,
@@ -505,17 +564,17 @@ fn visit_node_with_context(
             Ok(decorated_type)
         }
         // TODO: Determine if value is non-expansive for generalization
-        AstNode::Assignment { target, value, line, col } => {
+        AstNode::Assignment { target, value, line, col, .. } => {
             let value_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
             env.bind(target.clone(), TypeScheme::mono(value_ty.clone()));
             ctx.record_type(*line, *col, value_ty.clone());
             Ok(value_ty)
         }
-        AstNode::AnnotatedAssignment { target, type_annotation, value, line, col } => {
+        AstNode::AnnotatedAssignment { target, type_annotation, value, line, col, end_line, end_col, .. } => {
             let annotated_ty = env.parse_annotation_or_any(type_annotation);
             if let Some(val) = value {
                 let value_ty = visit_node_with_env(val, env, ctx, stub_cache)?;
-                let span = Span::new(*line, *col);
+                let span = Span::with_end(*line, *col, *end_line, *end_col);
                 ctx.constraints
                     .push(Constraint::Equal(value_ty, annotated_ty.clone(), span));
             }
@@ -523,14 +582,14 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, annotated_ty.clone());
             Ok(annotated_ty)
         }
-        AstNode::Call { function, args, keywords, line, col } => {
+        AstNode::Call { function, args, keywords, line, col, end_line, end_col, .. } => {
             let func_ty = if function.contains('.') {
                 if let Some(last_dot_idx) = function.rfind('.') {
                     let (object_part, method_part) = function.split_at(last_dot_idx);
                     let method_name = &method_part[1..];
                     let obj_ty = env.lookup(object_part).unwrap_or_else(|| Type::Var(env.fresh_var()));
                     let method_ty = Type::Var(env.fresh_var());
-                    let span = Span::new(*line, *col);
+                    let span = Span::with_end(*line, *col, *end_line, *end_col);
 
                     ctx.constraints.push(Constraint::HasAttr(
                         obj_ty,
@@ -549,17 +608,22 @@ fn visit_node_with_context(
 
             let mut positional_arg_types = Vec::new();
             for arg in args {
-                positional_arg_types.push(visit_node_with_env(arg, env, ctx, stub_cache)?);
+                let arg_ty = visit_node_with_env(arg, env, ctx, stub_cache)?;
+                let (arg_line, arg_col, arg_end_line, arg_end_col) = get_node_position(arg);
+                let arg_span = Span::with_end(arg_line, arg_col, arg_end_line, arg_end_col);
+                positional_arg_types.push((arg_ty, arg_span));
             }
 
             let mut keyword_arg_types = Vec::new();
             for (name, value) in keywords {
                 let kw_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
-                keyword_arg_types.push((name.clone(), kw_ty));
+                let (kw_line, kw_col, kw_end_line, kw_end_col) = get_node_position(value);
+                let kw_span = Span::with_end(kw_line, kw_col, kw_end_line, kw_end_col);
+                keyword_arg_types.push((name.clone(), kw_ty, kw_span));
             }
 
             let ret_ty = Type::Var(env.fresh_var());
-            let span = Span::new(*line, *col);
+            let span = Span::with_end(*line, *col, *end_line, *end_col);
             ctx.constraints.push(Constraint::Call(
                 func_ty,
                 positional_arg_types,
@@ -571,12 +635,12 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, ret_ty.clone());
             Ok(ret_ty)
         }
-        AstNode::Identifier { name, line, col } => {
+        AstNode::Identifier { name, line, col, .. } => {
             let ty = env.lookup(name).unwrap_or_else(|| Type::Var(env.fresh_var()));
             ctx.record_type(*line, *col, ty.clone());
             Ok(ty)
         }
-        AstNode::Literal { value, line, col } => {
+        AstNode::Literal { value, line, col, .. } => {
             let ty = match value {
                 LiteralValue::Integer(_) => Type::int(),
                 LiteralValue::Float(_) => Type::float(),
@@ -587,7 +651,7 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, ty.clone());
             Ok(ty)
         }
-        AstNode::Return { value, line, col } => {
+        AstNode::Return { value, line, col, end_line, end_col, .. } => {
             let ty = if let Some(val) = value {
                 visit_node_with_context(val, env, ctx, stub_cache, ExprContext::Value)?
             } else {
@@ -595,7 +659,7 @@ fn visit_node_with_context(
             };
 
             if let Some(expected_ret_ty) = env.get_expected_return_type() {
-                let span = Span::new(*line, *col);
+                let span = Span::with_end(*line, *col, *end_line, *end_col);
                 ctx.constraints
                     .push(Constraint::Equal(ty.clone(), expected_ret_ty.clone(), span));
             }
@@ -603,12 +667,12 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, ty.clone());
             Ok(ty)
         }
-        AstNode::Yield { value, line, col } => {
+        AstNode::Yield { value, line, col, end_line, end_col, .. } => {
             let yielded_ty =
                 if let Some(val) = value { visit_node_with_env(val, env, ctx, stub_cache)? } else { Type::none() };
 
             let result_ty = if let Some((yield_var, send_var, _return_var)) = env.get_generator_params() {
-                let span = Span::new(*line, *col);
+                let span = Span::with_end(*line, *col, *end_line, *end_col);
                 ctx.constraints
                     .push(Constraint::Equal(yielded_ty.clone(), yield_var.clone(), span));
 
@@ -620,9 +684,9 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, result_ty.clone());
             Ok(result_ty)
         }
-        AstNode::YieldFrom { value, line, col } => {
+        AstNode::YieldFrom { value, line, col, end_line, end_col, .. } => {
             let subgen_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
-            let span = Span::new(*line, *col);
+            let span = Span::with_end(*line, *col, *end_line, *end_col);
 
             let result_ty = if let Some((sub_yield, sub_send, sub_return)) = subgen_ty.extract_generator_params() {
                 if let Some((yield_var, send_var, _return_var)) = env.get_generator_params() {
@@ -647,9 +711,9 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, result_ty.clone());
             Ok(result_ty)
         }
-        AstNode::Await { value, line, col } => {
+        AstNode::Await { value, line, col, end_col, end_line } => {
             let awaitable_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
-            let span = Span::new(*line, *col);
+            let span = Span::with_end(*line, *col, *end_line, *end_col);
 
             let result_ty = if let Some((_y, _s, r)) = awaitable_ty.extract_coroutine_params() {
                 r.clone()
@@ -675,19 +739,19 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, result_ty.clone());
             Ok(result_ty)
         }
-        AstNode::Attribute { object, attribute, line, col } => {
+        AstNode::Attribute { object, attribute, line, col, end_line, end_col, .. } => {
             let obj_ty = visit_node_with_env(object, env, ctx, stub_cache)?;
             let attr_ty = Type::Var(env.fresh_var());
-            let span = Span::new(*line, *col);
+            let span = Span::with_end(*line, *col, *end_line, *end_col);
             ctx.constraints
                 .push(Constraint::HasAttr(obj_ty, attribute.clone(), attr_ty.clone(), span));
             ctx.record_type(*line, *col, attr_ty.clone());
             Ok(attr_ty)
         }
-        AstNode::BinaryOp { left, right, line, col, .. } => {
+        AstNode::BinaryOp { left, right, line, col, end_col, end_line, .. } => {
             let left_ty = visit_node_with_env(left, env, ctx, stub_cache)?;
             let right_ty = visit_node_with_env(right, env, ctx, stub_cache)?;
-            let span = Span::new(*line, *col);
+            let span = Span::with_end(*line, *col, *end_line, *end_col);
             ctx.constraints.push(Constraint::Equal(left_ty.clone(), right_ty, span));
             ctx.record_type(*line, *col, left_ty.clone());
             Ok(left_ty)
@@ -697,10 +761,10 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, ty.clone());
             Ok(ty)
         }
-        AstNode::Subscript { value, slice, line, col } => {
+        AstNode::Subscript { value, slice, line, col, end_line, end_col, .. } => {
             let value_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
             let slice_ty = visit_node_with_env(slice, env, ctx, stub_cache)?;
-            let span = Span::new(*line, *col);
+            let span = Span::with_end(*line, *col, *end_line, *end_col);
 
             let getitem_method_ty = Type::Var(env.fresh_var());
             ctx.constraints.push(Constraint::HasAttr(
@@ -713,7 +777,7 @@ fn visit_node_with_context(
             let result_ty = Type::Var(env.fresh_var());
             ctx.constraints.push(Constraint::Call(
                 getitem_method_ty,
-                vec![slice_ty],
+                vec![(slice_ty, span)],
                 vec![],
                 result_ty.clone(),
                 span,
@@ -722,7 +786,7 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, result_ty.clone());
             Ok(result_ty)
         }
-        AstNode::If { test, body, elif_parts, else_body, line, col, .. } => {
+        AstNode::If { test, body, elif_parts, else_body, line, col, end_col, end_line } => {
             visit_node_with_context(test, env, ctx, stub_cache, ExprContext::Value)?;
 
             let is_main = is_main_guard(test);
@@ -744,7 +808,7 @@ fn visit_node_with_context(
                 true_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
 
                 if let Some(pred) = &predicate {
-                    let span = Span::new(*line, *col);
+                    let span = Span::with_end(*line, *col, *end_line, *end_col);
                     ctx.constraints.push(Constraint::Narrowing(
                         var_name.clone(),
                         pred.clone(),
@@ -776,7 +840,7 @@ fn visit_node_with_context(
                     if let Some(pred) = &predicate {
                         if pred.has_simple_negation() {
                             if let Some(inv_pred) = &inverse_predicate {
-                                let span = Span::new(*line, *col);
+                                let span = Span::with_end(*line, *col, *end_line, *end_col);
                                 ctx.constraints.push(Constraint::Narrowing(
                                     var_name.clone(),
                                     inv_pred.clone(),
@@ -848,7 +912,7 @@ fn visit_node_with_context(
 
             Ok(Type::none())
         }
-        AstNode::Import { module, alias, line, col } => {
+        AstNode::Import { module, alias, line, col, .. } => {
             let module_name = alias.as_ref().unwrap_or(module);
             let module_type = Type::Con(TypeCtor::Module(module.clone()));
             if let Some(cache_arc) = stub_cache {
@@ -866,7 +930,7 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, module_type.clone());
             Ok(module_type)
         }
-        AstNode::ImportFrom { module, names, line, col } => {
+        AstNode::ImportFrom { module, names, line, col, .. } => {
             if let Some(cache_arc) = stub_cache {
                 if let Ok(cache) = cache_arc.read() {
                     if let Some(stub) = cache.get(module) {
@@ -898,10 +962,10 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, module_type.clone());
             Ok(module_type)
         }
-        AstNode::For { target, iter, body, else_body, is_async, line, col } => {
+        AstNode::For { target, iter, body, else_body, is_async, line, col, end_col, end_line } => {
             let iter_ty = visit_node_with_env(iter, env, ctx, stub_cache)?;
             let element_ty = Type::Var(env.fresh_var());
-            let span = Span::new(*line, *col);
+            let span = Span::with_end(*line, *col, *end_line, *end_col);
 
             let protocol = if *is_async {
                 beacon_core::ProtocolName::AsyncIterable
@@ -928,7 +992,7 @@ fn visit_node_with_context(
             Ok(Type::none())
         }
 
-        AstNode::While { test, body, else_body, line, col } => {
+        AstNode::While { test, body, else_body, line, col, end_col, end_line } => {
             visit_node_with_context(test, env, ctx, stub_cache, ExprContext::Value)?;
 
             let predicate = extract_type_predicate(test, env);
@@ -941,7 +1005,7 @@ fn visit_node_with_context(
                 loop_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
 
                 if let Some(pred) = &predicate {
-                    let span = Span::new(*line, *col);
+                    let span = Span::with_end(*line, *col, *end_line, *end_col);
                     ctx.constraints.push(Constraint::Narrowing(
                         var_name.clone(),
                         pred.clone(),
@@ -965,7 +1029,7 @@ fn visit_node_with_context(
                     if let Some(pred) = &predicate {
                         if pred.has_simple_negation() {
                             if let Some(inv_pred) = &inverse_predicate {
-                                let span = Span::new(*line, *col);
+                                let span = Span::with_end(*line, *col, *end_line, *end_col);
                                 ctx.constraints.push(Constraint::Narrowing(
                                     var_name.clone(),
                                     inv_pred.clone(),
@@ -986,7 +1050,7 @@ fn visit_node_with_context(
             Ok(Type::none())
         }
 
-        AstNode::Try { body, handlers, else_body, finally_body, line, col } => {
+        AstNode::Try { body, handlers, else_body, finally_body, line, col, end_col, end_line } => {
             for stmt in body {
                 visit_node_with_context(stmt, env, ctx, stub_cache, ExprContext::Void)?;
             }
@@ -1001,7 +1065,7 @@ fn visit_node_with_context(
                     };
                     handler_env.bind(name.clone(), TypeScheme::mono(exc_ty.clone()));
 
-                    let span = Span::new(*line, *col);
+                    let span = Span::with_end(*line, *col, *end_line, *end_col);
                     ctx.constraints.push(Constraint::Narrowing(
                         name.clone(),
                         TypePredicate::IsInstance(exc_ty.clone()),
@@ -1031,10 +1095,10 @@ fn visit_node_with_context(
             Ok(Type::none())
         }
 
-        AstNode::Match { subject, cases, line, col } => {
+        AstNode::Match { subject, cases, line, col, end_line, end_col, .. } => {
             let subject_ty = visit_node_with_env(subject, env, ctx, stub_cache)?;
             let all_patterns: Vec<beacon_parser::Pattern> = cases.iter().map(|c| c.pattern.clone()).collect();
-            let span = Span::new(*line, *col);
+            let span = Span::with_end(*line, *col, *end_line, *end_col);
 
             ctx.constraints.push(Constraint::PatternExhaustive(
                 subject_ty.clone(),
@@ -1103,7 +1167,7 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, Type::none());
             Ok(Type::none())
         }
-        AstNode::Raise { exc, line, col } => {
+        AstNode::Raise { exc, line, col, .. } => {
             if let Some(exception) = exc {
                 visit_node_with_env(exception, env, ctx, stub_cache)?;
             }
@@ -1112,7 +1176,7 @@ fn visit_node_with_context(
             Ok(Type::never())
         }
 
-        AstNode::With { items, body, is_async, line, col } => {
+        AstNode::With { items, body, is_async, line, col, end_col, end_line } => {
             let (enter_method, exit_method) =
                 if *is_async { ("__aenter__", "__aexit__") } else { ("__enter__", "__exit__") };
 
@@ -1120,7 +1184,7 @@ fn visit_node_with_context(
                 let context_ty = visit_node_with_context(&item.context_expr, env, ctx, stub_cache, ExprContext::Value)?;
 
                 let enter_ty = Type::Var(env.fresh_var());
-                let span = Span::new(*line, *col);
+                let span = Span::with_end(*line, *col, *end_line, *end_col);
                 ctx.constraints.push(Constraint::HasAttr(
                     context_ty.clone(),
                     enter_method.to_string(),
@@ -1151,7 +1215,7 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, Type::none());
             Ok(Type::none())
         }
-        AstNode::Lambda { args, body, line, col } => {
+        AstNode::Lambda { args, body, line, col, .. } => {
             let params: Vec<(String, Type)> = args
                 .iter()
                 .enumerate()
@@ -1187,20 +1251,20 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, Type::bool());
             Ok(Type::bool())
         }
-        AstNode::NamedExpr { target, value, line, col } => {
+        AstNode::NamedExpr { target, value, line, col, .. } => {
             let value_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
             env.bind(target.clone(), TypeScheme::mono(value_ty.clone()));
             ctx.record_type(*line, *col, value_ty.clone());
             Ok(value_ty)
         }
-        AstNode::ListComp { element, generators, line, col } => {
+        AstNode::ListComp { element, generators, line, col, end_col, end_line } => {
             let mut comp_env = env.clone();
 
             for generator in generators {
                 let iter_ty = visit_node_with_env(&generator.iter, &mut comp_env, ctx, stub_cache)?;
 
                 let element_ty = Type::Var(comp_env.fresh_var());
-                let span = Span::new(*line, *col);
+                let span = Span::with_end(*line, *col, *end_line, *end_col);
                 ctx.constraints.push(Constraint::Protocol(
                     iter_ty,
                     beacon_core::ProtocolName::Iterable,
@@ -1221,14 +1285,14 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, list_ty.clone());
             Ok(list_ty)
         }
-        AstNode::SetComp { element, generators, line, col } => {
+        AstNode::SetComp { element, generators, line, col, end_col, end_line } => {
             let mut comp_env = env.clone();
 
             for generator in generators {
                 let iter_ty = visit_node_with_env(&generator.iter, &mut comp_env, ctx, stub_cache)?;
 
                 let element_ty = Type::Var(comp_env.fresh_var());
-                let span = Span::new(*line, *col);
+                let span = Span::with_end(*line, *col, *end_line, *end_col);
                 ctx.constraints.push(Constraint::Protocol(
                     iter_ty,
                     beacon_core::ProtocolName::Iterable,
@@ -1249,14 +1313,14 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, set_ty.clone());
             Ok(set_ty)
         }
-        AstNode::DictComp { key, value, generators, line, col } => {
+        AstNode::DictComp { key, value, generators, line, col, end_col, end_line } => {
             let mut comp_env = env.clone();
 
             for generator in generators {
                 let iter_ty = visit_node_with_env(&generator.iter, &mut comp_env, ctx, stub_cache)?;
 
                 let element_ty = Type::Var(comp_env.fresh_var());
-                let span = Span::new(*line, *col);
+                let span = Span::with_end(*line, *col, *end_line, *end_col);
                 ctx.constraints.push(Constraint::Protocol(
                     iter_ty,
                     beacon_core::ProtocolName::Iterable,
@@ -1278,14 +1342,14 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, dict_ty.clone());
             Ok(dict_ty)
         }
-        AstNode::GeneratorExp { element, generators, line, col } => {
+        AstNode::GeneratorExp { element, generators, line, col, end_col, end_line } => {
             let mut comp_env = env.clone();
 
             for generator in generators {
                 let iter_ty = visit_node_with_env(&generator.iter, &mut comp_env, ctx, stub_cache)?;
 
                 let element_ty = Type::Var(comp_env.fresh_var());
-                let span = Span::new(*line, *col);
+                let span = Span::with_end(*line, *col, *end_line, *end_col);
                 ctx.constraints.push(Constraint::Protocol(
                     iter_ty,
                     beacon_core::ProtocolName::Iterable,
@@ -1306,7 +1370,7 @@ fn visit_node_with_context(
             ctx.record_type(*line, *col, generator_ty.clone());
             Ok(generator_ty)
         }
-        AstNode::Tuple { elements, line, col } => {
+        AstNode::Tuple { elements, line, col, .. } => {
             if elements.is_empty() {
                 let elem_ty = Type::Var(env.fresh_var());
                 let tuple_ty = Type::tuple(elem_ty);
@@ -1328,8 +1392,8 @@ fn visit_node_with_context(
                 Ok(tuple_ty)
             }
         }
-        AstNode::List { elements, line, col } => {
-            let span = Span::new(*line, *col);
+        AstNode::List { elements, line, col, end_line, end_col, .. } => {
+            let span = Span::with_end(*line, *col, *end_line, *end_col);
 
             if elements.is_empty() {
                 let elem_ty = Type::Var(env.fresh_var());
@@ -1353,8 +1417,8 @@ fn visit_node_with_context(
                 Ok(list_ty)
             }
         }
-        AstNode::Dict { keys, values, line, col } => {
-            let span = Span::new(*line, *col);
+        AstNode::Dict { keys, values, line, col, end_line, end_col, .. } => {
+            let span = Span::with_end(*line, *col, *end_line, *end_col);
 
             if keys.is_empty() {
                 let key_ty = Type::Var(env.fresh_var());
@@ -1390,8 +1454,8 @@ fn visit_node_with_context(
                 Ok(dict_ty)
             }
         }
-        AstNode::Set { elements, line, col } => {
-            let span = Span::new(*line, *col);
+        AstNode::Set { elements, line, col, end_col, end_line } => {
+            let span = Span::with_end(*line, *col, *end_line, *end_col);
 
             if elements.is_empty() {
                 let elem_ty = Type::Var(env.fresh_var());
@@ -1989,9 +2053,13 @@ mod tests {
     use super::*;
     use beacon_parser::{AstNode, SymbolTable};
 
+    fn make_yield(line: usize, col: usize) -> AstNode {
+        AstNode::Yield { value: None, end_line: line, line, col, end_col: col + 5 }
+    }
+
     #[test]
     fn test_contains_yield_simple() {
-        let nodes = vec![AstNode::Yield { value: None, line: 1, col: 1 }];
+        let nodes = vec![make_yield(1, 1)];
         assert!(contains_yield(&nodes));
     }
 
@@ -2000,13 +2068,15 @@ mod tests {
         let nodes = vec![AstNode::FunctionDef {
             name: "inner".to_string(),
             args: vec![],
-            body: vec![AstNode::Yield { value: None, line: 2, col: 5 }],
+            body: vec![make_yield(2, 5)],
             docstring: None,
             return_type: None,
             decorators: vec![],
             is_async: false,
             line: 2,
+            end_line: 2,
             col: 1,
+            end_col: 1,
         }];
         assert!(
             !contains_yield(&nodes),
@@ -2020,12 +2090,16 @@ mod tests {
             target: "x".to_string(),
             value: Box::new(AstNode::Lambda {
                 args: vec![],
-                body: Box::new(AstNode::Yield { value: None, line: 1, col: 20 }),
+                body: Box::new(make_yield(1, 20)),
                 line: 1,
                 col: 5,
+                end_line: 1,
+                end_col: 5,
             }),
             line: 1,
+            end_line: 1,
             col: 1,
+            end_col: 1,
         }];
         assert!(
             !contains_yield(&nodes),
@@ -2036,10 +2110,12 @@ mod tests {
     #[test]
     fn test_contains_yield_in_list_comp() {
         let nodes = vec![AstNode::ListComp {
-            element: Box::new(AstNode::Yield { value: None, line: 1, col: 10 }),
+            element: Box::new(make_yield(1, 10)),
             generators: vec![],
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         }];
         assert!(
             !contains_yield(&nodes),
@@ -2050,10 +2126,12 @@ mod tests {
     #[test]
     fn test_contains_yield_in_generator_exp() {
         let nodes = vec![AstNode::GeneratorExp {
-            element: Box::new(AstNode::Yield { value: None, line: 1, col: 10 }),
+            element: Box::new(make_yield(1, 10)),
             generators: vec![],
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         }];
         assert!(
             !contains_yield(&nodes),
@@ -2064,11 +2142,13 @@ mod tests {
     #[test]
     fn test_contains_yield_in_dict_comp() {
         let nodes = vec![AstNode::DictComp {
-            key: Box::new(AstNode::Yield { value: None, line: 1, col: 10 }),
-            value: Box::new(AstNode::Identifier { name: "v".to_string(), line: 1, col: 15 }),
+            key: Box::new(make_yield(1, 10)),
+            value: Box::new(AstNode::Identifier { name: "v".to_string(), line: 1, col: 15, end_line: 1, end_col: 16 }),
             generators: vec![],
             line: 1,
+            end_line: 1,
             col: 1,
+            end_col: 1,
         }];
         assert!(
             !contains_yield(&nodes),
@@ -2079,10 +2159,12 @@ mod tests {
     #[test]
     fn test_contains_yield_in_set_comp() {
         let nodes = vec![AstNode::SetComp {
-            element: Box::new(AstNode::Yield { value: None, line: 1, col: 10 }),
+            element: Box::new(make_yield(1, 10)),
             generators: vec![],
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         }];
         assert!(
             !contains_yield(&nodes),
@@ -2093,12 +2175,20 @@ mod tests {
     #[test]
     fn test_contains_yield_in_if_statement() {
         let nodes = vec![AstNode::If {
-            test: Box::new(AstNode::Identifier { name: "condition".to_string(), line: 1, col: 4 }),
-            body: vec![AstNode::Yield { value: None, line: 2, col: 5 }],
+            test: Box::new(AstNode::Identifier {
+                name: "condition".to_string(),
+                line: 1,
+                col: 4,
+                end_line: 1,
+                end_col: 13,
+            }),
+            body: vec![make_yield(2, 5)],
             elif_parts: vec![],
             else_body: None,
             line: 1,
+            end_line: 1,
             col: 1,
+            end_col: 1,
         }];
         assert!(
             contains_yield(&nodes),
@@ -2112,10 +2202,14 @@ mod tests {
             value: Some(Box::new(AstNode::Literal {
                 value: LiteralValue::Integer(42),
                 line: 1,
+                end_line: 1,
                 col: 8,
+                end_col: 8,
             })),
             line: 1,
+            end_line: 1,
             col: 1,
+            end_col: 1,
         }];
         assert_eq!(detect_function_kind(&body, false), FunctionKind::Regular);
     }
@@ -2126,10 +2220,14 @@ mod tests {
             value: Some(Box::new(AstNode::Literal {
                 value: LiteralValue::Integer(1),
                 line: 1,
+                end_line: 1,
                 col: 11,
+                end_col: 11,
             })),
             line: 1,
+            end_line: 1,
             col: 5,
+            end_col: 5,
         }];
         assert_eq!(detect_function_kind(&body, false), FunctionKind::Generator);
     }
@@ -2140,10 +2238,14 @@ mod tests {
             value: Some(Box::new(AstNode::Literal {
                 value: LiteralValue::Integer(1),
                 line: 1,
+                end_line: 1,
                 col: 11,
+                end_col: 11,
             })),
             line: 1,
+            end_line: 1,
             col: 5,
+            end_col: 5,
         }];
         assert_eq!(detect_function_kind(&body, true), FunctionKind::AsyncGenerator);
     }
@@ -2151,9 +2253,17 @@ mod tests {
     #[test]
     fn test_detect_function_kind_coroutine() {
         let body = vec![AstNode::Await {
-            value: Box::new(AstNode::Identifier { name: "something".to_string(), line: 1, col: 11 }),
+            value: Box::new(AstNode::Identifier {
+                name: "something".to_string(),
+                line: 1,
+                col: 11,
+                end_line: 1,
+                end_col: 20,
+            }),
             line: 1,
+            end_line: 1,
             col: 5,
+            end_col: 5,
         }];
         assert_eq!(detect_function_kind(&body, true), FunctionKind::Coroutine);
     }
@@ -2166,11 +2276,25 @@ mod tests {
         env.bind("provider".to_string(), TypeScheme::mono(Type::optional(Type::string())));
 
         let condition = AstNode::Compare {
-            left: Box::new(AstNode::Identifier { name: "provider".to_string(), line: 1, col: 1 }),
+            left: Box::new(AstNode::Identifier {
+                name: "provider".to_string(),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 9,
+            }),
             ops: vec![beacon_parser::CompareOperator::Is],
-            comparators: vec![AstNode::Literal { value: LiteralValue::None, line: 1, col: 15 }],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::None,
+                line: 1,
+                col: 15,
+                end_col: 19,
+                end_line: 1,
+            }],
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
 
         let reassignment = AstNode::Assignment {
@@ -2178,10 +2302,14 @@ mod tests {
             value: Box::new(AstNode::Literal {
                 value: LiteralValue::String { value: "fallback".to_string(), prefix: String::new() },
                 line: 2,
+                end_line: 2,
                 col: 4,
+                end_col: 12,
             }),
             line: 2,
             col: 4,
+            end_line: 2,
+            end_col: 4,
         };
 
         let if_node = AstNode::If {
@@ -2191,6 +2319,8 @@ mod tests {
             else_body: None,
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
 
         visit_node_with_context(&if_node, &mut env, &mut ctx, None, ExprContext::Void).unwrap();
@@ -2215,10 +2345,14 @@ mod tests {
                 value: Some(Box::new(AstNode::Literal {
                     value: beacon_parser::LiteralValue::Integer(42),
                     line: 2,
+                    end_line: 2,
                     col: 12,
+                    end_col: 12,
                 })),
                 line: 2,
+                end_line: 2,
                 col: 5,
+                end_col: 5,
             }],
             docstring: None,
             return_type: Some("int".to_string()),
@@ -2226,6 +2360,8 @@ mod tests {
             is_async: true,
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
 
         let fn_ty = visit_node_with_env(&async_fn, &mut env, &mut ctx, None).unwrap();
@@ -2243,9 +2379,17 @@ mod tests {
         );
 
         let await_expr = AstNode::Await {
-            value: Box::new(AstNode::Identifier { name: "unknown_awaitable".to_string(), line: 1, col: 7 }),
+            value: Box::new(AstNode::Identifier {
+                name: "unknown_awaitable".to_string(),
+                line: 1,
+                col: 7,
+                end_line: 1,
+                end_col: 24,
+            }),
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
 
         let result_ty = visit_node_with_env(&await_expr, &mut env, &mut ctx, None).unwrap();
@@ -2273,6 +2417,8 @@ mod tests {
             is_async: false,
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
         visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
 
@@ -2283,6 +2429,8 @@ mod tests {
                 keywords: vec![],
                 line: 2,
                 col: 1,
+                end_line: 2,
+                end_col: 1,
             }],
             docstring: None,
         };
@@ -2332,26 +2480,48 @@ mod tests {
             is_async: false,
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
         visit_node_with_env(&main_func, &mut env, &mut ctx, None).unwrap();
 
         let if_main = AstNode::If {
             test: Box::new(AstNode::Compare {
-                left: Box::new(AstNode::Identifier { name: "__name__".to_string(), line: 3, col: 4 }),
+                left: Box::new(AstNode::Identifier {
+                    name: "__name__".to_string(),
+                    line: 3,
+                    col: 4,
+                    end_line: 3,
+                    end_col: 12,
+                }),
                 ops: vec![beacon_parser::CompareOperator::Eq],
                 comparators: vec![AstNode::Literal {
                     value: LiteralValue::String { value: "__main__".to_string(), prefix: String::new() },
                     line: 3,
+                    end_line: 3,
                     col: 15,
+                    end_col: 15,
                 }],
                 line: 3,
+                end_line: 3,
                 col: 4,
+                end_col: 4,
             }),
-            body: vec![AstNode::Call { function: "main".to_string(), args: vec![], keywords: vec![], line: 4, col: 5 }],
+            body: vec![AstNode::Call {
+                function: "main".to_string(),
+                args: vec![],
+                keywords: vec![],
+                line: 4,
+                col: 5,
+                end_line: 4,
+                end_col: 8,
+            }],
             elif_parts: vec![],
             else_body: None,
             line: 3,
             col: 1,
+            end_line: 3,
+            end_col: 1,
         };
 
         visit_node_with_env(&if_main, &mut env, &mut ctx, None).unwrap();
@@ -2380,15 +2550,25 @@ mod tests {
     #[test]
     fn test_if_main_guard_detection() {
         let test1 = AstNode::Compare {
-            left: Box::new(AstNode::Identifier { name: "__name__".to_string(), line: 1, col: 4 }),
+            left: Box::new(AstNode::Identifier {
+                name: "__name__".to_string(),
+                line: 1,
+                col: 4,
+                end_line: 1,
+                end_col: 12,
+            }),
             ops: vec![beacon_parser::CompareOperator::Eq],
             comparators: vec![AstNode::Literal {
                 value: LiteralValue::String { value: "__main__".to_string(), prefix: String::new() },
                 line: 1,
+                end_line: 1,
                 col: 15,
+                end_col: 15,
             }],
             line: 1,
             col: 4,
+            end_line: 1,
+            end_col: 4,
         };
         assert!(is_main_guard(&test1), "Should detect __name__ == \"__main__\"");
 
@@ -2396,21 +2576,39 @@ mod tests {
             left: Box::new(AstNode::Literal {
                 value: LiteralValue::String { value: "__main__".to_string(), prefix: String::new() },
                 line: 1,
+                end_line: 1,
                 col: 4,
+                end_col: 4,
             }),
             ops: vec![beacon_parser::CompareOperator::Eq],
-            comparators: vec![AstNode::Identifier { name: "__name__".to_string(), line: 1, col: 18 }],
+            comparators: vec![AstNode::Identifier {
+                name: "__name__".to_string(),
+                line: 1,
+                col: 18,
+                end_line: 1,
+                end_col: 26,
+            }],
             line: 1,
             col: 4,
+            end_line: 1,
+            end_col: 4,
         };
         assert!(is_main_guard(&test2), "Should detect \"__main__\" == __name__");
 
         let test3 = AstNode::Compare {
-            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 4 }),
+            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 4, end_line: 1, end_col: 5 }),
             ops: vec![beacon_parser::CompareOperator::Eq],
-            comparators: vec![AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 9 }],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(42),
+                line: 1,
+                col: 9,
+                end_line: 1,
+                end_col: 11,
+            }],
             line: 1,
             col: 4,
+            end_line: 1,
+            end_col: 4,
         };
         assert!(!is_main_guard(&test3), "Should not detect regular comparison");
     }
@@ -2419,9 +2617,17 @@ mod tests {
     fn test_return_path_analysis_implicit_none() {
         let body = vec![AstNode::Assignment {
             target: "x".to_string(),
-            value: Box::new(AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 5 }),
+            value: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(42),
+                line: 1,
+                col: 5,
+                end_line: 1,
+                end_col: 7,
+            }),
             line: 1,
+            end_line: 1,
             col: 1,
+            end_col: 2,
         }];
 
         let analysis = analyze_return_paths(&body);
@@ -2437,10 +2643,14 @@ mod tests {
             value: Some(Box::new(AstNode::Literal {
                 value: LiteralValue::Integer(42),
                 line: 1,
+                end_line: 1,
                 col: 12,
+                end_col: 12,
             })),
             line: 1,
+            end_line: 1,
             col: 5,
+            end_col: 5,
         }];
 
         let analysis = analyze_return_paths(&body);
@@ -2456,20 +2666,32 @@ mod tests {
     #[test]
     fn test_return_path_analysis_mixed_returns() {
         let body = vec![AstNode::If {
-            test: Box::new(AstNode::Identifier { name: "condition".to_string(), line: 1, col: 4 }),
+            test: Box::new(AstNode::Identifier {
+                name: "condition".to_string(),
+                line: 1,
+                col: 4,
+                end_line: 1,
+                end_col: 13,
+            }),
             body: vec![AstNode::Return {
                 value: Some(Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(42),
                     line: 2,
+                    end_line: 2,
                     col: 16,
+                    end_col: 16,
                 })),
                 line: 2,
+                end_line: 2,
                 col: 9,
+                end_col: 9,
             }],
             elif_parts: vec![],
             else_body: None,
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         }];
 
         let analysis = analyze_return_paths(&body);
@@ -2488,28 +2710,44 @@ mod tests {
     #[test]
     fn test_return_path_analysis_all_paths_return() {
         let body = vec![AstNode::If {
-            test: Box::new(AstNode::Identifier { name: "condition".to_string(), line: 1, col: 4 }),
+            test: Box::new(AstNode::Identifier {
+                name: "condition".to_string(),
+                line: 1,
+                col: 4,
+                end_line: 1,
+                end_col: 13,
+            }),
             body: vec![AstNode::Return {
                 value: Some(Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(1),
                     line: 2,
+                    end_line: 2,
                     col: 16,
+                    end_col: 16,
                 })),
                 line: 2,
+                end_line: 2,
                 col: 9,
+                end_col: 9,
             }],
             elif_parts: vec![],
             else_body: Some(vec![AstNode::Return {
                 value: Some(Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(2),
                     line: 4,
+                    end_line: 4,
                     col: 16,
+                    end_col: 16,
                 })),
                 line: 4,
+                end_line: 4,
                 col: 9,
+                end_col: 9,
             }]),
             line: 1,
+            end_line: 1,
             col: 1,
+            end_col: 1,
         }];
 
         let analysis = analyze_return_paths(&body);
@@ -2537,13 +2775,15 @@ mod tests {
         let func_def = AstNode::FunctionDef {
             name: "do_nothing".to_string(),
             args: vec![],
-            body: vec![AstNode::Pass { line: 2, col: 5 }],
+            body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
             docstring: None,
             return_type: None,
             decorators: vec![],
             is_async: false,
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
 
         let fn_ty = visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
@@ -2575,10 +2815,14 @@ mod tests {
                 value: Some(Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(42),
                     line: 2,
+                    end_line: 2,
                     col: 12,
+                    end_col: 12,
                 })),
                 line: 2,
+                end_line: 2,
                 col: 5,
+                end_col: 5,
             }],
             docstring: None,
             return_type: Some("int".to_string()),
@@ -2586,6 +2830,8 @@ mod tests {
             is_async: false,
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
 
         visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
@@ -2616,20 +2862,32 @@ mod tests {
             name: "maybe_number".to_string(),
             args: vec![],
             body: vec![AstNode::If {
-                test: Box::new(AstNode::Identifier { name: "condition".to_string(), line: 2, col: 8 }),
+                test: Box::new(AstNode::Identifier {
+                    name: "condition".to_string(),
+                    line: 2,
+                    col: 8,
+                    end_line: 2,
+                    end_col: 17,
+                }),
                 body: vec![AstNode::Return {
                     value: Some(Box::new(AstNode::Literal {
                         value: LiteralValue::Integer(42),
                         line: 3,
+                        end_line: 3,
                         col: 16,
+                        end_col: 16,
                     })),
                     line: 3,
+                    end_line: 3,
                     col: 9,
+                    end_col: 9,
                 }],
                 elif_parts: vec![],
                 else_body: None,
                 line: 2,
                 col: 5,
+                end_line: 2,
+                end_col: 5,
             }],
             docstring: None,
             return_type: None,
@@ -2637,6 +2895,8 @@ mod tests {
             is_async: false,
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
 
         let fn_ty = visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
@@ -2675,20 +2935,38 @@ mod tests {
             name: "maybe_string".to_string(),
             args: vec![],
             body: vec![AstNode::If {
-                test: Box::new(AstNode::Identifier { name: "condition".to_string(), line: 2, col: 8 }),
+                test: Box::new(AstNode::Identifier {
+                    name: "condition".to_string(),
+                    line: 2,
+                    col: 8,
+                    end_line: 2,
+                    end_col: 17,
+                }),
                 body: vec![AstNode::Return {
                     value: Some(Box::new(AstNode::Literal {
                         value: LiteralValue::String { value: "hello".to_string(), prefix: String::new() },
                         line: 3,
+                        end_line: 3,
                         col: 16,
+                        end_col: 16,
                     })),
                     line: 3,
                     col: 9,
+                    end_line: 3,
+                    end_col: 9,
                 }],
                 elif_parts: vec![],
-                else_body: Some(vec![AstNode::Return { value: None, line: 5, col: 9 }]),
+                else_body: Some(vec![AstNode::Return {
+                    value: None,
+                    line: 5,
+                    col: 9,
+                    end_line: 5,
+                    end_col: 9,
+                }]),
                 line: 2,
+                end_line: 2,
                 col: 5,
+                end_col: 5,
             }],
             docstring: None,
             return_type: None,
@@ -2696,6 +2974,8 @@ mod tests {
             is_async: false,
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
 
         let fn_ty = visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
@@ -2730,28 +3010,44 @@ mod tests {
             name: "always_number".to_string(),
             args: vec![],
             body: vec![AstNode::If {
-                test: Box::new(AstNode::Identifier { name: "condition".to_string(), line: 2, col: 8 }),
+                test: Box::new(AstNode::Identifier {
+                    name: "condition".to_string(),
+                    line: 2,
+                    col: 8,
+                    end_line: 2,
+                    end_col: 17,
+                }),
                 body: vec![AstNode::Return {
                     value: Some(Box::new(AstNode::Literal {
                         value: LiteralValue::Integer(1),
                         line: 3,
+                        end_line: 3,
                         col: 16,
+                        end_col: 16,
                     })),
                     line: 3,
+                    end_line: 3,
                     col: 9,
+                    end_col: 9,
                 }],
                 elif_parts: vec![],
                 else_body: Some(vec![AstNode::Return {
                     value: Some(Box::new(AstNode::Literal {
                         value: LiteralValue::Integer(2),
                         line: 5,
+                        end_line: 5,
                         col: 16,
+                        end_col: 16,
                     })),
                     line: 5,
+                    end_line: 5,
                     col: 9,
+                    end_col: 9,
                 }]),
                 line: 2,
+                end_line: 2,
                 col: 5,
+                end_col: 5,
             }],
             docstring: None,
             return_type: None,
@@ -2759,6 +3055,8 @@ mod tests {
             is_async: false,
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
 
         let fn_ty = visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
@@ -2791,9 +3089,17 @@ mod tests {
             args: vec![],
             body: vec![AstNode::Assignment {
                 target: "x".to_string(),
-                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(42), line: 2, col: 9 }),
+                value: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(42),
+                    line: 2,
+                    col: 9,
+                    end_line: 2,
+                    end_col: 9,
+                }),
                 line: 2,
                 col: 5,
+                end_line: 2,
+                end_col: 5,
             }],
             docstring: None,
             return_type: None,
@@ -2801,6 +3107,8 @@ mod tests {
             is_async: false,
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
 
         let fn_ty = visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
@@ -2830,9 +3138,17 @@ mod tests {
             args: vec![],
             body: vec![AstNode::Assignment {
                 target: "x".to_string(),
-                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(42), line: 2, col: 9 }),
+                value: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(42),
+                    line: 2,
+                    col: 9,
+                    end_line: 2,
+                    end_col: 11,
+                }),
                 line: 2,
                 col: 5,
+                end_line: 2,
+                end_col: 6,
             }],
             docstring: None,
             return_type: None,
@@ -2840,6 +3156,8 @@ mod tests {
             is_async: false,
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
         let main_ty = visit_node_with_env(&main_func, &mut env, &mut ctx, None).unwrap();
 
@@ -2855,21 +3173,41 @@ mod tests {
 
         let if_main = AstNode::If {
             test: Box::new(AstNode::Compare {
-                left: Box::new(AstNode::Identifier { name: "__name__".to_string(), line: 5, col: 4 }),
+                left: Box::new(AstNode::Identifier {
+                    name: "__name__".to_string(),
+                    line: 5,
+                    col: 4,
+                    end_line: 5,
+                    end_col: 12,
+                }),
                 ops: vec![beacon_parser::CompareOperator::Eq],
                 comparators: vec![AstNode::Literal {
                     value: LiteralValue::String { value: "__main__".to_string(), prefix: String::new() },
                     line: 5,
                     col: 15,
+                    end_line: 5,
+                    end_col: 15,
                 }],
                 line: 5,
+                end_line: 5,
                 col: 4,
+                end_col: 4,
             }),
-            body: vec![AstNode::Call { function: "main".to_string(), args: vec![], keywords: vec![], line: 6, col: 5 }],
+            body: vec![AstNode::Call {
+                function: "main".to_string(),
+                args: vec![],
+                keywords: vec![],
+                line: 6,
+                col: 5,
+                end_line: 6,
+                end_col: 5,
+            }],
             elif_parts: vec![],
             else_body: None,
             line: 5,
             col: 1,
+            end_line: 5,
+            end_col: 1,
         };
 
         visit_node_with_env(&if_main, &mut env, &mut ctx, None).unwrap();
@@ -2911,7 +3249,7 @@ mod tests {
             &AstNode::Module { body: vec![], docstring: None },
         );
 
-        let list_node = AstNode::List { elements: vec![], line: 1, col: 5 };
+        let list_node = AstNode::List { elements: vec![], line: 1, col: 5, end_line: 1, end_col: 7 };
         let list_ty = visit_node_with_env(&list_node, &mut env, &mut ctx, None).unwrap();
 
         assert!(
@@ -2931,12 +3269,14 @@ mod tests {
 
         let list_node = AstNode::List {
             elements: vec![
-                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 6 },
-                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 9 },
-                AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 12 },
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 6, end_line: 1, end_col: 6 },
+                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 9, end_line: 1, end_col: 9 },
+                AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 12, end_line: 1, end_col: 12 },
             ],
             line: 1,
             col: 5,
+            end_line: 1,
+            end_col: 5,
         };
 
         let list_ty = visit_node_with_env(&list_node, &mut env, &mut ctx, None).unwrap();
@@ -2965,7 +3305,7 @@ mod tests {
             &AstNode::Module { body: vec![], docstring: None },
         );
 
-        let dict_node = AstNode::Dict { keys: vec![], values: vec![], line: 1, col: 5 };
+        let dict_node = AstNode::Dict { keys: vec![], values: vec![], line: 1, col: 5, end_line: 1, end_col: 5 };
         let dict_ty = visit_node_with_env(&dict_node, &mut env, &mut ctx, None).unwrap();
 
         assert!(
@@ -2989,19 +3329,25 @@ mod tests {
                     value: LiteralValue::String { value: "a".to_string(), prefix: "".to_string() },
                     line: 1,
                     col: 6,
+                    end_line: 1,
+                    end_col: 6,
                 },
                 AstNode::Literal {
                     value: LiteralValue::String { value: "b".to_string(), prefix: "".to_string() },
                     line: 1,
                     col: 15,
+                    end_line: 1,
+                    end_col: 15,
                 },
             ],
             values: vec![
-                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 11 },
-                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 20 },
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 11, end_line: 1, end_col: 11 },
+                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 20, end_line: 1, end_col: 20 },
             ],
             line: 1,
             col: 5,
+            end_line: 1,
+            end_col: 5,
         };
         let dict_ty = visit_node_with_env(&dict_node, &mut env, &mut ctx, None).unwrap();
 
@@ -3032,12 +3378,14 @@ mod tests {
 
         let set_node = AstNode::Set {
             elements: vec![
-                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 6 },
-                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 9 },
-                AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 12 },
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 6, end_line: 1, end_col: 6 },
+                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 9, end_line: 1, end_col: 9 },
+                AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 12, end_line: 1, end_col: 12 },
             ],
             line: 1,
             col: 5,
+            end_line: 1,
+            end_col: 5,
         };
         let set_ty = visit_node_with_env(&set_node, &mut env, &mut ctx, None).unwrap();
 
@@ -3068,16 +3416,20 @@ mod tests {
 
         let tuple_node = AstNode::Tuple {
             elements: vec![
-                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 6 },
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 6, end_line: 1, end_col: 6 },
                 AstNode::Literal {
                     value: LiteralValue::String { value: "a".to_string(), prefix: "".to_string() },
                     line: 1,
                     col: 9,
+                    end_line: 1,
+                    end_col: 9,
                 },
-                AstNode::Literal { value: LiteralValue::Boolean(true), line: 1, col: 14 },
+                AstNode::Literal { value: LiteralValue::Boolean(true), line: 1, col: 14, end_line: 1, end_col: 14 },
             ],
             line: 1,
             col: 5,
+            end_line: 1,
+            end_col: 5,
         };
         let tuple_ty = visit_node_with_env(&tuple_node, &mut env, &mut ctx, None).unwrap();
 
@@ -3115,19 +3467,29 @@ mod tests {
 
         let list_node = AstNode::List {
             elements: vec![
-                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 6 },
-                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 9 },
-                AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 12 },
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 6, end_line: 1, end_col: 6 },
+                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 9, end_line: 1, end_col: 9 },
+                AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 12, end_line: 1, end_col: 12 },
             ],
             line: 1,
             col: 5,
+            end_line: 1,
+            end_col: 5,
         };
 
         let subscript_node = AstNode::Subscript {
             value: Box::new(list_node),
-            slice: Box::new(AstNode::Literal { value: LiteralValue::Integer(0), line: 1, col: 16 }),
+            slice: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(0),
+                line: 1,
+                col: 16,
+                end_line: 1,
+                end_col: 16,
+            }),
             line: 1,
             col: 5,
+            end_line: 1,
+            end_col: 5,
         };
 
         let _result_ty = visit_node_with_env(&subscript_node, &mut env, &mut ctx, None).unwrap();
@@ -3163,16 +3525,34 @@ mod tests {
             target: "x".to_string(),
             value: Box::new(AstNode::Subscript {
                 value: Box::new(AstNode::List {
-                    elements: vec![AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 10 }],
+                    elements: vec![AstNode::Literal {
+                        value: LiteralValue::Integer(1),
+                        line: 1,
+                        col: 10,
+                        end_line: 1,
+                        end_col: 10,
+                    }],
                     line: 1,
                     col: 9,
+                    end_line: 1,
+                    end_col: 9,
                 }),
-                slice: Box::new(AstNode::Literal { value: LiteralValue::Integer(0), line: 1, col: 12 }),
+                slice: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(0),
+                    line: 1,
+                    col: 12,
+                    end_line: 1,
+                    end_col: 12,
+                }),
                 line: 1,
                 col: 9,
+                end_line: 1,
+                end_col: 9,
             }),
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
 
         visit_node_with_env(&assignment, &mut env, &mut ctx, None).unwrap();
@@ -3196,6 +3576,8 @@ mod tests {
                 value: None,
                 line: 2,
                 col: 5,
+                end_line: 2,
+                end_col: 5,
             },
             AstNode::AnnotatedAssignment {
                 target: "y".to_string(),
@@ -3203,10 +3585,14 @@ mod tests {
                 value: Some(Box::new(AstNode::Literal {
                     value: LiteralValue::String { value: "default".to_string(), prefix: "".to_string() },
                     line: 3,
+                    end_line: 3,
                     col: 13,
+                    end_col: 13,
                 })),
                 line: 3,
                 col: 5,
+                end_line: 3,
+                end_col: 5,
             },
         ];
 
@@ -3245,10 +3631,14 @@ mod tests {
                 value: Some(Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(0),
                     line: 2,
+                    end_line: 2,
                     col: 21,
+                    end_col: 21,
                 })),
                 line: 2,
                 col: 5,
+                end_line: 2,
+                end_col: 5,
             },
             AstNode::FunctionDef {
                 name: "__init__".to_string(),
@@ -3256,6 +3646,8 @@ mod tests {
                     name: "self".to_string(),
                     line: 4,
                     col: 14,
+                    end_line: 4,
+                    end_col: 18,
                     type_annotation: None,
                     default_value: None,
                 }],
@@ -3265,10 +3657,14 @@ mod tests {
                     value: Some(Box::new(AstNode::Literal {
                         value: LiteralValue::String { value: "hello".to_string(), prefix: "".to_string() },
                         line: 5,
+                        end_line: 5,
                         col: 33,
+                        end_col: 33,
                     })),
                     line: 5,
+                    end_line: 5,
                     col: 9,
+                    end_col: 9,
                 }],
                 docstring: None,
                 return_type: None,
@@ -3276,6 +3672,8 @@ mod tests {
                 is_async: false,
                 line: 4,
                 col: 5,
+                end_line: 4,
+                end_col: 5,
             },
         ];
 
@@ -3316,19 +3714,31 @@ mod tests {
         let class_body = vec![
             AstNode::Assignment {
                 target: "counter".to_string(),
-                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(0), line: 2, col: 17 }),
+                value: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(0),
+                    line: 2,
+                    col: 17,
+                    end_line: 2,
+                    end_col: 18,
+                }),
                 line: 2,
                 col: 5,
+                end_line: 2,
+                end_col: 5,
             },
             AstNode::Assignment {
                 target: "name".to_string(),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::String { value: "default".to_string(), prefix: "".to_string() },
                     line: 3,
+                    end_line: 3,
                     col: 14,
+                    end_col: 14,
                 }),
                 line: 3,
                 col: 5,
+                end_line: 3,
+                end_col: 5,
             },
         ];
 
@@ -3366,12 +3776,22 @@ mod tests {
                 value: None,
                 line: 2,
                 col: 5,
+                end_line: 2,
+                end_col: 5,
             },
             AstNode::Assignment {
                 target: "untyped_field".to_string(),
-                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(42), line: 3, col: 23 }),
+                value: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(42),
+                    line: 3,
+                    col: 23,
+                    end_line: 3,
+                    end_col: 25,
+                }),
                 line: 3,
                 col: 5,
+                end_line: 3,
+                end_col: 5,
             },
             AstNode::AnnotatedAssignment {
                 target: "another_typed".to_string(),
@@ -3379,10 +3799,14 @@ mod tests {
                 value: Some(Box::new(AstNode::Literal {
                     value: LiteralValue::String { value: "test".to_string(), prefix: "".to_string() },
                     line: 4,
+                    end_line: 4,
                     col: 25,
+                    end_col: 25,
                 })),
                 line: 4,
                 col: 5,
+                end_line: 4,
+                end_col: 5,
             },
         ];
 
@@ -3438,6 +3862,8 @@ mod tests {
                 value: None,
                 line: 2,
                 col: 5,
+                end_line: 2,
+                end_col: 5,
             },
             AstNode::ClassDef {
                 name: "Inner".to_string(),
@@ -3445,14 +3871,24 @@ mod tests {
                 metaclass: None,
                 body: vec![AstNode::Assignment {
                     target: "inner_field".to_string(),
-                    value: Box::new(AstNode::Literal { value: LiteralValue::Integer(1), line: 4, col: 21 }),
+                    value: Box::new(AstNode::Literal {
+                        value: LiteralValue::Integer(1),
+                        line: 4,
+                        col: 21,
+                        end_line: 4,
+                        end_col: 22,
+                    }),
                     line: 4,
+                    end_line: 4,
                     col: 9,
+                    end_col: 9,
                 }],
                 docstring: None,
                 decorators: vec![],
                 line: 3,
                 col: 5,
+                end_line: 3,
+                end_col: 5,
             },
         ];
 
@@ -3516,6 +3952,8 @@ mod tests {
                 value: None,
                 line: 2,
                 col: 5,
+                end_line: 2,
+                end_col: 5,
             },
             AstNode::AnnotatedAssignment {
                 target: "y".to_string(),
@@ -3523,6 +3961,8 @@ mod tests {
                 value: None,
                 line: 3,
                 col: 5,
+                end_line: 3,
+                end_col: 5,
             },
         ];
 
@@ -3563,6 +4003,8 @@ mod tests {
                 value: None,
                 line: 2,
                 col: 5,
+                end_line: 2,
+                end_col: 5,
             },
             AstNode::FunctionDef {
                 name: "__init__".to_string(),
@@ -3574,6 +4016,8 @@ mod tests {
                 is_async: false,
                 line: 3,
                 col: 5,
+                end_line: 3,
+                end_col: 5,
             },
         ];
 
@@ -3600,21 +4044,45 @@ mod tests {
         let class_body = vec![
             AstNode::Assignment {
                 target: "RED".to_string(),
-                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(1), line: 2, col: 11 }),
+                value: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(1),
+                    line: 2,
+                    col: 11,
+                    end_line: 2,
+                    end_col: 12,
+                }),
                 line: 2,
                 col: 5,
+                end_line: 2,
+                end_col: 5,
             },
             AstNode::Assignment {
                 target: "GREEN".to_string(),
-                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(2), line: 3, col: 13 }),
+                value: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(2),
+                    line: 3,
+                    col: 13,
+                    end_line: 3,
+                    end_col: 14,
+                }),
                 line: 3,
                 col: 5,
+                end_line: 3,
+                end_col: 5,
             },
             AstNode::Assignment {
                 target: "BLUE".to_string(),
-                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(3), line: 4, col: 12 }),
+                value: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(3),
+                    line: 4,
+                    col: 12,
+                    end_line: 4,
+                    end_col: 13,
+                }),
                 line: 4,
                 col: 5,
+                end_line: 4,
+                end_col: 5,
             },
         ];
 
@@ -3652,9 +4120,17 @@ mod tests {
         let class_body = vec![
             AstNode::Assignment {
                 target: "MEMBER".to_string(),
-                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(1), line: 2, col: 14 }),
+                value: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(1),
+                    line: 2,
+                    col: 14,
+                    end_line: 2,
+                    end_col: 14,
+                }),
                 line: 2,
                 col: 5,
+                end_line: 2,
+                end_col: 5,
             },
             AstNode::FunctionDef {
                 name: "some_method".to_string(),
@@ -3666,6 +4142,8 @@ mod tests {
                 is_async: false,
                 line: 3,
                 col: 5,
+                end_line: 3,
+                end_col: 5,
             },
         ];
 
@@ -3690,15 +4168,31 @@ mod tests {
         let class_body = vec![
             AstNode::Assignment {
                 target: "PUBLIC".to_string(),
-                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(1), line: 2, col: 14 }),
+                value: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(1),
+                    line: 2,
+                    col: 14,
+                    end_line: 2,
+                    end_col: 15,
+                }),
                 line: 2,
                 col: 5,
+                end_line: 2,
+                end_col: 5,
             },
             AstNode::Assignment {
                 target: "_private".to_string(),
-                value: Box::new(AstNode::Literal { value: LiteralValue::Integer(2), line: 3, col: 16 }),
+                value: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(2),
+                    line: 3,
+                    col: 16,
+                    end_line: 3,
+                    end_col: 17,
+                }),
                 line: 3,
                 col: 5,
+                end_line: 3,
+                end_col: 5,
             },
         ];
 
@@ -3726,13 +4220,23 @@ mod tests {
                 AstNode::Literal {
                     value: LiteralValue::String { value: "Module docstring".to_string(), prefix: "".to_string() },
                     line: 1,
+                    end_line: 1,
                     col: 1,
+                    end_col: 1,
                 },
                 AstNode::Assignment {
                     target: "x".to_string(),
-                    value: Box::new(AstNode::Literal { value: LiteralValue::Integer(42), line: 2, col: 5 }),
+                    value: Box::new(AstNode::Literal {
+                        value: LiteralValue::Integer(42),
+                        line: 2,
+                        col: 5,
+                        end_line: 2,
+                        end_col: 7,
+                    }),
                     line: 2,
+                    end_line: 2,
                     col: 1,
+                    end_col: 1,
                 },
             ],
             docstring: Some("Module docstring".to_string()),

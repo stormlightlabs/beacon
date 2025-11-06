@@ -244,9 +244,9 @@ impl FoldingRangeProvider {
                     }
                 }
             }
-            AstNode::List { elements, line, col }
-            | AstNode::Tuple { elements, line, col }
-            | AstNode::Set { elements, line, col } => {
+            AstNode::List { elements, line, col, .. }
+            | AstNode::Tuple { elements, line, col, .. }
+            | AstNode::Set { elements, line, col, .. } => {
                 if elements.len() > 1 {
                     if let Some(last) = elements.last() {
                         let end_line = self.get_node_end_line(last);

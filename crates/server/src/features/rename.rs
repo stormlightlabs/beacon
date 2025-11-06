@@ -94,7 +94,7 @@ impl RenameProvider {
     /// Finds all occurrences of the symbol and creates text edits to replace them.
     fn collect_renames(node: &AstNode, symbol_name: &str, new_name: &str, edits: &mut Vec<TextEdit>, _text: &str) {
         match node {
-            AstNode::Identifier { name, line, col } if name == symbol_name => {
+            AstNode::Identifier { name, line, col, .. } if name == symbol_name => {
                 let position =
                     Position { line: (*line as u32).saturating_sub(1), character: (*col as u32).saturating_sub(1) };
                 let end_position =
@@ -105,7 +105,7 @@ impl RenameProvider {
                     new_text: new_name.to_string(),
                 });
             }
-            AstNode::Assignment { target, value, line, col } => {
+            AstNode::Assignment { target, value, line, col, .. } => {
                 if target == symbol_name {
                     let position =
                         Position { line: (*line as u32).saturating_sub(1), character: (*col as u32).saturating_sub(1) };
@@ -334,7 +334,7 @@ print(x)"#;
 
     #[test]
     fn test_collect_renames_simple() {
-        let ast = AstNode::Identifier { name: "old_name".to_string(), line: 1, col: 1 };
+        let ast = AstNode::Identifier { name: "old_name".to_string(), line: 1, col: 1, end_line: 1, end_col: 8 };
         let mut edits = Vec::new();
 
         RenameProvider::collect_renames(&ast, "old_name", "new_name", &mut edits, "old_name");
@@ -349,9 +349,11 @@ print(x)"#;
     fn test_collect_renames_in_assignment() {
         let ast = AstNode::Assignment {
             target: "x".to_string(),
-            value: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 5 }),
+            value: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 5, end_line: 1, end_col: 2 }),
             line: 1,
             col: 1,
+            end_line: 0,
+            end_col: 0,
         };
 
         let mut edits = Vec::new();
@@ -373,18 +375,26 @@ print(x)"#;
                         value: beacon_parser::LiteralValue::Integer(42),
                         line: 2,
                         col: 9,
+                        end_col: 0,
+                        end_line: 0,
                     }),
                     line: 2,
                     col: 5,
+                    end_col: 0,
+                    end_line: 0,
                 },
                 AstNode::Return {
                     value: Some(Box::new(AstNode::Identifier {
                         name: "x".to_string(),
                         line: 3,
                         col: 12,
+                        end_col: 0,
+                        end_line: 0,
                     })),
                     line: 3,
                     col: 5,
+                    end_col: 0,
+                    end_line: 0,
                 },
             ],
             line: 1,
@@ -393,6 +403,8 @@ print(x)"#;
             return_type: None,
             decorators: Vec::new(),
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         let mut edits = Vec::new();
@@ -408,10 +420,12 @@ print(x)"#;
     fn test_collect_renames_in_call() {
         let ast = AstNode::Call {
             function: "print".to_string(),
-            args: vec![AstNode::Identifier { name: "x".to_string(), line: 1, col: 7 }],
+            args: vec![AstNode::Identifier { name: "x".to_string(), line: 1, col: 7, end_col: 0, end_line: 0 }],
             line: 1,
             col: 1,
             keywords: Vec::new(),
+            end_line: 1,
+            end_col: 1,
         };
 
         let mut edits = Vec::new();
@@ -423,7 +437,7 @@ print(x)"#;
 
     #[test]
     fn test_collect_renames_no_match() {
-        let ast = AstNode::Identifier { name: "x".to_string(), line: 1, col: 1 };
+        let ast = AstNode::Identifier { name: "x".to_string(), line: 1, col: 1, end_col: 0, end_line: 0 };
         let mut edits = Vec::new();
 
         RenameProvider::collect_renames(&ast, "y", "z", &mut edits, "");
@@ -446,12 +460,18 @@ print(x)"#;
                             name: "x".to_string(),
                             line: 3,
                             col: 16,
+                            end_line: 0,
+                            end_col: 0,
                         })),
                         line: 3,
                         col: 9,
+                        end_line: 0,
+                        end_col: 0,
                     }],
                     line: 2,
                     col: 5,
+                    end_line: 0,
+                    end_col: 0,
                     docstring: None,
                     return_type: None,
                     decorators: Vec::new(),
@@ -459,6 +479,8 @@ print(x)"#;
                 }],
                 line: 1,
                 col: 1,
+                end_line: 0,
+                end_col: 0,
                 docstring: None,
                 decorators: Vec::new(),
             }],
@@ -474,7 +496,8 @@ print(x)"#;
 
     #[test]
     fn test_rename_position_calculation() {
-        let ast = AstNode::Identifier { name: "long_variable_name".to_string(), line: 5, col: 10 };
+        let ast =
+            AstNode::Identifier { name: "long_variable_name".to_string(), line: 5, col: 10, end_col: 0, end_line: 0 };
         let mut edits = Vec::new();
 
         RenameProvider::collect_renames(&ast, "long_variable_name", "short", &mut edits, "");
@@ -541,15 +564,27 @@ print(x)"#;
                         value: beacon_parser::LiteralValue::Integer(1),
                         line: 1,
                         col: 5,
+                        end_col: 0,
+                        end_line: 0,
                     }),
                     line: 1,
                     col: 1,
+                    end_col: 0,
+                    end_line: 0,
                 },
                 AstNode::Assignment {
                     target: "y".to_string(),
-                    value: Box::new(AstNode::Identifier { name: "x".to_string(), line: 2, col: 5 }),
+                    value: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 2,
+                        col: 5,
+                        end_line: 2,
+                        end_col: 6,
+                    }),
                     line: 2,
                     col: 1,
+                    end_col: 0,
+                    end_line: 0,
                 },
             ],
             docstring: None,

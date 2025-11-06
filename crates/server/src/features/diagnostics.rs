@@ -892,6 +892,10 @@ fn type_error_to_diagnostic(error_info: &beacon_constraint::TypeErrorInfo) -> Di
             "HM008",
             format!("Argument count mismatch: expected {expected} argument(s), got {found}"),
         ),
+        TypeError::ArgumentTypeMismatch { param_name, expected, found } => (
+            "HM009",
+            format!("Argument of type '{found}' cannot be assigned to parameter '{param_name}' of type '{expected}'"),
+        ),
         TypeError::PatternNonExhaustive(uncovered) => (
             "PM001",
             format!("Pattern match is not exhaustive. Missing coverage for: {uncovered}"),
@@ -1313,15 +1317,25 @@ class MyClass:
     #[test]
     fn test_is_name_main_check_positive() {
         let test_expr = AstNode::Compare {
-            left: Box::new(AstNode::Identifier { name: "__name__".to_string(), line: 1, col: 4 }),
+            left: Box::new(AstNode::Identifier {
+                name: "__name__".to_string(),
+                line: 1,
+                col: 4,
+                end_line: 1,
+                end_col: 12,
+            }),
             ops: vec![beacon_parser::CompareOperator::Eq],
             comparators: vec![AstNode::Literal {
                 value: beacon_parser::LiteralValue::String { value: "__main__".to_string(), prefix: String::new() },
                 line: 1,
                 col: 16,
+                end_line: 1,
+                end_col: 9,
             }],
             line: 1,
             col: 12,
+            end_line: 1,
+            end_col: 12,
         };
 
         assert!(DiagnosticProvider::is_name_main_check(&test_expr));
@@ -1330,11 +1344,19 @@ class MyClass:
     #[test]
     fn test_is_name_main_check_negative() {
         let test_expr = AstNode::Compare {
-            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 4 }),
+            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 4, end_line: 1, end_col: 5 }),
             ops: vec![beacon_parser::CompareOperator::Eq],
-            comparators: vec![AstNode::Literal { value: beacon_parser::LiteralValue::Integer(42), line: 1, col: 9 }],
+            comparators: vec![AstNode::Literal {
+                value: beacon_parser::LiteralValue::Integer(42),
+                line: 1,
+                col: 9,
+                end_line: 1,
+                end_col: 11,
+            }],
             line: 1,
             col: 6,
+            end_line: 1,
+            end_col: 6,
         };
 
         assert!(!DiagnosticProvider::is_name_main_check(&test_expr));

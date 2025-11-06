@@ -490,6 +490,8 @@ mod tests {
                 col: 1,
                 type_annotation: Some("int".to_string()),
                 default_value: None,
+                end_line: 1,
+                end_col: 1,
             },
             Parameter {
                 name: "y".to_string(),
@@ -497,6 +499,8 @@ mod tests {
                 col: 2,
                 type_annotation: Some("str".to_string()),
                 default_value: None,
+                end_line: 1,
+                end_col: 2,
             },
         ];
 
@@ -521,6 +525,8 @@ mod tests {
                     col: 9,
                     type_annotation: Some("int".to_string()),
                     default_value: None,
+                    end_line: 1,
+                    end_col: 10,
                 }],
                 body: vec![],
                 docstring: None,
@@ -529,6 +535,8 @@ mod tests {
                 line: 1,
                 col: 1,
                 is_async: false,
+                end_line: 1,
+                end_col: 1,
             }],
             docstring: None,
         };

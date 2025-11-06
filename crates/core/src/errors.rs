@@ -29,6 +29,13 @@ pub enum TypeError {
     #[error("Argument count mismatch: expected {expected}, got {found}")]
     ArgumentCountMismatch { expected: usize, found: usize },
 
+    #[error("Argument of type '{found}' cannot be assigned to parameter '{param_name}' of type '{expected}'")]
+    ArgumentTypeMismatch {
+        param_name: String,
+        expected: String,
+        found: String,
+    },
+
     #[error("Match pattern is not exhaustive. Missing coverage for: {0}")]
     PatternNonExhaustive(String),
 

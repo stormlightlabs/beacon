@@ -30,6 +30,8 @@ pub struct Parameter {
     pub name: String,
     pub line: usize,
     pub col: usize,
+    pub end_line: usize,
+    pub end_col: usize,
     pub type_annotation: Option<String>,
     pub default_value: Option<Box<AstNode>>,
 }
@@ -51,6 +53,8 @@ pub enum AstNode {
         is_async: bool,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     ClassDef {
         name: String,
@@ -61,12 +65,16 @@ pub enum AstNode {
         decorators: Vec<String>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     Assignment {
         target: String,
         value: Box<AstNode>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     AnnotatedAssignment {
         target: String,
@@ -74,6 +82,8 @@ pub enum AstNode {
         value: Option<Box<AstNode>>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     Call {
         function: String,
@@ -81,21 +91,29 @@ pub enum AstNode {
         keywords: Vec<(String, AstNode)>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     Identifier {
         name: String,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     Literal {
         value: LiteralValue,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     Return {
         value: Option<Box<AstNode>>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Import statement: import module [as alias]
     Import {
@@ -103,6 +121,8 @@ pub enum AstNode {
         alias: Option<String>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Import from statement: from module import names
     ImportFrom {
@@ -110,6 +130,8 @@ pub enum AstNode {
         names: Vec<String>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Attribute access: object.attribute
     Attribute {
@@ -117,6 +139,8 @@ pub enum AstNode {
         attribute: String,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// If statement: if test: body elif test: body else: body
     If {
@@ -126,6 +150,8 @@ pub enum AstNode {
         else_body: Option<Vec<AstNode>>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// For loop: for target in iter: body
     For {
@@ -136,6 +162,8 @@ pub enum AstNode {
         is_async: bool,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// While loop: while test: body
     While {
@@ -144,6 +172,8 @@ pub enum AstNode {
         else_body: Option<Vec<AstNode>>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Try/except/finally: try: body except: handlers else: orelse finally: finalbody
     Try {
@@ -153,6 +183,8 @@ pub enum AstNode {
         finally_body: Option<Vec<AstNode>>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// With statement: with item as target: body
     With {
@@ -161,6 +193,8 @@ pub enum AstNode {
         is_async: bool,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// List comprehension: [expr for target in iter if cond]
     ListComp {
@@ -168,6 +202,8 @@ pub enum AstNode {
         generators: Vec<Comprehension>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Dict comprehension: {key: value for target in iter if cond}
     DictComp {
@@ -176,6 +212,8 @@ pub enum AstNode {
         generators: Vec<Comprehension>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Set comprehension: {expr for target in iter if cond}
     SetComp {
@@ -183,6 +221,8 @@ pub enum AstNode {
         generators: Vec<Comprehension>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Generator expression: (expr for target in iter if cond)
     GeneratorExp {
@@ -190,6 +230,8 @@ pub enum AstNode {
         generators: Vec<Comprehension>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Named expression (walrus operator): target := value
     NamedExpr {
@@ -197,6 +239,8 @@ pub enum AstNode {
         value: Box<AstNode>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Binary operation: left op right
     BinaryOp {
@@ -205,6 +249,8 @@ pub enum AstNode {
         right: Box<AstNode>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Unary operation: op operand
     UnaryOp {
@@ -212,6 +258,8 @@ pub enum AstNode {
         operand: Box<AstNode>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Comparison operation: left op right (can chain)
     Compare {
@@ -220,6 +268,8 @@ pub enum AstNode {
         comparators: Vec<AstNode>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Lambda expression: lambda args: body
     Lambda {
@@ -227,6 +277,8 @@ pub enum AstNode {
         body: Box<AstNode>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Subscript: value[slice]
     Subscript {
@@ -234,6 +286,8 @@ pub enum AstNode {
         slice: Box<AstNode>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Match statement (PEP 634): match subject: case pattern: body
     Match {
@@ -241,39 +295,53 @@ pub enum AstNode {
         cases: Vec<MatchCase>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Pass statement
     Pass {
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Break statement
     Break {
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Continue statement
     Continue {
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Raise statement
     Raise {
         exc: Option<Box<AstNode>>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Tuple literal: (1, 2, 3) or (x,)
     Tuple {
         elements: Vec<AstNode>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// List literal: [1, 2, 3] or []
     List {
         elements: Vec<AstNode>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Dict literal: {'a': 1, 'b': 2} or {}
     Dict {
@@ -281,30 +349,40 @@ pub enum AstNode {
         values: Vec<AstNode>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Set literal: {1, 2, 3}
     Set {
         elements: Vec<AstNode>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Yield expression: yield value
     Yield {
         value: Option<Box<AstNode>>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Yield from expression: yield from iterable
     YieldFrom {
         value: Box<AstNode>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
     /// Await expression: await coroutine
     Await {
         value: Box<AstNode>,
         line: usize,
         col: usize,
+        end_line: usize,
+        end_col: usize,
     },
 }
 
@@ -325,6 +403,8 @@ pub struct ExceptHandler {
     pub body: Vec<AstNode>,
     pub line: usize,
     pub col: usize,
+    pub end_line: usize,
+    pub end_col: usize,
 }
 
 /// With item for with statements
@@ -485,8 +565,11 @@ impl PythonParser {
 
     fn node_to_ast(&self, node: Node, source: &str) -> Result<AstNode> {
         let start_position = node.start_position();
+        let end_position = node.end_position();
         let line = start_position.row + 1;
         let col = start_position.column + 1;
+        let end_line = end_position.row + 1;
+        let end_col = end_position.column + 1;
 
         match node.kind() {
             "decorated_definition" => {
@@ -520,7 +603,7 @@ impl PythonParser {
                     return Ok(ast);
                 }
 
-                Ok(AstNode::Identifier { name: "<decorated>".to_string(), line, col })
+                Ok(AstNode::Identifier { name: "<decorated>".to_string(), line, col, end_line, end_col })
             }
             "module" => {
                 let mut body = Vec::new();
@@ -549,7 +632,7 @@ impl PythonParser {
                     node.children(&mut cursor).any(|child| child.kind() == "async")
                 };
 
-                Ok(AstNode::FunctionDef { name, args, body, docstring, return_type, decorators, is_async, line, col })
+                Ok(AstNode::FunctionDef { name, args, body, docstring, return_type, decorators, is_async, line, col, end_line, end_col })
             }
             "class_definition" => {
                 let name = self.extract_identifier(&node, source, "name")?;
@@ -561,13 +644,13 @@ impl PythonParser {
                     .child_by_field_name("body")
                     .and_then(|body_node| self.extract_docstring(&body_node, source));
 
-                Ok(AstNode::ClassDef { name, bases, metaclass, body, docstring, decorators, line, col })
+                Ok(AstNode::ClassDef { name, bases, metaclass, body, docstring, decorators, line, col, end_line, end_col })
             }
             "expression_statement" => {
                 if let Some(child) = node.named_child(0) {
                     self.node_to_ast(child, source)
                 } else {
-                    Ok(AstNode::Identifier { name: "<empty_expression>".to_string(), line, col })
+                    Ok(AstNode::Identifier { name: "<empty_expression>".to_string(), line, col, end_line, end_col })
                 }
             }
             "assignment" => {
@@ -584,154 +667,154 @@ impl PythonParser {
                         .transpose()?
                         .map(Box::new);
 
-                    Ok(AstNode::AnnotatedAssignment { target, type_annotation, value, line, col })
+                    Ok(AstNode::AnnotatedAssignment { target, type_annotation, value, line, col, end_line, end_col })
                 } else {
                     let value = self.extract_assignment_value(&node, source)?;
-                    Ok(AstNode::Assignment { target, value: Box::new(value), line, col })
+                    Ok(AstNode::Assignment { target, value: Box::new(value), line, col, end_line, end_col })
                 }
             }
             "call" => {
                 let function = self.extract_call_function(&node, source)?;
                 let InfoArgsKwargs(args, keywords) = self.extract_call_args_and_kwargs(&node, source)?;
-                Ok(AstNode::Call { function, args, keywords, line, col })
+                Ok(AstNode::Call { function, args, keywords, line, col, end_line, end_col })
             }
             "identifier" => {
                 let name = node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
-                Ok(AstNode::Identifier { name: name.to_string(), line, col })
+                Ok(AstNode::Identifier { name: name.to_string(), line, col, end_line, end_col })
             }
             "string" | "integer" | "float" | "true" | "false" | "none" => {
                 let value = self.extract_literal_value(&node, source)?;
-                Ok(AstNode::Literal { value, line, col })
+                Ok(AstNode::Literal { value, line, col, end_line, end_col })
             }
             "return_statement" => {
                 let value = self.extract_return_value(&node, source)?;
-                Ok(AstNode::Return { value: value.map(Box::new), line, col })
+                Ok(AstNode::Return { value: value.map(Box::new), line, col, end_line, end_col })
             }
             "import_statement" => {
                 let (module, alias) = self.extract_import_info(&node, source)?;
-                Ok(AstNode::Import { module, alias, line, col })
+                Ok(AstNode::Import { module, alias, line, col, end_line, end_col })
             }
             "import_from_statement" => {
                 let (module, names) = self.extract_import_from_info(&node, source)?;
-                Ok(AstNode::ImportFrom { module, names, line, col })
+                Ok(AstNode::ImportFrom { module, names, line, col, end_line, end_col })
             }
             "attribute" => {
                 let (object, attribute) = self.extract_attribute_info(&node, source)?;
-                Ok(AstNode::Attribute { object: Box::new(object), attribute, line, col })
+                Ok(AstNode::Attribute { object: Box::new(object), attribute, line, col, end_line, end_col })
             }
             "if_statement" => {
                 let InfoIf(test, body, elif_parts, else_body) = self.extract_if_info(&node, source)?;
-                Ok(AstNode::If { test: Box::new(test), body, elif_parts, else_body, line, col })
+                Ok(AstNode::If { test: Box::new(test), body, elif_parts, else_body, line, col, end_line, end_col })
             }
             "for_statement" => {
                 let InfoFor(target, iter, body, else_body, is_async) = self.extract_for_info(&node, source)?;
-                Ok(AstNode::For { target, iter: Box::new(iter), body, else_body, is_async, line, col })
+                Ok(AstNode::For { target, iter: Box::new(iter), body, else_body, is_async, line, col, end_line, end_col })
             }
             "while_statement" => {
                 let (test, body, else_body) = self.extract_while_info(&node, source)?;
-                Ok(AstNode::While { test: Box::new(test), body, else_body, line, col })
+                Ok(AstNode::While { test: Box::new(test), body, else_body, line, col, end_line, end_col })
             }
             "try_statement" => {
                 let InfoTry(body, handlers, else_body, finally_body) = self.extract_try_info(&node, source)?;
-                Ok(AstNode::Try { body, handlers, else_body, finally_body, line, col })
+                Ok(AstNode::Try { body, handlers, else_body, finally_body, line, col, end_line, end_col })
             }
             "with_statement" => {
                 let (items, body, is_async) = self.extract_with_info(&node, source)?;
-                Ok(AstNode::With { items, body, is_async, line, col })
+                Ok(AstNode::With { items, body, is_async, line, col, end_line, end_col })
             }
             "list_comprehension" => {
                 let (element, generators) = self.extract_list_comp_info(&node, source)?;
-                Ok(AstNode::ListComp { element: Box::new(element), generators, line, col })
+                Ok(AstNode::ListComp { element: Box::new(element), generators, line, col, end_line, end_col })
             }
             "dictionary_comprehension" => {
                 let (key, value, generators) = self.extract_dict_comp_info(&node, source)?;
-                Ok(AstNode::DictComp { key: Box::new(key), value: Box::new(value), generators, line, col })
+                Ok(AstNode::DictComp { key: Box::new(key), value: Box::new(value), generators, line, col, end_line, end_col })
             }
             "set_comprehension" => {
                 let (element, generators) = self.extract_set_comp_info(&node, source)?;
-                Ok(AstNode::SetComp { element: Box::new(element), generators, line, col })
+                Ok(AstNode::SetComp { element: Box::new(element), generators, line, col, end_line, end_col })
             }
             "generator_expression" => {
                 let (element, generators) = self.extract_generator_exp_info(&node, source)?;
-                Ok(AstNode::GeneratorExp { element: Box::new(element), generators, line, col })
+                Ok(AstNode::GeneratorExp { element: Box::new(element), generators, line, col, end_line, end_col })
             }
             "named_expression" => {
                 let (target, value) = self.extract_named_expr_info(&node, source)?;
-                Ok(AstNode::NamedExpr { target, value: Box::new(value), line, col })
+                Ok(AstNode::NamedExpr { target, value: Box::new(value), line, col, end_line, end_col })
             }
             "binary_operator" => {
                 let (left, op, right) = self.extract_binary_op_info(&node, source)?;
-                Ok(AstNode::BinaryOp { left: Box::new(left), op, right: Box::new(right), line, col })
+                Ok(AstNode::BinaryOp { left: Box::new(left), op, right: Box::new(right), line, col, end_line, end_col })
             }
             "unary_operator" => {
                 let (op, operand) = self.extract_unary_op_info(&node, source)?;
-                Ok(AstNode::UnaryOp { op, operand: Box::new(operand), line, col })
+                Ok(AstNode::UnaryOp { op, operand: Box::new(operand), line, col, end_line, end_col })
             }
             "comparison_operator" => {
                 let (left, ops, comparators) = self.extract_comparison_info(&node, source)?;
-                Ok(AstNode::Compare { left: Box::new(left), ops, comparators, line, col })
+                Ok(AstNode::Compare { left: Box::new(left), ops, comparators, line, col, end_line, end_col })
             }
             "lambda" => {
                 let (args, body) = self.extract_lambda_info(&node, source)?;
-                Ok(AstNode::Lambda { args, body: Box::new(body), line, col })
+                Ok(AstNode::Lambda { args, body: Box::new(body), line, col, end_line, end_col })
             }
             "subscript" => {
                 let (value, slice) = self.extract_subscript_info(&node, source)?;
-                Ok(AstNode::Subscript { value: Box::new(value), slice: Box::new(slice), line, col })
+                Ok(AstNode::Subscript { value: Box::new(value), slice: Box::new(slice), line, col, end_line, end_col })
             }
             "match_statement" => {
                 let (subject, cases) = self.extract_match_info(&node, source)?;
-                Ok(AstNode::Match { subject: Box::new(subject), cases, line, col })
+                Ok(AstNode::Match { subject: Box::new(subject), cases, line, col, end_line, end_col })
             }
-            "pass_statement" => Ok(AstNode::Pass { line, col }),
-            "break_statement" => Ok(AstNode::Break { line, col }),
-            "continue_statement" => Ok(AstNode::Continue { line, col }),
+            "pass_statement" => Ok(AstNode::Pass { line, col, end_line, end_col }),
+            "break_statement" => Ok(AstNode::Break { line, col, end_line, end_col }),
+            "continue_statement" => Ok(AstNode::Continue { line, col, end_line, end_col }),
             "raise_statement" => {
                 let exc = self.extract_raise_value(&node, source)?;
-                Ok(AstNode::Raise { exc: exc.map(Box::new), line, col })
+                Ok(AstNode::Raise { exc: exc.map(Box::new), line, col, end_line, end_col })
             }
             "yield" => {
                 let value = node
                     .named_child(0)
                     .map(|child| self.node_to_ast(child, source))
                     .transpose()?;
-                Ok(AstNode::Yield { value: value.map(Box::new), line, col })
+                Ok(AstNode::Yield { value: value.map(Box::new), line, col, end_line, end_col })
             }
             "await" => {
                 if let Some(child) = node.named_child(0) {
                     let value = self.node_to_ast(child, source)?;
-                    Ok(AstNode::Await { value: Box::new(value), line, col })
+                    Ok(AstNode::Await { value: Box::new(value), line, col, end_line, end_col })
                 } else {
                     Err(ParseError::MissingNode("await value".to_string()).into())
                 }
             }
             "tuple" | "expression_list" => {
                 let elements = self.extract_tuple_elements(&node, source)?;
-                Ok(AstNode::Tuple { elements, line, col })
+                Ok(AstNode::Tuple { elements, line, col, end_line, end_col })
             }
             "list" => {
                 let elements = self.extract_list_elements(&node, source)?;
-                Ok(AstNode::List { elements, line, col })
+                Ok(AstNode::List { elements, line, col, end_line, end_col })
             }
             "dictionary" => {
                 let (keys, values) = self.extract_dict_pairs(&node, source)?;
-                Ok(AstNode::Dict { keys, values, line, col })
+                Ok(AstNode::Dict { keys, values, line, col, end_line, end_col })
             }
             "set" => {
                 let elements = self.extract_set_elements(&node, source)?;
-                Ok(AstNode::Set { elements, line, col })
+                Ok(AstNode::Set { elements, line, col, end_line, end_col })
             }
             "parenthesized_expression" => match node.named_child(0) {
                 Some(child) => self.node_to_ast(child, source),
-                None => Ok(AstNode::Identifier { name: "<empty_parens>".to_string(), line, col }),
+                None => Ok(AstNode::Identifier { name: "<empty_parens>".to_string(), line, col, end_line, end_col }),
             },
             "boolean_operator" => {
                 let (left, op, right) = self.extract_boolean_op_info(&node, source)?;
-                Ok(AstNode::BinaryOp { left: Box::new(left), op, right: Box::new(right), line, col })
+                Ok(AstNode::BinaryOp { left: Box::new(left), op, right: Box::new(right), line, col, end_line, end_col })
             }
             _ => match node.utf8_text(source.as_bytes()) {
-                Ok(text) => Ok(AstNode::Identifier { name: text.to_string(), line, col }),
-                Err(_) => Ok(AstNode::Identifier { name: format!("<{}>]", node.kind()), line, col }),
+                Ok(text) => Ok(AstNode::Identifier { name: text.to_string(), line, col, end_line, end_col }),
+                Err(_) => Ok(AstNode::Identifier { name: format!("<{}>]", node.kind()), line, col, end_line, end_col }),
             },
         }
     }
@@ -768,10 +851,13 @@ impl PythonParser {
             "identifier" => {
                 let arg_name = node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
                 let start_position = node.start_position();
+                let end_position = node.end_position();
                 Ok(Some(Parameter {
                     name: arg_name.to_string(),
                     line: start_position.row + 1,
                     col: start_position.column + 1,
+                    end_line: end_position.row + 1,
+                    end_col: end_position.column + 1,
                     type_annotation: None,
                     default_value: None,
                 }))
@@ -781,6 +867,7 @@ impl PythonParser {
                 let mut type_annotation = None;
                 let mut default_value = None;
                 let mut position = node.start_position();
+                let end_position = node.end_position();
 
                 if let Some(name_node) = node.child_by_field_name("name") {
                     name = Some(
@@ -824,6 +911,8 @@ impl PythonParser {
                         name: n,
                         line: position.row + 1,
                         col: position.column + 1,
+                        end_line: end_position.row + 1,
+                        end_col: end_position.column + 1,
                         type_annotation,
                         default_value,
                     })),
@@ -834,6 +923,7 @@ impl PythonParser {
                 let mut name = None;
                 let mut default_value = None;
                 let mut position = node.start_position();
+                let end_position = node.end_position();
 
                 if let Some(name_node) = node.child_by_field_name("name") {
                     name = Some(
@@ -854,6 +944,8 @@ impl PythonParser {
                         name: n,
                         line: position.row + 1,
                         col: position.column + 1,
+                        end_line: end_position.row + 1,
+                        end_col: end_position.column + 1,
                         type_annotation: None,
                         default_value,
                     })),
@@ -1427,8 +1519,11 @@ impl PythonParser {
 
     fn extract_except_handler(&self, node: &Node, source: &str) -> Result<ExceptHandler> {
         let start_position = node.start_position();
+        let end_position = node.end_position();
         let line = start_position.row + 1;
         let col = start_position.column + 1;
+        let end_line = end_position.row + 1;
+        let end_col = end_position.column + 1;
         let exception_type = node
             .children(&mut node.walk())
             .find(|n| n.kind() == "dotted_name" || n.kind() == "identifier")
@@ -1446,7 +1541,7 @@ impl PythonParser {
             .ok_or_else(|| ParseError::TreeSitterError("Missing except body".to_string()))?;
         let body = self.extract_body(&body_node, source)?;
 
-        Ok(ExceptHandler { exception_type, name, body, line, col })
+        Ok(ExceptHandler { exception_type, name, body, line, col, end_line, end_col })
     }
 
     fn extract_with_info(&self, node: &Node, source: &str) -> Result<(Vec<WithItem>, Vec<AstNode>, bool)> {
@@ -4126,6 +4221,195 @@ with context_manager as value:
                 }
                 other => panic!("Expected With node, got: {other:?}"),
             },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    // Tests for exact span ranges (end_line, end_col)
+
+    #[test]
+    fn test_assignment_span() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "x = 42";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                match &body[0] {
+                    AstNode::Assignment { line, col, end_line, end_col, .. } => {
+                        assert_eq!(*line, 1);
+                        assert_eq!(*col, 1);
+                        assert_eq!(*end_line, 1);
+                        assert_eq!(*end_col, 7); // tree-sitter returns position after last char
+                    }
+                    _ => panic!("Expected assignment"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_identifier_span() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "print(hello)";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                match &body[0] {
+                    AstNode::Call { args, .. } => {
+                        match &args[0] {
+                            AstNode::Identifier { name, line, col, end_line, end_col } => {
+                                assert_eq!(name, "hello");
+                                assert_eq!(*line, 1);
+                                assert_eq!(*col, 7);
+                                assert_eq!(*end_line, 1);
+                                assert_eq!(*end_col, 12); // "hello" is 5 chars, ends at 7+5=12
+                            }
+                            _ => panic!("Expected identifier"),
+                        }
+                    }
+                    _ => panic!("Expected call"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_literal_span() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "x = 'test string'";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                match &body[0] {
+                    AstNode::Assignment { value, .. } => {
+                        match value.as_ref() {
+                            AstNode::Literal { line, col, end_line, end_col, .. } => {
+                                assert_eq!(*line, 1);
+                                assert_eq!(*col, 5);
+                                assert_eq!(*end_line, 1);
+                                assert_eq!(*end_col, 18); // tree-sitter returns position after last char
+                            }
+                            _ => panic!("Expected literal"),
+                        }
+                    }
+                    _ => panic!("Expected assignment"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_binary_op_span() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "result = x + y";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                match &body[0] {
+                    AstNode::Assignment { value, .. } => {
+                        match value.as_ref() {
+                            AstNode::BinaryOp { line, col, end_line, end_col, .. } => {
+                                assert_eq!(*line, 1);
+                                assert_eq!(*col, 10);
+                                assert_eq!(*end_line, 1);
+                                assert_eq!(*end_col, 15); // tree-sitter returns position after last char
+                            }
+                            _ => panic!("Expected binary operation"),
+                        }
+                    }
+                    _ => panic!("Expected assignment"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_function_def_span() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "def add(x, y):\n    return x + y";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                match &body[0] {
+                    AstNode::FunctionDef { line, col, end_line, end_col, .. } => {
+                        assert_eq!(*line, 1);
+                        assert_eq!(*col, 1);
+                        assert_eq!(*end_line, 2);
+                        // Function should span to the end of the return statement
+                        assert!(*end_col > 1);
+                    }
+                    _ => panic!("Expected function definition"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_multiline_span() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "if x > 0:\n    print('positive')\nelse:\n    print('non-positive')";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                match &body[0] {
+                    AstNode::If { line, col, end_line, end_col, .. } => {
+                        assert_eq!(*line, 1);
+                        assert_eq!(*col, 1);
+                        assert_eq!(*end_line, 4); // Should span to line 4
+                        assert!(*end_col > 1);
+                    }
+                    _ => panic!("Expected if statement"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_parameter_span() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "def func(param1, param2: int):\n    pass";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                match &body[0] {
+                    AstNode::FunctionDef { args, .. } => {
+                        // Check first parameter
+                        assert_eq!(args[0].name, "param1");
+                        assert_eq!(args[0].line, 1);
+                        assert_eq!(args[0].col, 10);
+                        assert_eq!(args[0].end_line, 1);
+                        assert_eq!(args[0].end_col, 16);
+
+                        // Check second parameter
+                        assert_eq!(args[1].name, "param2");
+                        assert_eq!(args[1].line, 1);
+                        assert_eq!(args[1].col, 18);
+                        assert_eq!(args[1].end_line, 1);
+                        assert!(args[1].end_col > args[1].col);
+                    }
+                    _ => panic!("Expected function definition"),
+                }
+            }
             _ => panic!("Expected module"),
         }
     }

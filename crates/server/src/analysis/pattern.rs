@@ -311,7 +311,8 @@ mod tests {
     #[test]
     fn test_extract_literal_type() {
         let mut env = TypeEnvironment::new();
-        let int_literal = AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 1 };
+        let int_literal =
+            AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 1, end_line: 1, end_col: 2 };
         let ty = extract_literal_type(&int_literal, &mut env).unwrap();
         assert_eq!(ty, Type::int());
     }
@@ -385,6 +386,8 @@ mod tests {
             value: LiteralValue::String { value: "key".to_string(), prefix: String::new() },
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
         let pattern = Pattern::MatchMapping {
             keys: vec![key],
@@ -416,7 +419,7 @@ mod tests {
         let mut env = TypeEnvironment::new();
         let class_registry = ClassRegistry::new();
         let subject_type = Type::int();
-        let literal = AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 1 };
+        let literal = AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 1, end_line: 1, end_col: 2 };
         let pattern = Pattern::MatchValue(literal);
         let bindings = extract_pattern_bindings(&pattern, &subject_type, &mut env, &class_registry).unwrap();
         assert_eq!(bindings.len(), 0);

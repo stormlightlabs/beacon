@@ -261,14 +261,14 @@ impl SemanticTokensProvider {
                     self.collect_tokens_from_node(stmt, symbol_table, class_scope, text, raw_tokens);
                 }
             }
-            AstNode::Assignment { target, value, line, col } => {
+            AstNode::Assignment { target, value, line, col, .. } => {
                 let token_type = self.get_token_type_index(&SymbolKind::Variable);
                 let modifiers = self.get_definition_modifier();
                 Self::add_token(target, *line, *col, token_type, modifiers, text, raw_tokens);
                 self.collect_tokens_from_node(value, symbol_table, current_scope, text, raw_tokens);
             }
 
-            AstNode::AnnotatedAssignment { target, type_annotation, value, line, col } => {
+            AstNode::AnnotatedAssignment { target, type_annotation, value, line, col, .. } => {
                 let token_type = self.get_token_type_index(&SymbolKind::Variable);
                 let modifiers = self.get_definition_modifier();
                 Self::add_token(target, *line, *col, token_type, modifiers, text, raw_tokens);
@@ -288,7 +288,7 @@ impl SemanticTokensProvider {
                 }
             }
 
-            AstNode::Call { function, args, keywords, line, col } => {
+            AstNode::Call { function, args, keywords, line, col, .. } => {
                 if function.contains('.') {
                     let parts: Vec<&str> = function.split('.').collect();
                     let mut current_col = *col;
@@ -323,7 +323,7 @@ impl SemanticTokensProvider {
                 }
             }
 
-            AstNode::Identifier { name, line, col } => {
+            AstNode::Identifier { name, line, col, .. } => {
                 if let Some(symbol) = symbol_table.lookup_symbol(name, current_scope) {
                     let token_type = self.get_token_type_index(&symbol.kind);
                     let modifiers = 0;
@@ -331,7 +331,7 @@ impl SemanticTokensProvider {
                 }
             }
 
-            AstNode::Literal { value, line, col } => {
+            AstNode::Literal { value, line, col, .. } => {
                 use beacon_parser::LiteralValue;
                 let (token_type, length) = match value {
                     LiteralValue::String { value: s, .. } => {
@@ -383,7 +383,7 @@ impl SemanticTokensProvider {
                 self.collect_tokens_from_node(val, symbol_table, current_scope, text, raw_tokens);
             }
 
-            AstNode::Import { module, alias, line, col } => {
+            AstNode::Import { module, alias, line, col, .. } => {
                 let name = alias.as_ref().unwrap_or(module);
                 let token_type = self.get_token_type_index(&SymbolKind::Import);
                 let modifiers = self.get_definition_modifier();
@@ -398,7 +398,7 @@ impl SemanticTokensProvider {
                 }
             }
 
-            AstNode::Attribute { object, attribute, line, col } => {
+            AstNode::Attribute { object, attribute, line, col, .. } => {
                 self.collect_tokens_from_node(object, symbol_table, current_scope, text, raw_tokens);
 
                 let token_type = SUPPORTED_TYPES
@@ -547,9 +547,9 @@ impl SemanticTokensProvider {
             | AstNode::Lambda { line, col, .. }
             | AstNode::Subscript { line, col, .. }
             | AstNode::Match { line, col, .. }
-            | AstNode::Pass { line, col }
-            | AstNode::Break { line, col }
-            | AstNode::Continue { line, col }
+            | AstNode::Pass { line, col, .. }
+            | AstNode::Break { line, col, .. }
+            | AstNode::Continue { line, col, .. }
             | AstNode::Raise { line, col, .. } => (*line, *col),
         }
     }

@@ -425,10 +425,10 @@ impl<'a> DataFlowAnalyzer<'a> {
     /// Recursively collect all identifier uses in an expression
     fn collect_uses(node: &AstNode, uses: &mut Vec<(String, usize, usize)>) {
         match node {
-            AstNode::Identifier { name, line, col } => {
+            AstNode::Identifier { name, line, col, .. } => {
                 uses.push((name.clone(), *line, *col));
             }
-            AstNode::Call { function, args, keywords, line, col } => {
+            AstNode::Call { function, args, keywords, line, col, .. } => {
                 uses.push((function.clone(), *line, *col));
                 for arg in args {
                     Self::collect_uses(arg, uses);
@@ -505,9 +505,9 @@ impl<'a> DataFlowAnalyzer<'a> {
             | AstNode::ClassDef { line, col, .. }
             | AstNode::Import { line, col, .. }
             | AstNode::ImportFrom { line, col, .. }
-            | AstNode::Pass { line, col }
-            | AstNode::Break { line, col }
-            | AstNode::Continue { line, col }
+            | AstNode::Pass { line, col, .. }
+            | AstNode::Break { line, col, .. }
+            | AstNode::Continue { line, col, .. }
             | AstNode::Raise { line, col, .. } => (*line, *col),
             _ => (0, 0),
         }
@@ -740,7 +740,7 @@ impl<'a> DataFlowAnalyzer<'a> {
 mod tests {
     use super::*;
     use crate::analysis::cfg::CfgBuilder;
-    use beacon_parser::{NameResolver, ScopeId, ScopeKind, SymbolTable};
+    use beacon_parser::{NameResolver, Parameter, ScopeId, ScopeKind, SymbolTable};
 
     /// Helper to find the first function scope in the symbol table (for tests)
     fn find_function_scope(symbol_table: &SymbolTable) -> ScopeId {
@@ -763,19 +763,31 @@ mod tests {
             body: vec![
                 AstNode::Assignment {
                     target: "y".to_string(),
-                    value: Box::new(AstNode::Identifier { name: "x".to_string(), line: 2, col: 9 }),
+                    value: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 2,
+                        col: 9,
+                        end_line: 2,
+                        end_col: 10,
+                    }),
                     line: 2,
+                    end_line: 2,
                     col: 5,
+                    end_col: 5,
                 },
                 AstNode::Assignment {
                     target: "x".to_string(),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(1),
                         line: 3,
+                        end_line: 3,
                         col: 9,
+                        end_col: 9,
                     }),
                     line: 3,
+                    end_line: 3,
                     col: 5,
+                    end_col: 5,
                 },
             ],
             docstring: None,
@@ -784,6 +796,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -821,29 +835,41 @@ mod tests {
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(1),
                         line: 2,
+                        end_line: 2,
                         col: 9,
+                        end_col: 9,
                     }),
                     line: 2,
+                    end_line: 2,
                     col: 5,
+                    end_col: 5,
                 },
                 AstNode::Assignment {
                     target: "y".to_string(),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(2),
                         line: 3,
+                        end_line: 3,
                         col: 9,
+                        end_col: 9,
                     }),
                     line: 3,
+                    end_line: 3,
                     col: 5,
+                    end_col: 5,
                 },
                 AstNode::Return {
                     value: Some(Box::new(AstNode::Identifier {
                         name: "y".to_string(),
                         line: 4,
+                        end_line: 4,
                         col: 12,
+                        end_col: 12,
                     })),
                     line: 4,
+                    end_line: 4,
                     col: 5,
+                    end_col: 5,
                 },
             ],
             docstring: None,
@@ -852,6 +878,8 @@ mod tests {
             line: 1,
             is_async: false,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -879,36 +907,58 @@ mod tests {
 
         let ast = AstNode::FunctionDef {
             name: "foo".to_string(),
-            args: vec![beacon_parser::Parameter {
+            args: vec![Parameter {
                 name: "cond".to_string(),
                 line: 1,
+                end_line: 1,
                 col: 9,
+                end_col: 9,
                 type_annotation: None,
                 default_value: None,
             }],
             body: vec![
                 AstNode::If {
-                    test: Box::new(AstNode::Identifier { name: "cond".to_string(), line: 2, col: 8 }),
+                    test: Box::new(AstNode::Identifier {
+                        name: "cond".to_string(),
+                        line: 2,
+                        col: 8,
+                        end_line: 2,
+                        end_col: 12,
+                    }),
                     body: vec![AstNode::Assignment {
                         target: "x".to_string(),
                         value: Box::new(AstNode::Literal {
                             value: beacon_parser::LiteralValue::Integer(1),
                             line: 3,
+                            end_line: 3,
                             col: 13,
+                            end_col: 13,
                         }),
                         line: 3,
+                        end_line: 3,
                         col: 9,
+                        end_col: 9,
                     }],
                     elif_parts: vec![],
                     else_body: None,
                     line: 2,
+                    end_line: 2,
                     col: 5,
+                    end_col: 5,
                 },
                 AstNode::Call {
                     function: "print".to_string(),
-                    args: vec![AstNode::Identifier { name: "x".to_string(), line: 4, col: 11 }],
+                    args: vec![AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 4,
+                        col: 11,
+                        end_line: 4,
+                        end_col: 12,
+                    }],
                     line: 4,
+                    end_line: 4,
                     col: 5,
+                    end_col: 5,
                     keywords: Vec::new(),
                 },
             ],
@@ -918,6 +968,8 @@ mod tests {
             line: 1,
             is_async: false,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -947,22 +999,34 @@ mod tests {
             args: vec![beacon_parser::Parameter {
                 name: "cond".to_string(),
                 line: 1,
+                end_line: 1,
                 col: 9,
+                end_col: 9,
                 type_annotation: None,
                 default_value: None,
             }],
             body: vec![
                 AstNode::If {
-                    test: Box::new(AstNode::Identifier { name: "cond".to_string(), line: 2, col: 8 }),
+                    test: Box::new(AstNode::Identifier {
+                        name: "cond".to_string(),
+                        line: 2,
+                        col: 8,
+                        end_line: 2,
+                        end_col: 8,
+                    }),
                     body: vec![AstNode::Assignment {
                         target: "x".to_string(),
                         value: Box::new(AstNode::Literal {
                             value: beacon_parser::LiteralValue::Integer(1),
                             line: 3,
+                            end_line: 3,
                             col: 13,
+                            end_col: 13,
                         }),
                         line: 3,
+                        end_line: 3,
                         col: 9,
+                        end_col: 9,
                     }],
                     elif_parts: vec![],
                     else_body: Some(vec![AstNode::Assignment {
@@ -970,19 +1034,33 @@ mod tests {
                         value: Box::new(AstNode::Literal {
                             value: beacon_parser::LiteralValue::Integer(2),
                             line: 5,
+                            end_line: 5,
                             col: 13,
+                            end_col: 13,
                         }),
                         line: 5,
+                        end_line: 5,
                         col: 9,
+                        end_col: 9,
                     }]),
                     line: 2,
+                    end_line: 2,
                     col: 5,
+                    end_col: 5,
                 },
                 AstNode::Call {
                     function: "print".to_string(),
-                    args: vec![AstNode::Identifier { name: "x".to_string(), line: 6, col: 11 }],
+                    args: vec![AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 6,
+                        col: 11,
+                        end_line: 6,
+                        end_col: 12,
+                    }],
                     line: 6,
+                    end_line: 6,
                     col: 5,
+                    end_col: 5,
                     keywords: Vec::new(),
                 },
             ],
@@ -992,6 +1070,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1001,7 +1081,6 @@ mod tests {
             builder.build_function(body);
 
             let cfg = builder.build();
-
             let scope_id = find_function_scope(&resolver.symbol_table);
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
@@ -1022,25 +1101,49 @@ mod tests {
             args: vec![],
             body: vec![AstNode::For {
                 target: "i".to_string(),
-                iter: Box::new(AstNode::Identifier { name: "items".to_string(), line: 2, col: 14 }),
+                iter: Box::new(AstNode::Identifier {
+                    name: "items".to_string(),
+                    line: 2,
+                    col: 14,
+                    end_line: 2,
+                    end_col: 19,
+                }),
                 body: vec![
                     AstNode::Assignment {
                         target: "result".to_string(),
-                        value: Box::new(AstNode::Identifier { name: "total".to_string(), line: 3, col: 18 }),
+                        value: Box::new(AstNode::Identifier {
+                            name: "total".to_string(),
+                            line: 3,
+                            col: 18,
+                            end_line: 3,
+                            end_col: 23,
+                        }),
                         line: 3,
+                        end_line: 3,
                         col: 9,
+                        end_col: 9,
                     },
                     AstNode::Assignment {
                         target: "total".to_string(),
-                        value: Box::new(AstNode::Identifier { name: "i".to_string(), line: 4, col: 17 }),
+                        value: Box::new(AstNode::Identifier {
+                            name: "i".to_string(),
+                            line: 4,
+                            col: 17,
+                            end_line: 4,
+                            end_col: 18,
+                        }),
                         line: 4,
+                        end_line: 4,
                         col: 9,
+                        end_col: 9,
                     },
                 ],
                 else_body: None,
                 is_async: false,
                 line: 2,
+                end_line: 2,
                 col: 5,
+                end_col: 5,
             }],
             docstring: None,
             return_type: None,
@@ -1048,6 +1151,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1079,20 +1184,28 @@ mod tests {
                     value: Some(Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(1),
                         line: 2,
+                        end_line: 2,
                         col: 12,
+                        end_col: 12,
                     })),
                     line: 2,
+                    end_line: 2,
                     col: 5,
+                    end_col: 5,
                 },
                 AstNode::Assignment {
                     target: "x".to_string(),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(2),
                         line: 3,
+                        end_line: 3,
                         col: 9,
+                        end_col: 9,
                     }),
                     line: 3,
+                    end_line: 3,
                     col: 5,
+                    end_col: 5,
                 },
             ],
             docstring: None,
@@ -1101,6 +1214,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1130,19 +1245,31 @@ mod tests {
             body: vec![
                 AstNode::Assignment {
                     target: "y".to_string(),
-                    value: Box::new(AstNode::Identifier { name: "x".to_string(), line: 2, col: 9 }),
+                    value: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 2,
+                        col: 9,
+                        end_col: 10,
+                        end_line: 2,
+                    }),
                     line: 2,
+                    end_line: 2,
                     col: 5,
+                    end_col: 5,
                 },
                 AstNode::Assignment {
                     target: "z".to_string(),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(1),
                         line: 3,
+                        end_line: 3,
                         col: 9,
+                        end_col: 9,
                     }),
                     line: 3,
+                    end_line: 3,
                     col: 5,
+                    end_col: 5,
                 },
             ],
             docstring: None,
@@ -1151,6 +1278,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1182,15 +1311,25 @@ mod tests {
             args: vec![beacon_parser::Parameter {
                 name: "param".to_string(),
                 line: 1,
+                end_line: 1,
                 col: 9,
+                end_col: 9,
                 type_annotation: None,
                 default_value: None,
             }],
             body: vec![AstNode::Assignment {
                 target: "x".to_string(),
-                value: Box::new(AstNode::Identifier { name: "param".to_string(), line: 2, col: 9 }),
+                value: Box::new(AstNode::Identifier {
+                    name: "param".to_string(),
+                    line: 2,
+                    col: 9,
+                    end_col: 14,
+                    end_line: 2,
+                }),
                 line: 2,
+                end_line: 2,
                 col: 5,
+                end_col: 5,
             }],
             docstring: None,
             return_type: None,
@@ -1198,6 +1337,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1229,22 +1370,40 @@ mod tests {
                 target: "i".to_string(),
                 iter: Box::new(AstNode::Call {
                     function: "range".to_string(),
-                    args: vec![AstNode::Literal { value: beacon_parser::LiteralValue::Integer(10), line: 2, col: 20 }],
+                    args: vec![AstNode::Literal {
+                        value: beacon_parser::LiteralValue::Integer(10),
+                        line: 2,
+                        col: 20,
+                        end_line: 2,
+                        end_col: 21,
+                    }],
                     line: 2,
+                    end_line: 2,
                     col: 14,
+                    end_col: 14,
                     keywords: Vec::new(),
                 }),
                 body: vec![AstNode::Call {
                     function: "print".to_string(),
-                    args: vec![AstNode::Identifier { name: "i".to_string(), line: 3, col: 15 }],
+                    args: vec![AstNode::Identifier {
+                        name: "i".to_string(),
+                        line: 3,
+                        col: 15,
+                        end_line: 3,
+                        end_col: 16,
+                    }],
                     line: 3,
+                    end_line: 3,
                     col: 9,
+                    end_col: 9,
                     keywords: Vec::new(),
                 }],
                 else_body: None,
                 is_async: false,
                 line: 2,
+                end_line: 2,
                 col: 5,
+                end_col: 5,
             }],
             docstring: None,
             return_type: None,
@@ -1252,6 +1411,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1265,8 +1426,6 @@ mod tests {
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
 
-            // Loop target 'i' is defined by the for statement before the body executes
-            // The For node creates a definition, so 'i' should not be flagged as use-before-def
             let i_errors: Vec<_> = result.iter().filter(|e| e.var_name == "i").collect();
             assert!(
                 i_errors.is_empty(),
@@ -1288,14 +1447,30 @@ mod tests {
             body: vec![AstNode::Assignment {
                 target: "z".to_string(),
                 value: Box::new(AstNode::BinaryOp {
-                    left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 2, col: 9 }),
+                    left: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 2,
+                        col: 9,
+                        end_line: 2,
+                        end_col: 10,
+                    }),
                     op: beacon_parser::BinaryOperator::Add,
-                    right: Box::new(AstNode::Identifier { name: "y".to_string(), line: 2, col: 13 }),
+                    right: Box::new(AstNode::Identifier {
+                        name: "y".to_string(),
+                        line: 2,
+                        col: 13,
+                        end_line: 2,
+                        end_col: 14,
+                    }),
                     line: 2,
+                    end_line: 2,
                     col: 11,
+                    end_col: 11,
                 }),
                 line: 2,
+                end_line: 2,
                 col: 5,
+                end_col: 5,
             }],
             docstring: None,
             return_type: None,
@@ -1303,6 +1478,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1337,16 +1514,28 @@ mod tests {
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(1),
                         line: 2,
+                        end_line: 2,
                         col: 9,
+                        end_col: 9,
                     }),
                     line: 2,
+                    end_line: 2,
                     col: 5,
+                    end_col: 5,
                 },
                 AstNode::Assignment {
                     target: "y".to_string(),
-                    value: Box::new(AstNode::Identifier { name: "x".to_string(), line: 3, col: 9 }),
+                    value: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 3,
+                        col: 9,
+                        end_line: 3,
+                        end_col: 10,
+                    }),
                     line: 3,
+                    end_line: 3,
                     col: 5,
+                    end_col: 5,
                 },
             ],
             docstring: None,
@@ -1355,6 +1544,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1388,20 +1579,28 @@ mod tests {
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Boolean(false),
                         line: 2,
+                        end_line: 2,
                         col: 13,
+                        end_col: 13,
                     }),
                     line: 2,
+                    end_line: 2,
                     col: 5,
+                    end_col: 5,
                 },
                 AstNode::Assignment {
                     target: "x".to_string(),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(1),
                         line: 3,
+                        end_line: 3,
                         col: 9,
+                        end_col: 9,
                     }),
                     line: 3,
+                    end_line: 3,
                     col: 5,
+                    end_col: 5,
                 },
             ],
             docstring: None,
@@ -1410,6 +1609,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1421,7 +1622,8 @@ mod tests {
             let cfg = builder.build();
             let scope_id = find_function_scope(&resolver.symbol_table);
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let debug_identifier = AstNode::Identifier { name: "DEBUG".to_string(), line: 2, col: 13 };
+            let debug_identifier =
+                AstNode::Identifier { name: "DEBUG".to_string(), line: 2, col: 13, end_line: 2, end_col: 18 };
 
             let mut test_constants = FxHashMap::default();
             test_constants.insert("DEBUG".to_string(), ConstantValue::Bool(false));
@@ -1447,26 +1649,42 @@ mod tests {
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(5),
                         line: 2,
+                        end_line: 2,
                         col: 9,
+                        end_col: 9,
                     }),
                     line: 2,
+                    end_line: 2,
                     col: 5,
+                    end_col: 5,
                 },
                 AstNode::Assignment {
                     target: "y".to_string(),
                     value: Box::new(AstNode::BinaryOp {
-                        left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 3, col: 9 }),
+                        left: Box::new(AstNode::Identifier {
+                            name: "x".to_string(),
+                            line: 3,
+                            col: 9,
+                            end_line: 3,
+                            end_col: 10,
+                        }),
                         op: beacon_parser::BinaryOperator::Add,
                         right: Box::new(AstNode::Literal {
                             value: beacon_parser::LiteralValue::Integer(3),
                             line: 3,
+                            end_line: 3,
                             col: 13,
+                            end_col: 13,
                         }),
                         line: 3,
+                        end_line: 3,
                         col: 11,
+                        end_col: 11,
                     }),
                     line: 3,
+                    end_line: 3,
                     col: 5,
+                    end_col: 5,
                 },
             ],
             docstring: None,
@@ -1475,6 +1693,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1491,11 +1711,25 @@ mod tests {
             test_constants.insert("x".to_string(), ConstantValue::Integer(5));
 
             let expr = AstNode::BinaryOp {
-                left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 3, col: 9 }),
+                left: Box::new(AstNode::Identifier {
+                    name: "x".to_string(),
+                    line: 3,
+                    col: 9,
+                    end_line: 3,
+                    end_col: 10,
+                }),
                 op: beacon_parser::BinaryOperator::Add,
-                right: Box::new(AstNode::Literal { value: beacon_parser::LiteralValue::Integer(3), line: 3, col: 13 }),
+                right: Box::new(AstNode::Literal {
+                    value: beacon_parser::LiteralValue::Integer(3),
+                    line: 3,
+                    col: 13,
+                    end_line: 3,
+                    end_col: 14,
+                }),
                 line: 3,
                 col: 11,
+                end_line: 3,
+                end_col: 11,
             };
 
             let result = analyzer.evaluate_to_constant(&expr, &test_constants);
@@ -1515,9 +1749,17 @@ mod tests {
             args: vec![],
             body: vec![AstNode::Assignment {
                 target: "x".to_string(),
-                value: Box::new(AstNode::Literal { value: beacon_parser::LiteralValue::Integer(10), line: 2, col: 9 }),
+                value: Box::new(AstNode::Literal {
+                    value: beacon_parser::LiteralValue::Integer(10),
+                    line: 2,
+                    col: 9,
+                    end_line: 2,
+                    end_col: 10,
+                }),
                 line: 2,
+                end_line: 2,
                 col: 5,
+                end_col: 5,
             }],
             docstring: None,
             return_type: None,
@@ -1525,6 +1767,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1541,30 +1785,50 @@ mod tests {
             test_constants.insert("x".to_string(), ConstantValue::Integer(10));
 
             let condition = AstNode::Compare {
-                left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 2, col: 9 }),
+                left: Box::new(AstNode::Identifier {
+                    name: "x".to_string(),
+                    line: 2,
+                    col: 9,
+                    end_line: 2,
+                    end_col: 10,
+                }),
                 ops: vec![beacon_parser::CompareOperator::Gt],
                 comparators: vec![AstNode::Literal {
                     value: beacon_parser::LiteralValue::Integer(5),
                     line: 2,
+                    end_line: 2,
                     col: 13,
+                    end_col: 13,
                 }],
                 line: 2,
                 col: 11,
+                end_line: 2,
+                end_col: 11,
             };
 
             let result = analyzer.evaluate_condition(&condition, &test_constants);
             assert_eq!(result, ConditionResult::AlwaysTrue);
 
             let condition2 = AstNode::Compare {
-                left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 2, col: 9 }),
+                left: Box::new(AstNode::Identifier {
+                    name: "x".to_string(),
+                    line: 2,
+                    col: 9,
+                    end_line: 2,
+                    end_col: 10,
+                }),
                 ops: vec![beacon_parser::CompareOperator::Lt],
                 comparators: vec![AstNode::Literal {
                     value: beacon_parser::LiteralValue::Integer(5),
                     line: 2,
+                    end_line: 2,
                     col: 13,
+                    end_col: 13,
                 }],
                 line: 2,
                 col: 11,
+                end_line: 2,
+                end_col: 11,
             };
 
             let result2 = analyzer.evaluate_condition(&condition2, &test_constants);
@@ -1587,10 +1851,14 @@ mod tests {
                 value: Box::new(AstNode::Literal {
                     value: beacon_parser::LiteralValue::String { value: "hello".to_string(), prefix: String::new() },
                     line: 2,
+                    end_line: 2,
                     col: 9,
+                    end_col: 9,
                 }),
                 line: 2,
+                end_line: 2,
                 col: 5,
+                end_col: 5,
             }],
             docstring: None,
             return_type: None,
@@ -1598,6 +1866,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1614,15 +1884,25 @@ mod tests {
             test_constants.insert("s".to_string(), ConstantValue::String("hello".to_string()));
 
             let expr = AstNode::BinaryOp {
-                left: Box::new(AstNode::Identifier { name: "s".to_string(), line: 2, col: 9 }),
+                left: Box::new(AstNode::Identifier {
+                    name: "s".to_string(),
+                    line: 2,
+                    col: 9,
+                    end_line: 2,
+                    end_col: 10,
+                }),
                 op: beacon_parser::BinaryOperator::Add,
                 right: Box::new(AstNode::Literal {
                     value: beacon_parser::LiteralValue::String { value: " world".to_string(), prefix: String::new() },
                     line: 2,
                     col: 13,
+                    end_line: 2,
+                    end_col: 20,
                 }),
                 line: 2,
                 col: 11,
+                end_line: 2,
+                end_col: 11,
             };
 
             let result = analyzer.evaluate_to_constant(&expr, &test_constants);
@@ -1648,11 +1928,15 @@ mod tests {
                         function: "inner".to_string(),
                         args: vec![],
                         line: 2,
+                        end_line: 2,
                         col: 14,
+                        end_col: 14,
                         keywords: Vec::new(),
                     }),
                     line: 2,
+                    end_line: 2,
                     col: 5,
+                    end_col: 5,
                 },
                 AstNode::FunctionDef {
                     name: "inner".to_string(),
@@ -1661,26 +1945,36 @@ mod tests {
                         value: Some(Box::new(AstNode::Literal {
                             value: beacon_parser::LiteralValue::Integer(42),
                             line: 4,
+                            end_line: 4,
                             col: 16,
+                            end_col: 16,
                         })),
                         line: 4,
+                        end_line: 4,
                         col: 9,
+                        end_col: 9,
                     }],
                     docstring: None,
                     return_type: None,
                     decorators: Vec::new(),
                     line: 3,
+                    end_line: 3,
                     col: 5,
+                    end_col: 5,
                     is_async: false,
                 },
                 AstNode::Return {
                     value: Some(Box::new(AstNode::Identifier {
                         name: "result".to_string(),
                         line: 5,
+                        end_line: 5,
                         col: 12,
+                        end_col: 12,
                     })),
                     line: 5,
+                    end_line: 5,
                     col: 5,
+                    end_col: 5,
                 },
             ],
             docstring: None,
@@ -1689,6 +1983,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1696,13 +1992,11 @@ mod tests {
         if let AstNode::FunctionDef { body, .. } = &ast {
             let mut builder = CfgBuilder::new();
             builder.build_function(body);
-            let cfg = builder.build();
 
+            let cfg = builder.build();
             let scope_id = find_function_scope(&resolver.symbol_table);
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
-
-            // 'inner' should NOT be flagged as use-before-def because function defs are hoisted
             let inner_errors: Vec<_> = result.iter().filter(|e| e.var_name == "inner").collect();
             assert!(
                 inner_errors.is_empty(),
@@ -1729,30 +2023,40 @@ mod tests {
                         function: "MyClass".to_string(),
                         args: vec![],
                         line: 2,
+                        end_line: 2,
                         col: 11,
+                        end_col: 11,
                         keywords: Vec::new(),
                     }),
                     line: 2,
+                    end_line: 2,
                     col: 5,
+                    end_col: 5,
                 },
                 AstNode::ClassDef {
                     name: "MyClass".to_string(),
                     bases: vec![],
                     metaclass: None,
-                    body: vec![AstNode::Pass { line: 4, col: 9 }],
+                    body: vec![AstNode::Pass { line: 4, end_line: 4, col: 9, end_col: 9 }],
                     docstring: None,
                     decorators: Vec::new(),
                     line: 3,
+                    end_line: 3,
                     col: 5,
+                    end_col: 5,
                 },
                 AstNode::Return {
                     value: Some(Box::new(AstNode::Identifier {
                         name: "obj".to_string(),
                         line: 5,
+                        end_line: 5,
                         col: 12,
+                        end_col: 12,
                     })),
                     line: 5,
+                    end_line: 5,
                     col: 5,
+                    end_col: 5,
                 },
             ],
             docstring: None,
@@ -1761,6 +2065,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1773,8 +2079,6 @@ mod tests {
             let scope_id = find_function_scope(&resolver.symbol_table);
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
-
-            // 'MyClass' should NOT be flagged as use-before-def because class defs are hoisted
             let class_errors: Vec<_> = result.iter().filter(|e| e.var_name == "MyClass").collect();
             assert!(
                 class_errors.is_empty(),
@@ -1802,17 +2106,23 @@ mod tests {
                         function: "helper".to_string(),
                         args: vec![],
                         line: 2,
+                        end_line: 2,
                         col: 14,
+                        end_col: 14,
                         keywords: Vec::new(),
                     }),
                     line: 2,
+                    end_line: 2,
                     col: 5,
+                    end_col: 5,
                 },
                 AstNode::If {
                     test: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Boolean(true),
                         line: 3,
+                        end_line: 3,
                         col: 8,
+                        end_col: 8,
                     }),
                     body: vec![AstNode::FunctionDef {
                         name: "helper".to_string(),
@@ -1821,31 +2131,43 @@ mod tests {
                             value: Some(Box::new(AstNode::Literal {
                                 value: beacon_parser::LiteralValue::Integer(1),
                                 line: 5,
+                                end_line: 5,
                                 col: 20,
+                                end_col: 20,
                             })),
                             line: 5,
+                            end_line: 5,
                             col: 13,
+                            end_col: 13,
                         }],
                         docstring: None,
                         return_type: None,
                         decorators: Vec::new(),
                         line: 4,
+                        end_line: 4,
                         col: 9,
+                        end_col: 9,
                         is_async: false,
                     }],
                     elif_parts: vec![],
                     else_body: None,
                     line: 3,
+                    end_line: 3,
                     col: 5,
+                    end_col: 5,
                 },
                 AstNode::Return {
                     value: Some(Box::new(AstNode::Identifier {
                         name: "result".to_string(),
                         line: 6,
+                        end_line: 6,
                         col: 12,
+                        end_col: 12,
                     })),
                     line: 6,
+                    end_line: 6,
                     col: 5,
+                    end_col: 5,
                 },
             ],
             docstring: None,
@@ -1854,6 +2176,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1884,13 +2208,15 @@ mod tests {
         let ast = AstNode::FunctionDef {
             name: "foo".to_string(),
             args: vec![],
-            body: vec![AstNode::Pass { line: 2, col: 5 }],
+            body: vec![AstNode::Pass { line: 2, end_line: 2, col: 5, end_col: 5 }],
             docstring: None,
             return_type: None,
             decorators: Vec::new(),
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1908,30 +2234,54 @@ mod tests {
             test_constants.insert("b".to_string(), ConstantValue::Bool(false));
 
             let and_expr = AstNode::BinaryOp {
-                left: Box::new(AstNode::Identifier { name: "a".to_string(), line: 2, col: 5 }),
+                left: Box::new(AstNode::Identifier { name: "a".to_string(), line: 2, end_line: 2, col: 5, end_col: 5 }),
                 op: beacon_parser::BinaryOperator::And,
-                right: Box::new(AstNode::Identifier { name: "b".to_string(), line: 2, col: 11 }),
+                right: Box::new(AstNode::Identifier {
+                    name: "b".to_string(),
+                    line: 2,
+                    end_line: 2,
+                    col: 11,
+                    end_col: 11,
+                }),
                 line: 2,
                 col: 9,
+                end_line: 2,
+                end_col: 9,
             };
             let and_result = analyzer.evaluate_condition(&and_expr, &test_constants);
             assert_eq!(and_result, ConditionResult::AlwaysFalse);
 
             let or_expr = AstNode::BinaryOp {
-                left: Box::new(AstNode::Identifier { name: "a".to_string(), line: 2, col: 5 }),
+                left: Box::new(AstNode::Identifier { name: "a".to_string(), line: 2, col: 5, end_line: 2, end_col: 5 }),
                 op: beacon_parser::BinaryOperator::Or,
-                right: Box::new(AstNode::Identifier { name: "b".to_string(), line: 2, col: 10 }),
+                right: Box::new(AstNode::Identifier {
+                    name: "b".to_string(),
+                    line: 2,
+                    col: 10,
+                    end_line: 2,
+                    end_col: 10,
+                }),
                 line: 2,
                 col: 8,
+                end_line: 2,
+                end_col: 8,
             };
             let or_result = analyzer.evaluate_condition(&or_expr, &test_constants);
             assert_eq!(or_result, ConditionResult::AlwaysTrue);
 
             let not_expr = AstNode::UnaryOp {
                 op: beacon_parser::UnaryOperator::Not,
-                operand: Box::new(AstNode::Identifier { name: "b".to_string(), line: 2, col: 9 }),
+                operand: Box::new(AstNode::Identifier {
+                    name: "b".to_string(),
+                    line: 2,
+                    col: 9,
+                    end_line: 2,
+                    end_col: 9,
+                }),
                 line: 2,
                 col: 5,
+                end_line: 2,
+                end_col: 5,
             };
             let not_result = analyzer.evaluate_condition(&not_expr, &test_constants);
             assert_eq!(not_result, ConditionResult::AlwaysTrue);
@@ -1949,18 +2299,29 @@ mod tests {
             name: "foo".to_string(),
             args: vec![],
             body: vec![
-                AstNode::ImportFrom { module: "bar".to_string(), names: vec!["baz".to_string()], line: 2, col: 5 },
+                AstNode::ImportFrom {
+                    module: "bar".to_string(),
+                    names: vec!["baz".to_string()],
+                    line: 2,
+                    col: 5,
+                    end_line: 2,
+                    end_col: 5,
+                },
                 AstNode::Assignment {
                     target: "result".to_string(),
                     value: Box::new(AstNode::Call {
                         function: "baz".to_string(),
                         args: vec![],
                         line: 3,
+                        end_line: 3,
                         col: 14,
+                        end_col: 14,
                         keywords: Vec::new(),
                     }),
                     line: 3,
+                    end_line: 3,
                     col: 5,
+                    end_col: 5,
                 },
             ],
             docstring: None,
@@ -1969,6 +2330,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -2001,17 +2364,27 @@ mod tests {
             name: "foo".to_string(),
             args: vec![],
             body: vec![
-                AstNode::Import { module: "os".to_string(), alias: None, line: 2, col: 5 },
+                AstNode::Import { module: "os".to_string(), alias: None, line: 2, col: 5, end_line: 2, end_col: 5 },
                 AstNode::Assignment {
                     target: "path".to_string(),
                     value: Box::new(AstNode::Attribute {
-                        object: Box::new(AstNode::Identifier { name: "os".to_string(), line: 3, col: 12 }),
+                        object: Box::new(AstNode::Identifier {
+                            name: "os".to_string(),
+                            line: 3,
+                            col: 12,
+                            end_line: 3,
+                            end_col: 12,
+                        }),
                         attribute: "path".to_string(),
                         line: 3,
+                        end_line: 3,
                         col: 12,
+                        end_col: 12,
                     }),
                     line: 3,
+                    end_line: 3,
                     col: 5,
+                    end_col: 5,
                 },
             ],
             docstring: None,
@@ -2020,6 +2393,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -2033,7 +2408,6 @@ mod tests {
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
 
-            // 'os' should NOT be flagged as use-before-def because imports are hoisted
             let os_errors: Vec<_> = result.iter().filter(|e| e.var_name == "os").collect();
             assert!(
                 os_errors.is_empty(),
@@ -2053,7 +2427,14 @@ mod tests {
             name: "foo".to_string(),
             args: vec![],
             body: vec![
-                AstNode::Import { module: "numpy".to_string(), alias: Some("np".to_string()), line: 2, col: 5 },
+                AstNode::Import {
+                    module: "numpy".to_string(),
+                    alias: Some("np".to_string()),
+                    line: 2,
+                    col: 5,
+                    end_line: 2,
+                    end_col: 5,
+                },
                 AstNode::Assignment {
                     target: "arr".to_string(),
                     value: Box::new(AstNode::Call {
@@ -2061,14 +2442,20 @@ mod tests {
                         args: vec![AstNode::Literal {
                             value: beacon_parser::LiteralValue::Integer(1),
                             line: 3,
+                            end_line: 3,
                             col: 19,
+                            end_col: 19,
                         }],
                         line: 3,
+                        end_line: 3,
                         col: 11,
+                        end_col: 11,
                         keywords: Vec::new(),
                     }),
                     line: 3,
+                    end_line: 3,
                     col: 5,
+                    end_col: 5,
                 },
             ],
             docstring: None,
@@ -2077,6 +2464,8 @@ mod tests {
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -2090,14 +2479,12 @@ mod tests {
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
 
-            // 'np' (alias) should NOT be flagged as use-before-def because imports are hoisted
             let np_errors: Vec<_> = result.iter().filter(|e| e.var_name == "np").collect();
             assert!(
                 np_errors.is_empty(),
                 "Imported alias 'np' should not be flagged as use-before-def due to import hoisting, found: {np_errors:?}"
             );
 
-            // 'numpy' should NOT appear in errors (it's the module, not the binding)
             let numpy_errors: Vec<_> = result.iter().filter(|e| e.var_name == "numpy").collect();
             assert!(
                 numpy_errors.is_empty(),
@@ -2117,11 +2504,13 @@ mod tests {
             name: "MyClass".to_string(),
             bases: vec![],
             metaclass: None,
-            body: vec![AstNode::Pass { line: 2, col: 5 }],
+            body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
             docstring: None,
             decorators: Vec::new(),
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
 
         let func_def = AstNode::FunctionDef {
@@ -2132,11 +2521,15 @@ mod tests {
                     function: "MyClass".to_string(),
                     args: vec![],
                     line: 5,
+                    end_line: 5,
                     col: 12,
+                    end_col: 12,
                     keywords: Vec::new(),
                 })),
                 line: 5,
+                end_line: 5,
                 col: 5,
+                end_col: 5,
             }],
             docstring: None,
             return_type: None,
@@ -2144,6 +2537,8 @@ mod tests {
             line: 4,
             col: 1,
             is_async: false,
+            end_line: 4,
+            end_col: 1,
         };
 
         let module = AstNode::Module { body: vec![class_def, func_def], docstring: None };
@@ -2188,13 +2583,15 @@ mod tests {
         let helper_def = AstNode::FunctionDef {
             name: "helper".to_string(),
             args: vec![],
-            body: vec![AstNode::Pass { line: 2, col: 5 }],
+            body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
             docstring: None,
             return_type: None,
             decorators: Vec::new(),
             line: 1,
             col: 1,
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         let main_def = AstNode::FunctionDef {
@@ -2205,6 +2602,8 @@ mod tests {
                 args: vec![],
                 line: 5,
                 col: 5,
+                end_line: 5,
+                end_col: 5,
                 keywords: Vec::new(),
             }],
             docstring: None,
@@ -2213,6 +2612,8 @@ mod tests {
             line: 4,
             col: 1,
             is_async: false,
+            end_line: 4,
+            end_col: 1,
         };
 
         let module = AstNode::Module { body: vec![helper_def, main_def], docstring: None };

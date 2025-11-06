@@ -513,7 +513,7 @@ impl NameResolver {
                     self.track_references(val)?;
                 }
             }
-            AstNode::Call { function, args, keywords, line, col } => {
+            AstNode::Call { function, args, keywords, line, col, .. } => {
                 let byte_offset = self.line_col_to_byte_offset(*line, *col);
                 let scope = self.symbol_table.find_scope_at_position(byte_offset);
                 self.symbol_table
@@ -527,7 +527,7 @@ impl NameResolver {
                     self.track_references(value)?;
                 }
             }
-            AstNode::Identifier { name, line, col } => {
+            AstNode::Identifier { name, line, col, .. } => {
                 let byte_offset = self.line_col_to_byte_offset(*line, *col);
                 let scope = self.symbol_table.find_scope_at_position(byte_offset);
                 self.symbol_table
@@ -785,9 +785,9 @@ impl NameResolver {
             | AstNode::Compare { line, col, .. }
             | AstNode::Lambda { line, col, .. }
             | AstNode::Subscript { line, col, .. }
-            | AstNode::Pass { line, col }
-            | AstNode::Break { line, col }
-            | AstNode::Continue { line, col }
+            | AstNode::Pass { line, col, .. }
+            | AstNode::Break { line, col, .. }
+            | AstNode::Continue { line, col, .. }
             | AstNode::Raise { line, col, .. } => {
                 let start_byte = self.line_col_to_byte_offset(*line, *col);
                 let mut end_byte = start_byte;
@@ -883,7 +883,7 @@ impl NameResolver {
 
                 self.current_scope = prev_scope;
             }
-            AstNode::Assignment { target, value, line, col } => {
+            AstNode::Assignment { target, value, line, col, .. } => {
                 self.visit_node(value)?;
 
                 let symbol = Symbol {
@@ -925,7 +925,7 @@ impl NameResolver {
                     self.visit_node(val)?;
                 }
             }
-            AstNode::Import { module, alias, line, col } => self.symbol_table.add_symbol(
+            AstNode::Import { module, alias, line, col, .. } => self.symbol_table.add_symbol(
                 self.current_scope,
                 Symbol {
                     name: alias.as_ref().unwrap_or(module).clone(),
@@ -1058,9 +1058,9 @@ impl NameResolver {
                     self.visit_node(stmt)?;
                 }
             }
-            AstNode::ListComp { element, generators, line, col }
-            | AstNode::SetComp { element, generators, line, col }
-            | AstNode::GeneratorExp { element, generators, line, col } => {
+            AstNode::ListComp { element, generators, line, col, .. }
+            | AstNode::SetComp { element, generators, line, col, .. }
+            | AstNode::GeneratorExp { element, generators, line, col, .. } => {
                 for generator in generators {
                     self.visit_node(&generator.iter)?;
 
@@ -1081,7 +1081,7 @@ impl NameResolver {
                 }
                 self.visit_node(element)?;
             }
-            AstNode::DictComp { key, value, generators, line, col } => {
+            AstNode::DictComp { key, value, generators, line, col, .. } => {
                 for generator in generators {
                     self.visit_node(&generator.iter)?;
 
@@ -1104,7 +1104,7 @@ impl NameResolver {
                 self.visit_node(key)?;
                 self.visit_node(value)?;
             }
-            AstNode::NamedExpr { target, value, line, col } => {
+            AstNode::NamedExpr { target, value, line, col, .. } => {
                 self.visit_node(value)?;
                 let symbol = Symbol {
                     name: target.clone(),
@@ -1128,7 +1128,7 @@ impl NameResolver {
                     self.visit_node(comp)?;
                 }
             }
-            AstNode::Lambda { args, body, line, col } => {
+            AstNode::Lambda { args, body, line, col, .. } => {
                 let start_byte = self.line_col_to_byte_offset(*line, *col);
                 let end_byte = self.get_node_end_byte(node);
 
@@ -1230,6 +1230,12 @@ mod tests {
     use super::*;
     use crate::Parameter;
 
+    // NOTE: All test AST node constructions below include end_line and end_col fields
+    // to match the updated AST structure that supports precise span tracking.
+    // For test purposes, end positions are set to reasonable placeholder values
+    // (typically same as start position for simple literals, or estimated based on
+    // typical Python syntax for complex nodes).
+
     #[test]
     fn test_symbol_table_creation() {
         let table = SymbolTable::new();
@@ -1290,9 +1296,17 @@ mod tests {
 
         let ast = AstNode::Assignment {
             target: "x".to_string(),
-            value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(42), line: 1, col: 5 }),
+            value: Box::new(AstNode::Literal {
+                value: crate::LiteralValue::Integer(42),
+                line: 1,
+                col: 5,
+                end_line: 1,
+                end_col: 7,  // "42" is 2 chars
+            }),
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 7,  // "x = 42" ends at col 7
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1310,17 +1324,43 @@ mod tests {
         let ast = AstNode::FunctionDef {
             name: "test_func".to_string(),
             args: vec![
-                Parameter { name: "param1".to_string(), line: 1, col: 15, type_annotation: None, default_value: None },
-                Parameter { name: "param2".to_string(), line: 1, col: 23, type_annotation: None, default_value: None },
+                Parameter {
+                    name: "param1".to_string(),
+                    line: 1,
+                    col: 15,
+                    end_line: 1,
+                    end_col: 21,  // "param1" is 6 chars
+                    type_annotation: None,
+                    default_value: None,
+                },
+                Parameter {
+                    name: "param2".to_string(),
+                    line: 1,
+                    col: 23,
+                    end_line: 1,
+                    end_col: 29,  // "param2" is 6 chars
+                    type_annotation: None,
+                    default_value: None,
+                },
             ],
             body: vec![AstNode::Assignment {
                 target: "local_var".to_string(),
-                value: Box::new(AstNode::Identifier { name: "param1".to_string(), line: 2, col: 15 }),
+                value: Box::new(AstNode::Identifier {
+                    name: "param1".to_string(),
+                    line: 2,
+                    col: 15,
+                    end_line: 2,
+                    end_col: 21,  // "param1" is 6 chars
+                }),
                 line: 2,
                 col: 5,
+                end_line: 2,
+                end_col: 21,  // "local_var = param1" ends at col 21
             }],
             line: 1,
             col: 1,
+            end_line: 2,
+            end_col: 21,  // Function ends at last statement
             docstring: None,
             return_type: None,
             decorators: Vec::new(),
@@ -1360,9 +1400,17 @@ mod tests {
             body: vec![
                 AstNode::Assignment {
                     target: "x".to_string(),
-                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 5 }),
+                    value: Box::new(AstNode::Literal {
+                        value: crate::LiteralValue::Integer(1),
+                        line: 1,
+                        col: 5,
+                        end_line: 1,
+                        end_col: 6,
+                    }),
                     line: 1,
                     col: 1,
+                    end_line: 1,
+                    end_col: 6,
                 },
                 AstNode::FunctionDef {
                     name: "foo".to_string(),
@@ -1374,9 +1422,13 @@ mod tests {
                                 value: crate::LiteralValue::Integer(2),
                                 line: 3,
                                 col: 9,
+                                end_line: 3,
+                                end_col: 10,
                             }),
                             line: 3,
                             col: 5,
+                            end_line: 3,
+                            end_col: 10,
                         },
                         AstNode::Assignment {
                             target: "z".to_string(),
@@ -1384,13 +1436,19 @@ mod tests {
                                 value: crate::LiteralValue::Integer(3),
                                 line: 4,
                                 col: 9,
+                                end_line: 4,
+                                end_col: 10,
                             }),
                             line: 4,
                             col: 5,
+                            end_line: 4,
+                            end_col: 10,
                         },
                     ],
                     line: 2,
                     col: 1,
+                    end_line: 4,
+                    end_col: 10,
                     docstring: None,
                     return_type: None,
                     decorators: Vec::new(),
@@ -1398,9 +1456,17 @@ mod tests {
                 },
                 AstNode::Assignment {
                     target: "w".to_string(),
-                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(4), line: 5, col: 5 }),
+                    value: Box::new(AstNode::Literal {
+                        value: crate::LiteralValue::Integer(4),
+                        line: 5,
+                        col: 5,
+                        end_line: 5,
+                        end_col: 6,
+                    }),
                     line: 5,
                     col: 1,
+                    end_line: 5,
+                    end_col: 6,
                 },
             ],
             docstring: None,
@@ -1435,9 +1501,17 @@ mod tests {
             body: vec![
                 AstNode::Assignment {
                     target: "global_var".to_string(),
-                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 15 }),
+                    value: Box::new(AstNode::Literal {
+                        value: crate::LiteralValue::Integer(1),
+                        line: 1,
+                        col: 15,
+                        end_line: 1,
+                        end_col: 16,
+                    }),
                     line: 1,
                     col: 1,
+                    end_line: 1,
+                    end_col: 16,
                 },
                 AstNode::FunctionDef {
                     name: "outer".to_string(),
@@ -1445,17 +1519,29 @@ mod tests {
                         name: "param".to_string(),
                         line: 2,
                         col: 11,
+                        end_line: 2,
+                        end_col: 16,
                         type_annotation: None,
                         default_value: None,
                     }],
                     body: vec![AstNode::Assignment {
                         target: "outer_var".to_string(),
-                        value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(2), line: 3, col: 20 }),
+                        value: Box::new(AstNode::Literal {
+                            value: crate::LiteralValue::Integer(2),
+                            line: 3,
+                            col: 20,
+                            end_line: 3,
+                            end_col: 21,
+                        }),
                         line: 3,
                         col: 9,
+                        end_line: 3,
+                        end_col: 21,
                     }],
                     line: 2,
                     col: 1,
+                    end_line: 3,
+                    end_col: 21,
                     docstring: None,
                     return_type: None,
                     is_async: false,
@@ -1512,10 +1598,12 @@ mod tests {
         let source = "obj.field".to_string();
         let mut resolver = NameResolver::new(source);
         let ast = AstNode::Attribute {
-            object: Box::new(AstNode::Identifier { name: "obj".to_string(), line: 1, col: 1 }),
+            object: Box::new(AstNode::Identifier { name: "obj".to_string(), line: 1, col: 1, end_line: 1, end_col: 4 }),
             attribute: "field".to_string(),
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 10,  // "obj.field" is 9 chars
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1527,9 +1615,17 @@ mod tests {
         let mut resolver = NameResolver::new(source);
         let ast = AstNode::NamedExpr {
             target: "x".to_string(),
-            value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(42), line: 1, col: 6 }),
+            value: Box::new(AstNode::Literal {
+                value: crate::LiteralValue::Integer(42),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 8,
+            }),
             line: 1,
             col: 2,
+            end_line: 1,
+            end_col: 8,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1544,11 +1640,13 @@ mod tests {
         let source = "x + y".to_string();
         let mut resolver = NameResolver::new(source);
         let ast = AstNode::BinaryOp {
-            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 1 }),
+            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 1, end_line: 1, end_col: 2 }),
             op: crate::BinaryOperator::Add,
-            right: Box::new(AstNode::Identifier { name: "y".to_string(), line: 1, col: 5 }),
+            right: Box::new(AstNode::Identifier { name: "y".to_string(), line: 1, col: 5, end_line: 1, end_col: 6 }),
             line: 1,
             col: 3,
+            end_line: 1,
+            end_col: 6,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1560,9 +1658,11 @@ mod tests {
         let mut resolver = NameResolver::new(source);
         let ast = AstNode::UnaryOp {
             op: crate::UnaryOperator::Minus,
-            operand: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 2 }),
+            operand: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 2, end_line: 1, end_col: 3 }),
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 3,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1573,11 +1673,13 @@ mod tests {
         let source = "x < y".to_string();
         let mut resolver = NameResolver::new(source);
         let ast = AstNode::Compare {
-            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 1 }),
+            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 1, end_line: 1, end_col: 2 }),
             ops: vec![crate::CompareOperator::Lt],
-            comparators: vec![AstNode::Identifier { name: "y".to_string(), line: 1, col: 5 }],
+            comparators: vec![AstNode::Identifier { name: "y".to_string(), line: 1, col: 5, end_line: 1, end_col: 6 }],
             line: 1,
             col: 3,
+            end_line: 1,
+            end_col: 6,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1588,10 +1690,18 @@ mod tests {
         let source = "arr[0]".to_string();
         let mut resolver = NameResolver::new(source);
         let ast = AstNode::Subscript {
-            value: Box::new(AstNode::Identifier { name: "arr".to_string(), line: 1, col: 1 }),
-            slice: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(0), line: 1, col: 5 }),
+            value: Box::new(AstNode::Identifier { name: "arr".to_string(), line: 1, col: 1, end_line: 1, end_col: 4 }),
+            slice: Box::new(AstNode::Literal {
+                value: crate::LiteralValue::Integer(0),
+                line: 1,
+                col: 5,
+                end_line: 1,
+                end_col: 6,
+            }),
             line: 1,
             col: 4,
+            end_line: 1,
+            end_col: 7,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1603,14 +1713,16 @@ mod tests {
         let mut resolver = NameResolver::new(source);
 
         let ast = AstNode::ListComp {
-            element: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 2 }),
+            element: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 2, end_line: 1, end_col: 3 }),
             generators: vec![crate::Comprehension {
                 target: "x".to_string(),
-                iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 13 },
+                iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 13, end_line: 1, end_col: 18 },
                 ifs: vec![],
             }],
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 19,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1621,15 +1733,17 @@ mod tests {
         let source = "{k: v for k, v in items}".to_string();
         let mut resolver = NameResolver::new(source);
         let ast = AstNode::DictComp {
-            key: Box::new(AstNode::Identifier { name: "k".to_string(), line: 1, col: 2 }),
-            value: Box::new(AstNode::Identifier { name: "v".to_string(), line: 1, col: 5 }),
+            key: Box::new(AstNode::Identifier { name: "k".to_string(), line: 1, col: 2, end_line: 1, end_col: 3 }),
+            value: Box::new(AstNode::Identifier { name: "v".to_string(), line: 1, col: 5, end_line: 1, end_col: 6 }),
             generators: vec![crate::Comprehension {
                 target: "k".to_string(),
-                iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 19 },
+                iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 19, end_line: 1, end_col: 24 },
                 ifs: vec![],
             }],
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 25,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1640,14 +1754,16 @@ mod tests {
         let source = "{x for x in items}".to_string();
         let mut resolver = NameResolver::new(source);
         let ast = AstNode::SetComp {
-            element: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 2 }),
+            element: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 2, end_line: 1, end_col: 3 }),
             generators: vec![crate::Comprehension {
                 target: "x".to_string(),
-                iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 13 },
+                iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 13, end_line: 1, end_col: 18 },
                 ifs: vec![],
             }],
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 19,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1658,14 +1774,16 @@ mod tests {
         let source = "(x for x in items)".to_string();
         let mut resolver = NameResolver::new(source);
         let ast = AstNode::GeneratorExp {
-            element: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 2 }),
+            element: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 2, end_line: 1, end_col: 3 }),
             generators: vec![crate::Comprehension {
                 target: "x".to_string(),
-                iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 13 },
+                iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 13, end_line: 1, end_col: 18 },
                 ifs: vec![],
             }],
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 19,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1701,12 +1819,16 @@ mod tests {
                         name: "self".to_string(),
                         line: 2,
                         col: 16,
+                        end_line: 2,
+                        end_col: 20,
                         type_annotation: None,
                         default_value: None,
                     }],
-                    body: vec![AstNode::Pass { line: 3, col: 9 }],
+                    body: vec![AstNode::Pass { line: 3, col: 9, end_line: 3, end_col: 13 }],
                     line: 2,
                     col: 5,
+                    end_line: 3,
+                    end_col: 13,
                     docstring: None,
                     return_type: None,
                     decorators: Vec::new(),
@@ -1714,6 +1836,8 @@ mod tests {
                 }],
                 line: 1,
                 col: 1,
+                end_line: 3,
+                end_col: 13,
                 docstring: None,
                 decorators: Vec::new(),
             }],
@@ -1751,12 +1875,22 @@ mod tests {
                 args: vec![],
                 body: vec![AstNode::Assignment {
                     target: "x".to_string(),
-                    value: Box::new(AstNode::Identifier { name: "__name__".to_string(), line: 2, col: 9 }),
+                    value: Box::new(AstNode::Identifier {
+                        name: "__name__".to_string(),
+                        line: 2,
+                        col: 9,
+                        end_line: 2,
+                        end_col: 17,
+                    }),
                     line: 2,
                     col: 5,
+                    end_line: 2,
+                    end_col: 17,
                 }],
                 line: 1,
                 col: 1,
+                end_line: 2,
+                end_col: 17,
                 docstring: None,
                 return_type: None,
                 decorators: Vec::new(),
@@ -1784,18 +1918,22 @@ mod tests {
         let source = "match x:\n    case 1:\n        pass".to_string();
         let mut resolver = NameResolver::new(source);
         let ast = AstNode::Match {
-            subject: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 7 }),
+            subject: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 7, end_line: 1, end_col: 8 }),
             cases: vec![crate::MatchCase {
                 pattern: crate::Pattern::MatchValue(AstNode::Literal {
                     value: crate::LiteralValue::Integer(1),
                     line: 2,
                     col: 10,
+                    end_line: 2,
+                    end_col: 11,
                 }),
                 guard: None,
-                body: vec![AstNode::Pass { line: 3, col: 9 }],
+                body: vec![AstNode::Pass { line: 3, col: 9, end_line: 3, end_col: 13 }],
             }],
             line: 1,
             col: 1,
+            end_line: 3,
+            end_col: 13,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1810,21 +1948,39 @@ mod tests {
             body: vec![
                 AstNode::Assignment {
                     target: "x".to_string(),
-                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 5 }),
+                    value: Box::new(AstNode::Literal {
+                        value: crate::LiteralValue::Integer(1),
+                        line: 1,
+                        col: 5,
+                        end_line: 1,
+                        end_col: 6,
+                    }),
                     line: 1,
                     col: 1,
+                    end_line: 1,
+                    end_col: 6,
                 },
                 AstNode::FunctionDef {
                     name: "foo".to_string(),
                     args: vec![],
                     body: vec![AstNode::Assignment {
                         target: "x".to_string(),
-                        value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(2), line: 3, col: 9 }),
+                        value: Box::new(AstNode::Literal {
+                            value: crate::LiteralValue::Integer(2),
+                            line: 3,
+                            col: 9,
+                            end_line: 3,
+                            end_col: 10,
+                        }),
                         line: 3,
                         col: 5,
+                        end_line: 3,
+                        end_col: 10,
                     }],
                     line: 2,
                     col: 1,
+                    end_line: 3,
+                    end_col: 10,
                     docstring: None,
                     return_type: None,
                     decorators: Vec::new(),
@@ -1853,9 +2009,17 @@ mod tests {
             body: vec![
                 AstNode::Assignment {
                     target: "x".to_string(),
-                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 5 }),
+                    value: Box::new(AstNode::Literal {
+                        value: crate::LiteralValue::Integer(1),
+                        line: 1,
+                        col: 5,
+                        end_line: 1,
+                        end_col: 6,
+                    }),
                     line: 1,
                     col: 1,
+                    end_line: 1,
+                    end_col: 6,
                 },
                 AstNode::FunctionDef {
                     name: "outer".to_string(),
@@ -1867,9 +2031,13 @@ mod tests {
                                 value: crate::LiteralValue::Integer(2),
                                 line: 3,
                                 col: 9,
+                                end_line: 3,
+                                end_col: 10,
                             }),
                             line: 3,
                             col: 5,
+                            end_line: 3,
+                            end_col: 10,
                         },
                         AstNode::FunctionDef {
                             name: "inner".to_string(),
@@ -1880,12 +2048,18 @@ mod tests {
                                     value: crate::LiteralValue::Integer(3),
                                     line: 5,
                                     col: 13,
+                                    end_line: 5,
+                                    end_col: 14,
                                 }),
                                 line: 5,
                                 col: 9,
+                                end_line: 5,
+                                end_col: 14,
                             }],
                             line: 4,
                             col: 5,
+                            end_line: 5,
+                            end_col: 14,
                             docstring: None,
                             return_type: None,
                             decorators: Vec::new(),
@@ -1894,6 +2068,8 @@ mod tests {
                     ],
                     line: 2,
                     col: 1,
+                    end_line: 5,
+                    end_col: 14,
                     docstring: None,
                     return_type: None,
                     decorators: Vec::new(),
@@ -1920,15 +2096,31 @@ mod tests {
             body: vec![
                 AstNode::Assignment {
                     target: "x".to_string(),
-                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 5 }),
+                    value: Box::new(AstNode::Literal {
+                        value: crate::LiteralValue::Integer(1),
+                        line: 1,
+                        col: 5,
+                        end_line: 1,
+                        end_col: 6,
+                    }),
                     line: 1,
                     col: 1,
+                    end_line: 1,
+                    end_col: 6,
                 },
                 AstNode::Assignment {
                     target: "y".to_string(),
-                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(2), line: 2, col: 5 }),
+                    value: Box::new(AstNode::Literal {
+                        value: crate::LiteralValue::Integer(2),
+                        line: 2,
+                        col: 5,
+                        end_line: 2,
+                        end_col: 6,
+                    }),
                     line: 2,
                     col: 1,
+                    end_line: 2,
+                    end_col: 6,
                 },
             ],
             docstring: None,
@@ -1949,9 +2141,17 @@ mod tests {
             body: vec![
                 AstNode::Assignment {
                     target: "x".to_string(),
-                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 5 }),
+                    value: Box::new(AstNode::Literal {
+                        value: crate::LiteralValue::Integer(1),
+                        line: 1,
+                        col: 5,
+                        end_line: 1,
+                        end_col: 6,
+                    }),
                     line: 1,
                     col: 1,
+                    end_line: 1,
+                    end_col: 6,
                 },
                 AstNode::FunctionDef {
                     name: "foo".to_string(),
@@ -1959,12 +2159,16 @@ mod tests {
                         name: "x".to_string(),
                         line: 2,
                         col: 9,
+                        end_line: 2,
+                        end_col: 10,
                         type_annotation: None,
                         default_value: None,
                     }],
-                    body: vec![AstNode::Pass { line: 3, col: 5 }],
+                    body: vec![AstNode::Pass { line: 3, col: 5, end_line: 3, end_col: 9 }],
                     line: 2,
                     col: 1,
+                    end_line: 3,
+                    end_col: 9,
                     docstring: None,
                     return_type: None,
                     decorators: Vec::new(),
@@ -1989,21 +2193,45 @@ mod tests {
             body: vec![
                 AstNode::Assignment {
                     target: "x".to_string(),
-                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 5 }),
+                    value: Box::new(AstNode::Literal {
+                        value: crate::LiteralValue::Integer(1),
+                        line: 1,
+                        col: 5,
+                        end_line: 1,
+                        end_col: 6,
+                    }),
                     line: 1,
                     col: 1,
+                    end_line: 1,
+                    end_col: 6,
                 },
                 AstNode::Assignment {
                     target: "y".to_string(),
                     value: Box::new(AstNode::BinaryOp {
-                        left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 2, col: 5 }),
+                        left: Box::new(AstNode::Identifier {
+                            name: "x".to_string(),
+                            line: 2,
+                            col: 5,
+                            end_line: 2,
+                            end_col: 6,
+                        }),
                         op: crate::BinaryOperator::Add,
-                        right: Box::new(AstNode::Identifier { name: "x".to_string(), line: 2, col: 9 }),
+                        right: Box::new(AstNode::Identifier {
+                            name: "x".to_string(),
+                            line: 2,
+                            col: 9,
+                            end_line: 2,
+                            end_col: 10,
+                        }),
                         line: 2,
                         col: 7,
+                        end_line: 2,
+                        end_col: 10,
                     }),
                     line: 2,
                     col: 1,
+                    end_line: 2,
+                    end_col: 10,
                 },
             ],
             docstring: None,
@@ -2033,21 +2261,39 @@ mod tests {
             body: vec![
                 AstNode::Assignment {
                     target: "x".to_string(),
-                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 5 }),
+                    value: Box::new(AstNode::Literal {
+                        value: crate::LiteralValue::Integer(1),
+                        line: 1,
+                        col: 5,
+                        end_line: 1,
+                        end_col: 6,
+                    }),
                     line: 1,
                     col: 1,
+                    end_line: 1,
+                    end_col: 6,
                 },
                 AstNode::Assignment {
                     target: "y".to_string(),
-                    value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(2), line: 2, col: 5 }),
+                    value: Box::new(AstNode::Literal {
+                        value: crate::LiteralValue::Integer(2),
+                        line: 2,
+                        col: 5,
+                        end_line: 2,
+                        end_col: 6,
+                    }),
                     line: 2,
                     col: 1,
+                    end_line: 2,
+                    end_col: 6,
                 },
                 AstNode::Call {
                     function: "print".to_string(),
-                    args: vec![AstNode::Identifier { name: "y".to_string(), line: 3, col: 7 }],
+                    args: vec![AstNode::Identifier { name: "y".to_string(), line: 3, col: 7, end_line: 3, end_col: 8 }],
                     line: 3,
                     col: 1,
+                    end_line: 3,
+                    end_col: 9,
                     keywords: Vec::new(),
                 },
             ],
@@ -2069,9 +2315,17 @@ mod tests {
         let ast = AstNode::Module {
             body: vec![AstNode::Assignment {
                 target: "_x".to_string(),
-                value: Box::new(AstNode::Literal { value: crate::LiteralValue::Integer(1), line: 1, col: 6 }),
+                value: Box::new(AstNode::Literal {
+                    value: crate::LiteralValue::Integer(1),
+                    line: 1,
+                    col: 6,
+                    end_line: 1,
+                    end_col: 7,
+                }),
                 line: 1,
                 col: 1,
+                end_line: 1,
+                end_col: 7,
             }],
             docstring: None,
         };
@@ -2091,9 +2345,11 @@ mod tests {
             body: vec![AstNode::FunctionDef {
                 name: "foo".to_string(),
                 args: vec![],
-                body: vec![AstNode::Pass { line: 2, col: 5 }],
+                body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
                 line: 1,
                 col: 1,
+                end_line: 2,
+                end_col: 9,
                 docstring: None,
                 return_type: None,
                 is_async: false,
@@ -2118,9 +2374,11 @@ mod tests {
                 name: "MyClass".to_string(),
                 metaclass: None,
                 bases: Vec::new(),
-                body: vec![AstNode::Pass { line: 2, col: 5 }],
+                body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
                 line: 1,
                 col: 1,
+                end_line: 2,
+                end_col: 9,
                 docstring: None,
                 decorators: Vec::new(),
             }],

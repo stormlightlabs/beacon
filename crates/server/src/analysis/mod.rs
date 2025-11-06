@@ -345,7 +345,7 @@ impl Analyzer {
         node: &AstNode, symbol_table: &SymbolTable, text: &str, unbound: &mut Vec<(String, usize, usize)>,
     ) {
         match node {
-            AstNode::Identifier { name, line, col } => {
+            AstNode::Identifier { name, line, col, .. } => {
                 if !Self::is_valid_identifier(name) {
                     return;
                 }

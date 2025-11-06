@@ -68,7 +68,7 @@ impl DocumentHighlightProvider {
     /// Classifies each occurrence as Read or Write based on context.
     fn collect_highlights(node: &AstNode, symbol_name: &str, highlights: &mut Vec<DocumentHighlight>, _text: &str) {
         match node {
-            AstNode::Identifier { name, line, col } if name == symbol_name => {
+            AstNode::Identifier { name, line, col, .. } if name == symbol_name => {
                 let position =
                     Position { line: (*line as u32).saturating_sub(1), character: (*col as u32).saturating_sub(1) };
                 let end_position =
@@ -79,7 +79,7 @@ impl DocumentHighlightProvider {
                     kind: Some(DocumentHighlightKind::READ),
                 });
             }
-            AstNode::Assignment { target, value, line, col } => {
+            AstNode::Assignment { target, value, line, col, .. } => {
                 if target == symbol_name {
                     let position =
                         Position { line: (*line as u32).saturating_sub(1), character: (*col as u32).saturating_sub(1) };
@@ -219,9 +219,11 @@ result = hello()"#;
     fn test_collect_highlights_assignment() {
         let ast = AstNode::Assignment {
             target: "x".to_string(),
-            value: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 5 }),
+            value: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 5, end_col: 6, end_line: 1 }),
             line: 1,
             col: 1,
+            end_line: 1,
+            end_col: 1,
         };
 
         let mut highlights = Vec::new();
@@ -242,9 +244,13 @@ result = hello()"#;
                     name: "x".to_string(),
                     line: 2,
                     col: 12,
+                    end_col: 1,
+                    end_line: 2,
                 })),
                 line: 2,
                 col: 5,
+                end_col: 1,
+                end_line: 2,
             }],
             line: 1,
             col: 1,
@@ -252,6 +258,8 @@ result = hello()"#;
             return_type: None,
             decorators: Vec::new(),
             is_async: false,
+            end_line: 1,
+            end_col: 1,
         };
 
         let mut highlights = Vec::new();
@@ -265,10 +273,12 @@ result = hello()"#;
     fn test_collect_highlights_in_call() {
         let ast = AstNode::Call {
             function: "print".to_string(),
-            args: vec![AstNode::Identifier { name: "x".to_string(), line: 1, col: 7 }],
+            args: vec![AstNode::Identifier { name: "x".to_string(), line: 1, col: 7, end_line: 1, end_col: 8 }],
             line: 1,
             col: 1,
             keywords: Vec::new(),
+            end_line: 1,
+            end_col: 1,
         };
 
         let mut highlights = Vec::new();
@@ -280,7 +290,7 @@ result = hello()"#;
 
     #[test]
     fn test_highlight_position_calculation() {
-        let ast = AstNode::Identifier { name: "variable_name".to_string(), line: 5, col: 10 };
+        let ast = AstNode::Identifier { name: "variable_name".to_string(), line: 5, col: 10, end_line: 5, end_col: 23 };
 
         let mut highlights = Vec::new();
         DocumentHighlightProvider::collect_highlights(&ast, "variable_name", &mut highlights, "");

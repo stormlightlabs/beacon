@@ -647,8 +647,24 @@ mod tests {
             body: vec![AstNode::FunctionDef {
                 name: "test_func".to_string(),
                 args: vec![
-                    Parameter { name: "x".to_string(), line: 1, col: 15, type_annotation: None, default_value: None },
-                    Parameter { name: "y".to_string(), line: 1, col: 18, type_annotation: None, default_value: None },
+                    Parameter {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 15,
+                        type_annotation: None,
+                        default_value: None,
+                        end_col: 1,
+                        end_line: 16,
+                    },
+                    Parameter {
+                        name: "y".to_string(),
+                        line: 1,
+                        col: 18,
+                        type_annotation: None,
+                        default_value: None,
+                        end_col: 1,
+                        end_line: 19,
+                    },
                 ],
                 body: vec![],
                 line: 1,
@@ -657,6 +673,8 @@ mod tests {
                 return_type: None,
                 decorators: Vec::new(),
                 is_async: false,
+                end_line: 1,
+                end_col: 1,
             }],
             docstring: None,
         };
@@ -713,6 +731,8 @@ mod tests {
                 names: vec!["path".to_string()],
                 line: 1,
                 col: 0,
+                end_line: 1,
+                end_col: 1,
             }],
             docstring: None,
         };

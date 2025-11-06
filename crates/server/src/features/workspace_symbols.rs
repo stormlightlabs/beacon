@@ -156,7 +156,7 @@ impl WorkspaceSymbolsProvider {
                     Self::collect_matching_symbols(uri, stmt, symbol_table, query, results);
                 }
             }
-            AstNode::Assignment { target, value, line, col } => {
+            AstNode::Assignment { target, value, line, col, .. } => {
                 if query.is_empty() || target.to_lowercase().contains(query) {
                     let symbol_kind = symbol_table
                         .lookup_symbol(target, symbol_table.root_scope)

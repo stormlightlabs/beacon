@@ -130,10 +130,10 @@ impl<'a> Linter<'a> {
                     self.visit_node(val);
                 }
             }
-            AstNode::Break { line, col } => {
+            AstNode::Break { line, col, .. } => {
                 self.check_break_outside_loop(*line, *col);
             }
-            AstNode::Continue { line, col } => {
+            AstNode::Continue { line, col, .. } => {
                 self.check_continue_outside_loop(*line, *col);
             }
             AstNode::For { target, iter, body, else_body, line, col, .. } => {
@@ -175,7 +175,7 @@ impl<'a> Linter<'a> {
                     }
                 }
             }
-            AstNode::If { test, body, elif_parts, else_body, line, col } => {
+            AstNode::If { test, body, elif_parts, else_body, line, col, .. } => {
                 self.check_if_tuple(test, *line, *col);
                 self.visit_node(test);
 
@@ -196,7 +196,7 @@ impl<'a> Linter<'a> {
                     }
                 }
             }
-            AstNode::Try { body, handlers, else_body, finally_body, line, col } => {
+            AstNode::Try { body, handlers, else_body, finally_body, line, col, .. } => {
                 self.check_default_except_not_last(handlers, *line, *col);
 
                 for stmt in body {
@@ -222,25 +222,25 @@ impl<'a> Linter<'a> {
                     }
                 }
             }
-            AstNode::Raise { exc, line, col } => {
+            AstNode::Raise { exc, line, col, .. } => {
                 if let Some(exception) = exc {
                     self.check_raise_not_implemented(exception, *line, *col);
                     self.visit_node(exception);
                 }
             }
-            AstNode::Compare { left, ops, comparators, line, col } => {
+            AstNode::Compare { left, ops, comparators, line, col, .. } => {
                 self.check_is_literal(left, ops, comparators, *line, *col);
                 self.visit_node(left);
                 for comp in comparators {
                     self.visit_node(comp);
                 }
             }
-            AstNode::Import { module, alias, line, col } => {
+            AstNode::Import { module, alias, line, col, .. } => {
                 let import_name = alias.as_ref().unwrap_or(module).clone();
                 self.ctx.add_import(import_name);
                 let _ = (line, col);
             }
-            AstNode::ImportFrom { module: _, names, line, col } => {
+            AstNode::ImportFrom { module: _, names, line, col, .. } => {
                 let is_star_import = names.is_empty();
                 if is_star_import {
                     if self.ctx.function_depth > 0 || self.ctx.class_depth > 0 {
@@ -268,7 +268,7 @@ impl<'a> Linter<'a> {
             AstNode::Assignment { target: _, value, .. } => {
                 self.visit_node(value);
             }
-            AstNode::AnnotatedAssignment { target: _, type_annotation, value, line, col } => {
+            AstNode::AnnotatedAssignment { target: _, type_annotation, value, line, col, .. } => {
                 self.check_forward_annotation_syntax(type_annotation, *line, *col);
                 if let Some(val) = value {
                     self.visit_node(val);
@@ -293,7 +293,7 @@ impl<'a> Linter<'a> {
                 self.visit_node(value);
                 self.visit_node(slice);
             }
-            AstNode::Literal { value, line, col } => {
+            AstNode::Literal { value, line, col, .. } => {
                 if let LiteralValue::String { value: s, prefix } = value {
                     self.check_fstring_missing_placeholders(s, prefix, *line, *col);
                 }
@@ -330,7 +330,7 @@ impl<'a> Linter<'a> {
                 }
                 self.visit_node(element);
             }
-            AstNode::DictComp { key, value, generators, line, col } => {
+            AstNode::DictComp { key, value, generators, line, col, .. } => {
                 for generator in generators {
                     self.visit_node(&generator.iter);
                     for if_clause in &generator.ifs {

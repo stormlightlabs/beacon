@@ -90,7 +90,7 @@ mod tests {
     #[test]
     fn test_narrow_type_by_pattern_match_value() {
         let union_type = Type::union(vec![Type::int(), Type::string()]);
-        let literal = AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 1 };
+        let literal = AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 1, end_line: 1, end_col: 1 };
         let pattern = Pattern::MatchValue(literal);
 
         let result = narrow_type_by_pattern(&union_type, &pattern);
