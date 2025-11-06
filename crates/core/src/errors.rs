@@ -42,6 +42,12 @@ pub enum TypeError {
     #[error("Pattern is unreachable (subsumed by earlier pattern)")]
     PatternUnreachable,
 
+    #[error("Pattern type mismatch: pattern type '{pattern_type}' cannot match subject of type '{subject_type}'")]
+    PatternTypeMismatch { pattern_type: String, subject_type: String },
+
+    #[error("Invalid pattern structure: expected {expected}, found {found}")]
+    PatternStructureMismatch { expected: String, found: String },
+
     #[error("Keyword argument error: {0}")]
     KeywordArgumentError(String),
 

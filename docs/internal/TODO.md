@@ -8,15 +8,8 @@ Implementation details and mod-specific tasks.
 
 **Files:** `crates/server/src/features/diagnostics.rs`, `crates/server/src/features/code_actions.rs`
 
-#### Diagnostics
-
-- [ ] HM010: Pattern type mismatch (e.g., matching int pattern against str)
-- [ ] HM013: Invalid pattern structure (wrong number of elements, etc.)
-
 #### Quick Fixes
 
-- [ ] Add missing case for non-exhaustive matches (PM001)
-- [ ] Remove unreachable pattern (PM002)
 - [ ] Move pattern before subsuming pattern (PM002)
 
 ### Configuration
@@ -91,14 +84,3 @@ Tasks:
 - [ ] Track inter-scope dependencies (e.g., function calls, imports)
 - [ ] Selective invalidation: only reanalyze changed scopes and dependents
 - [ ] Benchmark incremental analysis with large files (target: <50ms for single-scope change)
-
-## Error & Warning Span Position Accuracy
-
-Parser doesn't provide end positions for AST nodes, causing diagnostics to estimate span length (defaults to +10 chars).
-
-**Location**: `crates/parser` (AST node definitions) & `crates/server/src/analysis/walker.rs` (Span creation)
-
-- [ ] Add end_line and end_col to all AstNode variants
-- [ ] Update parser to track end positions during tree-sitter traversal
-- [ ] Update constraint generation to use `Span::with_end()` instead of `Span::new()`
-- [ ] Test error highlighting covers full expressions (exact character ranges)

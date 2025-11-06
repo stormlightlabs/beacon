@@ -3,6 +3,7 @@ use std::{collections::HashSet, result};
 use crate::{
     Constraint, ConstraintSet, Span, TypeErrorInfo,
     exhaustiveness::{ExhaustivenessResult, ReachabilityResult, check_exhaustiveness, check_reachability},
+    pattern_validation::{validate_pattern_structure, validate_pattern_type_compatibility},
 };
 
 use beacon_core::{
@@ -1048,6 +1049,16 @@ pub fn solve_constraints(
                     ReachabilityResult::Unreachable { subsumed_by: _ } => {
                         type_errors.push(TypeErrorInfo::new(TypeError::PatternUnreachable, span));
                     }
+                }
+            }
+            Constraint::PatternTypeCompatible(pattern, subject_ty, span) => {
+                if let Err(type_err) = validate_pattern_type_compatibility(&pattern, &subject_ty, class_registry) {
+                    type_errors.push(TypeErrorInfo::new(type_err, span));
+                }
+            }
+            Constraint::PatternStructureValid(pattern, subject_ty, span) => {
+                if let Err(type_err) = validate_pattern_structure(&pattern, &subject_ty) {
+                    type_errors.push(TypeErrorInfo::new(type_err, span));
                 }
             }
             Constraint::Narrowing(_var, _predicate, _narrowed_type, _span) => {}

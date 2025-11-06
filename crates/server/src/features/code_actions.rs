@@ -14,7 +14,6 @@ use lsp_types::{
 use std::collections::HashMap;
 use url::Url;
 
-/// Helper trait to extract string from NumberOrString
 trait CodeAsStr {
     fn as_str(&self) -> Option<&str>;
 }
@@ -39,7 +38,6 @@ impl CodeActionsProvider {
 
     /// Provide code actions for a range
     ///
-    /// TODO: Implement various code action types
     /// TODO: Add refactoring actions
     /// TODO: Add insert type annotation actions
     /// TODO: Add convert to Optional actions
@@ -56,14 +54,14 @@ impl CodeActionsProvider {
     }
 
     /// Generate a quick fix for a diagnostic
-    ///
-    /// Matches on diagnostic code to provide appropriate fixes
     fn quick_fix_for_diagnostic(&self, uri: &Url, diagnostic: &lsp_types::Diagnostic) -> Option<CodeAction> {
         let code = diagnostic.code.as_ref()?.as_str()?;
 
         match code {
             "unused-variable" | "unused-import" => self.remove_unused_line(uri, diagnostic),
             "HM001" if diagnostic.message.contains("None") => self.suggest_optional(uri, diagnostic),
+            "PM001" => self.add_missing_patterns(uri, diagnostic),
+            "PM002" => self.remove_unreachable_pattern(uri, diagnostic),
             _ => None,
         }
     }
@@ -72,10 +70,9 @@ impl CodeActionsProvider {
     fn remove_unused_line(&self, uri: &Url, diagnostic: &lsp_types::Diagnostic) -> Option<CodeAction> {
         let line_start = Position { line: diagnostic.range.start.line, character: 0 };
         let line_end = Position { line: diagnostic.range.start.line + 1, character: 0 };
-
         let edit = TextEdit { range: Range { start: line_start, end: line_end }, new_text: String::new() };
-
         let mut changes = HashMap::default();
+
         changes.insert(uri.clone(), vec![edit]);
 
         Some(CodeAction {
@@ -260,6 +257,151 @@ impl CodeActionsProvider {
     /// Replace variable uses with its value
     pub fn _inline_variable(&self, _uri: &Url, _range: Range) -> Option<CodeAction> {
         None
+    }
+
+    /// Quick fix: Remove unreachable pattern (PM002)
+    ///
+    /// Removes the entire case block that contains an unreachable pattern.
+    /// The diagnostic range points to the pattern, we need to extend it to include the entire case.
+    fn remove_unreachable_pattern(&self, uri: &Url, diagnostic: &lsp_types::Diagnostic) -> Option<CodeAction> {
+        self.documents.get_document(uri, |document| {
+            let source = document.text();
+            let lines: Vec<&str> = source.lines().collect();
+            let start_line = diagnostic.range.start.line as usize;
+            if start_line >= lines.len() {
+                return None;
+            }
+
+            let case_start_line = (0..=start_line)
+                .rev()
+                .find(|&i| i < lines.len() && lines[i].trim_start().starts_with("case "))?;
+
+            let case_end_line = ((case_start_line + 1)..lines.len())
+                .find(|&i| {
+                    let trimmed = lines[i].trim_start();
+                    trimmed.starts_with("case ")
+                        || (!trimmed.is_empty() && !trimmed.starts_with(' ') && !trimmed.starts_with('\t'))
+                })
+                .unwrap_or(lines.len());
+
+            let start_pos = Position { line: case_start_line as u32, character: 0 };
+            let end_pos = Position { line: case_end_line as u32, character: 0 };
+
+            let edit = TextEdit { range: Range { start: start_pos, end: end_pos }, new_text: String::new() };
+
+            let mut changes = HashMap::default();
+            changes.insert(uri.clone(), vec![edit]);
+
+            Some(CodeAction {
+                title: "Remove unreachable pattern".to_string(),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diagnostic.clone()]),
+                edit: Some(WorkspaceEdit { changes: Some(changes), document_changes: None, change_annotations: None }),
+                command: None,
+                is_preferred: Some(true),
+                disabled: None,
+                data: None,
+            })
+        })?
+    }
+
+    /// Quick fix: Add missing pattern cases (PM001)
+    ///
+    /// Parses the diagnostic message to extract uncovered types and generates case statements for each.
+    /// Inserts the new cases before the end of the match statement.
+    fn add_missing_patterns(&self, uri: &Url, diagnostic: &lsp_types::Diagnostic) -> Option<CodeAction> {
+        self.documents.get_document(uri, |document| {
+            let source = document.text();
+            let lines: Vec<&str> = source.lines().collect();
+
+            let uncovered_types = self.extract_uncovered_types(&diagnostic.message)?;
+
+            let match_start_line = diagnostic.range.start.line as usize;
+            let indent = self.detect_case_indentation(&lines, match_start_line)?;
+
+            let insert_line = self.find_last_case_end(&lines, match_start_line)?;
+
+            let mut new_cases = String::new();
+            for uncovered_type in &uncovered_types {
+                let pattern = self.generate_pattern_for_type(uncovered_type);
+                new_cases.push_str(&format!("{indent}case {pattern}:\n"));
+                new_cases.push_str(&format!("{indent}    pass  # TODO: Handle {uncovered_type} case\n"));
+            }
+
+            let edit = TextEdit {
+                range: Range {
+                    start: Position { line: insert_line as u32, character: 0 },
+                    end: Position { line: insert_line as u32, character: 0 },
+                },
+                new_text: new_cases,
+            };
+
+            let mut changes = HashMap::default();
+            changes.insert(uri.clone(), vec![edit]);
+
+            Some(CodeAction {
+                title: format!(
+                    "Add missing pattern case{}",
+                    if uncovered_types.len() > 1 { "s" } else { "" }
+                ),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diagnostic.clone()]),
+                edit: Some(WorkspaceEdit { changes: Some(changes), document_changes: None, change_annotations: None }),
+                command: None,
+                is_preferred: Some(true),
+                disabled: None,
+                data: None,
+            })
+        })?
+    }
+
+    /// Extract uncovered types from PM001 diagnostic message
+    fn extract_uncovered_types(&self, message: &str) -> Option<Vec<String>> {
+        let prefix = "Missing coverage for: ";
+        let types_str = message.split(prefix).nth(1)?;
+
+        Some(types_str.split(", ").map(|s| s.trim().to_string()).collect())
+    }
+
+    /// Detect the indentation level of case statements in the match block
+    fn detect_case_indentation(&self, lines: &[&str], start_line: usize) -> Option<String> {
+        for line in lines.iter().skip(start_line) {
+            if line.trim_start().starts_with("case ") {
+                let indent_count = line.len() - line.trim_start().len();
+                return Some(" ".repeat(indent_count));
+            }
+        }
+        Some("    ".to_string())
+    }
+
+    /// Find the line after the last case block where we should insert new cases
+    fn find_last_case_end(&self, lines: &[&str], start_line: usize) -> Option<usize> {
+        let mut last_case_end = start_line;
+        let mut in_case = false;
+
+        for (i, line) in lines.iter().enumerate().skip(start_line) {
+            let trimmed = line.trim_start();
+
+            if trimmed.starts_with("case ") {
+                in_case = true;
+                last_case_end = i + 1;
+            } else if in_case && !trimmed.is_empty() && !trimmed.starts_with(' ') && !trimmed.starts_with('\t') {
+                return Some(last_case_end);
+            } else if in_case && !trimmed.is_empty() {
+                last_case_end = i + 1;
+            }
+        }
+
+        Some(last_case_end)
+    }
+
+    /// Generate a simple pattern for a given type name
+    fn generate_pattern_for_type(&self, type_name: &str) -> String {
+        if type_name.chars().next().is_some_and(|c| c.is_uppercase()) {
+            format!("{type_name}()")
+        } else {
+            format!("_ if isinstance(_, {type_name})")
+        }
     }
 
     /// Create a workspace edit for a single file

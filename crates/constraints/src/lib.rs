@@ -1,4 +1,5 @@
 pub mod exhaustiveness;
+pub mod pattern_validation;
 pub mod solver;
 
 mod pattern;
@@ -121,6 +122,12 @@ pub enum Constraint {
     /// Reachability constraint: pattern must be reachable (not subsumed by previous patterns)
     /// Stores the pattern and all previous patterns in the match statement
     PatternReachable(beacon_parser::Pattern, Vec<beacon_parser::Pattern>, Span),
+    /// Type compatibility constraint: pattern type must be compatible with subject type
+    /// Validates that the pattern can potentially match the subject (e.g., no int pattern on str subject)
+    PatternTypeCompatible(beacon_parser::Pattern, Type, Span),
+    /// Structure validity constraint: pattern structure must match subject type structure
+    /// Validates arity for tuples, required keys for mappings, etc.
+    PatternStructureValid(beacon_parser::Pattern, Type, Span),
     /// Type narrowing constraint based on a predicate
     /// Narrowing(variable, predicate, narrowed_type, span)
     ///

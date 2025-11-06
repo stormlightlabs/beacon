@@ -904,6 +904,16 @@ fn type_error_to_diagnostic(error_info: &beacon_constraint::TypeErrorInfo) -> Di
             "PM002",
             "This pattern is unreachable (subsumed by an earlier pattern)".to_string(),
         ),
+        TypeError::PatternTypeMismatch { pattern_type, subject_type } => (
+            "HM010",
+            format!(
+                "Pattern type mismatch: pattern type '{pattern_type}' cannot match subject of type '{subject_type}'"
+            ),
+        ),
+        TypeError::PatternStructureMismatch { expected, found } => (
+            "HM013",
+            format!("Invalid pattern structure: expected {expected}, found {found}"),
+        ),
         TypeError::KeywordArgumentError(msg) => ("HM011", format!("Keyword argument error: {msg}")),
         TypeError::Other(msg) => ("HM012", format!("Type error: {msg}")),
     };

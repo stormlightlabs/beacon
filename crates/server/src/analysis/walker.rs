@@ -1117,6 +1117,18 @@ fn visit_node_with_context(
                     span,
                 ));
 
+                ctx.constraints.push(Constraint::PatternTypeCompatible(
+                    case.pattern.clone(),
+                    subject_ty.clone(),
+                    span,
+                ));
+
+                ctx.constraints.push(Constraint::PatternStructureValid(
+                    case.pattern.clone(),
+                    subject_ty.clone(),
+                    span,
+                ));
+
                 let mut case_env = env.clone();
                 let bindings =
                     extract_pattern_bindings(&case.pattern, &subject_ty, &mut case_env, &ctx.class_registry)?;
