@@ -1890,29 +1890,24 @@ fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Opti
 /// Extract type guard information from a function's return annotation
 ///
 /// Detects `TypeGuard[T]` or `TypeIs[T]` annotations and extracts the guarded type.
-/// The annotation parser marks these with format `_TypeGuard_<type>` or `_TypeIs_<type>`.
 fn extract_type_guard_info(
     return_annotation: &str, _params: &[beacon_parser::Parameter],
 ) -> Option<beacon_constraint::TypeGuardInfo> {
-    if return_annotation.starts_with("_TypeGuard_") || return_annotation.starts_with("_TypeIs_") {
-        let kind = if return_annotation.starts_with("_TypeGuard_") {
-            TypeGuardKind::TypeGuard
-        } else {
-            TypeGuardKind::TypeIs
-        };
+    let trimmed = return_annotation.trim();
 
-        let type_str = if kind == TypeGuardKind::TypeGuard {
-            return_annotation.strip_prefix("_TypeGuard_").unwrap_or("")
-        } else {
-            return_annotation.strip_prefix("_TypeIs_").unwrap_or("")
-        };
+    if trimmed.starts_with("TypeGuard[") || trimmed.starts_with("TypeIs[") {
+        let kind = if trimmed.starts_with("TypeGuard[") { TypeGuardKind::TypeGuard } else { TypeGuardKind::TypeIs };
+        let prefix = if kind == TypeGuardKind::TypeGuard { "TypeGuard[" } else { "TypeIs[" };
 
-        let parser = beacon_core::AnnotationParser::new();
-        if let Ok(guarded_type) = parser.parse(type_str) {
-            // TODO: Support guarding specific parameters via more sophisticated detection
-            let param_index = 0;
-
-            return Some(TypeGuardInfo::new(param_index, guarded_type, kind));
+        if let Some(inner) = trimmed.strip_prefix(prefix) {
+            if let Some(type_str) = inner.strip_suffix(']') {
+                let parser = beacon_core::AnnotationParser::new();
+                if let Ok(guarded_type) = parser.parse(type_str) {
+                    // TODO: Support guarding specific parameters
+                    let param_index = 0;
+                    return Some(TypeGuardInfo::new(param_index, guarded_type, kind));
+                }
+            }
         }
     }
 
@@ -4278,5 +4273,53 @@ mod tests {
             !has_string_constraints,
             "Docstring should not generate constraints involving string type"
         );
+    }
+
+    #[test]
+    fn test_extract_type_guard_info_with_typeguard() {
+        let params = vec![];
+        let result = extract_type_guard_info("TypeGuard[str]", &params);
+        assert!(result.is_some(), "Should extract TypeGuard info");
+
+        let guard_info = result.unwrap();
+        assert_eq!(guard_info.kind, beacon_constraint::TypeGuardKind::TypeGuard);
+    }
+
+    #[test]
+    fn test_extract_type_guard_info_with_typeis() {
+        let params = vec![];
+        let result = extract_type_guard_info("TypeIs[int]", &params);
+        assert!(result.is_some(), "Should extract TypeIs info");
+
+        let guard_info = result.unwrap();
+        assert_eq!(guard_info.kind, beacon_constraint::TypeGuardKind::TypeIs);
+    }
+
+    #[test]
+    fn test_extract_type_guard_info_with_whitespace() {
+        let params = vec![];
+        let result = extract_type_guard_info("  TypeGuard[str]  ", &params);
+        assert!(result.is_some(), "Should handle whitespace around TypeGuard");
+    }
+
+    #[test]
+    fn test_extract_type_guard_info_with_complex_type() {
+        let params = vec![];
+        let result = extract_type_guard_info("TypeGuard[list[str]]", &params);
+        assert!(result.is_some(), "Should handle complex type parameters");
+    }
+
+    #[test]
+    fn test_extract_type_guard_info_without_type_guard() {
+        let params = vec![];
+        let result = extract_type_guard_info("bool", &params);
+        assert!(result.is_none(), "Should return None for non-TypeGuard annotations");
+    }
+
+    #[test]
+    fn test_extract_type_guard_info_with_invalid_syntax() {
+        let params = vec![];
+        let result = extract_type_guard_info("TypeGuard[", &params);
+        assert!(result.is_none(), "Should return None for invalid syntax");
     }
 }

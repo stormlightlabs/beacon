@@ -116,28 +116,38 @@ impl DiagnosticProvider {
             Err(_) => return,
         };
 
-        // TODO: Track Any propagation depth through the type map
-        // TODO: flow tracking is implemented
-        // TODO: Get actual position from node_id
-        for ty in result.type_map.values() {
+        for (node_id, ty) in &result.type_map {
             if Self::contains_any_type(ty, 0) {
-                let diagnostic = Diagnostic {
-                    range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 0, character: 1 } },
-                    severity: Some(DiagnosticSeverity::WARNING),
-                    code: Some(lsp_types::NumberOrString::String("ANY001".to_string())),
-                    source: Some("beacon".to_string()),
-                    message: "Type 'Any' detected - this reduces type safety".to_string(),
-                    related_information: None,
-                    tags: None,
-                    data: None,
-                    code_description: None,
-                };
-                diagnostics.push(diagnostic);
-                break;
+                if let Some((line, col)) = result
+                    .position_map
+                    .iter()
+                    .find_map(|((l, c), id)| (*id == *node_id).then_some((*l, *c)))
+                {
+                    let position =
+                        Position { line: (line.saturating_sub(1)) as u32, character: (col.saturating_sub(1)) as u32 };
+
+                    let range = Range {
+                        start: position,
+                        end: Position { line: position.line, character: position.character + 10 },
+                    };
+
+                    diagnostics.push(Diagnostic {
+                        range,
+                        severity: Some(DiagnosticSeverity::WARNING),
+                        code: Some(lsp_types::NumberOrString::String("ANY001".to_string())),
+                        source: Some("beacon".to_string()),
+                        message: "Type 'Any' detected - this reduces type safety".to_string(),
+                        related_information: None,
+                        tags: None,
+                        data: None,
+                        code_description: None,
+                    });
+                }
             }
         }
     }
 
+    #[allow(dead_code)]
     fn contains_any_type(ty: &beacon_core::Type, _depth: u32) -> bool {
         use beacon_core::{Type, TypeCtor};
 

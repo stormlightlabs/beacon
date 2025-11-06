@@ -30,7 +30,7 @@ use beacon_core::{
     Type, TypeVarGen,
     errors::{AnalysisError, Result},
 };
-use beacon_parser::{AstNode, ScopeId, ScopeKind, SymbolTable, resolve::Scope};
+use beacon_parser::{AstNode, ScopeId, SymbolTable, resolve::Scope};
 use lsp_types::Position;
 use rustc_hash::FxHashMap;
 use std::{collections::HashSet, sync::Arc};
@@ -223,7 +223,7 @@ impl Analyzer {
 
         self.position_maps.insert(uri.clone(), position_map.clone());
 
-        let static_analysis = self.perform_static_analysis(&ast, &symbol_table);
+        let static_analysis = self.perform_static_analysis(&ast, &symbol_table, &source);
 
         self.cache_scope_results(uri, &scopes, &type_map, &position_map);
 
@@ -275,22 +275,22 @@ impl Analyzer {
     ///
     /// Builds control flow graphs for each function and runs data flow analyses to detect use-before-def, unreachable code, and unused variables.
     /// TODO: Extend to module-level analysis
-    fn perform_static_analysis(&self, ast: &AstNode, symbol_table: &SymbolTable) -> Option<data_flow::DataFlowResult> {
+    fn perform_static_analysis(
+        &self, ast: &AstNode, symbol_table: &SymbolTable, source: &str,
+    ) -> Option<data_flow::DataFlowResult> {
         match ast {
             AstNode::Module { body, .. } => {
                 let module_hoisted = data_flow::DataFlowAnalyzer::collect_hoisted_definitions(body);
 
                 for stmt in body {
-                    if let AstNode::FunctionDef { body: func_body, .. } = stmt {
+                    if let AstNode::FunctionDef { body: func_body, line, col, .. } = stmt {
                         let mut builder = cfg::CfgBuilder::new();
                         builder.build_function(func_body);
                         let cfg = builder.build();
-                        let scope_id = symbol_table
-                            .scopes
-                            .values()
-                            .find(|scope| scope.kind == ScopeKind::Function)
-                            .map(|scope| scope.id)
-                            .unwrap_or(symbol_table.root_scope);
+
+                        let byte_offset = Self::line_col_to_byte_offset(source, *line, *col);
+                        let scope_id = symbol_table.find_scope_at_position(byte_offset);
+
                         let analyzer = data_flow::DataFlowAnalyzer::new(
                             &cfg,
                             func_body,
@@ -303,21 +303,41 @@ impl Analyzer {
                 }
                 None
             }
-            AstNode::FunctionDef { body, .. } => {
+            AstNode::FunctionDef { body, line, col, .. } => {
                 let mut builder = cfg::CfgBuilder::new();
                 builder.build_function(body);
                 let cfg = builder.build();
-                let scope_id = symbol_table
-                    .scopes
-                    .values()
-                    .find(|scope| scope.kind == ScopeKind::Function)
-                    .map(|scope| scope.id)
-                    .unwrap_or(symbol_table.root_scope);
+
+                let byte_offset = Self::line_col_to_byte_offset(source, *line, *col);
+                let scope_id = symbol_table.find_scope_at_position(byte_offset);
+
                 let analyzer = data_flow::DataFlowAnalyzer::new(&cfg, body, symbol_table, scope_id, None);
                 Some(analyzer.analyze())
             }
             _ => None,
         }
+    }
+
+    /// Convert line/col (1-indexed) to byte offset
+    fn line_col_to_byte_offset(source: &str, line: usize, col: usize) -> usize {
+        let mut byte_offset = 0;
+        let mut current_line = 1;
+        let mut current_col = 1;
+
+        for ch in source.chars() {
+            if current_line == line && current_col == col {
+                return byte_offset;
+            }
+            if ch == '\n' {
+                current_line += 1;
+                current_col = 1;
+            } else {
+                current_col += 1;
+            }
+            byte_offset += ch.len_utf8();
+        }
+
+        byte_offset
     }
 
     /// Find unbound variables in the AST
