@@ -1,5 +1,3 @@
-use std::{collections::HashSet, result};
-
 use crate::{
     Constraint, ConstraintSet, Span, TypeErrorInfo,
     exhaustiveness::{ExhaustivenessResult, ReachabilityResult, check_exhaustiveness, check_reachability},
@@ -7,9 +5,17 @@ use crate::{
 };
 
 use beacon_core::{
-    ClassMetadata, ClassRegistry, MethodSignature, ProtocolChecker, ProtocolName, Result, Subst, Type, TypeCtor,
-    TypeError, TypeVar, Unifier,
+    BeaconError, ClassMetadata, ClassRegistry, MethodSignature, ProtocolChecker, ProtocolName, Result, Subst, Type,
+    TypeCtor, TypeError, TypeVar, Unifier,
 };
+use std::{collections::HashSet, result};
+
+struct CallContext<'a> {
+    subst: &'a mut Subst,
+    type_errors: &'a mut Vec<TypeErrorInfo>,
+    class_registry: &'a ClassRegistry,
+    span: Span,
+}
 
 /// Extract the base type constructor from a type application
 ///
@@ -501,6 +507,122 @@ fn instantiate_class_type(metadata: &ClassMetadata, class_name: &str, subst: &Su
     class_ty
 }
 
+/// Simplify all types in a substitution by applying normalization rules
+///
+/// This performs post-processing after constraint solving to simplify union types that may have been created during unification.
+fn simplify_substitution(subst: Subst) -> Subst {
+    let simplified_pairs: Vec<(TypeVar, Type)> = subst
+        .iter()
+        .map(|(tv, ty)| (tv.clone(), ty.clone().simplify()))
+        .collect();
+
+    let mut result = Subst::empty();
+    for (tv, simplified_ty) in simplified_pairs {
+        result.insert(tv, simplified_ty);
+    }
+    result
+}
+
+fn handle_call_args(
+    ctx: &mut CallContext<'_>, pos_args: &[(Type, Span)], kw_args: &[(String, Type, Span)], params: &[(String, Type)],
+    has_bound_receiver: bool,
+) {
+    match merge_and_validate_args(pos_args, kw_args, params, has_bound_receiver) {
+        Ok(merged_args) => {
+            let expected_params: Vec<(String, Type)> =
+                if has_bound_receiver { params.iter().skip(1).cloned().collect() } else { params.to_vec() };
+
+            if merged_args.len() <= expected_params.len() {
+                for ((provided_ty, arg_span, param_name), (_pname, expected_param_ty)) in
+                    merged_args.iter().zip(expected_params.iter())
+                {
+                    let provided_ty = ctx.subst.apply(provided_ty);
+                    let expected_ty = ctx.subst.apply(expected_param_ty);
+
+                    match Unifier::unify(&provided_ty, &expected_ty) {
+                        Ok(s) => {
+                            *ctx.subst = s.compose(ctx.subst.clone());
+                        }
+                        Err(BeaconError::TypeError(_)) => {
+                            if let Some(s) = generator_iterable_subst(&provided_ty, &expected_ty) {
+                                *ctx.subst = s.compose(ctx.subst.clone());
+                            } else if !types_compatible(&provided_ty, &expected_ty, ctx.class_registry) {
+                                ctx.type_errors.push(TypeErrorInfo::new(
+                                    TypeError::ArgumentTypeMismatch {
+                                        param_name: param_name.clone(),
+                                        expected: expected_ty.to_string(),
+                                        found: provided_ty.to_string(),
+                                    },
+                                    *arg_span,
+                                ));
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                }
+            } else {
+                ctx.type_errors.push(TypeErrorInfo::new(
+                    TypeError::ArgumentCountMismatch { expected: expected_params.len(), found: merged_args.len() },
+                    ctx.span,
+                ));
+            }
+        }
+        Err(error_msg) => {
+            ctx.type_errors
+                .push(TypeErrorInfo::new(TypeError::KeywordArgumentError(error_msg), ctx.span));
+        }
+    }
+}
+
+fn unify_return_type(
+    subst: &mut Subst, type_errors: &mut Vec<TypeErrorInfo>, call_ret_ty: &Type, target_ty: &Type, span: Span,
+) {
+    match Unifier::unify(&subst.apply(call_ret_ty), &subst.apply(target_ty)) {
+        Ok(s) => *subst = s.compose(subst.clone()),
+        Err(BeaconError::TypeError(type_err)) => type_errors.push(TypeErrorInfo::new(type_err, span)),
+        Err(_) => (),
+    }
+}
+
+fn unify_with_adhoc_fun(
+    subst: &mut Subst, type_errors: &mut Vec<TypeErrorInfo>, callable: &Type, pos_args: &[(Type, Span)],
+    kw_args: &[(String, Type, Span)], ret_ty: &Type, span: Span,
+) {
+    let all_args: Vec<Type> = pos_args
+        .iter()
+        .map(|(ty, _)| ty.clone())
+        .chain(kw_args.iter().map(|(_, ty, _)| ty.clone()))
+        .collect();
+
+    let expected_fn_ty = Type::fun_unnamed(all_args, ret_ty.clone());
+
+    match Unifier::unify(&subst.apply(callable), &subst.apply(&expected_fn_ty)) {
+        Ok(s) => {
+            *subst = s.compose(subst.clone());
+        }
+        Err(BeaconError::TypeError(type_err)) => {
+            type_errors.push(TypeErrorInfo::new(type_err, span));
+        }
+        Err(_) => {}
+    }
+}
+
+/// Re-resolve a bound method type against receiver metadata.
+/// Falls back to the original method if we can't do better.
+fn resolve_bound_method_type<'a>(
+    rec: Box<Type>, name: &str, method: &'a Type, pos_args: &[(Type, Span)], subst: &Subst, reg: &'a ClassRegistry,
+) -> &'a Type {
+    if let Type::Con(TypeCtor::Class(class_name)) = rec.as_ref() {
+        if let Some(metadata) = reg.get_class(class_name) {
+            if let Some(method_type) = metadata.lookup_method_type(name) {
+                let applied_args: Vec<Type> = pos_args.iter().map(|(arg_ty, _)| subst.apply(arg_ty)).collect();
+                return method_type.resolve_for_args(&applied_args).unwrap_or(method);
+            }
+        }
+    }
+    method
+}
+
 /// Solve a set of constraints using beacon-core's unification algorithm
 ///
 /// Errors are accumulated rather than failing fast to provide comprehensive feedback.
@@ -523,7 +645,7 @@ pub fn solve_constraints(
                         Ok(s) => {
                             subst = s.compose(subst);
                         }
-                        Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                        Err(BeaconError::TypeError(type_err)) => {
                             if !types_compatible(&applied_t1, &applied_t2, class_registry)
                                 && !types_compatible(&applied_t2, &applied_t1, class_registry)
                             {
@@ -534,255 +656,65 @@ pub fn solve_constraints(
                     }
                 }
             }
-
             Constraint::Call(func_ty, pos_args, kw_args, ret_ty, span) => {
                 let applied_func = subst.apply(&func_ty);
 
                 if let Type::Con(TypeCtor::Class(class_name)) = &applied_func {
                     if let Some(metadata) = class_registry.get_class(class_name) {
-                        if let Some(ctor_ty) = metadata.new_type.as_ref().or(metadata.init_type.as_ref()) {
-                            if let Type::Fun(params, _) = ctor_ty {
-                                match merge_and_validate_args(&pos_args, &kw_args, params, true) {
-                                    Ok(merged_args) => {
-                                        let ctor_params: Vec<(String, Type)> = params.iter().skip(1).cloned().collect();
-                                        if merged_args.len() <= ctor_params.len() {
-                                            for (
-                                                (provided_ty, arg_span, param_name),
-                                                (_param_name, expected_param_ty),
-                                            ) in merged_args.iter().zip(ctor_params.iter())
-                                            {
-                                                let provided_ty = subst.apply(provided_ty);
-                                                let expected_ty = subst.apply(expected_param_ty);
-                                                match Unifier::unify(&provided_ty, &expected_ty) {
-                                                    Ok(s) => {
-                                                        subst = s.compose(subst);
-                                                    }
-                                                    Err(beacon_core::BeaconError::TypeError(_type_err)) => {
-                                                        if let Some(s) =
-                                                            generator_iterable_subst(&provided_ty, &expected_ty)
-                                                        {
-                                                            subst = s.compose(subst);
-                                                        } else if !types_compatible(
-                                                            &provided_ty,
-                                                            &expected_ty,
-                                                            class_registry,
-                                                        ) {
-                                                            type_errors.push(TypeErrorInfo::new(
-                                                                TypeError::ArgumentTypeMismatch {
-                                                                    param_name: param_name.clone(),
-                                                                    expected: expected_ty.to_string(),
-                                                                    found: provided_ty.to_string(),
-                                                                },
-                                                                *arg_span,
-                                                            ));
-                                                        }
-                                                    }
-                                                    Err(_) => {}
-                                                }
-                                            }
-                                        } else {
-                                            type_errors.push(TypeErrorInfo::new(
-                                                TypeError::ArgumentCountMismatch {
-                                                    expected: ctor_params.len(),
-                                                    found: merged_args.len(),
-                                                },
-                                                span,
-                                            ));
-                                        }
-                                    }
-                                    Err(error_msg) => {
-                                        type_errors.push(TypeErrorInfo::new(TypeError::Other(error_msg), span));
-                                    }
-                                }
-                            }
-
-                            let class_result_ty = instantiate_class_type(metadata, class_name, &subst);
-                            match Unifier::unify(&subst.apply(&ret_ty), &class_result_ty) {
-                                Ok(s) => {
-                                    subst = s.compose(subst);
-                                }
-                                Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                    type_errors.push(TypeErrorInfo::new(type_err, span));
-                                }
-                                Err(_) => {}
-                            }
-                        } else {
-                            let class_result_ty = instantiate_class_type(metadata, class_name, &subst);
-                            match Unifier::unify(&subst.apply(&ret_ty), &class_result_ty) {
-                                Ok(s) => {
-                                    subst = s.compose(subst);
-                                }
-                                Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                    type_errors.push(TypeErrorInfo::new(type_err, span));
-                                }
-                                Err(_) => {}
-                            }
+                        if let Some(Type::Fun(params, _)) = metadata.new_type.as_ref().or(metadata.init_type.as_ref()) {
+                            let mut ctx =
+                                CallContext { subst: &mut subst, type_errors: &mut type_errors, class_registry, span };
+                            handle_call_args(&mut ctx, &pos_args, &kw_args, params, true);
                         }
+
+                        let class_result_ty = instantiate_class_type(metadata, class_name, &subst);
+                        unify_return_type(&mut subst, &mut type_errors, &ret_ty, &class_result_ty, span);
                     }
                 } else if let Type::BoundMethod(receiver, method_name, method) = &applied_func {
-                    let resolved_method = if let Type::Con(TypeCtor::Class(class_name)) = receiver.as_ref() {
-                        if let Some(metadata) = class_registry.get_class(class_name) {
-                            if let Some(method_type) = metadata.lookup_method_type(method_name) {
-                                let applied_args: Vec<Type> =
-                                    pos_args.iter().map(|(arg_ty, _)| subst.apply(arg_ty)).collect();
-                                method_type.resolve_for_args(&applied_args).unwrap_or(method.as_ref())
-                            } else {
-                                method.as_ref()
-                            }
-                        } else {
-                            method.as_ref()
-                        }
-                    } else {
-                        method.as_ref()
-                    };
+                    let resolved_method = resolve_bound_method_type(
+                        receiver.clone(),
+                        method_name,
+                        method,
+                        &pos_args,
+                        &subst,
+                        class_registry,
+                    );
 
                     if let Type::Fun(params, method_ret) = resolved_method {
-                        match merge_and_validate_args(&pos_args, &kw_args, params, true) {
-                            Ok(merged_args) => {
-                                let bound_params: Vec<(String, Type)> = params.iter().skip(1).cloned().collect();
-                                if merged_args.len() <= bound_params.len() {
-                                    for ((provided_ty, arg_span, param_name), (_param_name, expected_param_ty)) in
-                                        merged_args.iter().zip(bound_params.iter())
-                                    {
-                                        let provided_ty = subst.apply(provided_ty);
-                                        let expected_ty = subst.apply(expected_param_ty);
-                                        match Unifier::unify(&provided_ty, &expected_ty) {
-                                            Ok(s) => {
-                                                subst = s.compose(subst);
-                                            }
-                                            Err(beacon_core::BeaconError::TypeError(_type_err)) => {
-                                                if let Some(s) = generator_iterable_subst(&provided_ty, &expected_ty) {
-                                                    subst = s.compose(subst);
-                                                } else if !types_compatible(&provided_ty, &expected_ty, class_registry)
-                                                {
-                                                    type_errors.push(TypeErrorInfo::new(
-                                                        TypeError::ArgumentTypeMismatch {
-                                                            param_name: param_name.clone(),
-                                                            expected: expected_ty.to_string(),
-                                                            found: provided_ty.to_string(),
-                                                        },
-                                                        *arg_span,
-                                                    ));
-                                                }
-                                            }
-                                            Err(_) => {}
-                                        }
-                                    }
+                        let mut ctx =
+                            CallContext { subst: &mut subst, type_errors: &mut type_errors, class_registry, span };
 
-                                    match Unifier::unify(&subst.apply(&ret_ty), &subst.apply(method_ret)) {
-                                        Ok(s) => {
-                                            subst = s.compose(subst);
-                                        }
-                                        Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                            type_errors.push(TypeErrorInfo::new(type_err, span));
-                                        }
-                                        Err(_) => {}
-                                    }
-                                } else {
-                                    type_errors.push(TypeErrorInfo::new(
-                                        TypeError::ArgumentCountMismatch {
-                                            expected: bound_params.len(),
-                                            found: merged_args.len(),
-                                        },
-                                        span,
-                                    ));
-                                }
-                            }
-                            Err(error_msg) => {
-                                type_errors.push(TypeErrorInfo::new(TypeError::KeywordArgumentError(error_msg), span));
-                            }
-                        }
+                        handle_call_args(&mut ctx, &pos_args, &kw_args, params, true);
+                        unify_return_type(&mut subst, &mut type_errors, &ret_ty, method_ret, span);
                     } else {
-                        let all_args: Vec<Type> = pos_args
-                            .iter()
-                            .map(|(ty, _)| ty.clone())
-                            .chain(kw_args.iter().map(|(_, ty, _)| ty.clone()))
-                            .collect();
-                        let expected_fn_ty = Type::fun_unnamed(all_args, ret_ty);
-                        let resolved_method_ty = subst.apply(&resolved_method.clone());
-                        match Unifier::unify(&resolved_method_ty, &subst.apply(&expected_fn_ty)) {
-                            Ok(s) => {
-                                subst = s.compose(subst);
-                            }
-                            Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                type_errors.push(TypeErrorInfo::new(type_err, span));
-                            }
-                            Err(_) => {}
-                        }
+                        unify_with_adhoc_fun(
+                            &mut subst,
+                            &mut type_errors,
+                            resolved_method,
+                            &pos_args,
+                            &kw_args,
+                            &ret_ty,
+                            span,
+                        );
                     }
                 } else {
                     let applied_func = subst.apply(&func_ty);
                     if let Type::Fun(params, fn_ret) = &applied_func {
-                        match merge_and_validate_args(&pos_args, &kw_args, params, false) {
-                            Ok(merged_args) => {
-                                if merged_args.len() <= params.len() {
-                                    for ((provided_ty, arg_span, param_name), (_param_name, expected_param_ty)) in
-                                        merged_args.iter().zip(params.iter())
-                                    {
-                                        let provided_ty = subst.apply(provided_ty);
-                                        let expected_ty = subst.apply(expected_param_ty);
-                                        match Unifier::unify(&provided_ty, &expected_ty) {
-                                            Ok(s) => {
-                                                subst = s.compose(subst);
-                                            }
-                                            Err(beacon_core::BeaconError::TypeError(_type_err)) => {
-                                                if let Some(s) = generator_iterable_subst(&provided_ty, &expected_ty) {
-                                                    subst = s.compose(subst);
-                                                } else if !types_compatible(&provided_ty, &expected_ty, class_registry)
-                                                {
-                                                    type_errors.push(TypeErrorInfo::new(
-                                                        TypeError::ArgumentTypeMismatch {
-                                                            param_name: param_name.clone(),
-                                                            expected: expected_ty.to_string(),
-                                                            found: provided_ty.to_string(),
-                                                        },
-                                                        *arg_span,
-                                                    ));
-                                                }
-                                            }
-                                            Err(_) => {}
-                                        }
-                                    }
+                        let mut ctx =
+                            CallContext { subst: &mut subst, type_errors: &mut type_errors, class_registry, span };
+                        handle_call_args(&mut ctx, &pos_args, &kw_args, params, false);
 
-                                    match Unifier::unify(&subst.apply(&ret_ty), &subst.apply(fn_ret)) {
-                                        Ok(s) => {
-                                            subst = s.compose(subst);
-                                        }
-                                        Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                            type_errors.push(TypeErrorInfo::new(type_err, span));
-                                        }
-                                        Err(_) => {}
-                                    }
-                                } else {
-                                    type_errors.push(TypeErrorInfo::new(
-                                        TypeError::ArgumentCountMismatch {
-                                            expected: params.len(),
-                                            found: merged_args.len(),
-                                        },
-                                        span,
-                                    ));
-                                }
-                            }
-                            Err(error_msg) => {
-                                type_errors.push(TypeErrorInfo::new(TypeError::KeywordArgumentError(error_msg), span));
-                            }
-                        }
+                        unify_return_type(&mut subst, &mut type_errors, &ret_ty, fn_ret, span);
                     } else {
-                        let all_args: Vec<Type> = pos_args
-                            .iter()
-                            .map(|(ty, _)| ty.clone())
-                            .chain(kw_args.iter().map(|(_, ty, _)| ty.clone()))
-                            .collect();
-                        let expected_fn_ty = Type::fun_unnamed(all_args, ret_ty);
-                        match Unifier::unify(&subst.apply(&func_ty), &subst.apply(&expected_fn_ty)) {
-                            Ok(s) => {
-                                subst = s.compose(subst);
-                            }
-                            Err(beacon_core::BeaconError::TypeError(type_err)) => {
-                                type_errors.push(TypeErrorInfo::new(type_err, span));
-                            }
-                            Err(_) => {}
-                        }
+                        unify_with_adhoc_fun(
+                            &mut subst,
+                            &mut type_errors,
+                            &applied_func,
+                            &pos_args,
+                            &kw_args,
+                            &ret_ty,
+                            span,
+                        );
                     }
                 }
             }
@@ -821,7 +753,7 @@ pub fn solve_constraints(
                             Ok(s) => {
                                 subst = s.compose(subst);
                             }
-                            Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                            Err(BeaconError::TypeError(type_err)) => {
                                 type_errors.push(TypeErrorInfo::new(type_err, span));
                             }
                             Err(_) => {}
@@ -849,7 +781,7 @@ pub fn solve_constraints(
                                 Ok(s) => {
                                     subst = s.compose(subst);
                                 }
-                                Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                                Err(BeaconError::TypeError(type_err)) => {
                                     type_errors.push(TypeErrorInfo::new(type_err, span));
                                 }
                                 Err(_) => {}
@@ -896,7 +828,7 @@ pub fn solve_constraints(
                                     Ok(s) => {
                                         subst = s.compose(subst);
                                     }
-                                    Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                                    Err(BeaconError::TypeError(type_err)) => {
                                         type_errors.push(TypeErrorInfo::new(type_err, span));
                                     }
                                     Err(_) => {}
@@ -954,7 +886,7 @@ pub fn solve_constraints(
                                 Ok(s) => {
                                     subst = s.compose(subst);
                                 }
-                                Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                                Err(BeaconError::TypeError(type_err)) => {
                                     type_errors.push(TypeErrorInfo::new(type_err, span));
                                 }
                                 Err(_) => {}
@@ -975,7 +907,6 @@ pub fn solve_constraints(
                     }
                 }
             }
-
             Constraint::Protocol(obj_ty, protocol_name, elem_ty, span) => {
                 let applied_obj = subst.apply(&obj_ty);
                 if matches!(applied_obj, Type::Var(_)) {
@@ -1009,7 +940,7 @@ pub fn solve_constraints(
                         Ok(s) => {
                             subst = s.compose(subst);
                         }
-                        Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                        Err(BeaconError::TypeError(type_err)) => {
                             type_errors.push(TypeErrorInfo::new(type_err, span));
                         }
                         Err(_) => {}
@@ -1024,14 +955,12 @@ pub fn solve_constraints(
                     ));
                 }
             }
-
             Constraint::MatchPattern(_subject_ty, _pattern, bindings, _span) => {
                 for (_var_name, binding_ty) in bindings {
                     let applied_binding = subst.apply(&binding_ty);
                     let _ = applied_binding;
                 }
             }
-
             Constraint::PatternExhaustive(subject_ty, patterns, span) => {
                 let result = check_exhaustiveness(&subject_ty, &patterns);
                 match result {
@@ -1061,8 +990,8 @@ pub fn solve_constraints(
                     type_errors.push(TypeErrorInfo::new(type_err, span));
                 }
             }
-            Constraint::Narrowing(_var, _predicate, _narrowed_type, _span) => {}
-            Constraint::Join(_var, incoming_types, result_type, span) => {
+            Constraint::Narrowing(_, _, _, _) => {}
+            Constraint::Join(_, incoming_types, result_type, span) => {
                 let union_type = if incoming_types.is_empty() {
                     Type::Con(TypeCtor::NoneType)
                 } else if incoming_types.len() == 1 {
@@ -1075,7 +1004,7 @@ pub fn solve_constraints(
                     Ok(s) => {
                         subst = s.compose(subst);
                     }
-                    Err(beacon_core::BeaconError::TypeError(type_err)) => {
+                    Err(BeaconError::TypeError(type_err)) => {
                         type_errors.push(TypeErrorInfo::new(type_err, span));
                     }
                     Err(_) => {}
@@ -1087,22 +1016,6 @@ pub fn solve_constraints(
     let simplified_subst = simplify_substitution(subst);
 
     Ok((simplified_subst, type_errors))
-}
-
-/// Simplify all types in a substitution by applying normalization rules
-///
-/// This performs post-processing after constraint solving to simplify union types that may have been created during unification.
-fn simplify_substitution(subst: Subst) -> Subst {
-    let simplified_pairs: Vec<(TypeVar, Type)> = subst
-        .iter()
-        .map(|(tv, ty)| (tv.clone(), ty.clone().simplify()))
-        .collect();
-
-    let mut result = Subst::empty();
-    for (tv, simplified_ty) in simplified_pairs {
-        result.insert(tv, simplified_ty);
-    }
-    result
 }
 
 #[cfg(test)]
@@ -1249,7 +1162,7 @@ mod tests {
     #[test]
     fn test_solve_call_constraint_wrong_arg_count() {
         let func_ty = Type::fun_unnamed(vec![Type::int()], Type::string());
-        let arg_types = vec![(Type::int(), test_span()), (Type::int(), test_span())]; // Too many args
+        let arg_types = vec![(Type::int(), test_span()), (Type::int(), test_span())];
         let ret_ty = tvar(0);
         let constraints =
             ConstraintSet { constraints: vec![Constraint::Call(func_ty, arg_types, vec![], ret_ty, test_span())] };
@@ -1754,7 +1667,7 @@ mod tests {
     #[test]
     fn test_call_with_fewer_args_than_params() {
         let func_ty = Type::fun_unnamed(vec![Type::string(), Type::string()], Type::string());
-        let arg_types = vec![(Type::string(), test_span())]; // Only provide first arg
+        let arg_types = vec![(Type::string(), test_span())];
         let ret_ty = tvar(0);
         let constraints = ConstraintSet {
             constraints: vec![Constraint::Call(
@@ -1815,7 +1728,7 @@ mod tests {
     #[test]
     fn test_call_with_too_many_args() {
         let func_ty = Type::fun_unnamed(vec![Type::int()], Type::string());
-        let arg_types = vec![(Type::int(), test_span()), (Type::int(), test_span())]; // Too many args
+        let arg_types = vec![(Type::int(), test_span()), (Type::int(), test_span())];
         let ret_ty = tvar(0);
         let constraints =
             ConstraintSet { constraints: vec![Constraint::Call(func_ty, arg_types, vec![], ret_ty, test_span())] };
@@ -1847,7 +1760,7 @@ mod tests {
         let receiver = Type::Con(TypeCtor::Class("TestClass".to_string()));
         let method_ty = Type::fun_unnamed(vec![Type::any(), Type::int(), Type::string()], Type::bool());
         let bound_method = Type::BoundMethod(Box::new(receiver), "method".to_string(), Box::new(method_ty));
-        let arg_types = vec![(Type::int(), test_span())]; // Only provide first arg (second has default)
+        let arg_types = vec![(Type::int(), test_span())];
         let ret_ty = tvar(0);
 
         let constraints = ConstraintSet {
@@ -1884,7 +1797,7 @@ mod tests {
         registry.register_class("TestClass".to_string(), class_meta);
 
         let class_ty = Type::Con(TypeCtor::Class("TestClass".to_string()));
-        let arg_types = vec![(Type::int(), test_span())]; // Only provide x, y has default
+        let arg_types = vec![(Type::int(), test_span())];
         let ret_ty = tvar(0);
         let constraints = ConstraintSet {
             constraints: vec![Constraint::Call(
@@ -2096,7 +2009,7 @@ mod tests {
         match resolved {
             Type::BoundMethod(_, _, method) => match *method {
                 Type::Fun(params, ret) => {
-                    assert_eq!(params.len(), 2); // self + index
+                    assert_eq!(params.len(), 2);
                     assert_eq!(*ret, Type::int(), "Should return int, not _T");
                 }
                 _ => panic!("Expected Fun inside BoundMethod"),
