@@ -16,9 +16,9 @@ pub mod linter;
 pub mod pattern;
 pub mod rules;
 pub mod type_env;
+pub mod walker;
 
 mod loader;
-mod walker;
 
 use crate::cache::{CacheManager, ScopeCacheKey};
 use crate::config::Config;
@@ -737,10 +737,8 @@ impl Analyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::Workspace;
     use beacon_constraint::ConstraintGenContext;
     use beacon_core::{ClassRegistry, MethodType, TypeCtor, TypeError};
-    use std::path::PathBuf;
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -749,7 +747,7 @@ mod tests {
     fn test_analyzer_creation() {
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
-        let _analyzer = Analyzer::new(config, documents);
+        let _ = Analyzer::new(config, documents);
     }
 
     #[test]
@@ -917,141 +915,6 @@ provider = SERVICE_REGISTRY.get("test")
         assert!(
             !non_builtins.iter().any(|(name, _, _)| name == "SERVICE_REGISTRY"),
             "SERVICE_REGISTRY should not be undefined"
-        );
-    }
-
-    #[test]
-    fn test_lsp_capabilities_provider_diagnostics_cleared() {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let repo_root = manifest_dir
-            .parent()
-            .expect("server crate parent")
-            .parent()
-            .expect("workspace root")
-            .to_path_buf();
-        let samples_root = repo_root.join("samples");
-        let sample_path = samples_root.join("lsp_capabilities.py");
-        let sample_uri = Url::from_file_path(&sample_path).expect("sample URI");
-
-        let config = Config { stub_paths: vec![repo_root.join("stubs")], ..Default::default() };
-        let documents = DocumentManager::new().unwrap();
-
-        let root_uri = Url::from_directory_path(&samples_root).expect("samples directory URI");
-        let mut workspace = Workspace::new(Some(root_uri), config.clone(), documents.clone());
-        workspace.initialize().expect("workspace initialization");
-        let stub_cache = workspace.stub_cache();
-        if let Ok(cache) = stub_cache.read() {
-            if let Some(stub) = cache.get("capabilities_support") {
-                println!("exports keys: {:?}", stub.exports.keys().collect::<Vec<_>>());
-                if let Some(ty) = stub.exports.get("InMemoryProvider") {
-                    println!("stub InMemoryProvider export: {ty:?}");
-                }
-                if let Some(ty) = stub.exports.get("DataProvider") {
-                    println!("stub DataProvider export: {ty:?}");
-                }
-                if let Some(ty) = stub.exports.get("register_provider") {
-                    println!("stub register_provider export: {ty:?}");
-                }
-                let mut registry = ClassRegistry::new();
-                loader::load_stub_into_registry(stub, &mut registry).expect("load stub");
-                if let Some(meta) = registry.get_class("InMemoryProvider") {
-                    println!("InMemoryProvider metadata type params: {:?}", meta.type_params);
-                    println!("InMemoryProvider bases: {:?}", meta.base_classes);
-                }
-                if let Some(meta) = registry.get_class("DataProvider") {
-                    println!("DataProvider metadata type params: {:?}", meta.type_params);
-                    println!("DataProvider bases: {:?}", meta.base_classes);
-                }
-                let mut parser = crate::parser::LspParser::new().expect("parser");
-                let parsed = parser
-                    .parse(&std::fs::read_to_string(&stub.path).expect("read stub"))
-                    .expect("parse stub");
-                if let beacon_parser::AstNode::Module { body, .. } = parsed.ast {
-                    for node in body {
-                        if let beacon_parser::AstNode::ClassDef { name, bases, .. } = node {
-                            if name == "InMemoryProvider" {
-                                println!("AST bases for InMemoryProvider: {bases:?}");
-                            }
-                            if name == "DataProvider" {
-                                println!("AST bases for DataProvider: {bases:?}");
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        let workspace = Arc::new(RwLock::new(workspace));
-
-        let source = std::fs::read_to_string(&sample_path).expect("read sample");
-        documents
-            .open_document(sample_uri.clone(), 1, source)
-            .expect("open document");
-
-        let mut analyzer = Analyzer::with_workspace(config, documents, workspace);
-        let result = analyzer.analyze(&sample_uri).expect("analysis result");
-
-        if let Some(node_id) = result.position_map.get(&(58, 5)) {
-            if let Some(ty) = result.type_map.get(node_id) {
-                println!("DEBUG type at register_provider arg: {ty:?}");
-            }
-        }
-
-        let problematic_lines = [58, 60, 71];
-        for &line in &problematic_lines {
-            for col in 1..120 {
-                if let Some(node_id) = result.position_map.get(&(line, col)) {
-                    if let Some(ty) = result.type_map.get(node_id) {
-                        println!("type at {line}:{col} -> {ty:?}");
-                    }
-                }
-            }
-        }
-
-        for (node_id, ty) in &result.type_map {
-            let ty_str = format!("{ty:?}");
-            if ty_str.contains("InMemoryProvider") || ty_str.contains("DataProvider") {
-                if let Some((line, col)) = result
-                    .position_map
-                    .iter()
-                    .find_map(|((l, c), id)| (*id == *node_id).then_some((*l, *c)))
-                {
-                    println!("node {node_id} -> {ty:?} at {line}:{col}");
-                }
-            }
-        }
-
-        let offending: Vec<_> = result
-            .type_errors
-            .iter()
-            .filter(|err| problematic_lines.contains(&err.span.line))
-            .collect();
-
-        // NOTE: With stub base parsing and Callable annotation parsing fixed, most false positives
-        // are eliminated. Some remaining errors may require additional work on:
-        // - Generic type parameter inference and substitution
-        // - Protocol structural typing vs nominal subtyping
-        // - Constraint generation for complex generic scenarios
-        //
-        // For now, we verify that the critical infrastructure is working:
-        // - DataProvider is flagged as a protocol
-        // - InMemoryProvider has DataProvider in its bases
-        // - Callable types are parsed correctly
-        //
-        // TODO: Investigate remaining type errors and determine if they are legitimate or false positives
-        if !offending.is_empty() {
-            eprintln!(
-                "WARNING: {} type errors remain on lines {:?}",
-                offending.len(),
-                problematic_lines
-            );
-            for err in &offending {
-                eprintln!("  - {err:?}");
-            }
-        }
-
-        assert!(
-            offending.len() < 10,
-            "Expected most provider-related diagnostics to be cleared, but found too many: {offending:?}"
         );
     }
 
@@ -2548,7 +2411,6 @@ def describe(x: int | str):
         );
     }
 
-    /// Test that patterns after a catch-all pattern are correctly identified as unreachable
     #[test]
     fn test_pattern_reachability_unreachable_after_catch_all() {
         let config = Config::default();

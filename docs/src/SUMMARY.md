@@ -2,6 +2,10 @@
 
 [Introduction](./introduction.md)
 
+- [CLI Tools](./cli/overview.md)
+    - [Type Checking](./cli/typecheck.md)
+    - [Language Server](./cli/lsp.md)
+    - [Debug Tools](./cli/debug.md)
 - [Beacon LSP](./lsp/index.md)
     - [Goals And Scope](./lsp/goals.md)
     - [Architecture](./lsp/architecture.md)

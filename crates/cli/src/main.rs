@@ -1,13 +1,33 @@
+mod formatters;
+
 use anyhow::{Context, Result};
-use beacon_parser::{PythonHighlighter, PythonParser, SymbolTable};
-use clap::{Parser, Subcommand};
+use beacon_constraint::ConstraintResult;
+use beacon_lsp::{Config, analysis::Analyzer, document::DocumentManager};
+use beacon_parser::{PythonHighlighter, PythonParser};
+use clap::{Parser, Subcommand, ValueEnum};
+use formatters::{format_compact, format_human, format_json, print_parse_errors, print_symbol_table};
+use owo_colors::OwoColorize;
+use serde_json::json;
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
+use tree_sitter::Node;
+use url::Url;
+
+/// Output format for diagnostics
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum OutputFormat {
+    /// Human-readable output with colors and context
+    Human,
+    /// JSON format for machine processing
+    Json,
+    /// Compact single-line format (file:line:col)
+    Compact,
+}
 
 #[derive(Parser)]
 #[command(name = "beacon-cli")]
-#[command(about = "A Python parser and syntax highlighter built with tree-sitter")]
+#[command(about = "Beacon - Language Server & Hindley-Milner type system for Python")]
 #[command(version = "0.1.0")]
 struct Cli {
     #[command(subcommand)]
@@ -21,11 +41,9 @@ enum Commands {
         /// Python file to parse
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
-
         /// Pretty print the AST
         #[arg(short, long)]
         pretty: bool,
-
         /// Show tree-sitter CST structure
         #[arg(short, long)]
         tree: bool,
@@ -35,7 +53,6 @@ enum Commands {
         /// Python file to highlight
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
-
         /// Disable colors (plain text output)
         #[arg(long)]
         no_color: bool,
@@ -51,33 +68,86 @@ enum Commands {
         /// Python file to analyze
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
-
         /// Show detailed scope information
         #[arg(short, long)]
         verbose: bool,
     },
+    /// Type check Python file with Hindley-Milner inference
+    Typecheck {
+        /// Python file to type check
+        #[arg(value_name = "FILE")]
+        file: Option<PathBuf>,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "human")]
+        format: OutputFormat,
+        /// Analyze all files in workspace (follow imports)
+        #[arg(short, long)]
+        workspace: bool,
+    },
+    /// Start Beacon Language Server
+    Lsp {
+        /// Use TCP instead of stdio
+        #[arg(long)]
+        tcp: Option<u16>,
+        /// Log file path for debugging
+        #[arg(long)]
+        log_file: Option<PathBuf>,
+    },
+    /// Debug tools (available only in debug builds)
+    #[cfg(debug_assertions)]
+    Debug {
+        #[command(subcommand)]
+        command: DebugCommands,
+    },
 }
 
-fn main() -> Result<()> {
-    let cli = Cli::parse();
+#[cfg(debug_assertions)]
+#[derive(Subcommand)]
+enum DebugCommands {
+    /// Show tree-sitter CST structure
+    Tree {
+        /// Python file to analyze
+        #[arg(value_name = "FILE")]
+        file: Option<PathBuf>,
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show AST with inferred types
+    Ast {
+        /// Python file to analyze
+        #[arg(value_name = "FILE")]
+        file: Option<PathBuf>,
+        /// Output format (json or tree)
+        #[arg(long, default_value = "tree")]
+        format: String,
+    },
+    /// Show generated constraints
+    Constraints {
+        /// Python file to analyze
+        #[arg(value_name = "FILE")]
+        file: Option<PathBuf>,
+    },
+    /// Show unification trace
+    Unify {
+        /// Python file to analyze
+        #[arg(value_name = "FILE")]
+        file: Option<PathBuf>,
+    },
+}
 
-    match cli.command {
-        Commands::Parse { file, pretty, tree } => {
-            let source = read_input(file)?;
-            parse_command(&source, pretty, tree)
-        }
-        Commands::Highlight { file, no_color } => {
-            let source = read_input(file)?;
-            highlight_command(&source, !no_color)
-        }
-        Commands::Check { file } => {
-            let source = read_input(file)?;
-            check_command(&source)
-        }
-        Commands::Resolve { file, verbose } => {
-            let source = read_input(file)?;
-            resolve_command(&source, verbose)
-        }
+#[tokio::main]
+async fn main() -> Result<()> {
+    match Cli::parse().command {
+        Commands::Parse { file, pretty, tree } => parse_command(&read_input(file)?, pretty, tree),
+        Commands::Highlight { file, no_color } => highlight_command(&read_input(file)?, !no_color),
+        Commands::Check { file } => check_command(&read_input(file)?),
+        Commands::Resolve { file, verbose } => resolve_command(&read_input(file)?, verbose),
+        Commands::Typecheck { file, format, workspace } => typecheck_command(file, format, workspace).await,
+        Commands::Lsp { tcp, log_file } => lsp_command(tcp, log_file).await,
+
+        #[cfg(debug_assertions)]
+        Commands::Debug { command } => debug_command(command),
     }
 }
 
@@ -100,7 +170,7 @@ fn parse_command(source: &str, pretty: bool, show_tree: bool) -> Result<()> {
     let parsed = parser.parse(source).with_context(|| "Failed to parse Python source")?;
 
     if show_tree {
-        println!("Tree-sitter CST structure:");
+        println!("{}", "Tree-sitter CST structure:".cyan().bold());
         println!("{}", parser.debug_tree(&parsed));
         println!();
     }
@@ -108,7 +178,7 @@ fn parse_command(source: &str, pretty: bool, show_tree: bool) -> Result<()> {
     let ast = parser.to_ast(&parsed).with_context(|| "Failed to convert to AST")?;
 
     if pretty {
-        println!("Python AST:");
+        println!("{}", "Python AST:".cyan().bold());
         println!("{ast:#?}");
     } else {
         println!("{ast:?}");
@@ -119,9 +189,7 @@ fn parse_command(source: &str, pretty: bool, show_tree: bool) -> Result<()> {
 
 fn highlight_command(source: &str, enable_colors: bool) -> Result<()> {
     let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
-
     let parsed = parser.parse(source).with_context(|| "Failed to parse Python source")?;
-
     let highlighter = PythonHighlighter::new(enable_colors);
     let highlighted = highlighter.highlight(source, &parsed.tree);
 
@@ -140,47 +208,25 @@ fn check_command(source: &str) -> Result<()> {
                 if cfg!(test) {
                     anyhow::bail!("Parse errors found in source code");
                 } else {
-                    println!("❌ Parse errors found:");
+                    println!("{} Parse errors found:", "✗".red().bold());
                     print_parse_errors(root, source, 0);
                     std::process::exit(1);
                 }
             } else {
-                println!("✅ No parse errors found");
+                println!("{} No parse errors found", "✓".green().bold());
             }
         }
         Err(e) => {
             if cfg!(test) {
                 return Err(e).with_context(|| "Failed to parse source code");
             } else {
-                println!("❌ Failed to parse: {e}");
+                println!("{} Failed to parse: {}", "✗".red().bold(), e.to_string().bright_red());
                 std::process::exit(1);
             }
         }
     }
 
     Ok(())
-}
-
-fn print_parse_errors(node: tree_sitter::Node, source: &str, depth: usize) {
-    if node.is_error() {
-        let start_pos = node.start_position();
-        let end_pos = node.end_position();
-        let text = node.utf8_text(source.as_bytes()).unwrap_or("<invalid>");
-
-        println!(
-            "{}Error at line {}, column {}-{}: '{}'",
-            "  ".repeat(depth),
-            start_pos.row + 1,
-            start_pos.column + 1,
-            end_pos.column + 1,
-            text.replace('\n', "\\n")
-        );
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        print_parse_errors(child, source, depth + 1);
-    }
 }
 
 fn resolve_command(source: &str, verbose: bool) -> Result<()> {
@@ -190,69 +236,410 @@ fn resolve_command(source: &str, verbose: bool) -> Result<()> {
         .parse_and_resolve(source)
         .with_context(|| "Failed to parse and resolve Python source")?;
 
-    println!("⚡ Name Resolution Analysis");
-    println!("===========================");
+    println!("{} {}", "⚡".yellow().bold(), "Name Resolution Analysis".cyan().bold());
+    println!("{}", "===========================".dimmed());
 
     print_symbol_table(&symbol_table, verbose);
 
     if verbose {
-        println!("\n▶ Statistics:");
-        println!("  • Total scopes: {}", symbol_table.scopes.len());
+        println!("\n{} {}:", "▶".bright_green(), "Statistics".green().bold());
+        println!(
+            "  • {}: {}",
+            "Total scopes".cyan(),
+            symbol_table.scopes.len().to_string().yellow()
+        );
         let total_symbols: usize = symbol_table.scopes.values().map(|scope| scope.symbols.len()).sum();
-        println!("  • Total symbols: {total_symbols}");
+        println!("  • {}: {}", "Total symbols".cyan(), total_symbols.to_string().yellow());
     }
 
     Ok(())
 }
 
-fn print_symbol_table(table: &SymbolTable, verbose: bool) {
-    print_scope(table, table.root_scope, 0, verbose);
-}
+async fn typecheck_command(file: Option<PathBuf>, format: OutputFormat, _workspace: bool) -> Result<()> {
+    let source = read_input(file.clone())?;
+    let documents = DocumentManager::new()?;
+    let file_path = file
+        .as_ref()
+        .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()))
+        .unwrap_or_else(|| PathBuf::from("stdin.py"));
 
-fn print_scope(table: &SymbolTable, scope_id: beacon_parser::ScopeId, depth: usize, verbose: bool) {
-    let scope = table.get_scope(scope_id).unwrap();
-    let indent = "  ".repeat(depth);
-    let scope_name = match scope.kind {
-        beacon_parser::ScopeKind::Module => "Module",
-        beacon_parser::ScopeKind::Function => "Function",
-        beacon_parser::ScopeKind::Class => "Class",
-        beacon_parser::ScopeKind::Block => "Block",
-    };
+    let uri = Url::from_file_path(&file_path)
+        .unwrap_or_else(|_| Url::parse(&format!("file://{}", file_path.display())).expect("Failed to create URL"));
 
-    if depth == 0 {
-        println!("▼ {scope_name} Scope:");
-    } else {
-        println!("{indent}▼ {scope_name} Scope:");
-    }
+    documents.open_document(uri.clone(), 1, source.clone())?;
 
-    let mut symbols: Vec<_> = scope.symbols.values().collect();
-    symbols.sort_by_key(|s| (&s.kind, &s.name));
+    let config = Config::default();
+    let mut analyzer = Analyzer::new(config, documents);
 
-    for symbol in symbols {
-        let symbol_icon = symbol.kind.icon();
-        let kind_name = symbol.kind.name();
+    match analyzer.analyze(&uri) {
+        Ok(result) => {
+            let errors = result.type_errors;
 
-        if verbose {
-            println!(
-                "{}  {} {} '{}' (line {}, col {})",
-                indent, symbol_icon, kind_name, symbol.name, symbol.line, symbol.col
-            );
-        } else {
-            println!("{}  {} {} '{}'", indent, symbol_icon, kind_name, symbol.name);
+            match format {
+                OutputFormat::Human => format_human(&source, &errors, &file_path),
+                OutputFormat::Json => format_json(&errors)?,
+                OutputFormat::Compact => format_compact(&errors, &file_path),
+            }
+
+            if !errors.is_empty() && !cfg!(test) {
+                std::process::exit(1);
+            }
+
+            Ok(())
+        }
+        Err(e) => {
+            if cfg!(test) {
+                anyhow::bail!("Type checking failed: {e}")
+            } else {
+                eprintln!("Error: Type checking failed: {e}");
+                std::process::exit(1);
+            }
         }
     }
+}
 
-    for &child_id in &scope.children {
+/// TODO: Implement TCP server
+async fn lsp_command(tcp: Option<u16>, log_file: Option<PathBuf>) -> Result<()> {
+    if let Some(path) = log_file {
+        let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let filename = path
+            .file_name()
+            .unwrap_or_else(|| std::ffi::OsStr::new("beacon-lsp.log"));
+
+        let file_appender = tracing_appender::rolling::never(parent, filename);
+        let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()),
+            )
+            .with_writer(non_blocking)
+            .init();
+
+        std::mem::forget(guard);
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()),
+            )
+            .with_writer(std::io::stderr)
+            .init();
+    }
+
+    if let Some(port) = tcp {
+        tracing::info!("Starting Beacon LSP server on TCP port {}", port);
+        eprintln!("TCP mode not yet implemented. Use stdio mode (default).");
+        std::process::exit(1);
+    } else {
+        tracing::info!("Starting Beacon LSP server on stdio");
+        beacon_lsp::run_server().await;
+    }
+
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+fn debug_command(command: DebugCommands) -> Result<()> {
+    match command {
+        DebugCommands::Tree { file, json } => debug_tree_command(file, json),
+        DebugCommands::Ast { file, format } => debug_ast_command(file, format),
+        DebugCommands::Constraints { file } => debug_constraints_command(file),
+        DebugCommands::Unify { file } => debug_unify_command(file),
+    }
+}
+
+#[cfg(debug_assertions)]
+fn debug_tree_command(file: Option<PathBuf>, json: bool) -> Result<()> {
+    let source = read_input(file)?;
+    let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
+    let parsed = parser.parse(&source).with_context(|| "Failed to parse Python source")?;
+
+    if json {
+        fn node_to_json(node: Node, source: &str) -> serde_json::Value {
+            let mut children = vec![];
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                children.push(node_to_json(child, source));
+            }
+
+            json!({
+                "type": node.kind(),
+                "start_byte": node.start_byte(),
+                "end_byte": node.end_byte(),
+                "start_line": node.start_position().row + 1,
+                "start_col": node.start_position().column + 1,
+                "end_line": node.end_position().row + 1,
+                "end_col": node.end_position().column + 1,
+                "text": node.utf8_text(source.as_bytes()).unwrap_or("<invalid>"),
+                "children": children,
+            })
+        }
+
+        let json_tree = node_to_json(parsed.tree.root_node(), &source);
+        println!("{}", serde_json::to_string_pretty(&json_tree)?);
+    } else {
+        println!("{}", "Tree-sitter CST:".cyan().bold());
+        println!("{}", parser.debug_tree(&parsed));
+    }
+
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+fn debug_ast_command(file: Option<PathBuf>, format: String) -> Result<()> {
+    let source = read_input(file.clone())?;
+    let documents = DocumentManager::new()?;
+    let file_path = file
+        .as_ref()
+        .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()))
+        .unwrap_or_else(|| PathBuf::from("stdin.py"));
+
+    let uri = Url::from_file_path(&file_path)
+        .unwrap_or_else(|_| Url::parse(&format!("file://{}", file_path.display())).expect("Failed to create URL"));
+
+    documents.open_document(uri.clone(), 1, source)?;
+
+    let config = Config::default();
+    let mut analyzer = Analyzer::new(config, documents);
+
+    match analyzer.analyze(&uri) {
+        Ok(result) => {
+            if format == "json" {
+                let ast_json = serde_json::json!({
+                    "type_map": result.type_map.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<std::collections::HashMap<_, _>>(),
+                    "position_map": result.position_map.iter().map(|(k, v)| (format!("{}:{}", k.0, k.1), v)).collect::<std::collections::HashMap<_, _>>(),
+                    "error_count": result.type_errors.len(),
+                });
+                println!("{}", serde_json::to_string_pretty(&ast_json)?);
+            } else {
+                println!("{}\n", "AST with inferred types:".cyan().bold());
+                println!(
+                    "{} {} nodes",
+                    "Type mappings:".green(),
+                    result.type_map.len().to_string().yellow()
+                );
+                println!(
+                    "{} {} positions",
+                    "Position mappings:".green(),
+                    result.position_map.len().to_string().yellow()
+                );
+                println!(
+                    "\n{} {}",
+                    "Type errors:".red().bold(),
+                    result.type_errors.len().to_string().yellow()
+                );
+
+                if !result.type_map.is_empty() {
+                    println!("\n{}:", "Node types".cyan().bold());
+                    let mut entries: Vec<_> = result.type_map.iter().collect();
+                    entries.sort_by_key(|(k, _)| *k);
+                    for (node_id, ty) in entries.iter().take(50) {
+                        println!(
+                            "  {} {}: {}",
+                            "▸".blue(),
+                            node_id.to_string().cyan(),
+                            ty.to_string().bright_white()
+                        );
+                    }
+                    if entries.len() > 50 {
+                        println!(
+                            "  {} and {} more",
+                            "...".dimmed(),
+                            (entries.len() - 50).to_string().yellow()
+                        );
+                    }
+                }
+            }
+            Ok(())
+        }
+        Err(e) => {
+            anyhow::bail!("Analysis failed: {e}")
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+fn debug_constraints_command(file: Option<PathBuf>) -> Result<()> {
+    let source = read_input(file)?;
+    let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
+    let parsed = parser.parse(&source).with_context(|| "Failed to parse Python source")?;
+    let ast = parser.to_ast(&parsed).with_context(|| "Failed to convert to AST")?;
+    let (_, symbol_table) = parser
+        .parse_and_resolve(&source)
+        .with_context(|| "Failed to parse and resolve Python source")?;
+
+    let ConstraintResult(constraint_set, _type_map, _position_map, _class_registry) =
+        beacon_lsp::analysis::walker::generate_constraints(&None, &ast, &symbol_table)?;
+
+    println!(
+        "{} {} constraints:\n",
+        "Generated".green().bold(),
+        constraint_set.constraints.len().to_string().yellow()
+    );
+
+    let mut constraint_groups: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+
+    for constraint in constraint_set.constraints {
+        let constraint_type = format!("{constraint:?}")
+            .split('(')
+            .next()
+            .unwrap_or("Unknown")
+            .to_string();
+        let constraint_str = format!("{constraint:?}");
+        constraint_groups
+            .entry(constraint_type)
+            .or_default()
+            .push(constraint_str);
+    }
+
+    for (constraint_type, instances) in constraint_groups.iter() {
+        println!(
+            "{} {} ({} instances)",
+            "▸".blue().bold(),
+            constraint_type.cyan().bold(),
+            instances.len().to_string().yellow()
+        );
+        for (idx, instance) in instances.iter().take(3).enumerate() {
+            println!("  {}. {}", (idx + 1).to_string().dimmed(), instance.bright_white());
+        }
+        if instances.len() > 3 {
+            println!(
+                "  {} and {} more",
+                "...".dimmed(),
+                (instances.len() - 3).to_string().yellow()
+            );
+        }
         println!();
-        print_scope(table, child_id, depth + 1, verbose);
+    }
+
+    Ok(())
+}
+
+#[cfg(debug_assertions)]
+fn debug_unify_command(file: Option<PathBuf>) -> Result<()> {
+    println!("{}", "Unification trace:".cyan().bold());
+    println!("{}", "TODO: Implement unification step-by-step trace".yellow());
+    println!(
+        "{}",
+        "This requires adding tracing to the solver implementation".dimmed()
+    );
+
+    let source = read_input(file)?;
+    let documents = DocumentManager::new()?;
+    let uri = Url::parse("file:///stdin.py").unwrap();
+
+    documents.open_document(uri.clone(), 1, source)?;
+
+    let config = Config::default();
+    let mut analyzer = Analyzer::new(config, documents);
+
+    match analyzer.analyze(&uri) {
+        Ok(result) => {
+            println!("\n{}:", "Unification completed".green().bold());
+            println!(
+                "  {}: {}",
+                "Type map size".cyan(),
+                result.type_map.len().to_string().yellow()
+            );
+            if result.type_errors.is_empty() {
+                println!(
+                    "  {}: {}",
+                    "Type errors".green(),
+                    result.type_errors.len().to_string().yellow()
+                );
+            } else {
+                println!(
+                    "  {}: {}",
+                    "Type errors".red(),
+                    result.type_errors.len().to_string().yellow()
+                );
+            }
+
+            if !result.type_errors.is_empty() {
+                println!("\n{}:", "Errors during unification".red().bold());
+                for (idx, error) in result.type_errors.iter().enumerate() {
+                    println!(
+                        "  {}. {} {} {}",
+                        (idx + 1).to_string().dimmed(),
+                        error.error.to_string().bright_red(),
+                        "at".dimmed(),
+                        format!("line {}, col {}", error.span.line, error.span.col).cyan()
+                    );
+                }
+            }
+
+            Ok(())
+        }
+        Err(e) => anyhow::bail!("Unification failed: {e}"),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use beacon_parser::SymbolTable;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    /// Test helper function that returns formatted output instead of printing
+    fn format_symbol_table_for_test(table: &SymbolTable, verbose: bool) -> String {
+        let mut output = String::new();
+        format_scope_for_test(table, table.root_scope, 0, verbose, &mut output);
+
+        if verbose {
+            output.push_str("\nStatistics:\n");
+            output.push_str(&format!("  • Total scopes: {}\n", table.scopes.len()));
+            let total_symbols: usize = table.scopes.values().map(|scope| scope.symbols.len()).sum();
+            output.push_str(&format!("  • Total symbols: {total_symbols}\n"));
+        }
+
+        output
+    }
+
+    fn format_scope_for_test(
+        table: &SymbolTable, scope_id: beacon_parser::ScopeId, depth: usize, verbose: bool, output: &mut String,
+    ) {
+        let scope = table.get_scope(scope_id).unwrap();
+        let indent = "  ".repeat(depth);
+
+        let scope_name = match scope.kind {
+            beacon_parser::ScopeKind::Module => "Module",
+            beacon_parser::ScopeKind::Function => "Function",
+            beacon_parser::ScopeKind::Class => "Class",
+            beacon_parser::ScopeKind::Block => "Block",
+        };
+
+        if depth == 0 {
+            output.push_str(&format!("▼ {scope_name} Scope:\n"));
+        } else {
+            output.push_str(&format!("{indent}▼ {scope_name} Scope:\n"));
+        }
+
+        let mut symbols: Vec<_> = scope.symbols.values().collect();
+        symbols.sort_by_key(|s| (&s.kind, &s.name));
+
+        for symbol in symbols {
+            let symbol_icon = symbol.kind.icon();
+            let kind_name = symbol.kind.name();
+
+            if verbose {
+                output.push_str(&format!(
+                    "{}  {} {} '{}' (line {}, col {})\n",
+                    indent, symbol_icon, kind_name, symbol.name, symbol.line, symbol.col
+                ));
+            } else {
+                output.push_str(&format!(
+                    "{}  {} {} '{}'\n",
+                    indent, symbol_icon, kind_name, symbol.name
+                ));
+            }
+        }
+
+        for &child_id in &scope.children {
+            output.push('\n');
+            format_scope_for_test(table, child_id, depth + 1, verbose, output);
+        }
+    }
 
     #[test]
     fn test_read_input_from_file() {
@@ -529,7 +916,6 @@ result = fibonacci(10)
     fn test_print_parse_errors_with_errors() {
         let mut parser = beacon_parser::PythonParser::new().unwrap();
         let source = "def incomplete_func(\nclass MissingColon\nif True\n    print('bad indent')";
-
         let parsed = parser.parse(source).unwrap();
         let root = parsed.tree.root_node();
 
@@ -542,7 +928,6 @@ result = fibonacci(10)
     fn test_print_parse_errors_valid_syntax() {
         let mut parser = beacon_parser::PythonParser::new().unwrap();
         let source = "def valid_function(x, y):\n    return x + y\n\nresult = valid_function(1, 2)";
-
         let parsed = parser.parse(source).unwrap();
         let root = parsed.tree.root_node();
 
@@ -596,75 +981,125 @@ result = obj.method(10)
     fn test_print_symbol_table_empty() {
         let mut parser = beacon_parser::PythonParser::new().unwrap();
         let source = "";
-
-        let (_ast, symbol_table) = parser.parse_and_resolve(source).unwrap();
+        let (_, symbol_table) = parser.parse_and_resolve(source).unwrap();
 
         let output = format_symbol_table_for_test(&symbol_table, false);
         assert!(output.contains("Module Scope"));
 
+        // NOTE: Symbol table includes 4 builtin dunders: __name__, __file__, __doc__, __package__
         let verbose_output = format_symbol_table_for_test(&symbol_table, true);
         assert!(verbose_output.contains("Total scopes: 1"));
-        // NOTE: Symbol table includes 4 builtin dunders: __name__, __file__, __doc__, __package__
         assert!(verbose_output.contains("Total symbols: 4"));
     }
 
-    /// Test helper function that returns formatted output instead of printing
-    fn format_symbol_table_for_test(table: &SymbolTable, verbose: bool) -> String {
-        let mut output = String::new();
-        format_scope_for_test(table, table.root_scope, 0, verbose, &mut output);
+    #[tokio::test]
+    async fn test_typecheck_command_no_errors() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            "def add(x: int, y: int) -> int:\n    return x + y\n\nresult = add(1, 2)"
+        )
+        .unwrap();
 
-        if verbose {
-            output.push_str("\nStatistics:\n");
-            output.push_str(&format!("  • Total scopes: {}\n", table.scopes.len()));
-            let total_symbols: usize = table.scopes.values().map(|scope| scope.symbols.len()).sum();
-            output.push_str(&format!("  • Total symbols: {total_symbols}\n"));
-        }
-
-        output
+        let result = typecheck_command(Some(temp_file.path().to_path_buf()), OutputFormat::Human, false).await;
+        let _ = result;
     }
 
-    fn format_scope_for_test(
-        table: &SymbolTable, scope_id: beacon_parser::ScopeId, depth: usize, verbose: bool, output: &mut String,
-    ) {
-        let scope = table.get_scope(scope_id).unwrap();
-        let indent = "  ".repeat(depth);
+    #[tokio::test]
+    async fn test_typecheck_command_json_format() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "x = 42\ny = 'hello'\nz = x + y").unwrap();
 
-        let scope_name = match scope.kind {
-            beacon_parser::ScopeKind::Module => "Module",
-            beacon_parser::ScopeKind::Function => "Function",
-            beacon_parser::ScopeKind::Class => "Class",
-            beacon_parser::ScopeKind::Block => "Block",
-        };
+        let result = typecheck_command(Some(temp_file.path().to_path_buf()), OutputFormat::Json, false).await;
+        let _ = result;
+    }
 
-        if depth == 0 {
-            output.push_str(&format!("▼ {scope_name} Scope:\n"));
-        } else {
-            output.push_str(&format!("{indent}▼ {scope_name} Scope:\n"));
-        }
+    #[tokio::test]
+    async fn test_typecheck_command_compact_format() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "def greet(name: str) -> str:\n    return f'Hello {{name}}'").unwrap();
 
-        let mut symbols: Vec<_> = scope.symbols.values().collect();
-        symbols.sort_by_key(|s| (&s.kind, &s.name));
+        let result = typecheck_command(Some(temp_file.path().to_path_buf()), OutputFormat::Compact, false).await;
+        let _ = result;
+    }
 
-        for symbol in symbols {
-            let symbol_icon = symbol.kind.icon();
-            let kind_name = symbol.kind.name();
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_debug_tree_command() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "x = 42\ny = 'hello'").unwrap();
 
-            if verbose {
-                output.push_str(&format!(
-                    "{}  {} {} '{}' (line {}, col {})\n",
-                    indent, symbol_icon, kind_name, symbol.name, symbol.line, symbol.col
-                ));
-            } else {
-                output.push_str(&format!(
-                    "{}  {} {} '{}'\n",
-                    indent, symbol_icon, kind_name, symbol.name
-                ));
-            }
-        }
+        let result = debug_tree_command(Some(temp_file.path().to_path_buf()), false);
+        assert!(result.is_ok());
+    }
 
-        for &child_id in &scope.children {
-            output.push('\n');
-            format_scope_for_test(table, child_id, depth + 1, verbose, output);
-        }
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_debug_tree_command_json() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(
+            temp_file,
+            "def factorial(n):\n    return n if n <= 1 else n * factorial(n-1)"
+        )
+        .unwrap();
+
+        let result = debug_tree_command(Some(temp_file.path().to_path_buf()), true);
+        assert!(result.is_ok());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_debug_ast_command() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "x = [1, 2, 3]\ny = sum(x)").unwrap();
+
+        let result = debug_ast_command(Some(temp_file.path().to_path_buf()), "tree".to_string());
+        assert!(result.is_ok());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_debug_constraints_command() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "def add(a, b):\n    return a + b\n\nresult = add(1, 2)").unwrap();
+
+        let result = debug_constraints_command(Some(temp_file.path().to_path_buf()));
+        assert!(result.is_ok());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_debug_unify_command() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "x = 42\ny = x + 10").unwrap();
+
+        let result = debug_unify_command(Some(temp_file.path().to_path_buf()));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    /// TODO: check output
+    fn test_format_human_no_errors() {
+        let source = "x = 42";
+        let errors = vec![];
+        let path = PathBuf::from("test.py");
+
+        format_human(source, &errors, &path);
+    }
+
+    #[test]
+    /// TODO: check output
+    fn test_format_json_no_errors() {
+        let errors = vec![];
+        let result = format_json(&errors);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    /// TODO: check output
+    fn test_format_compact_no_errors() {
+        let errors = vec![];
+        let path = PathBuf::from("test.py");
+        format_compact(&errors, &path);
     }
 }

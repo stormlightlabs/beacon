@@ -19,6 +19,67 @@ Beacon is a Rust implementation of the language server protocol & a hindley-miln
 └── pkg/                # Editor extensions & plugins
 ```
 
+## Quick Start
+
+### Installation
+
+Build from source:
+
+```sh
+cargo build --release
+```
+
+The CLI will be available at `target/release/beacon-cli`.
+
+### Type Checking
+
+Check Python files for type errors using Hindley-Milner inference:
+
+```sh
+# Check a file
+beacon-cli typecheck example.py
+
+# Check with JSON output for CI
+beacon-cli typecheck --format json example.py
+
+# Check from stdin
+cat example.py | beacon-cli typecheck
+```
+
+### Language Server
+
+Start the LSP server for editor integration:
+
+```sh
+beacon-cli lsp
+```
+
+Alternatively, start with file logging for debugging
+
+```sh
+beacon-cli lsp --log-file /tmp/beacon.log
+```
+
+### Debug Tools
+
+Debug builds include additional tools for inspecting the type system:
+
+```sh
+# View tree-sitter CST
+beacon-cli debug tree example.py
+
+# Show AST with inferred types
+beacon-cli debug ast example.py
+
+# Display generated constraints
+beacon-cli debug constraints example.py
+
+# Show unification results
+beacon-cli debug unify example.py
+```
+
+Full documentation: [CLI Tools](./docs/src/cli/overview.md)
+
 ## Completions & Static Analysis
 
 ### Completions
