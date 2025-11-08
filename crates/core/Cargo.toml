@@ -9,3 +9,4 @@ rustc-hash = "2.1"
 lsp-types.workspace = true
 url = "2.5.7"
 indexmap = "2.12"
+toml = "0.9"

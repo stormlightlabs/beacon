@@ -24,6 +24,7 @@ use crate::cache::{CacheManager, ScopeCacheKey};
 use crate::config::Config;
 use crate::document::DocumentManager;
 use crate::utils;
+use crate::workspace::Workspace;
 
 use beacon_constraint::{ConstraintResult, TypeErrorInfo};
 use beacon_core::{
@@ -87,9 +88,7 @@ impl Analyzer {
     }
 
     /// Create a new analyzer with workspace support for stub resolution
-    pub fn with_workspace(
-        config: Config, documents: DocumentManager, workspace: Arc<RwLock<crate::workspace::Workspace>>,
-    ) -> Self {
+    pub fn with_workspace(config: Config, documents: DocumentManager, workspace: Arc<RwLock<Workspace>>) -> Self {
         let stub_cache = workspace.try_read().ok().map(|ws| ws.stub_cache());
 
         Self {
@@ -269,6 +268,13 @@ impl Analyzer {
     pub fn invalidate(&mut self, uri: &Url) {
         self.cache.invalidate_document(uri);
         self.position_maps.remove(uri);
+    }
+
+    /// Update the analyzer's configuration
+    ///
+    /// This allows for runtime configuration updates without recreating the analyzer.
+    pub fn update_config(&mut self, config: Config) {
+        self._config = config;
     }
 
     /// Perform static analysis (CFG + data flow) on the AST
@@ -1790,7 +1796,7 @@ x = cfg.flag
             .unwrap()
             .to_path_buf();
         let root_uri = Url::from_directory_path(&workspace_root).ok();
-        let mut workspace = crate::workspace::Workspace::new(root_uri, config.clone(), documents.clone());
+        let mut workspace = Workspace::new(root_uri, config.clone(), documents.clone());
         workspace.initialize().ok();
 
         let workspace_arc = Arc::new(RwLock::new(workspace));
@@ -1826,7 +1832,7 @@ stripped = s.strip()
             .unwrap()
             .to_path_buf();
         let root_uri = Url::from_directory_path(&workspace_root).ok();
-        let mut workspace = crate::workspace::Workspace::new(root_uri, config.clone(), documents.clone());
+        let mut workspace = Workspace::new(root_uri, config.clone(), documents.clone());
         workspace.initialize().ok();
 
         let workspace_arc = Arc::new(RwLock::new(workspace));
@@ -1870,7 +1876,7 @@ result = s.nonexistent_method()
             .unwrap()
             .to_path_buf();
         let root_uri = Url::from_directory_path(&workspace_root).ok();
-        let mut workspace = crate::workspace::Workspace::new(root_uri, config.clone(), documents.clone());
+        let mut workspace = Workspace::new(root_uri, config.clone(), documents.clone());
         workspace.initialize().ok();
 
         let workspace_arc = Arc::new(RwLock::new(workspace));
@@ -1904,7 +1910,7 @@ result = s.strip().upper()
             .unwrap()
             .to_path_buf();
         let root_uri = Url::from_directory_path(&workspace_root).ok();
-        let mut workspace = crate::workspace::Workspace::new(root_uri, config.clone(), documents.clone());
+        let mut workspace = Workspace::new(root_uri, config.clone(), documents.clone());
         workspace.initialize().ok();
 
         let workspace_arc = Arc::new(RwLock::new(workspace));
@@ -2025,7 +2031,7 @@ async def main():
             .unwrap()
             .to_path_buf();
         let root_uri = Url::from_directory_path(&workspace_root).ok();
-        let mut workspace = crate::workspace::Workspace::new(root_uri, config.clone(), documents.clone());
+        let mut workspace = Workspace::new(root_uri, config.clone(), documents.clone());
         workspace.initialize().ok();
 
         let workspace_arc = Arc::new(RwLock::new(workspace));
@@ -2071,7 +2077,7 @@ result = upper_method()
             .unwrap()
             .to_path_buf();
         let root_uri = Url::from_directory_path(&workspace_root).ok();
-        let mut workspace = crate::workspace::Workspace::new(root_uri, config.clone(), documents.clone());
+        let mut workspace = Workspace::new(root_uri, config.clone(), documents.clone());
         workspace.initialize().ok();
 
         let workspace_arc = Arc::new(RwLock::new(workspace));

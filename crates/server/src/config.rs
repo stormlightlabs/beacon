@@ -4,9 +4,10 @@
 //! including type checking modes, Python version targeting, stub paths, and
 //! other customizable behaviors.
 
-use beacon_core::Result;
+use beacon_core::{Result, errors};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 /// Diagnostic severity level for configurable diagnostics
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,19 +219,87 @@ impl Config {
         Self::default()
     }
 
-    /// Update configuration from LSP initialization options
+    /// Update configuration from LSP initialization options or TOML value
     ///
-    /// TODO: Implement merging of user-provided options
-    pub fn update_from_value(&mut self, _value: serde_json::Value) {
-        // TODO: Parse and merge configuration from LSP client
+    /// Merges user-provided configuration with existing settings.
+    /// LSP settings take precedence over TOML configuration.
+    pub fn update_from_value(&mut self, value: serde_json::Value) {
+        // Parse as Config (camelCase for LSP) and merge non-default values
+        if let Ok(partial) = serde_json::from_value::<Config>(value) {
+            // Only update fields that differ from defaults
+            let defaults = Config::default();
+
+            if partial.mode != defaults.mode {
+                self.mode = partial.mode;
+            }
+            if partial.python_version != defaults.python_version {
+                self.python_version = partial.python_version;
+            }
+            if !partial.stub_paths.is_empty() && partial.stub_paths != defaults.stub_paths {
+                self.stub_paths = partial.stub_paths;
+            }
+            if partial.max_any_depth != defaults.max_any_depth {
+                self.max_any_depth = partial.max_any_depth;
+            }
+            if !partial.decorator_stubs.is_empty() {
+                self.decorator_stubs = partial.decorator_stubs;
+            }
+            if partial.incremental != defaults.incremental {
+                self.incremental = partial.incremental;
+            }
+            if partial.workspace_analysis != defaults.workspace_analysis {
+                self.workspace_analysis = partial.workspace_analysis;
+            }
+            if partial.enable_caching != defaults.enable_caching {
+                self.enable_caching = partial.enable_caching;
+            }
+            if partial.cache_size != defaults.cache_size {
+                self.cache_size = partial.cache_size;
+            }
+            if partial.experimental != defaults.experimental {
+                self.experimental = partial.experimental;
+            }
+            if !partial.source_roots.is_empty() {
+                self.source_roots = partial.source_roots;
+            }
+            if !partial.exclude_patterns.is_empty() {
+                self.exclude_patterns = partial.exclude_patterns;
+            }
+            if partial.unresolved_import_severity != defaults.unresolved_import_severity {
+                self.unresolved_import_severity = partial.unresolved_import_severity;
+            }
+            if partial.circular_import_severity != defaults.circular_import_severity {
+                self.circular_import_severity = partial.circular_import_severity;
+            }
+        }
     }
 
     /// Validate configuration and return any errors
     ///
-    /// TODO: Implement validation (e.g., stub paths exist, decorator stubs parse)
+    /// Checks that stub paths exist and are accessible.
     pub fn validate(&self) -> Result<()> {
-        // TODO: Validate stub paths exist
-        // TODO: Validate decorator stub syntax
+        // Validate stub paths exist and are readable
+        for stub_path in &self.stub_paths {
+            if !stub_path.exists() {
+                tracing::warn!("Stub path does not exist: {}", stub_path.display());
+            } else if !stub_path.is_dir() {
+                tracing::warn!("Stub path is not a directory: {}", stub_path.display());
+            }
+        }
+
+        // Validate source roots exist
+        for source_root in &self.source_roots {
+            if !source_root.exists() {
+                tracing::warn!("Source root does not exist: {}", source_root.display());
+            }
+        }
+
+        // Validate cache size is reasonable
+        if self.cache_size == 0 {
+            tracing::warn!("Cache size is 0, caching will be ineffective");
+        }
+
+        // TODO: Validate decorator stub syntax when decorator stub loading is implemented
         Ok(())
     }
 
@@ -242,11 +311,120 @@ impl Config {
         // TODO: Add site-packages paths
         self.stub_paths.clone()
     }
+
+    /// Discover and load configuration from TOML files in the workspace
+    ///
+    /// Searches for configuration in the following order:
+    /// 1. `beacon.toml` in workspace root
+    /// 2. `[tool.beacon]` section in `pyproject.toml`
+    ///
+    /// Returns a Config with TOML settings merged over defaults.
+    pub fn discover_and_load(workspace_root: &Path) -> Result<Self> {
+        let mut config = Config::default();
+
+        // Try beacon.toml first
+        let beacon_toml = workspace_root.join("beacon.toml");
+        if beacon_toml.exists() {
+            tracing::info!("Loading configuration from {}", beacon_toml.display());
+            config.load_from_toml_file(&beacon_toml)?;
+            return Ok(config);
+        }
+
+        // Try pyproject.toml [tool.beacon] section
+        let pyproject_toml = workspace_root.join("pyproject.toml");
+        if pyproject_toml.exists() {
+            tracing::info!(
+                "Loading configuration from [tool.beacon] in {}",
+                pyproject_toml.display()
+            );
+            if let Ok(content) = fs::read_to_string(&pyproject_toml) {
+                if let Ok(table) = toml::from_str::<toml::Table>(&content) {
+                    if let Some(tool) = table.get("tool").and_then(|t| t.as_table()) {
+                        if let Some(beacon_config) = tool.get("beacon") {
+                            config.load_from_toml_value(beacon_config.clone())?;
+                            return Ok(config);
+                        }
+                    }
+                }
+            }
+        }
+
+        // No configuration found, return defaults
+        tracing::debug!("No beacon.toml or pyproject.toml found, using defaults");
+        Ok(config)
+    }
+
+    /// Load configuration from a TOML file
+    ///
+    /// Merges settings from the TOML file into this configuration.
+    fn load_from_toml_file(&mut self, path: &Path) -> Result<()> {
+        let content = fs::read_to_string(path).map_err(|e| {
+            let err: beacon_core::ConfigError = std::io::Error::new(
+                e.kind(),
+                format!("Failed to read config file {}: {}", path.display(), e),
+            )
+            .into();
+
+            err
+        })?;
+
+        let table: toml::Table = toml::from_str(&content).map_err(errors::ConfigError::TOMLError)?;
+        let value = toml::Value::Table(table);
+
+        self.load_from_toml_value(value)
+    }
+
+    /// Load configuration from a TOML value
+    ///
+    /// TOML files use snake_case, so we need to convert to the camelCase JSON that update_from_value expects.
+    fn load_from_toml_value(&mut self, value: toml::Value) -> Result<()> {
+        let json_value = toml_to_json(value);
+        self.update_from_value(json_value);
+        Ok(())
+    }
+}
+
+/// Convert TOML value to JSON value, handling snake_case to camelCase conversion
+fn toml_to_json(value: toml::Value) -> serde_json::Value {
+    match value {
+        toml::Value::String(s) => serde_json::Value::String(s),
+        toml::Value::Integer(i) => serde_json::Value::Number(i.into()),
+        toml::Value::Float(f) => {
+            serde_json::Value::Number(serde_json::Number::from_f64(f).unwrap_or(serde_json::Number::from(0)))
+        }
+        toml::Value::Boolean(b) => serde_json::Value::Bool(b),
+        toml::Value::Array(arr) => serde_json::Value::Array(arr.into_iter().map(toml_to_json).collect()),
+        toml::Value::Table(table) => {
+            let mut map = serde_json::Map::new();
+            for (key, val) in table {
+                let camel_key = match key.as_str() {
+                    "python_version" => "pythonVersion".to_string(),
+                    "stub_paths" => "stubPaths".to_string(),
+                    "max_any_depth" => "maxAnyDepth".to_string(),
+                    "decorator_stubs" => "decoratorStubs".to_string(),
+                    "workspace_analysis" => "workspaceAnalysis".to_string(),
+                    "enable_caching" => "enableCaching".to_string(),
+                    "cache_size" => "cacheSize".to_string(),
+                    "source_roots" => "sourceRoots".to_string(),
+                    "exclude_patterns" => "excludePatterns".to_string(),
+                    "unresolved_import_severity" => "unresolvedImportSeverity".to_string(),
+                    "circular_import_severity" => "circularImportSeverity".to_string(),
+                    _ => key,
+                };
+                map.insert(camel_key, toml_to_json(val));
+            }
+            serde_json::Value::Object(map)
+        }
+        toml::Value::Datetime(dt) => serde_json::Value::String(dt.to_string()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
 
     #[test]
     fn test_default_config() {
@@ -261,7 +439,6 @@ mod tests {
     fn test_python_version_features() {
         assert!(PythonVersion::Py310.supports_pattern_matching());
         assert!(!PythonVersion::Py39.supports_pattern_matching());
-
         assert!(PythonVersion::Py312.supports_pep695_syntax());
         assert!(!PythonVersion::Py311.supports_pep695_syntax());
     }
@@ -276,5 +453,155 @@ mod tests {
 
         assert_eq!(config.mode, deserialized.mode);
         assert_eq!(config.python_version, deserialized.python_version);
+    }
+
+    #[test]
+    fn test_toml_to_json_conversion() {
+        let toml_str = r#"mode = "strict"
+python_version = "3.11"
+max_any_depth = 5
+incremental = false"#;
+
+        let table: toml::Table = toml::from_str(toml_str).unwrap();
+        let toml_value = toml::Value::Table(table);
+        let json_value = toml_to_json(toml_value);
+
+        let obj = json_value.as_object().unwrap();
+        assert!(obj.contains_key("mode"));
+        assert!(obj.contains_key("pythonVersion"));
+        assert!(obj.contains_key("maxAnyDepth"));
+        assert!(obj.contains_key("incremental"));
+
+        assert_eq!(obj.get("mode").unwrap().as_str().unwrap(), "strict");
+        assert_eq!(obj.get("pythonVersion").unwrap().as_str().unwrap(), "3.11");
+        assert_eq!(obj.get("maxAnyDepth").unwrap().as_i64().unwrap(), 5);
+        assert!(!obj.get("incremental").unwrap().as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_load_from_toml_value() {
+        let toml_str = r#"mode = "strict"
+python_version = "3.11"
+max_any_depth = 5"#;
+
+        let table: toml::Table = toml::from_str(toml_str).unwrap();
+        let toml_value = toml::Value::Table(table);
+        let mut config = Config::default();
+        config.load_from_toml_value(toml_value).unwrap();
+
+        assert_eq!(config.mode, TypeCheckingMode::Strict);
+        assert_eq!(config.python_version, PythonVersion::Py311);
+        assert_eq!(config.max_any_depth, 5);
+    }
+
+    #[test]
+    fn test_update_from_value_json() {
+        let json_str = r#"{
+            "mode": "loose",
+            "pythonVersion": "3.13",
+            "maxAnyDepth": 10
+        }"#;
+
+        let json_value: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        let mut config = Config::default();
+        config.update_from_value(json_value);
+
+        assert_eq!(config.mode, TypeCheckingMode::Loose);
+        assert_eq!(config.python_version, PythonVersion::Py313);
+        assert_eq!(config.max_any_depth, 10);
+    }
+
+    #[test]
+    fn test_validate_warns_on_missing_paths() {
+        let config = Config {
+            stub_paths: vec![PathBuf::from("/nonexistent/path")],
+            source_roots: vec![PathBuf::from("/another/nonexistent/path")],
+            ..Default::default()
+        };
+        let result = config.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_zero_cache_size() {
+        let config = Config { cache_size: 0, ..Default::default() };
+        let result = config.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_config_discover_no_files() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = Config::discover_and_load(temp_dir.path()).unwrap();
+        assert_eq!(config.mode, TypeCheckingMode::default());
+        assert_eq!(config.python_version, PythonVersion::default());
+    }
+
+    #[test]
+    fn test_config_discover_beacon_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let beacon_toml_path = temp_dir.path().join("beacon.toml");
+        let toml_content = r#"mode = "strict"
+python_version = "3.10"
+max_any_depth = 7
+incremental = false"#;
+
+        fs::write(&beacon_toml_path, toml_content).unwrap();
+
+        let config = Config::discover_and_load(temp_dir.path()).unwrap();
+
+        assert_eq!(config.mode, TypeCheckingMode::Strict);
+        assert_eq!(config.python_version, PythonVersion::Py310);
+        assert_eq!(config.max_any_depth, 7);
+        assert!(!config.incremental);
+    }
+
+    #[test]
+    fn test_config_discover_pyproject_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let pyproject_path = temp_dir.path().join("pyproject.toml");
+        let toml_content = r#"[tool.beacon]
+mode = "loose"
+python_version = "3.13""#;
+
+        fs::write(&pyproject_path, toml_content).unwrap();
+
+        let config = Config::discover_and_load(temp_dir.path()).unwrap();
+        assert_eq!(config.mode, TypeCheckingMode::Loose);
+        assert_eq!(config.python_version, PythonVersion::Py313);
+    }
+
+    #[test]
+    fn test_beacon_toml_takes_precedence() {
+        let temp_dir = TempDir::new().unwrap();
+        let beacon_toml_path = temp_dir.path().join("beacon.toml");
+        let pyproject_path = temp_dir.path().join("pyproject.toml");
+
+        fs::write(&beacon_toml_path, r#"mode = "strict""#).unwrap();
+        fs::write(
+            &pyproject_path,
+            r#"[tool.beacon]
+mode = "loose""#,
+        )
+        .unwrap();
+
+        let config = Config::discover_and_load(temp_dir.path()).unwrap();
+        assert_eq!(config.mode, TypeCheckingMode::Strict);
+    }
+
+    #[test]
+    fn test_update_from_value_preserves_defaults() {
+        let json_str = r#"{
+            "mode": "strict"
+        }"#;
+
+        let json_value: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        let mut config = Config::default();
+        let original_version = config.python_version;
+
+        config.update_from_value(json_value);
+
+        assert_eq!(config.mode, TypeCheckingMode::Strict);
+        assert_eq!(config.python_version, original_version);
     }
 }

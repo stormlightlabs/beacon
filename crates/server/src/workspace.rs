@@ -103,7 +103,7 @@ pub struct Workspace {
     /// Root URI of the workspace
     pub root_uri: Option<Url>,
     /// Configuration
-    config: Config,
+    pub config: Config,
     /// Document manager
     documents: DocumentManager,
     /// Index of all workspace modules

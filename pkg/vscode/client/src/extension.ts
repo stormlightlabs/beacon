@@ -12,14 +12,21 @@ export function activate(context: ExtensionContext) {
     command: serverPath,
     options: { cwd: getWorkspaceRoot(context), env: { ...process.env, RUST_LOG: "beacon_lsp=debug" } },
   };
-  const serverOptions: ServerOptions = { run: runExecutable, debug: debugExecutable };
 
+  const serverOptions: ServerOptions = { run: runExecutable, debug: debugExecutable };
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "python" }],
-    synchronize: { fileEvents: workspace.createFileSystemWatcher("**/*.py") },
+    synchronize: { fileEvents: workspace.createFileSystemWatcher("**/*.py"), configurationSection: "beacon" },
+    initializationOptions: getBeaconConfig(),
   };
 
   client = new LanguageClient("beacon-lsp", "Beacon Language Server", serverOptions, clientOptions);
+
+  context.subscriptions.push(workspace.onDidChangeConfiguration((event) => {
+    if (event.affectsConfiguration("beacon")) {
+      client.sendNotification("workspace/didChangeConfiguration", { settings: { beacon: getBeaconConfig() } });
+    }
+  }));
 
   client.start();
 }
@@ -29,6 +36,34 @@ export function deactivate(): Thenable<void> | undefined {
     return undefined;
   }
   return client.stop();
+}
+
+/**
+ * Get Beacon configuration from workspace settings
+ *
+ * Reads VSCode configuration and converts it to the format expected by the LSP server.
+ */
+function getBeaconConfig() {
+  const config = workspace.getConfiguration("beacon");
+
+  return {
+    mode: config.get("typeChecking.mode", "balanced"),
+    pythonVersion: config.get("python.version", "3.12"),
+    maxAnyDepth: config.get("advanced.maxAnyDepth", 3),
+    incremental: config.get("advanced.incremental", true),
+    workspaceAnalysis: config.get("advanced.workspaceAnalysis", true),
+    enableCaching: config.get("advanced.enableCaching", true),
+    cacheSize: config.get("advanced.cacheSize", 100),
+    unresolvedImportSeverity: config.get("diagnostics.unresolvedImports", "warning"),
+    circularImportSeverity: config.get("diagnostics.circularImports", "warning"),
+    inlayHints: {
+      enable: config.get("inlayHints.enable", true),
+      variableTypes: config.get("inlayHints.variableTypes", true),
+      functionReturnTypes: config.get("inlayHints.functionReturnTypes", true),
+      parameterNames: config.get("inlayHints.parameterNames", false),
+    },
+    interpreterPath: config.get("python.interpreterPath", ""),
+  };
 }
 
 /**

@@ -22,6 +22,113 @@
           "enum": ["off", "messages", "verbose"],
           "default": "off",
           "description": "Traces the communication between VS Code and the Beacon language server."
+        },
+        "beacon.typeChecking.mode": {
+          "scope": "resource",
+          "type": "string",
+          "enum": ["strict", "balanced", "loose"],
+          "default": "balanced",
+          "enumDescriptions": [
+            "Annotation mismatches are hard errors with strict enforcement",
+            "Annotation mismatches are diagnostics with quick fixes, but inference proceeds (default)",
+            "Annotations supply bounds but can be overridden by inference, very lenient"
+          ],
+          "description": "Type checking strictness mode. Controls how the type checker handles annotation mismatches and inference."
+        },
+        "beacon.inlayHints.enable": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable inlay hints for type information."
+        },
+        "beacon.inlayHints.variableTypes": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Show inlay hints for inferred variable types."
+        },
+        "beacon.inlayHints.functionReturnTypes": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Show inlay hints for inferred function return types."
+        },
+        "beacon.inlayHints.parameterNames": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": false,
+          "description": "Show inlay hints for parameter names in function calls."
+        },
+        "beacon.python.version": {
+          "scope": "resource",
+          "type": "string",
+          "enum": ["3.9", "3.10", "3.11", "3.12", "3.13"],
+          "default": "3.12",
+          "description": "Target Python version for feature support (e.g., pattern matching in 3.10+, PEP 695 syntax in 3.12+)."
+        },
+        "beacon.python.interpreterPath": {
+          "scope": "resource",
+          "type": "string",
+          "default": "",
+          "description": "Path to Python interpreter for runtime introspection. Leave empty to auto-detect."
+        },
+        "beacon.diagnostics.unresolvedImports": {
+          "scope": "resource",
+          "type": "string",
+          "enum": ["error", "warning", "info"],
+          "default": "warning",
+          "enumDescriptions": [
+            "Show unresolved imports as errors",
+            "Show unresolved imports as warnings",
+            "Show unresolved imports as info messages"
+          ],
+          "description": "Diagnostic severity level for unresolved imports."
+        },
+        "beacon.diagnostics.circularImports": {
+          "scope": "resource",
+          "type": "string",
+          "enum": ["error", "warning", "info"],
+          "default": "warning",
+          "enumDescriptions": [
+            "Show circular imports as errors",
+            "Show circular imports as warnings",
+            "Show circular imports as info messages"
+          ],
+          "description": "Diagnostic severity level for circular imports."
+        },
+        "beacon.advanced.maxAnyDepth": {
+          "scope": "resource",
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Maximum depth for Any type propagation before elevating diagnostics. Higher values are more permissive."
+        },
+        "beacon.advanced.incremental": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable incremental type checking for faster re-analysis."
+        },
+        "beacon.advanced.workspaceAnalysis": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable workspace-wide analysis and cross-file type checking."
+        },
+        "beacon.advanced.enableCaching": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable caching of parse trees and type inference results."
+        },
+        "beacon.advanced.cacheSize": {
+          "scope": "resource",
+          "type": "number",
+          "default": 100,
+          "minimum": 0,
+          "maximum": 1000,
+          "description": "Maximum number of documents to cache for faster analysis."
         }
       }
     }

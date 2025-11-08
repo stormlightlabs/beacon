@@ -26,6 +26,12 @@ impl InlayHintsProvider {
     /// - Inferred variable types for assignments without explicit type annotations
     /// - Function parameter names in function calls
     /// - Function return types for functions without return type annotations
+    ///
+    /// TODO: Add configuration support to conditionally enable/disable hint types
+    /// - inlayHints.enable: master toggle for all hints
+    /// - inlayHints.variableTypes: toggle for variable type hints
+    /// - inlayHints.functionReturnTypes: toggle for return type hints
+    /// - inlayHints.parameterNames: toggle for parameter name hints
     pub fn inlay_hints(&self, params: InlayHintParams, analyzer: &mut Analyzer) -> Vec<InlayHint> {
         let uri = params.text_document.uri;
         let range = params.range;

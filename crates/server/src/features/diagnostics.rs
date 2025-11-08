@@ -9,6 +9,8 @@ use crate::parser::{self, ParseError};
 use crate::workspace::Workspace;
 
 use beacon_core::BeaconError;
+use beacon_core::TypeError;
+use beacon_core::{Type, TypeCtor};
 use beacon_parser::{AstNode, MAGIC_METHODS};
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use std::sync::Arc;
@@ -24,6 +26,15 @@ pub struct DiagnosticProvider {
 impl DiagnosticProvider {
     pub fn new(documents: DocumentManager, workspace: Arc<RwLock<Workspace>>) -> Self {
         Self { documents, workspace, fuzzy_matcher: FuzzyMatcher::new() }
+    }
+
+    /// Convert config DiagnosticSeverity to LSP DiagnosticSeverity
+    fn config_severity_to_lsp(severity: config::DiagnosticSeverity) -> lsp_types::DiagnosticSeverity {
+        match severity {
+            config::DiagnosticSeverity::Error => lsp_types::DiagnosticSeverity::ERROR,
+            config::DiagnosticSeverity::Warning => lsp_types::DiagnosticSeverity::WARNING,
+            config::DiagnosticSeverity::Info => lsp_types::DiagnosticSeverity::INFORMATION,
+        }
     }
 
     /// Generate diagnostics for a document by combining syntax errors, type errors, and other analysis issues.
@@ -149,8 +160,6 @@ impl DiagnosticProvider {
 
     #[allow(dead_code)]
     fn contains_any_type(ty: &beacon_core::Type, _depth: u32) -> bool {
-        use beacon_core::{Type, TypeCtor};
-
         match ty {
             Type::Con(TypeCtor::Any) => true,
             Type::App(t1, t2) => Self::contains_any_type(t1, _depth + 1) || Self::contains_any_type(t2, _depth + 1),
@@ -182,7 +191,7 @@ impl DiagnosticProvider {
         // 4. Generating appropriate diagnostic based on mode
         // 5. Detecting missing/partial annotations for annotation coverage warnings
 
-        let _type_map = &result.type_map;
+        let _ = &result.type_map;
         let _ = mode;
     }
 
@@ -465,6 +474,7 @@ impl DiagnosticProvider {
         };
 
         let circular_groups = workspace.circular_dependencies();
+        let severity = Self::config_severity_to_lsp(workspace.config.circular_import_severity);
 
         for group in circular_groups {
             if !group.contains(uri) {
@@ -481,7 +491,7 @@ impl DiagnosticProvider {
 
             self.documents.get_document(uri, |doc| {
                 if let Some(ast) = doc.ast() {
-                    Self::find_import_locations(ast, &group, &workspace, diagnostics, &message);
+                    Self::find_import_locations(ast, &group, &workspace, diagnostics, &message, severity);
                 }
             });
         }
@@ -489,12 +499,13 @@ impl DiagnosticProvider {
 
     /// Find import statement locations for circular dependency reporting
     fn find_import_locations(
-        node: &AstNode, circular_group: &[Url], workspace: &Workspace, diagnostics: &mut Vec<Diagnostic>, message: &str,
+        node: &AstNode, circular_group: &[Url], workspace: &Workspace, diagnostics: &mut Vec<Diagnostic>,
+        message: &str, severity: lsp_types::DiagnosticSeverity,
     ) {
         match node {
             AstNode::Module { body, .. } => {
                 for stmt in body {
-                    Self::find_import_locations(stmt, circular_group, workspace, diagnostics, message);
+                    Self::find_import_locations(stmt, circular_group, workspace, diagnostics, message, severity);
                 }
             }
             AstNode::Import { module, line, col, .. } => {
@@ -509,7 +520,7 @@ impl DiagnosticProvider {
 
                         diagnostics.push(Diagnostic {
                             range,
-                            severity: Some(DiagnosticSeverity::ERROR),
+                            severity: Some(severity),
                             code: Some(lsp_types::NumberOrString::String("circular-import".to_string())),
                             source: Some("beacon".to_string()),
                             message: message.to_string(),
@@ -533,7 +544,7 @@ impl DiagnosticProvider {
 
                         diagnostics.push(Diagnostic {
                             range,
-                            severity: Some(DiagnosticSeverity::ERROR),
+                            severity: Some(severity),
                             code: Some(lsp_types::NumberOrString::String("circular-import".to_string())),
                             source: Some("beacon".to_string()),
                             message: message.to_string(),
@@ -547,21 +558,21 @@ impl DiagnosticProvider {
             }
             AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } => {
                 for stmt in body {
-                    Self::find_import_locations(stmt, circular_group, workspace, diagnostics, message);
+                    Self::find_import_locations(stmt, circular_group, workspace, diagnostics, message, severity);
                 }
             }
             AstNode::If { body, elif_parts, else_body, .. } => {
                 for stmt in body {
-                    Self::find_import_locations(stmt, circular_group, workspace, diagnostics, message);
+                    Self::find_import_locations(stmt, circular_group, workspace, diagnostics, message, severity);
                 }
                 for (_test, elif_body) in elif_parts {
                     for stmt in elif_body {
-                        Self::find_import_locations(stmt, circular_group, workspace, diagnostics, message);
+                        Self::find_import_locations(stmt, circular_group, workspace, diagnostics, message, severity);
                     }
                 }
                 if let Some(else_stmts) = else_body {
                     for stmt in else_stmts {
-                        Self::find_import_locations(stmt, circular_group, workspace, diagnostics, message);
+                        Self::find_import_locations(stmt, circular_group, workspace, diagnostics, message, severity);
                     }
                 }
             }
@@ -583,9 +594,11 @@ impl DiagnosticProvider {
             return;
         }
 
+        let severity = Self::config_severity_to_lsp(workspace.config.unresolved_import_severity);
+
         self.documents.get_document(uri, |doc| {
             if let Some(ast) = doc.ast() {
-                Self::find_unresolved_import_locations(ast, &unresolved, &workspace, diagnostics);
+                Self::find_unresolved_import_locations(ast, &unresolved, &workspace, diagnostics, severity);
             }
         });
     }
@@ -593,11 +606,12 @@ impl DiagnosticProvider {
     /// Find locations of unresolved imports in the AST
     fn find_unresolved_import_locations(
         node: &AstNode, unresolved: &[String], _workspace: &Workspace, diagnostics: &mut Vec<Diagnostic>,
+        severity: lsp_types::DiagnosticSeverity,
     ) {
         match node {
             AstNode::Module { body, .. } => {
                 for stmt in body {
-                    Self::find_unresolved_import_locations(stmt, unresolved, _workspace, diagnostics);
+                    Self::find_unresolved_import_locations(stmt, unresolved, _workspace, diagnostics, severity);
                 }
             }
             AstNode::Import { module, line, col, .. } => {
@@ -613,7 +627,7 @@ impl DiagnosticProvider {
 
                     diagnostics.push(Diagnostic {
                         range,
-                        severity: Some(DiagnosticSeverity::ERROR),
+                        severity: Some(severity),
                         code: Some(lsp_types::NumberOrString::String("unresolved-import".to_string())),
                         source: Some("beacon".to_string()),
                         message,
@@ -641,7 +655,7 @@ impl DiagnosticProvider {
 
                     diagnostics.push(Diagnostic {
                         range,
-                        severity: Some(DiagnosticSeverity::ERROR),
+                        severity: Some(severity),
                         code: Some(lsp_types::NumberOrString::String("unresolved-import".to_string())),
                         source: Some("beacon".to_string()),
                         message,
@@ -654,21 +668,21 @@ impl DiagnosticProvider {
             }
             AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } => {
                 for stmt in body {
-                    Self::find_unresolved_import_locations(stmt, unresolved, _workspace, diagnostics);
+                    Self::find_unresolved_import_locations(stmt, unresolved, _workspace, diagnostics, severity);
                 }
             }
             AstNode::If { body, elif_parts, else_body, .. } => {
                 for stmt in body {
-                    Self::find_unresolved_import_locations(stmt, unresolved, _workspace, diagnostics);
+                    Self::find_unresolved_import_locations(stmt, unresolved, _workspace, diagnostics, severity);
                 }
                 for (_test, elif_body) in elif_parts {
                     for stmt in elif_body {
-                        Self::find_unresolved_import_locations(stmt, unresolved, _workspace, diagnostics);
+                        Self::find_unresolved_import_locations(stmt, unresolved, _workspace, diagnostics, severity);
                     }
                 }
                 if let Some(else_stmts) = else_body {
                     for stmt in else_stmts {
-                        Self::find_unresolved_import_locations(stmt, unresolved, _workspace, diagnostics);
+                        Self::find_unresolved_import_locations(stmt, unresolved, _workspace, diagnostics, severity);
                     }
                 }
             }
@@ -857,8 +871,6 @@ fn analysis_error_to_diagnostic(error: &BeaconError) -> Diagnostic {
 
 /// Convert a type error with location info to an LSP diagnostic
 fn type_error_to_diagnostic(error_info: &beacon_constraint::TypeErrorInfo) -> Diagnostic {
-    use beacon_core::TypeError;
-
     let start_pos = Position {
         line: (error_info.line().saturating_sub(1)) as u32,
         character: (error_info.col().saturating_sub(1)) as u32,
@@ -1154,8 +1166,6 @@ mod tests {
 
     #[test]
     fn test_generate_diagnostics_with_unbound_variables() {
-        use std::str::FromStr;
-
         let documents = DocumentManager::new().unwrap();
         let workspace = create_test_workspace(documents.clone());
         let provider = DiagnosticProvider::new(documents.clone(), workspace);
@@ -1623,8 +1633,8 @@ def test():
 
         let diagnostic = type_error_to_diagnostic(&error_info);
 
-        assert_eq!(diagnostic.range.start.line, 4); // 5 - 1
-        assert_eq!(diagnostic.range.start.character, 9); // 10 - 1
-        assert_eq!(diagnostic.range.end.character, 19); // 9 + 10
+        assert_eq!(diagnostic.range.start.line, 4);
+        assert_eq!(diagnostic.range.start.character, 9);
+        assert_eq!(diagnostic.range.end.character, 19);
     }
 }

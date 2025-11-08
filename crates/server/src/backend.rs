@@ -122,11 +122,55 @@ impl Backend {
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
     /// Initialize the language server
-    /// TODO: Parse initialization options and update config
+    ///
+    /// Loads configuration from TOML files (beacon.toml or pyproject.toml) and merges with LSP initialization options.
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
-        let root_uri = params.root_uri;
+        let root_uri = params.root_uri.clone();
+        let mut config = if let Some(ref uri) = root_uri {
+            if let Ok(path) = uri.to_file_path() {
+                match Config::discover_and_load(&path) {
+                    Ok(cfg) => {
+                        self.client
+                            .log_message(MessageType::INFO, "Configuration loaded from workspace")
+                            .await;
+                        cfg
+                    }
+                    Err(e) => {
+                        self.client
+                            .log_message(MessageType::WARNING, format!("Failed to load configuration: {e}"))
+                            .await;
+                        Config::default()
+                    }
+                }
+            } else {
+                Config::default()
+            }
+        } else {
+            Config::default()
+        };
+
+        if let Some(init_options) = params.initialization_options {
+            config.update_from_value(init_options);
+            self.client
+                .log_message(MessageType::INFO, "LSP configuration options applied")
+                .await;
+        }
+
+        if let Err(e) = config.validate() {
+            self.client
+                .log_message(MessageType::WARNING, format!("Configuration validation warning: {e}"))
+                .await;
+        }
+
         let mut workspace = self.workspace.write().await;
         workspace.root_uri = root_uri;
+        workspace.config = config.clone();
+
+        let mut analyzer = self.analyzer.write().await;
+        analyzer.update_config(config);
+
+        drop(workspace);
+        drop(analyzer);
 
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
@@ -198,9 +242,36 @@ impl LanguageServer for Backend {
         Ok(())
     }
 
+    async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+        if let Some(settings) = params.settings.as_object() {
+            if let Some(beacon_settings) = settings.get("beacon") {
+                let mut workspace = self.workspace.write().await;
+                let mut config = workspace.config.clone();
+
+                config.update_from_value(beacon_settings.clone());
+
+                if let Err(e) = config.validate() {
+                    self.client
+                        .log_message(MessageType::WARNING, format!("Configuration validation warning: {e}"))
+                        .await;
+                }
+
+                workspace.config = config.clone();
+                drop(workspace);
+
+                let mut analyzer = self.analyzer.write().await;
+                analyzer.update_config(config);
+                drop(analyzer);
+
+                self.client
+                    .log_message(MessageType::INFO, "Configuration updated successfully")
+                    .await;
+            }
+        }
+    }
+
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let url = params.text_document.uri.clone();
-
         let version = params.text_document.version;
         let text = params.text_document.text;
 
@@ -811,7 +882,6 @@ mod tests {
     async fn test_symbol_resolve() {
         let service = create_backend();
         let backend = service.inner();
-
         let uri = Url::from_str("file:///test.py").unwrap();
         let location = Location {
             uri,
@@ -903,7 +973,6 @@ mod tests {
         let service = create_backend();
         let backend = service.inner();
         let params = InitializeParams::default();
-
         let result = backend.initialize(params).await.unwrap();
         let server_info = result.server_info.unwrap();
 
@@ -916,7 +985,6 @@ mod tests {
         let service = create_backend();
         let backend = service.inner();
         let params = InitializeParams::default();
-
         let result = backend.initialize(params).await.unwrap();
         let sync = result.capabilities.text_document_sync.unwrap();
 
@@ -933,7 +1001,6 @@ mod tests {
         let service = create_backend();
         let backend = service.inner();
         let params = InitializeParams::default();
-
         let result = backend.initialize(params).await.unwrap();
         let completion = result.capabilities.completion_provider.unwrap();
 
@@ -946,7 +1013,6 @@ mod tests {
         let service = create_backend();
         let backend = service.inner();
         let params = InitializeParams::default();
-
         let result = backend.initialize(params).await.unwrap();
         let signature_help = result.capabilities.signature_help_provider.unwrap();
 
@@ -961,7 +1027,6 @@ mod tests {
         let service = create_backend();
         let backend = service.inner();
         let params = InitializeParams::default();
-
         let result = backend.initialize(params).await.unwrap();
         assert!(result.capabilities.inlay_hint_provider.is_some());
     }
@@ -971,7 +1036,6 @@ mod tests {
         let service = create_backend();
         let backend = service.inner();
         let params = InitializeParams::default();
-
         let result = backend.initialize(params).await.unwrap();
 
         match result.capabilities.semantic_tokens_provider {

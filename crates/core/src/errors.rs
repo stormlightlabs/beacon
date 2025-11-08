@@ -126,6 +126,12 @@ pub enum ConfigError {
 
     #[error("Unsupported Python version: {0}")]
     UnsupportedPythonVersion(String),
+
+    #[error("Failed to parse TOML: {0}")]
+    TOMLError(#[from] toml::de::Error),
+
+    #[error("IO Error: {0}")]
+    IOError(#[from] std::io::Error),
 }
 
 #[derive(Debug, thiserror::Error)]

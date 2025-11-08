@@ -2,20 +2,24 @@
 
 Implementation details and mod-specific tasks.
 
-## Pattern Matching
-
-### LSP Features
+## LSP Features
 
 **Files:** `crates/server/src/features/diagnostics.rs`, `crates/server/src/features/code_actions.rs`
 
-#### Quick Fixes
+### Quick Fixes
 
 - [ ] Move pattern before subsuming pattern (PM002)
 
 ### Configuration
 
-- [ ] Make interpreter path configurable
-- [ ] on/off, verbosity for inlay hints
+- [x] Make interpreter path configurable (via `beacon.python.interpreterPath`)
+- [x] Configuration file support (beacon.toml, pyproject.toml)
+- [x] LSP configuration via workspace settings
+- [x] Config hot-reload support
+- [x] Diagnostic severity configuration
+- [ ] Inlay hints configuration implementation
+- [ ] Integration tests for configuration flow (config loading and hot-reload)
+- [ ] Formatting options
 
 ### Static Analysis & Linting
 

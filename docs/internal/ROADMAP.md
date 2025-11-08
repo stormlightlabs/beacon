@@ -38,10 +38,11 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 
 ### Configuration & Ergonomics
 
-- [ ] Configuration options (`mode`, `pythonVersion`, `stubPaths`, `decoratorStubs`)
-- [ ] Config hot-reload without restart
+- [x] Configuration options (`mode`, `pythonVersion`, `stubPaths`, `decoratorStubs`)
+- [x] Config hot-reload without restart
+- [x] Type checking modes (strict/balanced/loose)
+- [ ] Formatting options
 - [ ] Contributor documentation
-- [ ] Type checking modes (strict/balanced/loose)
 - [ ] Configurable verbosity for inlay hints
 
 ### Performance & Testing

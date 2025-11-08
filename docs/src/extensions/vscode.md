@@ -92,13 +92,80 @@ The launch configuration compiles the TypeScript client and relies on the previo
 
 ## Configuration
 
-The extension contributes a single user/workspace setting:
+The extension provides extensive configuration options accessible through VS Code settings. All settings are under the `beacon.*` namespace and can be configured per-workspace or globally.
 
-| Setting               | Values                           | Description                                                      |
-| --------------------- | -------------------------------- | ---------------------------------------------------------------- |
-| `beacon.trace.server` | `off` \| `messages` \| `verbose` | Controls JSON-RPC tracing between VS Code and the Beacon server. |
+### Type Checking
 
-Enable `messages` or `verbose` while debugging protocol issues; traces are written to the “Beacon LSP” output channel.
+| Setting                    | Type     | Default      | Description                                                      |
+| -------------------------- | -------- | ------------ | ---------------------------------------------------------------- |
+| `beacon.typeChecking.mode` | `string` | `"balanced"` | Type checking strictness: `"strict"`, `"balanced"`, or `"loose"` |
+
+### Inlay Hints
+
+| Setting                                 | Type      | Default | Description                                         |
+| --------------------------------------- | --------- | ------- | --------------------------------------------------- |
+| `beacon.inlayHints.enable`              | `boolean` | `true`  | Enable inlay hints for type information             |
+| `beacon.inlayHints.variableTypes`       | `boolean` | `true`  | Show inlay hints for inferred variable types        |
+| `beacon.inlayHints.functionReturnTypes` | `boolean` | `true`  | Show inlay hints for inferred function return types |
+| `beacon.inlayHints.parameterNames`      | `boolean` | `false` | Show inlay hints for parameter names in calls       |
+
+### Python Settings
+
+| Setting                         | Type     | Default  | Description                                                            |
+| ------------------------------- | -------- | -------- | ---------------------------------------------------------------------- |
+| `beacon.python.version`         | `string` | `"3.12"` | Target Python version: `"3.9"`, `"3.10"`, `"3.11"`, `"3.12"`, `"3.13"` |
+| `beacon.python.interpreterPath` | `string` | `""`     | Path to Python interpreter for runtime introspection                   |
+
+### Diagnostics
+
+| Setting                                | Type     | Default     | Description                                                       |
+| -------------------------------------- | -------- | ----------- | ----------------------------------------------------------------- |
+| `beacon.diagnostics.unresolvedImports` | `string` | `"warning"` | Severity for unresolved imports: `"error"`, `"warning"`, `"info"` |
+| `beacon.diagnostics.circularImports`   | `string` | `"warning"` | Severity for circular imports: `"error"`, `"warning"`, `"info"`   |
+
+### Advanced
+
+| Setting                             | Type      | Default | Description                                              |
+| ----------------------------------- | --------- | ------- | -------------------------------------------------------- |
+| `beacon.advanced.maxAnyDepth`       | `number`  | `3`     | Maximum depth for Any type propagation (0-10)            |
+| `beacon.advanced.incremental`       | `boolean` | `true`  | Enable incremental type checking                         |
+| `beacon.advanced.workspaceAnalysis` | `boolean` | `true`  | Enable workspace-wide analysis                           |
+| `beacon.advanced.enableCaching`     | `boolean` | `true`  | Enable caching of parse trees and type inference results |
+| `beacon.advanced.cacheSize`         | `number`  | `100`   | Maximum number of documents to cache (0-1000)            |
+
+### Debugging
+
+| Setting               | Type     | Default | Description                                             |
+| --------------------- | -------- | ------- | ------------------------------------------------------- |
+| `beacon.trace.server` | `string` | `"off"` | JSON-RPC tracing: `"off"`, `"messages"`, or `"verbose"` |
+
+Enable `messages` or `verbose` while debugging protocol issues; traces are written to the "Beacon LSP" output channel.
+
+### Example Configuration
+
+Add these settings to your `.vscode/settings.json`:
+
+```json
+{
+  "beacon.typeChecking.mode": "strict",
+  "beacon.python.version": "3.12",
+  "beacon.inlayHints.enable": true,
+  "beacon.inlayHints.variableTypes": true,
+  "beacon.inlayHints.functionReturnTypes": true,
+  "beacon.diagnostics.unresolvedImports": "error",
+  "beacon.diagnostics.circularImports": "warning"
+}
+```
+
+### Configuration Precedence
+
+Beacon merges configuration from multiple sources:
+
+1. **Default values** - Built-in defaults
+2. **TOML file** - `beacon.toml` or `pyproject.toml` in workspace root
+3. **VS Code settings** - User/workspace settings (highest precedence)
+
+See [Configuration](../configuration.md) for details on TOML configuration files.
 
 ## Packaging & Publishing
 
