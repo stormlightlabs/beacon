@@ -265,8 +265,14 @@ impl<'a> Linter<'a> {
             }
             // TODO: BEA029 will be checked in a separate pass since we need to know if the block has other content
             AstNode::Pass { .. } => {}
-            AstNode::Assignment { target: _, value, .. } => {
+            AstNode::Assignment { target, value, line, col, .. } => {
+                self.check_two_starred_expressions(target, *line, *col);
+                self.check_too_many_expressions_in_starred_assignment(target, value, *line, *col);
                 self.visit_node(value);
+            }
+            AstNode::Assert { test, line, col, .. } => {
+                self.check_assert_tuple(test, *line, *col);
+                self.visit_node(test);
             }
             AstNode::AnnotatedAssignment { target: _, type_annotation, value, line, col, .. } => {
                 self.check_forward_annotation_syntax(type_annotation, *line, *col);
@@ -363,7 +369,11 @@ impl<'a> Linter<'a> {
                     self.visit_node(value);
                 }
             }
-            AstNode::Yield { .. } | AstNode::YieldFrom { .. } | AstNode::Await { .. } | AstNode::Identifier { .. } => {}
+            AstNode::Yield { .. }
+            | AstNode::YieldFrom { .. }
+            | AstNode::Await { .. }
+            | AstNode::Identifier { .. }
+            | AstNode::Starred { .. } => {}
         }
     }
 
@@ -545,6 +555,89 @@ impl<'a> Linter<'a> {
             );
         }
     }
+
+    /// Check for assert with tuple test (always True)
+    ///
+    /// BEA012: `assert (1, 2)` creates a non-empty tuple which is always True
+    fn check_assert_tuple(&mut self, test: &AstNode, line: usize, col: usize) {
+        if let AstNode::Tuple { elements, .. } = test {
+            if !elements.is_empty() {
+                self.report(
+                    RuleKind::AssertTuple,
+                    "assertion is a tuple literal, which is always True".to_string(),
+                    line,
+                    col,
+                );
+            }
+        }
+    }
+
+    /// Check for multiple starred expressions in assignment target
+    ///
+    /// BEA009: `a, *b, *c = [1, 2, 3]` has two starred expressions (invalid)
+    fn check_two_starred_expressions(&mut self, target: &AstNode, line: usize, col: usize) {
+        let starred_count = Self::count_starred_expressions(target);
+        if starred_count > 1 {
+            self.report(
+                RuleKind::TwoStarredExpressions,
+                format!("assignment target contains {starred_count} starred expressions, only one allowed"),
+                line,
+                col,
+            );
+        }
+    }
+
+    /// Count starred expressions in an assignment target
+    fn count_starred_expressions(node: &AstNode) -> usize {
+        match node {
+            AstNode::Starred { .. } => 1,
+            AstNode::Tuple { elements, .. } | AstNode::List { elements, .. } => {
+                elements.iter().map(Self::count_starred_expressions).sum()
+            }
+            _ => 0,
+        }
+    }
+
+    /// Check for too many or too few expressions in starred assignment
+    ///
+    /// BEA010: `*a, b, c = [1]` has too many names for the iterable
+    fn check_too_many_expressions_in_starred_assignment(
+        &mut self, target: &AstNode, value: &AstNode, line: usize, col: usize,
+    ) {
+        if Self::count_starred_expressions(target) == 0 {
+            return;
+        }
+
+        let target_count = Self::count_target_names(target);
+        let starred_count = Self::count_starred_expressions(target);
+        let min_required = target_count - starred_count;
+        let value_len = match value {
+            AstNode::List { elements, .. } | AstNode::Tuple { elements, .. } => Some(elements.len()),
+            _ => None,
+        };
+
+        if let Some(value_len) = value_len {
+            if value_len < min_required {
+                self.report(
+                    RuleKind::TooManyExpressionsInStarredAssignment,
+                    format!("too many expressions in assignment; need at least {min_required} values, got {value_len}"),
+                    line,
+                    col,
+                );
+            }
+        }
+    }
+
+    /// Count total number of names in assignment target
+    fn count_target_names(node: &AstNode) -> usize {
+        match node {
+            AstNode::Identifier { .. } | AstNode::Starred { .. } => 1,
+            AstNode::Tuple { elements, .. } | AstNode::List { elements, .. } => {
+                elements.iter().map(Self::count_target_names).sum()
+            }
+            _ => 0,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -555,7 +648,6 @@ mod tests {
     fn lint_source(source: &str) -> Vec<DiagnosticMessage> {
         let mut parser = PythonParser::new().unwrap();
         let (ast, symbol_table) = parser.parse_and_resolve(source).unwrap();
-
         let mut linter = Linter::new(&symbol_table, "test.py".to_string());
         linter.analyze(&ast)
     }
@@ -564,7 +656,6 @@ mod tests {
     fn test_return_outside_function() {
         let source = "return 42";
         let diagnostics = lint_source(source);
-
         assert!(diagnostics.iter().any(|d| d.rule == RuleKind::ReturnOutsideFunction));
     }
 
@@ -572,7 +663,6 @@ mod tests {
     fn test_return_inside_function() {
         let source = "def foo():\n    return 42";
         let diagnostics = lint_source(source);
-
         assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::ReturnOutsideFunction));
     }
 
@@ -580,7 +670,6 @@ mod tests {
     fn test_break_outside_loop() {
         let source = "break";
         let diagnostics = lint_source(source);
-
         assert!(diagnostics.iter().any(|d| d.rule == RuleKind::BreakOutsideLoop));
     }
 
@@ -588,7 +677,6 @@ mod tests {
     fn test_break_inside_loop() {
         let source = "for i in range(10):\n    break";
         let diagnostics = lint_source(source);
-
         assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::BreakOutsideLoop));
     }
 
@@ -596,7 +684,6 @@ mod tests {
     fn test_continue_outside_loop() {
         let source = "continue";
         let diagnostics = lint_source(source);
-
         assert!(diagnostics.iter().any(|d| d.rule == RuleKind::ContinueOutsideLoop));
     }
 
@@ -604,7 +691,6 @@ mod tests {
     fn test_duplicate_argument() {
         let source = "def foo(x, y, x):\n    pass";
         let diagnostics = lint_source(source);
-
         assert!(diagnostics.iter().any(|d| d.rule == RuleKind::DuplicateArgument));
     }
 
@@ -612,7 +698,6 @@ mod tests {
     fn test_no_duplicate_argument() {
         let source = "def foo(x, y, z):\n    pass";
         let diagnostics = lint_source(source);
-
         assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::DuplicateArgument));
     }
 
@@ -620,7 +705,6 @@ mod tests {
     fn test_import_star_in_function() {
         let source = "def foo():\n    from os import *";
         let diagnostics = lint_source(source);
-
         assert!(diagnostics.iter().any(|d| d.rule == RuleKind::ImportStarNotPermitted));
     }
 
@@ -628,7 +712,6 @@ mod tests {
     fn test_import_star_at_module_level() {
         let source = "from os import *";
         let diagnostics = lint_source(source);
-
         assert!(diagnostics.iter().any(|d| d.rule == RuleKind::ImportStarUsed));
         assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::ImportStarNotPermitted));
     }
@@ -637,7 +720,6 @@ mod tests {
     fn test_raise_not_implemented() {
         let source = "raise NotImplemented";
         let diagnostics = lint_source(source);
-
         assert!(diagnostics.iter().any(|d| d.rule == RuleKind::RaiseNotImplemented));
     }
 
@@ -645,7 +727,6 @@ mod tests {
     fn test_raise_not_implemented_error() {
         let source = "raise NotImplementedError";
         let diagnostics = lint_source(source);
-
         assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::RaiseNotImplemented));
     }
 
@@ -675,7 +756,6 @@ except:
     pass
 "#;
         let diagnostics = lint_source(source);
-
         assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::DefaultExceptNotLast));
     }
 
@@ -688,7 +768,6 @@ except:
     pass
 "#;
         let diagnostics = lint_source(source);
-
         assert!(diagnostics.iter().any(|d| d.rule == RuleKind::EmptyExcept));
     }
 
@@ -696,7 +775,6 @@ except:
     fn test_is_literal_with_integer() {
         let source = "x is 5";
         let diagnostics = lint_source(source);
-
         assert!(diagnostics.iter().any(|d| d.rule == RuleKind::IsLiteral));
     }
 
@@ -704,7 +782,6 @@ except:
     fn test_is_none_allowed() {
         let source = "x is None";
         let diagnostics = lint_source(source);
-
         assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::IsLiteral));
     }
 
@@ -712,7 +789,6 @@ except:
     fn test_import_shadowed_by_loop_var() {
         let source = "import os\nfor os in range(10):\n    pass";
         let diagnostics = lint_source(source);
-
         assert!(diagnostics.iter().any(|d| d.rule == RuleKind::ImportShadowedByLoopVar));
     }
 
@@ -720,7 +796,6 @@ except:
     fn test_if_tuple() {
         let source = "if (x,):\n    pass";
         let diagnostics = lint_source(source);
-
         assert!(diagnostics.iter().any(|d| d.rule == RuleKind::IfTuple));
     }
 
@@ -728,7 +803,6 @@ except:
     fn test_if_tuple_multi_element() {
         let source = "if (x, y, z):\n    pass";
         let diagnostics = lint_source(source);
-
         assert!(diagnostics.iter().any(|d| d.rule == RuleKind::IfTuple));
     }
 
@@ -736,7 +810,6 @@ except:
     fn test_if_not_tuple() {
         let source = "if (x):\n    pass";
         let diagnostics = lint_source(source);
-
         assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::IfTuple));
     }
 
@@ -780,7 +853,6 @@ except:
     fn test_uppercase_fstring_missing_placeholders() {
         let source = "x = F'hello'";
         let diagnostics = lint_source(source);
-
         assert!(
             diagnostics
                 .iter()
@@ -792,7 +864,6 @@ except:
     fn test_raw_fstring_missing_placeholders() {
         let source = "x = rf'hello'";
         let diagnostics = lint_source(source);
-
         assert!(
             diagnostics
                 .iter()

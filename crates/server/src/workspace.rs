@@ -1148,8 +1148,6 @@ impl Workspace {
                     .unwrap_or_else(Type::any);
 
                 let func_type = Type::fun(param_types.clone(), ret_type.clone());
-
-                // Debug log to verify fix is active
                 if name == "register_provider" {
                     tracing::info!(
                         "Loading register_provider stub: params={:?}, return={:?}",
@@ -1169,7 +1167,7 @@ impl Workspace {
             }
             AstNode::AnnotatedAssignment { target, type_annotation: annotation, .. } => {
                 if let Some(ty) = self.parse_annotation_string(annotation) {
-                    exports.insert(target.clone(), ty);
+                    exports.insert(target.target_to_string(), ty);
                 }
             }
             AstNode::ImportFrom { module, names, .. } => {
@@ -1178,7 +1176,7 @@ impl Workspace {
                 }
             }
             AstNode::Assignment { target, value, .. } => {
-                if target == "__all__" {
+                if target.target_to_string() == "__all__" {
                     *all_exports = self.extract_all_list(value);
                 }
             }
@@ -1624,17 +1622,17 @@ mod tests {
     fn test_workspace_creation() {
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
-        let _workspace = Workspace::new(None, config, documents);
+        let _ = Workspace::new(None, config, documents);
     }
 
     #[test]
     fn test_dependency_graph_creation() {
-        let _graph = DependencyGraph::new();
+        let _ = DependencyGraph::new();
     }
 
     #[test]
     fn test_stub_cache_creation() {
-        let _cache = StubCache::new();
+        let _ = StubCache::new();
     }
 
     #[test]

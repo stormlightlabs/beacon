@@ -69,7 +69,7 @@ pub enum AstNode {
         end_col: usize,
     },
     Assignment {
-        target: String,
+        target: Box<AstNode>,
         value: Box<AstNode>,
         line: usize,
         col: usize,
@@ -77,7 +77,7 @@ pub enum AstNode {
         end_col: usize,
     },
     AnnotatedAssignment {
-        target: String,
+        target: Box<AstNode>,
         type_annotation: String,
         value: Option<Box<AstNode>>,
         line: usize,
@@ -384,6 +384,23 @@ pub enum AstNode {
         end_line: usize,
         end_col: usize,
     },
+    /// Assert statement: assert test, msg
+    Assert {
+        test: Box<AstNode>,
+        msg: Option<Box<AstNode>>,
+        line: usize,
+        col: usize,
+        end_line: usize,
+        end_col: usize,
+    },
+    /// Starred expression: *value (used in unpacking)
+    Starred {
+        value: Box<AstNode>,
+        line: usize,
+        col: usize,
+        end_line: usize,
+        end_col: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -512,6 +529,53 @@ struct InfoFor(String, AstNode, Vec<AstNode>, Option<Vec<AstNode>>, bool);
 
 struct InfoArgsKwargs(Vec<AstNode>, Vec<(String, AstNode)>);
 
+impl AstNode {
+    /// Extract variable names from an assignment target
+    ///
+    /// This helper extracts all identifier names that will be bound by an assignment.
+    /// For simple identifiers, returns a vec with one name. For tuple/list unpacking,
+    /// returns all names. For starred expressions, includes the starred variable.
+    /// For attribute access or subscripts, returns empty vec (no new variables bound).
+    pub fn extract_target_names(&self) -> Vec<String> {
+        match self {
+            AstNode::Identifier { name, .. } => vec![name.clone()],
+            AstNode::Tuple { elements, .. } | AstNode::List { elements, .. } => {
+                elements.iter().flat_map(|e| e.extract_target_names()).collect()
+            }
+            AstNode::Starred { value, .. } => value.extract_target_names(),
+            AstNode::Attribute { .. } | AstNode::Subscript { .. } => Vec::new(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Convert assignment target to a string representation
+    ///
+    /// This is a compatibility helper for code that expects string targets.
+    /// For simple identifiers, returns the name. For complex patterns, returns
+    /// a formatted representation.
+    pub fn target_to_string(&self) -> String {
+        match self {
+            AstNode::Identifier { name, .. } => name.clone(),
+            AstNode::Tuple { elements, .. } => {
+                let names: Vec<String> = elements.iter().map(|e| e.target_to_string()).collect();
+                format!("({})", names.join(", "))
+            }
+            AstNode::List { elements, .. } => {
+                let names: Vec<String> = elements.iter().map(|e| e.target_to_string()).collect();
+                format!("[{}]", names.join(", "))
+            }
+            AstNode::Starred { value, .. } => format!("*{}", value.target_to_string()),
+            AstNode::Attribute { object, attribute, .. } => {
+                format!("{}.{}", object.target_to_string(), attribute)
+            }
+            AstNode::Subscript { value, slice, .. } => {
+                format!("{}[{}]", value.target_to_string(), slice.target_to_string())
+            }
+            _ => "<unknown>".to_string(),
+        }
+    }
+}
+
 impl PythonParser {
     pub fn new() -> Result<Self> {
         let language = tree_sitter_python::LANGUAGE;
@@ -632,7 +696,19 @@ impl PythonParser {
                     node.children(&mut cursor).any(|child| child.kind() == "async")
                 };
 
-                Ok(AstNode::FunctionDef { name, args, body, docstring, return_type, decorators, is_async, line, col, end_line, end_col })
+                Ok(AstNode::FunctionDef {
+                    name,
+                    args,
+                    body,
+                    docstring,
+                    return_type,
+                    decorators,
+                    is_async,
+                    line,
+                    col,
+                    end_line,
+                    end_col,
+                })
             }
             "class_definition" => {
                 let name = self.extract_identifier(&node, source, "name")?;
@@ -644,7 +720,18 @@ impl PythonParser {
                     .child_by_field_name("body")
                     .and_then(|body_node| self.extract_docstring(&body_node, source));
 
-                Ok(AstNode::ClassDef { name, bases, metaclass, body, docstring, decorators, line, col, end_line, end_col })
+                Ok(AstNode::ClassDef {
+                    name,
+                    bases,
+                    metaclass,
+                    body,
+                    docstring,
+                    decorators,
+                    line,
+                    col,
+                    end_line,
+                    end_col,
+                })
             }
             "expression_statement" => {
                 if let Some(child) = node.named_child(0) {
@@ -667,10 +754,25 @@ impl PythonParser {
                         .transpose()?
                         .map(Box::new);
 
-                    Ok(AstNode::AnnotatedAssignment { target, type_annotation, value, line, col, end_line, end_col })
+                    Ok(AstNode::AnnotatedAssignment {
+                        target: Box::new(target),
+                        type_annotation,
+                        value,
+                        line,
+                        col,
+                        end_line,
+                        end_col,
+                    })
                 } else {
                     let value = self.extract_assignment_value(&node, source)?;
-                    Ok(AstNode::Assignment { target, value: Box::new(value), line, col, end_line, end_col })
+                    Ok(AstNode::Assignment {
+                        target: Box::new(target),
+                        value: Box::new(value),
+                        line,
+                        col,
+                        end_line,
+                        end_col,
+                    })
                 }
             }
             "call" => {
@@ -708,7 +810,17 @@ impl PythonParser {
             }
             "for_statement" => {
                 let InfoFor(target, iter, body, else_body, is_async) = self.extract_for_info(&node, source)?;
-                Ok(AstNode::For { target, iter: Box::new(iter), body, else_body, is_async, line, col, end_line, end_col })
+                Ok(AstNode::For {
+                    target,
+                    iter: Box::new(iter),
+                    body,
+                    else_body,
+                    is_async,
+                    line,
+                    col,
+                    end_line,
+                    end_col,
+                })
             }
             "while_statement" => {
                 let (test, body, else_body) = self.extract_while_info(&node, source)?;
@@ -728,7 +840,15 @@ impl PythonParser {
             }
             "dictionary_comprehension" => {
                 let (key, value, generators) = self.extract_dict_comp_info(&node, source)?;
-                Ok(AstNode::DictComp { key: Box::new(key), value: Box::new(value), generators, line, col, end_line, end_col })
+                Ok(AstNode::DictComp {
+                    key: Box::new(key),
+                    value: Box::new(value),
+                    generators,
+                    line,
+                    col,
+                    end_line,
+                    end_col,
+                })
             }
             "set_comprehension" => {
                 let (element, generators) = self.extract_set_comp_info(&node, source)?;
@@ -744,7 +864,17 @@ impl PythonParser {
             }
             "binary_operator" => {
                 let (left, op, right) = self.extract_binary_op_info(&node, source)?;
-                Ok(AstNode::BinaryOp { left: Box::new(left), op, right: Box::new(right), line, col, end_line, end_col })
+                Ok(
+                    AstNode::BinaryOp {
+                        left: Box::new(left),
+                        op,
+                        right: Box::new(right),
+                        line,
+                        col,
+                        end_line,
+                        end_col,
+                    },
+                )
             }
             "unary_operator" => {
                 let (op, operand) = self.extract_unary_op_info(&node, source)?;
@@ -810,7 +940,39 @@ impl PythonParser {
             },
             "boolean_operator" => {
                 let (left, op, right) = self.extract_boolean_op_info(&node, source)?;
-                Ok(AstNode::BinaryOp { left: Box::new(left), op, right: Box::new(right), line, col, end_line, end_col })
+                Ok(
+                    AstNode::BinaryOp {
+                        left: Box::new(left),
+                        op,
+                        right: Box::new(right),
+                        line,
+                        col,
+                        end_line,
+                        end_col,
+                    },
+                )
+            }
+            "assert_statement" => {
+                let test = node
+                    .named_child(0)
+                    .ok_or_else(|| ParseError::TreeSitterError("Missing assert test".to_string()))?;
+                let test_ast = self.node_to_ast(test, source)?;
+
+                let msg = node
+                    .named_child(1)
+                    .map(|msg_node| self.node_to_ast(msg_node, source))
+                    .transpose()?
+                    .map(Box::new);
+
+                Ok(AstNode::Assert { test: Box::new(test_ast), msg, line, col, end_line, end_col })
+            }
+            "starred_expression" => {
+                if let Some(child) = node.named_child(0) {
+                    let value = self.node_to_ast(child, source)?;
+                    Ok(AstNode::Starred { value: Box::new(value), line, col, end_line, end_col })
+                } else {
+                    Err(ParseError::MissingNode("starred value".to_string()).into())
+                }
             }
             _ => match node.utf8_text(source.as_bytes()) {
                 Ok(text) => Ok(AstNode::Identifier { name: text.to_string(), line, col, end_line, end_col }),
@@ -1040,16 +1202,12 @@ impl PythonParser {
         None
     }
 
-    fn extract_assignment_target(&self, node: &Node, source: &str) -> Result<String> {
+    fn extract_assignment_target(&self, node: &Node, source: &str) -> Result<AstNode> {
         let left_node = node
             .child_by_field_name("left")
             .ok_or_else(|| ParseError::TreeSitterError("Missing assignment target".to_string()))?;
 
-        let target = left_node
-            .utf8_text(source.as_bytes())
-            .map_err(|_| ParseError::InvalidUtf8)?;
-
-        Ok(target.to_string())
+        self.node_to_ast(left_node, source)
     }
 
     fn extract_assignment_value(&self, node: &Node, source: &str) -> Result<AstNode> {
@@ -2167,7 +2325,10 @@ mod tests {
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     AstNode::Assignment { target, value, .. } => {
-                        assert_eq!(target, "x");
+                        match target.as_ref() {
+                            AstNode::Identifier { name, .. } => assert_eq!(name, "x"),
+                            _ => panic!("Expected identifier target"),
+                        }
                         match value.as_ref() {
                             AstNode::Literal { value: LiteralValue::Integer(42), .. } => {}
                             _ => panic!("Expected integer literal 42"),
@@ -2388,9 +2549,10 @@ if __name__ == "__main__":
 
         match parser.to_ast(&parsed).unwrap() {
             AstNode::Module { body, .. } => match &body[0] {
-                AstNode::Assignment { target, .. } => {
-                    assert_eq!(target, "result");
-                }
+                AstNode::Assignment { target, .. } => match target.as_ref() {
+                    AstNode::Identifier { name, .. } => assert_eq!(name, "result"),
+                    _ => panic!("Expected identifier target"),
+                },
                 _ => panic!("Expected assignment"),
             },
             _ => panic!("Expected module"),
@@ -2975,7 +3137,10 @@ count: int = 0"#;
             AstNode::Module { body, .. } => {
                 match &body[0] {
                     AstNode::AnnotatedAssignment { target, type_annotation, value, .. } => {
-                        assert_eq!(target, "x");
+                        match target.as_ref() {
+                            AstNode::Identifier { name, .. } => assert_eq!(name, "x"),
+                            _ => panic!("Expected identifier target"),
+                        }
                         assert!(type_annotation.contains("int"));
                         assert!(value.is_some());
                     }
@@ -2984,7 +3149,10 @@ count: int = 0"#;
 
                 match &body[1] {
                     AstNode::AnnotatedAssignment { target, type_annotation, value, .. } => {
-                        assert_eq!(target, "y");
+                        match target.as_ref() {
+                            AstNode::Identifier { name, .. } => assert_eq!(name, "y"),
+                            _ => panic!("Expected identifier target"),
+                        }
                         assert!(type_annotation.contains("str"));
                         assert!(value.is_none());
                     }
@@ -4225,8 +4393,6 @@ with context_manager as value:
         }
     }
 
-    // Tests for exact span ranges (end_line, end_col)
-
     #[test]
     fn test_assignment_span() {
         let mut parser = PythonParser::new().unwrap();
@@ -4235,17 +4401,15 @@ with context_manager as value:
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body, .. } => {
-                match &body[0] {
-                    AstNode::Assignment { line, col, end_line, end_col, .. } => {
-                        assert_eq!(*line, 1);
-                        assert_eq!(*col, 1);
-                        assert_eq!(*end_line, 1);
-                        assert_eq!(*end_col, 7); // tree-sitter returns position after last char
-                    }
-                    _ => panic!("Expected assignment"),
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { line, col, end_line, end_col, .. } => {
+                    assert_eq!(*line, 1);
+                    assert_eq!(*col, 1);
+                    assert_eq!(*end_line, 1);
+                    assert_eq!(*end_col, 7);
                 }
-            }
+                _ => panic!("Expected assignment"),
+            },
             _ => panic!("Expected module"),
         }
     }
@@ -4258,23 +4422,19 @@ with context_manager as value:
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body, .. } => {
-                match &body[0] {
-                    AstNode::Call { args, .. } => {
-                        match &args[0] {
-                            AstNode::Identifier { name, line, col, end_line, end_col } => {
-                                assert_eq!(name, "hello");
-                                assert_eq!(*line, 1);
-                                assert_eq!(*col, 7);
-                                assert_eq!(*end_line, 1);
-                                assert_eq!(*end_col, 12); // "hello" is 5 chars, ends at 7+5=12
-                            }
-                            _ => panic!("Expected identifier"),
-                        }
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Call { args, .. } => match &args[0] {
+                    AstNode::Identifier { name, line, col, end_line, end_col } => {
+                        assert_eq!(name, "hello");
+                        assert_eq!(*line, 1);
+                        assert_eq!(*col, 7);
+                        assert_eq!(*end_line, 1);
+                        assert_eq!(*end_col, 12);
                     }
-                    _ => panic!("Expected call"),
-                }
-            }
+                    _ => panic!("Expected identifier"),
+                },
+                _ => panic!("Expected call"),
+            },
             _ => panic!("Expected module"),
         }
     }
@@ -4287,22 +4447,18 @@ with context_manager as value:
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body, .. } => {
-                match &body[0] {
-                    AstNode::Assignment { value, .. } => {
-                        match value.as_ref() {
-                            AstNode::Literal { line, col, end_line, end_col, .. } => {
-                                assert_eq!(*line, 1);
-                                assert_eq!(*col, 5);
-                                assert_eq!(*end_line, 1);
-                                assert_eq!(*end_col, 18); // tree-sitter returns position after last char
-                            }
-                            _ => panic!("Expected literal"),
-                        }
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => match value.as_ref() {
+                    AstNode::Literal { line, col, end_line, end_col, .. } => {
+                        assert_eq!(*line, 1);
+                        assert_eq!(*col, 5);
+                        assert_eq!(*end_line, 1);
+                        assert_eq!(*end_col, 18);
                     }
-                    _ => panic!("Expected assignment"),
-                }
-            }
+                    _ => panic!("Expected literal"),
+                },
+                _ => panic!("Expected assignment"),
+            },
             _ => panic!("Expected module"),
         }
     }
@@ -4315,22 +4471,18 @@ with context_manager as value:
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body, .. } => {
-                match &body[0] {
-                    AstNode::Assignment { value, .. } => {
-                        match value.as_ref() {
-                            AstNode::BinaryOp { line, col, end_line, end_col, .. } => {
-                                assert_eq!(*line, 1);
-                                assert_eq!(*col, 10);
-                                assert_eq!(*end_line, 1);
-                                assert_eq!(*end_col, 15); // tree-sitter returns position after last char
-                            }
-                            _ => panic!("Expected binary operation"),
-                        }
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => match value.as_ref() {
+                    AstNode::BinaryOp { line, col, end_line, end_col, .. } => {
+                        assert_eq!(*line, 1);
+                        assert_eq!(*col, 10);
+                        assert_eq!(*end_line, 1);
+                        assert_eq!(*end_col, 15);
                     }
-                    _ => panic!("Expected assignment"),
-                }
-            }
+                    _ => panic!("Expected binary operation"),
+                },
+                _ => panic!("Expected assignment"),
+            },
             _ => panic!("Expected module"),
         }
     }
@@ -4343,18 +4495,15 @@ with context_manager as value:
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body, .. } => {
-                match &body[0] {
-                    AstNode::FunctionDef { line, col, end_line, end_col, .. } => {
-                        assert_eq!(*line, 1);
-                        assert_eq!(*col, 1);
-                        assert_eq!(*end_line, 2);
-                        // Function should span to the end of the return statement
-                        assert!(*end_col > 1);
-                    }
-                    _ => panic!("Expected function definition"),
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::FunctionDef { line, col, end_line, end_col, .. } => {
+                    assert_eq!(*line, 1);
+                    assert_eq!(*col, 1);
+                    assert_eq!(*end_line, 2);
+                    assert!(*end_col > 1);
                 }
-            }
+                _ => panic!("Expected function definition"),
+            },
             _ => panic!("Expected module"),
         }
     }
@@ -4367,17 +4516,15 @@ with context_manager as value:
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body, .. } => {
-                match &body[0] {
-                    AstNode::If { line, col, end_line, end_col, .. } => {
-                        assert_eq!(*line, 1);
-                        assert_eq!(*col, 1);
-                        assert_eq!(*end_line, 4); // Should span to line 4
-                        assert!(*end_col > 1);
-                    }
-                    _ => panic!("Expected if statement"),
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::If { line, col, end_line, end_col, .. } => {
+                    assert_eq!(*line, 1);
+                    assert_eq!(*col, 1);
+                    assert_eq!(*end_line, 4);
+                    assert!(*end_col > 1);
                 }
-            }
+                _ => panic!("Expected if statement"),
+            },
             _ => panic!("Expected module"),
         }
     }
@@ -4390,26 +4537,21 @@ with context_manager as value:
         let ast = parser.to_ast(&parsed).unwrap();
 
         match ast {
-            AstNode::Module { body, .. } => {
-                match &body[0] {
-                    AstNode::FunctionDef { args, .. } => {
-                        // Check first parameter
-                        assert_eq!(args[0].name, "param1");
-                        assert_eq!(args[0].line, 1);
-                        assert_eq!(args[0].col, 10);
-                        assert_eq!(args[0].end_line, 1);
-                        assert_eq!(args[0].end_col, 16);
-
-                        // Check second parameter
-                        assert_eq!(args[1].name, "param2");
-                        assert_eq!(args[1].line, 1);
-                        assert_eq!(args[1].col, 18);
-                        assert_eq!(args[1].end_line, 1);
-                        assert!(args[1].end_col > args[1].col);
-                    }
-                    _ => panic!("Expected function definition"),
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::FunctionDef { args, .. } => {
+                    assert_eq!(args[0].name, "param1");
+                    assert_eq!(args[0].line, 1);
+                    assert_eq!(args[0].col, 10);
+                    assert_eq!(args[0].end_line, 1);
+                    assert_eq!(args[0].end_col, 16);
+                    assert_eq!(args[1].name, "param2");
+                    assert_eq!(args[1].line, 1);
+                    assert_eq!(args[1].col, 18);
+                    assert_eq!(args[1].end_line, 1);
+                    assert!(args[1].end_col > args[1].col);
                 }
-            }
+                _ => panic!("Expected function definition"),
+            },
             _ => panic!("Expected module"),
         }
     }

@@ -20,7 +20,7 @@ pub mod walker;
 
 mod loader;
 
-use crate::cache::{CacheManager, ScopeCacheKey};
+use crate::cache::{CacheManager, CachedScopeResult, ScopeCacheKey};
 use crate::config::Config;
 use crate::document::DocumentManager;
 use crate::utils;
@@ -143,8 +143,6 @@ impl Analyzer {
         &self, uri: &Url, scopes: &[(ScopeId, String, Scope)], type_map: &FxHashMap<usize, Type>,
         position_map: &FxHashMap<(usize, usize), usize>,
     ) {
-        use crate::cache::{CachedScopeResult, ScopeCacheKey};
-
         for (scope_id, content, scope) in scopes {
             let scope_type_map: FxHashMap<usize, Type> = type_map
                 .iter()
@@ -554,6 +552,7 @@ impl Analyzer {
             | AstNode::Pass { .. }
             | AstNode::Break { .. }
             | AstNode::Continue { .. } => {}
+            AstNode::Assert { .. } | AstNode::Starred { .. } => {}
         }
     }
 
@@ -745,6 +744,7 @@ mod tests {
     use super::*;
     use beacon_constraint::ConstraintGenContext;
     use beacon_core::{ClassRegistry, MethodType, TypeCtor, TypeError};
+    use lsp_types::{TextDocumentContentChangeEvent, VersionedTextDocumentIdentifier};
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -2241,8 +2241,6 @@ y = "hello"
 
     #[test]
     fn test_incremental_reanalysis_cache_miss_on_edit() {
-        use lsp_types::{TextDocumentContentChangeEvent, VersionedTextDocumentIdentifier};
-
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
         let mut analyzer = Analyzer::new(config, documents.clone());

@@ -4,6 +4,7 @@
 //! This provides visual feedback when the user's cursor is on a symbol.
 
 use crate::{document::DocumentManager, parser};
+
 use beacon_parser::{AstNode, SymbolTable};
 use lsp_types::{DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams, Position, Range};
 use url::Url;
@@ -80,7 +81,7 @@ impl DocumentHighlightProvider {
                 });
             }
             AstNode::Assignment { target, value, line, col, .. } => {
-                if target == symbol_name {
+                if target.target_to_string() == symbol_name {
                     let position =
                         Position { line: (*line as u32).saturating_sub(1), character: (*col as u32).saturating_sub(1) };
                     let end_position =
@@ -153,7 +154,7 @@ print(x)"#;
         let params = DocumentHighlightParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
                 text_document: lsp_types::TextDocumentIdentifier { uri },
-                position: Position { line: 0, character: 0 }, // On 'x' in first line
+                position: Position { line: 0, character: 0 },
             },
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
@@ -205,7 +206,7 @@ result = hello()"#;
         let params = DocumentHighlightParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
                 text_document: lsp_types::TextDocumentIdentifier { uri },
-                position: Position { line: 0, character: 2 }, // On '=' sign
+                position: Position { line: 0, character: 2 },
             },
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
@@ -218,7 +219,7 @@ result = hello()"#;
     #[test]
     fn test_collect_highlights_assignment() {
         let ast = AstNode::Assignment {
-            target: "x".to_string(),
+            target: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 1, end_line: 1, end_col: 2 }),
             value: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 5, end_col: 6, end_line: 1 }),
             line: 1,
             col: 1,
@@ -296,8 +297,8 @@ result = hello()"#;
         DocumentHighlightProvider::collect_highlights(&ast, "variable_name", &mut highlights, "");
 
         assert_eq!(highlights.len(), 1);
-        assert_eq!(highlights[0].range.start.line, 4); // 0-indexed
-        assert_eq!(highlights[0].range.start.character, 9); // 0-indexed
+        assert_eq!(highlights[0].range.start.line, 4);
+        assert_eq!(highlights[0].range.start.character, 9);
         assert_eq!(highlights[0].range.end.character, 9 + "variable_name".len() as u32);
     }
 }

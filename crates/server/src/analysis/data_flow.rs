@@ -6,6 +6,7 @@
 //! - Unused variable detection
 
 use super::cfg::{BlockId, ControlFlowGraph};
+
 use beacon_parser::{AstNode, BinaryOperator, CompareOperator, LiteralValue, ScopeId, SymbolTable, UnaryOperator};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -400,13 +401,13 @@ impl<'a> DataFlowAnalyzer<'a> {
         match stmt {
             AstNode::Assignment { target, value, .. } => {
                 Self::collect_uses(value, &mut uses);
-                defs.push(target.clone());
+                defs.extend(target.extract_target_names());
             }
             AstNode::AnnotatedAssignment { target, value, .. } => {
                 if let Some(val) = value {
                     Self::collect_uses(val, &mut uses);
                 }
-                defs.push(target.clone());
+                defs.extend(target.extract_target_names());
             }
             AstNode::For { target, iter, .. } => {
                 Self::collect_uses(iter, &mut uses);
@@ -576,18 +577,24 @@ impl<'a> DataFlowAnalyzer<'a> {
         match stmt {
             AstNode::Assignment { target, value, .. } => {
                 let const_value = self.evaluate_to_constant(value, constants);
-                constants.insert(target.clone(), const_value)
+                for name in target.extract_target_names() {
+                    constants.insert(name, const_value.clone());
+                }
             }
             AstNode::AnnotatedAssignment { target, value: Some(val), .. } => {
                 let const_value = self.evaluate_to_constant(val, constants);
-                constants.insert(target.clone(), const_value)
+                for name in target.extract_target_names() {
+                    constants.insert(name, const_value.clone());
+                }
             }
-            AstNode::For { target, .. } => constants.insert(target.clone(), ConstantValue::Unknown),
+            AstNode::For { target, .. } => {
+                constants.insert(target.clone(), ConstantValue::Unknown);
+            }
             AstNode::NamedExpr { target, value, .. } => {
                 let const_value = self.evaluate_to_constant(value, constants);
-                constants.insert(target.clone(), const_value)
+                constants.insert(target.clone(), const_value);
             }
-            _ => None,
+            _ => {}
         };
     }
 
@@ -762,7 +769,13 @@ mod tests {
             args: vec![],
             body: vec![
                 AstNode::Assignment {
-                    target: "y".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "y".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Identifier {
                         name: "x".to_string(),
                         line: 2,
@@ -776,7 +789,13 @@ mod tests {
                     end_col: 5,
                 },
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(1),
                         line: 3,
@@ -831,7 +850,13 @@ mod tests {
             args: vec![],
             body: vec![
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(1),
                         line: 2,
@@ -845,7 +870,13 @@ mod tests {
                     end_col: 5,
                 },
                 AstNode::Assignment {
-                    target: "y".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "y".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(2),
                         line: 3,
@@ -926,7 +957,13 @@ mod tests {
                         end_col: 12,
                     }),
                     body: vec![AstNode::Assignment {
-                        target: "x".to_string(),
+                        target: Box::new(AstNode::Identifier {
+                            name: "x".to_string(),
+                            line: 1,
+                            col: 1,
+                            end_line: 1,
+                            end_col: 2,
+                        }),
                         value: Box::new(AstNode::Literal {
                             value: beacon_parser::LiteralValue::Integer(1),
                             line: 3,
@@ -1015,7 +1052,13 @@ mod tests {
                         end_col: 8,
                     }),
                     body: vec![AstNode::Assignment {
-                        target: "x".to_string(),
+                        target: Box::new(AstNode::Identifier {
+                            name: "x".to_string(),
+                            line: 1,
+                            col: 1,
+                            end_line: 1,
+                            end_col: 2,
+                        }),
                         value: Box::new(AstNode::Literal {
                             value: beacon_parser::LiteralValue::Integer(1),
                             line: 3,
@@ -1030,7 +1073,13 @@ mod tests {
                     }],
                     elif_parts: vec![],
                     else_body: Some(vec![AstNode::Assignment {
-                        target: "x".to_string(),
+                        target: Box::new(AstNode::Identifier {
+                            name: "x".to_string(),
+                            line: 1,
+                            col: 1,
+                            end_line: 1,
+                            end_col: 2,
+                        }),
                         value: Box::new(AstNode::Literal {
                             value: beacon_parser::LiteralValue::Integer(2),
                             line: 5,
@@ -1110,7 +1159,13 @@ mod tests {
                 }),
                 body: vec![
                     AstNode::Assignment {
-                        target: "result".to_string(),
+                        target: Box::new(AstNode::Identifier {
+                            name: "result".to_string(),
+                            line: 1,
+                            col: 1,
+                            end_line: 1,
+                            end_col: 7,
+                        }),
                         value: Box::new(AstNode::Identifier {
                             name: "total".to_string(),
                             line: 3,
@@ -1124,7 +1179,13 @@ mod tests {
                         end_col: 9,
                     },
                     AstNode::Assignment {
-                        target: "total".to_string(),
+                        target: Box::new(AstNode::Identifier {
+                            name: "total".to_string(),
+                            line: 1,
+                            col: 1,
+                            end_line: 1,
+                            end_col: 6,
+                        }),
                         value: Box::new(AstNode::Identifier {
                             name: "i".to_string(),
                             line: 4,
@@ -1194,7 +1255,13 @@ mod tests {
                     end_col: 5,
                 },
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(2),
                         line: 3,
@@ -1244,7 +1311,13 @@ mod tests {
             args: vec![],
             body: vec![
                 AstNode::Assignment {
-                    target: "y".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "y".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Identifier {
                         name: "x".to_string(),
                         line: 2,
@@ -1258,7 +1331,13 @@ mod tests {
                     end_col: 5,
                 },
                 AstNode::Assignment {
-                    target: "z".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "z".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(1),
                         line: 3,
@@ -1318,7 +1397,13 @@ mod tests {
                 default_value: None,
             }],
             body: vec![AstNode::Assignment {
-                target: "x".to_string(),
+                target: Box::new(AstNode::Identifier {
+                    name: "x".to_string(),
+                    line: 2,
+                    col: 5,
+                    end_line: 2,
+                    end_col: 6,
+                }),
                 value: Box::new(AstNode::Identifier {
                     name: "param".to_string(),
                     line: 2,
@@ -1445,7 +1530,13 @@ mod tests {
             name: "foo".to_string(),
             args: vec![],
             body: vec![AstNode::Assignment {
-                target: "z".to_string(),
+                target: Box::new(AstNode::Identifier {
+                    name: "z".to_string(),
+                    line: 2,
+                    col: 5,
+                    end_line: 2,
+                    end_col: 6,
+                }),
                 value: Box::new(AstNode::BinaryOp {
                     left: Box::new(AstNode::Identifier {
                         name: "x".to_string(),
@@ -1510,7 +1601,13 @@ mod tests {
             args: vec![],
             body: vec![
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(1),
                         line: 2,
@@ -1524,7 +1621,13 @@ mod tests {
                     end_col: 5,
                 },
                 AstNode::Assignment {
-                    target: "y".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "y".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Identifier {
                         name: "x".to_string(),
                         line: 3,
@@ -1575,7 +1678,13 @@ mod tests {
             args: vec![],
             body: vec![
                 AstNode::Assignment {
-                    target: "DEBUG".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "DEBUG".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 6,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Boolean(false),
                         line: 2,
@@ -1589,7 +1698,13 @@ mod tests {
                     end_col: 5,
                 },
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(1),
                         line: 3,
@@ -1645,7 +1760,13 @@ mod tests {
             args: vec![],
             body: vec![
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(5),
                         line: 2,
@@ -1659,7 +1780,13 @@ mod tests {
                     end_col: 5,
                 },
                 AstNode::Assignment {
-                    target: "y".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "y".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::BinaryOp {
                         left: Box::new(AstNode::Identifier {
                             name: "x".to_string(),
@@ -1748,7 +1875,13 @@ mod tests {
             name: "foo".to_string(),
             args: vec![],
             body: vec![AstNode::Assignment {
-                target: "x".to_string(),
+                target: Box::new(AstNode::Identifier {
+                    name: "x".to_string(),
+                    line: 2,
+                    col: 5,
+                    end_line: 2,
+                    end_col: 6,
+                }),
                 value: Box::new(AstNode::Literal {
                     value: beacon_parser::LiteralValue::Integer(10),
                     line: 2,
@@ -1847,7 +1980,13 @@ mod tests {
             name: "foo".to_string(),
             args: vec![],
             body: vec![AstNode::Assignment {
-                target: "s".to_string(),
+                target: Box::new(AstNode::Identifier {
+                    name: "s".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }),
                 value: Box::new(AstNode::Literal {
                     value: beacon_parser::LiteralValue::String { value: "hello".to_string(), prefix: String::new() },
                     line: 2,
@@ -1923,7 +2062,13 @@ mod tests {
             args: vec![],
             body: vec![
                 AstNode::Assignment {
-                    target: "result".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "result".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 7,
+                    }),
                     value: Box::new(AstNode::Call {
                         function: "inner".to_string(),
                         args: vec![],
@@ -2018,7 +2163,13 @@ mod tests {
             args: vec![],
             body: vec![
                 AstNode::Assignment {
-                    target: "obj".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "obj".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 4,
+                    }),
                     value: Box::new(AstNode::Call {
                         function: "MyClass".to_string(),
                         args: vec![],
@@ -2101,7 +2252,13 @@ mod tests {
             args: vec![],
             body: vec![
                 AstNode::Assignment {
-                    target: "result".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "result".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 7,
+                    }),
                     value: Box::new(AstNode::Call {
                         function: "helper".to_string(),
                         args: vec![],
@@ -2308,7 +2465,13 @@ mod tests {
                     end_col: 5,
                 },
                 AstNode::Assignment {
-                    target: "result".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "result".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 7,
+                    }),
                     value: Box::new(AstNode::Call {
                         function: "baz".to_string(),
                         args: vec![],
@@ -2366,7 +2529,13 @@ mod tests {
             body: vec![
                 AstNode::Import { module: "os".to_string(), alias: None, line: 2, col: 5, end_line: 2, end_col: 5 },
                 AstNode::Assignment {
-                    target: "path".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "path".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 5,
+                    }),
                     value: Box::new(AstNode::Attribute {
                         object: Box::new(AstNode::Identifier {
                             name: "os".to_string(),
@@ -2436,7 +2605,13 @@ mod tests {
                     end_col: 5,
                 },
                 AstNode::Assignment {
-                    target: "arr".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "arr".to_string(),
+                        line: 3,
+                        col: 5,
+                        end_line: 3,
+                        end_col: 8,
+                    }),
                     value: Box::new(AstNode::Call {
                         function: "np.array".to_string(),
                         args: vec![AstNode::Literal {

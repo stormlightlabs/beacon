@@ -27,7 +27,7 @@ Implementation details and mod-specific tasks.
 
 See [Linter Rules](#linter-rules) section below for BEA code implementation status.
 
-**Infrastructure:**
+### Infrastructure
 
 - [ ] Suppression support (`# type: ignore`, `# noqa:`)
 - [ ] Rule configuration (per-rule enable/disable, severity)
@@ -48,13 +48,6 @@ See [Linter Rules](#linter-rules) section below for BEA code implementation stat
 
 Implementation status for BEA diagnostic codes. See `docs/src/lsp/lint_rules.md` for full rule documentation.
 
-### Needs Parser Support
-
-- [ ] BEA012: AssertTuple - Requires Assert AST node
-- [ ] BEA023: ForwardAnnotationSyntaxError - Needs Python expression parser for annotation validation
-- [ ] BEA009: TwoStarredExpressions - Needs starred expression support in assignment targets
-- [ ] BEA010: TooManyExpressionsInStarredAssignment - Validate unpacking arity
-
 ### Needs Symbol Table Integration
 
 - [ ] BEA015: UnusedImport
@@ -64,6 +57,7 @@ Implementation status for BEA diagnostic codes. See `docs/src/lsp/lint_rules.md`
 
 ### Needs Expression Evaluation
 
+- [ ] BEA023: ForwardAnnotationSyntaxError - Needs Python expression parser for annotation validation
 - [ ] BEA024: MultiValueRepeatedKeyLiteral - Requires dict key evaluation (linter.rs:340)
 - [ ] BEA029: RedundantPass - Requires separate pass (linter.rs:266)
 

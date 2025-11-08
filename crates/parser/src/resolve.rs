@@ -1,4 +1,5 @@
 use crate::AstNode;
+
 use beacon_core::Result;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
@@ -692,7 +693,9 @@ impl NameResolver {
             | AstNode::Break { .. }
             | AstNode::Continue { .. }
             | AstNode::Import { .. }
-            | AstNode::ImportFrom { .. } => {}
+            | AstNode::ImportFrom { .. }
+            | AstNode::Assert { .. }
+            | AstNode::Starred { .. } => {}
         }
 
         Ok(())
@@ -788,7 +791,9 @@ impl NameResolver {
             | AstNode::Pass { line, col, .. }
             | AstNode::Break { line, col, .. }
             | AstNode::Continue { line, col, .. }
-            | AstNode::Raise { line, col, .. } => {
+            | AstNode::Raise { line, col, .. }
+            | AstNode::Assert { line, col, .. }
+            | AstNode::Starred { line, col, .. } => {
                 let start_byte = self.line_col_to_byte_offset(*line, *col);
                 let mut end_byte = start_byte;
                 for (i, ch) in self.source[start_byte..].chars().enumerate() {
@@ -886,30 +891,34 @@ impl NameResolver {
             AstNode::Assignment { target, value, line, col, .. } => {
                 self.visit_node(value)?;
 
-                let symbol = Symbol {
-                    name: target.clone(),
-                    kind: SymbolKind::Variable,
-                    line: *line,
-                    col: *col,
-                    scope_id: self.current_scope,
-                    docstring: None,
-                    references: Vec::new(),
-                };
-                self.symbol_table.add_symbol(self.current_scope, symbol);
-            }
-            AstNode::AnnotatedAssignment { target, value, line, col, .. } => {
-                self.symbol_table.add_symbol(
-                    self.current_scope,
-                    Symbol {
-                        name: target.clone(),
+                for name in target.extract_target_names() {
+                    let symbol = Symbol {
+                        name,
                         kind: SymbolKind::Variable,
                         line: *line,
                         col: *col,
                         scope_id: self.current_scope,
                         docstring: None,
                         references: Vec::new(),
-                    },
-                );
+                    };
+                    self.symbol_table.add_symbol(self.current_scope, symbol);
+                }
+            }
+            AstNode::AnnotatedAssignment { target, value, line, col, .. } => {
+                for name in target.extract_target_names() {
+                    self.symbol_table.add_symbol(
+                        self.current_scope,
+                        Symbol {
+                            name,
+                            kind: SymbolKind::Variable,
+                            line: *line,
+                            col: *col,
+                            scope_id: self.current_scope,
+                            docstring: None,
+                            references: Vec::new(),
+                        },
+                    );
+                }
 
                 if let Some(val) = value {
                     self.visit_node(val)?;
@@ -1200,7 +1209,9 @@ impl NameResolver {
             | AstNode::Literal { .. }
             | AstNode::Pass { .. }
             | AstNode::Break { .. }
-            | AstNode::Continue { .. } => {}
+            | AstNode::Continue { .. }
+            | AstNode::Assert { .. }
+            | AstNode::Starred { .. } => {}
         }
 
         Ok(())
@@ -1295,18 +1306,18 @@ mod tests {
         let mut resolver = NameResolver::new(source);
 
         let ast = AstNode::Assignment {
-            target: "x".to_string(),
+            target: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 1, end_line: 1, end_col: 2 }),
             value: Box::new(AstNode::Literal {
                 value: crate::LiteralValue::Integer(42),
                 line: 1,
                 col: 5,
                 end_line: 1,
-                end_col: 7,  // "42" is 2 chars
+                end_col: 7,
             }),
             line: 1,
             col: 1,
             end_line: 1,
-            end_col: 7,  // "x = 42" ends at col 7
+            end_col: 7,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1329,7 +1340,7 @@ mod tests {
                     line: 1,
                     col: 15,
                     end_line: 1,
-                    end_col: 21,  // "param1" is 6 chars
+                    end_col: 21,
                     type_annotation: None,
                     default_value: None,
                 },
@@ -1338,29 +1349,35 @@ mod tests {
                     line: 1,
                     col: 23,
                     end_line: 1,
-                    end_col: 29,  // "param2" is 6 chars
+                    end_col: 29,
                     type_annotation: None,
                     default_value: None,
                 },
             ],
             body: vec![AstNode::Assignment {
-                target: "local_var".to_string(),
+                target: Box::new(AstNode::Identifier {
+                    name: "local_var".to_string(),
+                    line: 2,
+                    col: 5,
+                    end_line: 2,
+                    end_col: 14,
+                }),
                 value: Box::new(AstNode::Identifier {
                     name: "param1".to_string(),
                     line: 2,
                     col: 15,
                     end_line: 2,
-                    end_col: 21,  // "param1" is 6 chars
+                    end_col: 21,
                 }),
                 line: 2,
                 col: 5,
                 end_line: 2,
-                end_col: 21,  // "local_var = param1" ends at col 21
+                end_col: 21,
             }],
             line: 1,
             col: 1,
             end_line: 2,
-            end_col: 21,  // Function ends at last statement
+            end_col: 21,
             docstring: None,
             return_type: None,
             decorators: Vec::new(),
@@ -1399,7 +1416,13 @@ mod tests {
         let ast = AstNode::Module {
             body: vec![
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: crate::LiteralValue::Integer(1),
                         line: 1,
@@ -1417,7 +1440,13 @@ mod tests {
                     args: vec![],
                     body: vec![
                         AstNode::Assignment {
-                            target: "y".to_string(),
+                            target: Box::new(AstNode::Identifier {
+                                name: "y".to_string(),
+                                line: 3,
+                                col: 5,
+                                end_line: 3,
+                                end_col: 6,
+                            }),
                             value: Box::new(AstNode::Literal {
                                 value: crate::LiteralValue::Integer(2),
                                 line: 3,
@@ -1431,7 +1460,13 @@ mod tests {
                             end_col: 10,
                         },
                         AstNode::Assignment {
-                            target: "z".to_string(),
+                            target: Box::new(AstNode::Identifier {
+                                name: "z".to_string(),
+                                line: 4,
+                                col: 5,
+                                end_line: 4,
+                                end_col: 6,
+                            }),
                             value: Box::new(AstNode::Literal {
                                 value: crate::LiteralValue::Integer(3),
                                 line: 4,
@@ -1455,7 +1490,13 @@ mod tests {
                     is_async: false,
                 },
                 AstNode::Assignment {
-                    target: "w".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "w".to_string(),
+                        line: 5,
+                        col: 1,
+                        end_line: 5,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: crate::LiteralValue::Integer(4),
                         line: 5,
@@ -1500,7 +1541,13 @@ mod tests {
         let ast = AstNode::Module {
             body: vec![
                 AstNode::Assignment {
-                    target: "global_var".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "global_var".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 11,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: crate::LiteralValue::Integer(1),
                         line: 1,
@@ -1525,7 +1572,13 @@ mod tests {
                         default_value: None,
                     }],
                     body: vec![AstNode::Assignment {
-                        target: "outer_var".to_string(),
+                        target: Box::new(AstNode::Identifier {
+                            name: "outer_var".to_string(),
+                            line: 2,
+                            col: 5,
+                            end_line: 2,
+                            end_col: 14,
+                        }),
                         value: Box::new(AstNode::Literal {
                             value: crate::LiteralValue::Integer(2),
                             line: 3,
@@ -1603,7 +1656,7 @@ mod tests {
             line: 1,
             col: 1,
             end_line: 1,
-            end_col: 10,  // "obj.field" is 9 chars
+            end_col: 10,
         };
 
         resolver.resolve(&ast).unwrap();
@@ -1874,7 +1927,13 @@ mod tests {
                 name: "foo".to_string(),
                 args: vec![],
                 body: vec![AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Identifier {
                         name: "__name__".to_string(),
                         line: 2,
@@ -1947,7 +2006,13 @@ mod tests {
         let ast = AstNode::Module {
             body: vec![
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: crate::LiteralValue::Integer(1),
                         line: 1,
@@ -1964,7 +2029,13 @@ mod tests {
                     name: "foo".to_string(),
                     args: vec![],
                     body: vec![AstNode::Assignment {
-                        target: "x".to_string(),
+                        target: Box::new(AstNode::Identifier {
+                            name: "x".to_string(),
+                            line: 1,
+                            col: 1,
+                            end_line: 1,
+                            end_col: 2,
+                        }),
                         value: Box::new(AstNode::Literal {
                             value: crate::LiteralValue::Integer(2),
                             line: 3,
@@ -2008,7 +2079,13 @@ mod tests {
         let ast = AstNode::Module {
             body: vec![
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: crate::LiteralValue::Integer(1),
                         line: 1,
@@ -2026,7 +2103,13 @@ mod tests {
                     args: vec![],
                     body: vec![
                         AstNode::Assignment {
-                            target: "x".to_string(),
+                            target: Box::new(AstNode::Identifier {
+                                name: "x".to_string(),
+                                line: 1,
+                                col: 1,
+                                end_line: 1,
+                                end_col: 2,
+                            }),
                             value: Box::new(AstNode::Literal {
                                 value: crate::LiteralValue::Integer(2),
                                 line: 3,
@@ -2043,7 +2126,13 @@ mod tests {
                             name: "inner".to_string(),
                             args: vec![],
                             body: vec![AstNode::Assignment {
-                                target: "x".to_string(),
+                                target: Box::new(AstNode::Identifier {
+                                    name: "x".to_string(),
+                                    line: 1,
+                                    col: 1,
+                                    end_line: 1,
+                                    end_col: 2,
+                                }),
                                 value: Box::new(AstNode::Literal {
                                     value: crate::LiteralValue::Integer(3),
                                     line: 5,
@@ -2095,7 +2184,13 @@ mod tests {
         let ast = AstNode::Module {
             body: vec![
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: crate::LiteralValue::Integer(1),
                         line: 1,
@@ -2109,7 +2204,13 @@ mod tests {
                     end_col: 6,
                 },
                 AstNode::Assignment {
-                    target: "y".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "y".to_string(),
+                        line: 2,
+                        col: 1,
+                        end_line: 2,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: crate::LiteralValue::Integer(2),
                         line: 2,
@@ -2140,7 +2241,13 @@ mod tests {
         let ast = AstNode::Module {
             body: vec![
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: crate::LiteralValue::Integer(1),
                         line: 1,
@@ -2192,7 +2299,13 @@ mod tests {
         let ast = AstNode::Module {
             body: vec![
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: crate::LiteralValue::Integer(1),
                         line: 1,
@@ -2206,7 +2319,13 @@ mod tests {
                     end_col: 6,
                 },
                 AstNode::Assignment {
-                    target: "y".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "y".to_string(),
+                        line: 2,
+                        col: 1,
+                        end_line: 2,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::BinaryOp {
                         left: Box::new(AstNode::Identifier {
                             name: "x".to_string(),
@@ -2260,7 +2379,13 @@ mod tests {
         let ast = AstNode::Module {
             body: vec![
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: crate::LiteralValue::Integer(1),
                         line: 1,
@@ -2274,7 +2399,13 @@ mod tests {
                     end_col: 6,
                 },
                 AstNode::Assignment {
-                    target: "y".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "y".to_string(),
+                        line: 2,
+                        col: 1,
+                        end_line: 2,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: crate::LiteralValue::Integer(2),
                         line: 2,
@@ -2314,7 +2445,13 @@ mod tests {
 
         let ast = AstNode::Module {
             body: vec![AstNode::Assignment {
-                target: "_x".to_string(),
+                target: Box::new(AstNode::Identifier {
+                    name: "_x".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 3,
+                }),
                 value: Box::new(AstNode::Literal {
                     value: crate::LiteralValue::Integer(1),
                     line: 1,

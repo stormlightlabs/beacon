@@ -104,7 +104,9 @@ fn get_node_position(node: &AstNode) -> (usize, usize, usize, usize) {
         | AstNode::Raise { line, col, end_line, end_col, .. }
         | AstNode::Pass { line, col, end_line, end_col, .. }
         | AstNode::Break { line, col, end_line, end_col, .. }
-        | AstNode::Continue { line, col, end_line, end_col, .. } => (*line, *col, *end_line, *end_col),
+        | AstNode::Continue { line, col, end_line, end_col, .. }
+        | AstNode::Assert { line, col, end_line, end_col, .. }
+        | AstNode::Starred { line, col, end_line, end_col, .. } => (*line, *col, *end_line, *end_col),
     }
 }
 
@@ -185,6 +187,7 @@ fn check_node_for_yield(node: &AstNode) -> bool {
         | AstNode::Import { .. }
         | AstNode::ImportFrom { .. } => false,
         AstNode::Module { .. } => false,
+        AstNode::Assert { .. } | AstNode::Starred { .. } => false,
     }
 }
 
@@ -566,7 +569,9 @@ fn visit_node_with_context(
         // TODO: Determine if value is non-expansive for generalization
         AstNode::Assignment { target, value, line, col, .. } => {
             let value_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
-            env.bind(target.clone(), TypeScheme::mono(value_ty.clone()));
+            for name in target.extract_target_names() {
+                env.bind(name, TypeScheme::mono(value_ty.clone()));
+            }
             ctx.record_type(*line, *col, value_ty.clone());
             Ok(value_ty)
         }
@@ -578,7 +583,9 @@ fn visit_node_with_context(
                 ctx.constraints
                     .push(Constraint::Equal(value_ty, annotated_ty.clone(), span));
             }
-            env.bind(target.clone(), TypeScheme::mono(annotated_ty.clone()));
+            for name in target.extract_target_names() {
+                env.bind(name, TypeScheme::mono(annotated_ty.clone()));
+            }
             ctx.record_type(*line, *col, annotated_ty.clone());
             Ok(annotated_ty)
         }
@@ -1492,6 +1499,7 @@ fn visit_node_with_context(
             }
         }
         AstNode::Pass { .. } | AstNode::Break { .. } | AstNode::Continue { .. } => Ok(Type::none()),
+        AstNode::Assert { .. } | AstNode::Starred { .. } => Ok(Type::none()),
     }
 }
 
@@ -1531,11 +1539,11 @@ fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnvironmen
         match stmt {
             AstNode::AnnotatedAssignment { target, type_annotation, .. } => {
                 let field_type = env.parse_annotation_or_any(type_annotation);
-                metadata.add_field(target.clone(), field_type);
+                metadata.add_field(target.target_to_string(), field_type);
             }
             AstNode::Assignment { target, .. } => {
                 let field_type = Type::Var(env.fresh_var());
-                metadata.add_field(target.clone(), field_type);
+                metadata.add_field(target.target_to_string(), field_type);
             }
             _ => {}
         }
@@ -1595,13 +1603,13 @@ fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnvironmen
 fn extract_field_assignments(stmt: &AstNode, metadata: &mut ClassMetadata, env: &mut TypeEnvironment) {
     match stmt {
         AstNode::Assignment { target, .. } => {
-            if let Some(field_name) = target.strip_prefix("self.") {
+            if let Some(field_name) = target.target_to_string().strip_prefix("self.") {
                 let field_type = Type::Var(env.fresh_var());
                 metadata.add_field(field_name.to_string(), field_type);
             }
         }
         AstNode::AnnotatedAssignment { target, type_annotation, .. } => {
-            if let Some(field_name) = target.strip_prefix("self.") {
+            if let Some(field_name) = target.target_to_string().strip_prefix("self.") {
                 let field_type = env.parse_annotation_or_any(type_annotation);
                 metadata.add_field(field_name.to_string(), field_type);
             }
@@ -1729,13 +1737,15 @@ fn extract_enum_members(metadata: &mut ClassMetadata, body: &[AstNode], class_na
     for stmt in body {
         match stmt {
             AstNode::Assignment { target, .. } => {
-                if !target.contains('.') && !target.starts_with('_') {
-                    metadata.add_field(target.clone(), enum_type.clone());
+                let target_str = target.target_to_string();
+                if !target_str.contains('.') && !target_str.starts_with('_') {
+                    metadata.add_field(target_str, enum_type.clone());
                 }
             }
             AstNode::AnnotatedAssignment { target, .. } => {
-                if !target.contains('.') && !target.starts_with('_') {
-                    metadata.add_field(target.clone(), enum_type.clone());
+                let target_str = target.target_to_string();
+                if !target_str.contains('.') && !target_str.starts_with('_') {
+                    metadata.add_field(target_str, enum_type.clone());
                 }
             }
             _ => {}
@@ -2094,7 +2104,13 @@ mod tests {
     #[test]
     fn test_contains_yield_in_lambda() {
         let nodes = vec![AstNode::Assignment {
-            target: "x".to_string(),
+            target: Box::new(AstNode::Identifier {
+                name: "x".to_string(),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
             value: Box::new(AstNode::Lambda {
                 args: vec![],
                 body: Box::new(make_yield(1, 20)),
@@ -2305,7 +2321,13 @@ mod tests {
         };
 
         let reassignment = AstNode::Assignment {
-            target: "provider".to_string(),
+            target: Box::new(AstNode::Identifier {
+                name: "provider".to_string(),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 9,
+            }),
             value: Box::new(AstNode::Literal {
                 value: LiteralValue::String { value: "fallback".to_string(), prefix: String::new() },
                 line: 2,
@@ -2623,7 +2645,13 @@ mod tests {
     #[test]
     fn test_return_path_analysis_implicit_none() {
         let body = vec![AstNode::Assignment {
-            target: "x".to_string(),
+            target: Box::new(AstNode::Identifier {
+                name: "x".to_string(),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
             value: Box::new(AstNode::Literal {
                 value: LiteralValue::Integer(42),
                 line: 1,
@@ -3095,7 +3123,13 @@ mod tests {
             name: "side_effect".to_string(),
             args: vec![],
             body: vec![AstNode::Assignment {
-                target: "x".to_string(),
+                target: Box::new(AstNode::Identifier {
+                name: "x".to_string(),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(42),
                     line: 2,
@@ -3144,7 +3178,13 @@ mod tests {
             name: "main".to_string(),
             args: vec![],
             body: vec![AstNode::Assignment {
-                target: "x".to_string(),
+                target: Box::new(AstNode::Identifier {
+                name: "x".to_string(),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(42),
                     line: 2,
@@ -3529,7 +3569,13 @@ mod tests {
         );
 
         let assignment = AstNode::Assignment {
-            target: "x".to_string(),
+            target: Box::new(AstNode::Identifier {
+                name: "x".to_string(),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
             value: Box::new(AstNode::Subscript {
                 value: Box::new(AstNode::List {
                     elements: vec![AstNode::Literal {
@@ -3578,7 +3624,13 @@ mod tests {
 
         let class_body = vec![
             AstNode::AnnotatedAssignment {
-                target: "x".to_string(),
+                target: Box::new(AstNode::Identifier {
+                name: "x".to_string(),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
                 type_annotation: "int".to_string(),
                 value: None,
                 line: 2,
@@ -3587,7 +3639,13 @@ mod tests {
                 end_col: 5,
             },
             AstNode::AnnotatedAssignment {
-                target: "y".to_string(),
+                target: Box::new(AstNode::Identifier {
+                    name: "y".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }),
                 type_annotation: "str".to_string(),
                 value: Some(Box::new(AstNode::Literal {
                     value: LiteralValue::String { value: "default".to_string(), prefix: "".to_string() },
@@ -3633,7 +3691,7 @@ mod tests {
 
         let class_body = vec![
             AstNode::AnnotatedAssignment {
-                target: "class_var".to_string(),
+                target: Box::new(AstNode::Identifier { name: "class_var".to_string(), line: 1, col: 1, end_line: 1, end_col: 10 }),
                 type_annotation: "int".to_string(),
                 value: Some(Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(0),
@@ -3659,7 +3717,7 @@ mod tests {
                     default_value: None,
                 }],
                 body: vec![AstNode::AnnotatedAssignment {
-                    target: "self.instance_var".to_string(),
+                    target: Box::new(AstNode::Identifier { name: "self.instance_var".to_string(), line: 1, col: 1, end_line: 1, end_col: 18 }),
                     type_annotation: "str".to_string(),
                     value: Some(Box::new(AstNode::Literal {
                         value: LiteralValue::String { value: "hello".to_string(), prefix: "".to_string() },
@@ -3720,7 +3778,7 @@ mod tests {
 
         let class_body = vec![
             AstNode::Assignment {
-                target: "counter".to_string(),
+                target: Box::new(AstNode::Identifier { name: "counter".to_string(), line: 1, col: 1, end_line: 1, end_col: 8 }),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(0),
                     line: 2,
@@ -3734,7 +3792,7 @@ mod tests {
                 end_col: 5,
             },
             AstNode::Assignment {
-                target: "name".to_string(),
+                target: Box::new(AstNode::Identifier { name: "name".to_string(), line: 1, col: 1, end_line: 1, end_col: 5 }),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::String { value: "default".to_string(), prefix: "".to_string() },
                     line: 3,
@@ -3778,7 +3836,7 @@ mod tests {
 
         let class_body = vec![
             AstNode::AnnotatedAssignment {
-                target: "typed_field".to_string(),
+                target: Box::new(AstNode::Identifier { name: "typed_field".to_string(), line: 1, col: 1, end_line: 1, end_col: 12 }),
                 type_annotation: "int".to_string(),
                 value: None,
                 line: 2,
@@ -3787,7 +3845,7 @@ mod tests {
                 end_col: 5,
             },
             AstNode::Assignment {
-                target: "untyped_field".to_string(),
+                target: Box::new(AstNode::Identifier { name: "untyped_field".to_string(), line: 1, col: 1, end_line: 1, end_col: 14 }),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(42),
                     line: 3,
@@ -3801,7 +3859,7 @@ mod tests {
                 end_col: 5,
             },
             AstNode::AnnotatedAssignment {
-                target: "another_typed".to_string(),
+                target: Box::new(AstNode::Identifier { name: "another_typed".to_string(), line: 1, col: 1, end_line: 1, end_col: 14 }),
                 type_annotation: "str".to_string(),
                 value: Some(Box::new(AstNode::Literal {
                     value: LiteralValue::String { value: "test".to_string(), prefix: "".to_string() },
@@ -3864,7 +3922,7 @@ mod tests {
 
         let class_body = vec![
             AstNode::AnnotatedAssignment {
-                target: "outer_field".to_string(),
+                target: Box::new(AstNode::Identifier { name: "outer_field".to_string(), line: 1, col: 1, end_line: 1, end_col: 12 }),
                 type_annotation: "int".to_string(),
                 value: None,
                 line: 2,
@@ -3877,7 +3935,7 @@ mod tests {
                 bases: vec![],
                 metaclass: None,
                 body: vec![AstNode::Assignment {
-                    target: "inner_field".to_string(),
+                    target: Box::new(AstNode::Identifier { name: "inner_field".to_string(), line: 1, col: 1, end_line: 1, end_col: 12 }),
                     value: Box::new(AstNode::Literal {
                         value: LiteralValue::Integer(1),
                         line: 4,
@@ -3954,7 +4012,13 @@ mod tests {
 
         let class_body = vec![
             AstNode::AnnotatedAssignment {
-                target: "x".to_string(),
+                target: Box::new(AstNode::Identifier {
+                name: "x".to_string(),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
                 type_annotation: "int".to_string(),
                 value: None,
                 line: 2,
@@ -3963,7 +4027,13 @@ mod tests {
                 end_col: 5,
             },
             AstNode::AnnotatedAssignment {
-                target: "y".to_string(),
+                target: Box::new(AstNode::Identifier {
+                    name: "y".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }),
                 type_annotation: "str".to_string(),
                 value: None,
                 line: 3,
@@ -4005,7 +4075,13 @@ mod tests {
 
         let class_body = vec![
             AstNode::AnnotatedAssignment {
-                target: "x".to_string(),
+                target: Box::new(AstNode::Identifier {
+                name: "x".to_string(),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
                 type_annotation: "int".to_string(),
                 value: None,
                 line: 2,
@@ -4050,7 +4126,7 @@ mod tests {
 
         let class_body = vec![
             AstNode::Assignment {
-                target: "RED".to_string(),
+                target: Box::new(AstNode::Identifier { name: "RED".to_string(), line: 1, col: 1, end_line: 1, end_col: 4 }),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(1),
                     line: 2,
@@ -4064,7 +4140,7 @@ mod tests {
                 end_col: 5,
             },
             AstNode::Assignment {
-                target: "GREEN".to_string(),
+                target: Box::new(AstNode::Identifier { name: "GREEN".to_string(), line: 1, col: 1, end_line: 1, end_col: 6 }),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(2),
                     line: 3,
@@ -4078,7 +4154,7 @@ mod tests {
                 end_col: 5,
             },
             AstNode::Assignment {
-                target: "BLUE".to_string(),
+                target: Box::new(AstNode::Identifier { name: "BLUE".to_string(), line: 1, col: 1, end_line: 1, end_col: 5 }),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(3),
                     line: 4,
@@ -4126,7 +4202,7 @@ mod tests {
 
         let class_body = vec![
             AstNode::Assignment {
-                target: "MEMBER".to_string(),
+                target: Box::new(AstNode::Identifier { name: "MEMBER".to_string(), line: 1, col: 1, end_line: 1, end_col: 7 }),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(1),
                     line: 2,
@@ -4174,7 +4250,7 @@ mod tests {
 
         let class_body = vec![
             AstNode::Assignment {
-                target: "PUBLIC".to_string(),
+                target: Box::new(AstNode::Identifier { name: "PUBLIC".to_string(), line: 1, col: 1, end_line: 1, end_col: 7 }),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(1),
                     line: 2,
@@ -4188,7 +4264,7 @@ mod tests {
                 end_col: 5,
             },
             AstNode::Assignment {
-                target: "_private".to_string(),
+                target: Box::new(AstNode::Identifier { name: "_private".to_string(), line: 1, col: 1, end_line: 1, end_col: 9 }),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(2),
                     line: 3,
@@ -4232,7 +4308,13 @@ mod tests {
                     end_col: 1,
                 },
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                name: "x".to_string(),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
                     value: Box::new(AstNode::Literal {
                         value: LiteralValue::Integer(42),
                         line: 2,

@@ -4,6 +4,7 @@
 //! Validates the new name and creates workspace edits for all occurrences.
 
 use crate::{document::DocumentManager, parser};
+
 use beacon_parser::{AstNode, SymbolTable};
 use lsp_types::{Position, Range, RenameParams, TextEdit, Url, WorkspaceEdit};
 use std::collections::{HashMap, HashSet};
@@ -106,7 +107,8 @@ impl RenameProvider {
                 });
             }
             AstNode::Assignment { target, value, line, col, .. } => {
-                if target == symbol_name {
+                let target_str = target.target_to_string();
+                if target_str == symbol_name {
                     let position =
                         Position { line: (*line as u32).saturating_sub(1), character: (*col as u32).saturating_sub(1) };
                     let end_position =
@@ -120,7 +122,7 @@ impl RenameProvider {
                 let value_is_same_identifier =
                     matches!(value.as_ref(), AstNode::Identifier { name, .. } if name == symbol_name);
 
-                if !(target == symbol_name && value_is_same_identifier) {
+                if !(target_str == symbol_name && value_is_same_identifier) {
                     Self::collect_renames(value, symbol_name, new_name, edits, _text);
                 }
             }
@@ -265,7 +267,7 @@ print(x)"#;
         let params = RenameParams {
             text_document_position: lsp_types::TextDocumentPositionParams {
                 text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
-                position: Position { line: 0, character: 0 }, // On 'x'
+                position: Position { line: 0, character: 0 },
             },
             new_name: "renamed_var".to_string(),
             work_done_progress_params: Default::default(),
@@ -322,7 +324,7 @@ print(x)"#;
         let params = RenameParams {
             text_document_position: lsp_types::TextDocumentPositionParams {
                 text_document: lsp_types::TextDocumentIdentifier { uri },
-                position: Position { line: 0, character: 2 }, // On '='
+                position: Position { line: 0, character: 2 },
             },
             new_name: "new_name".to_string(),
             work_done_progress_params: Default::default(),
@@ -348,7 +350,7 @@ print(x)"#;
     #[test]
     fn test_collect_renames_in_assignment() {
         let ast = AstNode::Assignment {
-            target: "x".to_string(),
+            target: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 1, end_line: 1, end_col: 2 }),
             value: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 5, end_line: 1, end_col: 2 }),
             line: 1,
             col: 1,
@@ -370,7 +372,13 @@ print(x)"#;
             args: vec![],
             body: vec![
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(42),
                         line: 2,
@@ -503,8 +511,8 @@ print(x)"#;
         RenameProvider::collect_renames(&ast, "long_variable_name", "short", &mut edits, "");
 
         assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].range.start.line, 4); // 0-indexed
-        assert_eq!(edits[0].range.start.character, 9); // 0-indexed
+        assert_eq!(edits[0].range.start.line, 4);
+        assert_eq!(edits[0].range.start.character, 9);
         assert_eq!(edits[0].range.end.character, 9 + "long_variable_name".len() as u32);
         assert_eq!(edits[0].new_text, "short");
     }
@@ -524,7 +532,7 @@ print(x)"#;
         let params = RenameParams {
             text_document_position: lsp_types::TextDocumentPositionParams {
                 text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
-                position: Position { line: 1, character: 13 }, // On 'x'
+                position: Position { line: 1, character: 13 },
             },
             new_name: "value".to_string(),
             work_done_progress_params: Default::default(),
@@ -559,7 +567,13 @@ print(x)"#;
         let ast = AstNode::Module {
             body: vec![
                 AstNode::Assignment {
-                    target: "x".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "x".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(1),
                         line: 1,
@@ -573,7 +587,13 @@ print(x)"#;
                     end_line: 0,
                 },
                 AstNode::Assignment {
-                    target: "y".to_string(),
+                    target: Box::new(AstNode::Identifier {
+                        name: "y".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
                     value: Box::new(AstNode::Identifier {
                         name: "x".to_string(),
                         line: 2,

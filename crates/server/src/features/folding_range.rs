@@ -343,7 +343,6 @@ impl FoldingRangeProvider {
             }
         }
 
-        // Handle import group at end of file
         if let (Some(start), Some(end)) = (import_start, import_end) {
             if end > start {
                 ranges.push(FoldingRange {
@@ -399,7 +398,9 @@ impl FoldingRangeProvider {
             | AstNode::Attribute { line, .. }
             | AstNode::Subscript { line, .. }
             | AstNode::NamedExpr { line, .. }
-            | AstNode::Await { line, .. } => *line,
+            | AstNode::Await { line, .. }
+            | AstNode::Assert { line, .. }
+            | AstNode::Starred { line, .. } => *line,
         }
     }
 

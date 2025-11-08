@@ -4,6 +4,7 @@
 //! Supports hierarchical structure with methods nested inside classes.
 
 use crate::document::DocumentManager;
+
 use beacon_parser::AstNode;
 use lsp_types::{DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse, Position, Range, SymbolKind};
 use url::Url;
@@ -100,11 +101,12 @@ impl DocumentSymbolsProvider {
             }
 
             AstNode::Assignment { target, value, line, col, .. } => {
+                let target_str = target.target_to_string();
                 let range = self.assignment_range(*line, *col, value);
-                let selection_range = self.identifier_range(*line, *col, target.len());
+                let selection_range = self.identifier_range(*line, *col, target_str.len());
 
                 Some(DocumentSymbol {
-                    name: target.clone(),
+                    name: target_str,
                     detail: None,
                     kind: SymbolKind::VARIABLE,
                     tags: None,
@@ -222,7 +224,9 @@ impl DocumentSymbolsProvider {
             | AstNode::Pass { line, col, .. }
             | AstNode::Break { line, col, .. }
             | AstNode::Continue { line, col, .. }
-            | AstNode::Raise { line, col, .. } => {
+            | AstNode::Raise { line, col, .. }
+            | AstNode::Assert { line, col, .. }
+            | AstNode::Starred { line, col, .. } => {
                 Position { line: (*line).saturating_sub(1) as u32, character: (*col + 10).saturating_sub(1) as u32 }
             }
         }

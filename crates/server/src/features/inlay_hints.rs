@@ -4,6 +4,7 @@
 
 use crate::analysis::Analyzer;
 use crate::document::DocumentManager;
+
 use beacon_core::Type;
 use beacon_parser::AstNode;
 use lsp_types::{InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams, Position, Range};
@@ -82,7 +83,8 @@ impl InlayHintsProvider {
                     if let Some(ty) = Self::get_type_for_position(type_map, position_map, *line, *col) {
                         let type_str = ty.to_string();
                         if !type_str.contains("'") && type_str != "Any" {
-                            let position = Self::calculate_hint_position(*line, *col, target, text);
+                            let target_str = target.target_to_string();
+                            let position = Self::calculate_hint_position(*line, *col, &target_str, text);
                             hints.push(InlayHint {
                                 position,
                                 label: InlayHintLabel::String(format!(": {type_str}")),
@@ -639,16 +641,14 @@ if True:
     #[test]
     fn test_calculate_hint_position() {
         let text = "x = 42\ny = 3.14\n";
-
-        // Line 1, col 1, target "x" -> should be at (0, 1)
         let pos = InlayHintsProvider::calculate_hint_position(1, 1, "x", text);
         assert_eq!(pos.line, 0);
         assert_eq!(pos.character, 1);
+
         let pos = InlayHintsProvider::calculate_hint_position(2, 1, "y", text);
         assert_eq!(pos.line, 1);
         assert_eq!(pos.character, 1);
 
-        // Longer variable name
         let text = "my_variable = 42\n";
         let pos = InlayHintsProvider::calculate_hint_position(1, 1, "my_variable", text);
         assert_eq!(pos.line, 0);

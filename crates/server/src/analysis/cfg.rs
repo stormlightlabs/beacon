@@ -440,12 +440,12 @@ impl Default for CfgBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beacon_parser::{AstNode, ExceptHandler, WithItem};
+    use beacon_parser::{AstNode, ExceptHandler, LiteralValue, MatchCase, Pattern, WithItem};
 
     #[test]
     fn test_cfg_creation() {
         let cfg = ControlFlowGraph::new();
-        assert_eq!(cfg.blocks.len(), 2); // entry + exit
+        assert_eq!(cfg.blocks.len(), 2);
         assert!(cfg.blocks.contains_key(&cfg.entry));
         assert!(cfg.blocks.contains_key(&cfg.exit));
     }
@@ -751,8 +751,6 @@ mod tests {
 
     #[test]
     fn test_cfg_match_statement() {
-        use beacon_parser::{AstNode, LiteralValue, MatchCase, Pattern};
-
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::Match {
             subject: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 7, end_col: 8, end_line: 1 }),
@@ -864,7 +862,13 @@ mod tests {
         let mut builder = CfgBuilder::new();
         let body = vec![
             AstNode::Assignment {
-                target: "x".to_string(),
+                target: Box::new(AstNode::Identifier {
+                    name: "x".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }),
                 value: Box::new(AstNode::Literal {
                     value: beacon_parser::LiteralValue::Integer(1),
                     line: 1,

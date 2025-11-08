@@ -8,6 +8,7 @@
 
 use crate::document::DocumentManager;
 use crate::utils;
+
 use beacon_parser::{AstNode, ScopeId, SymbolKind, SymbolTable};
 use lsp_types::{
     Position, Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensParams,
@@ -264,21 +265,24 @@ impl SemanticTokensProvider {
             AstNode::Assignment { target, value, line, col, .. } => {
                 let token_type = self.get_token_type_index(&SymbolKind::Variable);
                 let modifiers = self.get_definition_modifier();
-                Self::add_token(target, *line, *col, token_type, modifiers, text, raw_tokens);
+                let target_str = target.target_to_string();
+                Self::add_token(&target_str, *line, *col, token_type, modifiers, text, raw_tokens);
                 self.collect_tokens_from_node(value, symbol_table, current_scope, text, raw_tokens);
             }
 
             AstNode::AnnotatedAssignment { target, type_annotation, value, line, col, .. } => {
                 let token_type = self.get_token_type_index(&SymbolKind::Variable);
                 let modifiers = self.get_definition_modifier();
-                Self::add_token(target, *line, *col, token_type, modifiers, text, raw_tokens);
+                let target_str = target.target_to_string();
+                Self::add_token(&target_str, *line, *col, token_type, modifiers, text, raw_tokens);
 
                 let type_token_type = SUPPORTED_TYPES
                     .iter()
                     .position(|t| *t == SemanticTokenType::TYPE)
                     .unwrap_or(0) as u32;
 
-                if let Some(type_col) = Self::find_type_annotation_position(text, *line, *col, target, type_annotation)
+                if let Some(type_col) =
+                    Self::find_type_annotation_position(text, *line, *col, &target_str, type_annotation)
                 {
                     Self::add_token(type_annotation, *line, type_col, type_token_type, 0, text, raw_tokens);
                 }
@@ -550,7 +554,9 @@ impl SemanticTokensProvider {
             | AstNode::Pass { line, col, .. }
             | AstNode::Break { line, col, .. }
             | AstNode::Continue { line, col, .. }
-            | AstNode::Raise { line, col, .. } => (*line, *col),
+            | AstNode::Raise { line, col, .. }
+            | AstNode::Assert { line, col, .. }
+            | AstNode::Starred { line, col, .. } => (*line, *col),
         }
     }
 
@@ -578,7 +584,7 @@ impl SemanticTokensProvider {
                 if let Some(type_start) = remaining.find(|c: char| !c.is_whitespace()) {
                     let type_pos = after_colon + type_start;
                     if line_text[type_pos..].starts_with(type_annotation) {
-                        return Some(type_pos + 1); // +1 for 1-indexed column
+                        return Some(type_pos + 1);
                     }
                 }
             }
@@ -603,7 +609,7 @@ impl SemanticTokensProvider {
                 if let Some(type_start) = remaining.find(|c: char| !c.is_whitespace()) {
                     let type_pos = after_arrow + type_start;
                     if line_text[type_pos..].starts_with(type_annotation) {
-                        return Some(type_pos + 1); // +1 for 1-indexed column
+                        return Some(type_pos + 1);
                     }
                 }
             }

@@ -299,7 +299,9 @@ impl TypeEnvironment {
             }
             AstNode::AnnotatedAssignment { target, type_annotation, .. } => {
                 let ty = self.parse_annotation_or_any(type_annotation);
-                self.bind(target.clone(), TypeScheme::mono(ty));
+                for name in target.extract_target_names() {
+                    self.bind(name, TypeScheme::mono(ty.clone()));
+                }
             }
             AstNode::If { body, elif_parts, else_body, .. } => {
                 for stmt in body {

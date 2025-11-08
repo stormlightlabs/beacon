@@ -49,7 +49,8 @@ pub fn collect_stub_type_vars(node: &AstNode, ctx: &mut StubTypeContext) {
         AstNode::Assignment { target, value, .. } => {
             if let AstNode::Call { function, .. } = value.as_ref() {
                 if function == "TypeVar" || function.ends_with(".TypeVar") {
-                    ctx.register_type_var(target);
+                    let target_str = target.target_to_string();
+                    ctx.register_type_var(&target_str);
                 }
             }
         }
@@ -230,7 +231,7 @@ pub fn process_class_methods(body: &[AstNode], metadata: &mut ClassMetadata, ctx
     for stmt in body {
         if let AstNode::AnnotatedAssignment { target, type_annotation, .. } = stmt {
             if let Some(attr_type) = parse_type_annotation(type_annotation, ctx) {
-                metadata.add_field(target.clone(), attr_type);
+                metadata.add_field(target.target_to_string(), attr_type);
             }
             continue;
         }
