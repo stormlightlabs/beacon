@@ -180,29 +180,25 @@ pub struct Config {
 
     /// Source roots for module resolution (in addition to workspace root)
     ///
-    /// TODO: Make this configurable via LSP settings
-    /// For now, we auto-detect workspace root, src/, and lib/
+    /// Auto-detected roots include workspace root, src/, and lib/
     #[serde(default)]
     pub source_roots: Vec<PathBuf>,
 
     /// Patterns to exclude from workspace scanning
     ///
-    /// TODO: Make this configurable via LSP settings
-    /// For now, we hardcode common venv patterns
+    /// Common patterns include venv/, .venv/, __pycache__/, etc.
     #[serde(default)]
     pub exclude_patterns: Vec<String>,
 
     /// Diagnostic severity for unresolved imports
     ///
-    /// TODO: Make this configurable (Info, Warning, Error)
-    /// For now, we default to Warning
+    /// Defaults to Warning
     #[serde(default)]
     pub unresolved_import_severity: DiagnosticSeverity,
 
     /// Diagnostic severity for circular imports
     ///
-    /// TODO: Make this configurable (Info, Warning, Error, or disabled)
-    /// For now, we default to Warning
+    /// Defaults to Warning
     #[serde(default)]
     pub circular_import_severity: DiagnosticSeverity,
 
@@ -756,5 +752,173 @@ parameter_names = true
 
         assert_eq!(config.inlay_hints.enable, original_enable);
         assert!(config.inlay_hints.parameter_names);
+    }
+
+    #[test]
+    fn test_source_roots_from_json() {
+        let json_str = r#"{
+            "sourceRoots": ["/path/to/src", "/path/to/lib"]
+        }"#;
+
+        let json_value: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        let mut config = Config::default();
+        config.update_from_value(json_value);
+
+        assert_eq!(config.source_roots.len(), 2);
+        assert_eq!(config.source_roots[0], PathBuf::from("/path/to/src"));
+        assert_eq!(config.source_roots[1], PathBuf::from("/path/to/lib"));
+    }
+
+    #[test]
+    fn test_source_roots_from_toml() {
+        let toml_str = r#"source_roots = ["/path/to/src", "/path/to/lib"]"#;
+
+        let table: toml::Table = toml::from_str(toml_str).unwrap();
+        let toml_value = toml::Value::Table(table);
+        let mut config = Config::default();
+        config.load_from_toml_value(toml_value).unwrap();
+
+        assert_eq!(config.source_roots.len(), 2);
+        assert_eq!(config.source_roots[0], PathBuf::from("/path/to/src"));
+        assert_eq!(config.source_roots[1], PathBuf::from("/path/to/lib"));
+    }
+
+    #[test]
+    fn test_exclude_patterns_from_json() {
+        let json_str = r#"{
+            "excludePatterns": ["venv", ".venv", "__pycache__"]
+        }"#;
+
+        let json_value: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        let mut config = Config::default();
+        config.update_from_value(json_value);
+
+        assert_eq!(config.exclude_patterns.len(), 3);
+        assert_eq!(config.exclude_patterns[0], "venv");
+        assert_eq!(config.exclude_patterns[1], ".venv");
+        assert_eq!(config.exclude_patterns[2], "__pycache__");
+    }
+
+    #[test]
+    fn test_exclude_patterns_from_toml() {
+        let toml_str = r#"exclude_patterns = ["venv", ".venv", "__pycache__"]"#;
+
+        let table: toml::Table = toml::from_str(toml_str).unwrap();
+        let toml_value = toml::Value::Table(table);
+        let mut config = Config::default();
+        config.load_from_toml_value(toml_value).unwrap();
+
+        assert_eq!(config.exclude_patterns.len(), 3);
+        assert_eq!(config.exclude_patterns[0], "venv");
+        assert_eq!(config.exclude_patterns[1], ".venv");
+        assert_eq!(config.exclude_patterns[2], "__pycache__");
+    }
+
+    #[test]
+    fn test_stub_paths_from_json() {
+        let json_str = r#"{
+            "stubPaths": ["/path/to/stubs", "/another/path"]
+        }"#;
+
+        let json_value: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        let mut config = Config::default();
+        config.update_from_value(json_value);
+
+        assert_eq!(config.stub_paths.len(), 2);
+        assert_eq!(config.stub_paths[0], PathBuf::from("/path/to/stubs"));
+        assert_eq!(config.stub_paths[1], PathBuf::from("/another/path"));
+    }
+
+    #[test]
+    fn test_stub_paths_from_toml() {
+        let toml_str = r#"stub_paths = ["/path/to/stubs", "/another/path"]"#;
+
+        let table: toml::Table = toml::from_str(toml_str).unwrap();
+        let toml_value = toml::Value::Table(table);
+        let mut config = Config::default();
+        config.load_from_toml_value(toml_value).unwrap();
+
+        assert_eq!(config.stub_paths.len(), 2);
+        assert_eq!(config.stub_paths[0], PathBuf::from("/path/to/stubs"));
+        assert_eq!(config.stub_paths[1], PathBuf::from("/another/path"));
+    }
+
+    #[test]
+    fn test_unresolved_import_severity_from_json() {
+        let json_str = r#"{
+            "unresolvedImportSeverity": "error"
+        }"#;
+
+        let json_value: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        let mut config = Config::default();
+        config.update_from_value(json_value);
+
+        assert_eq!(config.unresolved_import_severity, DiagnosticSeverity::Error);
+    }
+
+    #[test]
+    fn test_unresolved_import_severity_from_toml() {
+        let toml_str = r#"unresolved_import_severity = "info""#;
+
+        let table: toml::Table = toml::from_str(toml_str).unwrap();
+        let toml_value = toml::Value::Table(table);
+        let mut config = Config::default();
+        config.load_from_toml_value(toml_value).unwrap();
+
+        assert_eq!(config.unresolved_import_severity, DiagnosticSeverity::Info);
+    }
+
+    #[test]
+    fn test_circular_import_severity_from_json() {
+        let json_str = r#"{
+            "circularImportSeverity": "error"
+        }"#;
+
+        let json_value: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        let mut config = Config::default();
+        config.update_from_value(json_value);
+
+        assert_eq!(config.circular_import_severity, DiagnosticSeverity::Error);
+    }
+
+    #[test]
+    fn test_circular_import_severity_from_toml() {
+        let toml_str = r#"circular_import_severity = "info""#;
+
+        let table: toml::Table = toml::from_str(toml_str).unwrap();
+        let toml_value = toml::Value::Table(table);
+        let mut config = Config::default();
+        config.load_from_toml_value(toml_value).unwrap();
+
+        assert_eq!(config.circular_import_severity, DiagnosticSeverity::Info);
+    }
+
+    #[test]
+    fn test_combined_configuration_from_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let beacon_toml_path = temp_dir.path().join("beacon.toml");
+        let toml_content = r#"mode = "strict"
+python_version = "3.11"
+source_roots = ["/custom/src"]
+exclude_patterns = ["venv", ".venv"]
+stub_paths = ["/custom/stubs"]
+unresolved_import_severity = "error"
+circular_import_severity = "info"
+"#;
+
+        fs::write(&beacon_toml_path, toml_content).unwrap();
+
+        let config = Config::discover_and_load(temp_dir.path()).unwrap();
+
+        assert_eq!(config.mode, TypeCheckingMode::Strict);
+        assert_eq!(config.python_version, PythonVersion::Py311);
+        assert_eq!(config.source_roots.len(), 1);
+        assert_eq!(config.source_roots[0], PathBuf::from("/custom/src"));
+        assert_eq!(config.exclude_patterns.len(), 2);
+        assert_eq!(config.exclude_patterns[0], "venv");
+        assert_eq!(config.stub_paths.len(), 1);
+        assert_eq!(config.stub_paths[0], PathBuf::from("/custom/stubs"));
+        assert_eq!(config.unresolved_import_severity, DiagnosticSeverity::Error);
+        assert_eq!(config.circular_import_severity, DiagnosticSeverity::Info);
     }
 }

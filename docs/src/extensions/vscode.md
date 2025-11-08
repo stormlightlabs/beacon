@@ -1,6 +1,7 @@
 # VS Code Extension
 
-The Beacon VS Code extension (`pkg/vscode/`) pairs the Rust language server with the VS Code UI. It activates automatically for Python files and forwards editor requests to the Beacon LSP binary.
+The Beacon VS Code extension (`pkg/vscode/`) pairs the Rust language server with the VSCode UI.
+It activates automatically for Python files and forwards editor requests to the Beacon LSP binary.
 
 ## Feature Highlights
 
@@ -88,11 +89,13 @@ cargo build -p beacon-lsp --release    # release binary
 3. Press **F5** to start the Extension Development Host.
 4. In the new window, open a Python file (the repository’s `samples/` directory is a good starting point).
 
-The launch configuration compiles the TypeScript client and relies on the previously built Rust binary. In debug mode, `RUST_LOG=beacon_lsp=debug` is set automatically so server logs appear in the “Beacon LSP” output channel.
+The launch configuration compiles the TypeScript client and relies on the previously built Rust binary.
+In debug mode, `RUST_LOG=beacon_lsp=debug` is set automatically so server logs appear in the “Beacon LSP” output channel.
 
 ## Configuration
 
-The extension provides extensive configuration options accessible through VS Code settings. All settings are under the `beacon.*` namespace and can be configured per-workspace or globally.
+The extension provides extensive configuration options accessible through VS Code settings.
+All settings are under the `beacon.*` namespace and can be configured per-workspace or globally.
 
 ### Type Checking
 
@@ -111,10 +114,18 @@ The extension provides extensive configuration options accessible through VS Cod
 
 ### Python Settings
 
-| Setting                         | Type     | Default  | Description                                                            |
-| ------------------------------- | -------- | -------- | ---------------------------------------------------------------------- |
-| `beacon.python.version`         | `string` | `"3.12"` | Target Python version: `"3.9"`, `"3.10"`, `"3.11"`, `"3.12"`, `"3.13"` |
-| `beacon.python.interpreterPath` | `string` | `""`     | Path to Python interpreter for runtime introspection                   |
+| Setting                         | Type       | Default     | Description                                                            |
+| ------------------------------- | ---------- | ----------- | ---------------------------------------------------------------------- |
+| `beacon.python.version`         | `string`   | `"3.12"`    | Target Python version: `"3.9"`, `"3.10"`, `"3.11"`, `"3.12"`, `"3.13"` |
+| `beacon.python.interpreterPath` | `string`   | `""`        | Path to Python interpreter for runtime introspection                   |
+| `beacon.python.stubPaths`       | `string[]` | `["stubs"]` | Additional paths to search for .pyi stub files                         |
+
+### Workspace Settings
+
+| Setting                            | Type       | Default | Description                                                        |
+| ---------------------------------- | ---------- | ------- | ------------------------------------------------------------------ |
+| `beacon.workspace.sourceRoots`     | `string[]` | `[]`    | Source roots for module resolution (in addition to workspace root) |
+| `beacon.workspace.excludePatterns` | `string[]` | `[]`    | Patterns to exclude from workspace scanning (e.g., venv/, .venv/)  |
 
 ### Diagnostics
 
@@ -149,6 +160,13 @@ Add these settings to your `.vscode/settings.json`:
 {
   "beacon.typeChecking.mode": "strict",
   "beacon.python.version": "3.12",
+  "beacon.python.stubPaths": ["stubs", "typings"],
+  "beacon.workspace.sourceRoots": ["src", "lib"],
+  "beacon.workspace.excludePatterns": [
+      "**/venv/**",
+      "**/.venv/**",
+      "**/build/**"
+  ],
   "beacon.inlayHints.enable": true,
   "beacon.inlayHints.variableTypes": true,
   "beacon.inlayHints.functionReturnTypes": true,
@@ -173,7 +191,8 @@ See [Configuration](../configuration.md) for details on TOML configuration files
 2. From `pkg/vscode`, run `vsce package` (or `ovsx package`) to produce a `.vsix`.
 3. Publish the package with `vsce publish` or `ovsx publish` once authenticated.
 
-The generated `.vsix` expects the server binary to be shipped alongside the extension or obtainable on the user’s machine. Adjust `extension.ts` if you plan to bundle the binary differently.
+The generated `.vsix` expects the server binary to be shipped alongside the extension or obtainable on the user’s machine.
+Adjust `extension.ts` if you plan to bundle the binary differently.
 
 ## Troubleshooting
 

@@ -72,6 +72,27 @@
           "default": "",
           "description": "Path to Python interpreter for runtime introspection. Leave empty to auto-detect."
         },
+        "beacon.python.stubPaths": {
+          "scope": "resource",
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["stubs"],
+          "description": "Additional paths to search for .pyi stub files. Paths can be absolute or relative to the workspace root."
+        },
+        "beacon.workspace.sourceRoots": {
+          "scope": "resource",
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Source roots for module resolution (in addition to workspace root). Auto-detected roots include workspace root, src/, and lib/."
+        },
+        "beacon.workspace.excludePatterns": {
+          "scope": "resource",
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Patterns to exclude from workspace scanning. Common patterns include venv/, .venv/, __pycache__/, etc."
+        },
         "beacon.diagnostics.unresolvedImports": {
           "scope": "resource",
           "type": "string",

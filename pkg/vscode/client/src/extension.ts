@@ -49,6 +49,9 @@ function getBeaconConfig() {
   return {
     mode: config.get("typeChecking.mode", "balanced"),
     pythonVersion: config.get("python.version", "3.12"),
+    stubPaths: config.get("python.stubPaths", ["stubs"]),
+    sourceRoots: config.get("workspace.sourceRoots", []),
+    excludePatterns: config.get("workspace.excludePatterns", []),
     maxAnyDepth: config.get("advanced.maxAnyDepth", 3),
     incremental: config.get("advanced.incremental", true),
     workspaceAnalysis: config.get("advanced.workspaceAnalysis", true),

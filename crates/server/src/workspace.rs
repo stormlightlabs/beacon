@@ -279,8 +279,8 @@ impl Workspace {
 
     /// Discover all Python files in the workspace
     ///
-    /// Uses [ignore] crate to walk the workspace directory tree, respecting .gitignore files and excluding common virtual environment patterns.
-    /// TODO: Make overrides configurable via [Config::exclude_patterns]
+    /// Uses [ignore] crate to walk the workspace directory tree, respecting .gitignore files and excluding patterns from [Config::exclude_patterns].
+    /// Default exclusions include common virtual environment and cache directories.
     fn discover_files(&mut self) -> Result<(), WorkspaceError> {
         let root_path = match &self.root_uri {
             Some(uri) if uri.scheme() == "file" => {
@@ -313,24 +313,44 @@ impl Workspace {
             .git_exclude(true);
 
         let mut overrides_builder = ignore::overrides::OverrideBuilder::new(&root_path);
-        let venv_patterns = vec![
-            "!venv/",
-            "!.venv/",
-            "!env/",
-            "!.env/",
-            "!virtualenv/",
+
+        let default_patterns = vec![
             "!__pycache__/",
             "!*.pyc",
-            "!.tox/",
-            "!.nox/",
             "!.pytest_cache/",
             "!.mypy_cache/",
             "!.ruff_cache/",
         ];
 
-        for pattern in venv_patterns {
+        for pattern in default_patterns {
             if let Err(e) = overrides_builder.add(pattern) {
-                eprintln!("Warning: Failed to add exclude pattern {pattern}: {e}");
+                tracing::warn!("Failed to add default exclude pattern {pattern}: {e}");
+            }
+        }
+
+        if self.config.exclude_patterns.is_empty() {
+            let fallback_patterns = vec![
+                "!venv/",
+                "!.venv/",
+                "!env/",
+                "!.env/",
+                "!virtualenv/",
+                "!.tox/",
+                "!.nox/",
+            ];
+
+            for pattern in fallback_patterns {
+                if let Err(e) = overrides_builder.add(pattern) {
+                    tracing::warn!("Failed to add fallback exclude pattern {pattern}: {e}");
+                }
+            }
+        } else {
+            for pattern in &self.config.exclude_patterns {
+                let normalized = if pattern.starts_with('!') { pattern.clone() } else { format!("!{pattern}") };
+
+                if let Err(e) = overrides_builder.add(&normalized) {
+                    tracing::warn!("Failed to add configured exclude pattern {pattern}: {e}");
+                }
             }
         }
 
@@ -442,7 +462,6 @@ impl Workspace {
     /// Get all source roots to search for modules
     ///
     /// Auto-detects workspace root, src/, and lib/ as per user requirements.
-    /// TODO: Make source_roots configurable via [Config]
     fn get_source_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
 
@@ -1613,8 +1632,8 @@ pub enum WorkspaceError {
 mod tests {
     use super::*;
     use beacon_core::{Type, TypeCtor};
-    use std::io::Write;
-    use tempfile::NamedTempFile;
+    use std::{fs, io::Write};
+    use tempfile::{NamedTempFile, TempDir};
 
     #[test]
     fn test_workspace_creation() {
@@ -1950,7 +1969,6 @@ mod tests {
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
         let workspace = Workspace::new(None, config, documents);
-
         let stub_content = r#"
 """Test stub file."""
 
@@ -2029,8 +2047,8 @@ def test_function(x: str) -> bool: ...
     fn test_stdlib_stubs_have_expected_exports() {
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
-        let mut workspace = Workspace::new(None, config, documents);
 
+        let mut workspace = Workspace::new(None, config, documents);
         workspace.load_builtin_stubs();
         let cache = workspace.stubs.read().unwrap();
 
@@ -2173,6 +2191,170 @@ def test_function(x: str) -> bool: ...
         assert!(
             workspace.get_stub_type("typing", "Iterator").is_some(),
             "typing.Iterator should be available"
+        );
+    }
+
+    #[test]
+    fn test_discover_files_with_custom_exclude_patterns() {
+        let temp_dir = TempDir::new().unwrap();
+        let root_path = temp_dir.path();
+
+        fs::create_dir_all(root_path.join("src")).unwrap();
+        fs::create_dir_all(root_path.join("tests")).unwrap();
+        fs::create_dir_all(root_path.join("build")).unwrap();
+        fs::create_dir_all(root_path.join("venv")).unwrap();
+
+        fs::write(root_path.join("src/main.py"), "# main").unwrap();
+        fs::write(root_path.join("tests/test_main.py"), "# test").unwrap();
+        fs::write(root_path.join("build/generated.py"), "# build").unwrap();
+        fs::write(root_path.join("venv/lib.py"), "# venv").unwrap();
+
+        let config = Config {
+            exclude_patterns: vec!["**/build/**".to_string(), "**/venv/**".to_string()],
+            ..Default::default()
+        };
+        let documents = DocumentManager::new().unwrap();
+        let root_uri = Url::from_directory_path(root_path).unwrap();
+        let mut workspace = Workspace::new(Some(root_uri), config, documents);
+
+        workspace.discover_files().unwrap();
+
+        let indexed_files = workspace.all_indexed_files();
+        let file_paths: Vec<String> = indexed_files.iter().map(|uri| uri.path().to_string()).collect();
+
+        assert!(
+            file_paths.iter().any(|p| p.contains("src/main.py")),
+            "src/main.py should be indexed"
+        );
+        assert!(
+            file_paths.iter().any(|p| p.contains("tests/test_main.py")),
+            "tests/test_main.py should be indexed"
+        );
+        assert!(
+            !file_paths.iter().any(|p| p.contains("build/generated.py")),
+            "build/generated.py should be excluded"
+        );
+        assert!(
+            !file_paths.iter().any(|p| p.contains("venv/lib.py")),
+            "venv/lib.py should be excluded"
+        );
+    }
+
+    #[test]
+    fn test_discover_files_default_excludes_venv() {
+        let temp_dir = TempDir::new().unwrap();
+        let root_path = temp_dir.path();
+
+        fs::create_dir_all(root_path.join("src")).unwrap();
+        fs::create_dir_all(root_path.join(".venv/lib/python3.12")).unwrap();
+        fs::create_dir_all(root_path.join("venv/lib")).unwrap();
+
+        fs::write(root_path.join("src/app.py"), "# app").unwrap();
+        fs::write(root_path.join(".venv/lib/python3.12/site.py"), "# site").unwrap();
+        fs::write(root_path.join("venv/lib/foo.py"), "# foo").unwrap();
+
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let root_uri = Url::from_directory_path(root_path).unwrap();
+        let mut workspace = Workspace::new(Some(root_uri), config, documents);
+
+        workspace.discover_files().unwrap();
+
+        let indexed_files = workspace.all_indexed_files();
+        let file_paths: Vec<String> = indexed_files.iter().map(|uri| uri.path().to_string()).collect();
+
+        assert!(
+            file_paths.iter().any(|p| p.contains("src/app.py")),
+            "src/app.py should be indexed"
+        );
+        assert!(
+            !file_paths.iter().any(|p| p.contains(".venv")),
+            ".venv files should be excluded by default"
+        );
+        assert!(
+            !file_paths.iter().any(|p| p.contains("venv/lib/foo.py")),
+            "venv files should be excluded by default"
+        );
+    }
+
+    #[test]
+    fn test_discover_files_excludes_cache_directories() {
+        let temp_dir = TempDir::new().unwrap();
+        let root_path = temp_dir.path();
+
+        fs::create_dir_all(root_path.join("src")).unwrap();
+        fs::create_dir_all(root_path.join("__pycache__")).unwrap();
+        fs::create_dir_all(root_path.join(".mypy_cache")).unwrap();
+        fs::create_dir_all(root_path.join(".pytest_cache")).unwrap();
+
+        fs::write(root_path.join("src/module.py"), "# module").unwrap();
+        fs::write(root_path.join("__pycache__/module.cpython-312.pyc"), "# compiled").unwrap();
+        fs::write(root_path.join(".mypy_cache/cache.py"), "# cache").unwrap();
+        fs::write(root_path.join(".pytest_cache/data.py"), "# pytest").unwrap();
+
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let root_uri = Url::from_directory_path(root_path).unwrap();
+        let mut workspace = Workspace::new(Some(root_uri), config, documents);
+
+        workspace.discover_files().unwrap();
+
+        let indexed_files = workspace.all_indexed_files();
+        let file_paths: Vec<String> = indexed_files.iter().map(|uri| uri.path().to_string()).collect();
+
+        assert!(
+            file_paths.iter().any(|p| p.contains("src/module.py")),
+            "src/module.py should be indexed"
+        );
+        assert!(
+            !file_paths.iter().any(|p| p.contains("__pycache__")),
+            "__pycache__ should be excluded"
+        );
+        assert!(
+            !file_paths.iter().any(|p| p.contains(".mypy_cache")),
+            ".mypy_cache should be excluded"
+        );
+        assert!(
+            !file_paths.iter().any(|p| p.contains(".pytest_cache")),
+            ".pytest_cache should be excluded"
+        );
+    }
+
+    #[test]
+    fn test_exclude_patterns_normalization() {
+        let temp_dir = TempDir::new().unwrap();
+        let root_path = temp_dir.path();
+
+        fs::create_dir_all(root_path.join("src")).unwrap();
+        fs::create_dir_all(root_path.join("dist")).unwrap();
+        fs::create_dir_all(root_path.join("node_modules")).unwrap();
+
+        fs::write(root_path.join("src/app.py"), "# app").unwrap();
+        fs::write(root_path.join("dist/bundle.py"), "# bundle").unwrap();
+        fs::write(root_path.join("node_modules/pkg.py"), "# pkg").unwrap();
+
+        let config =
+            Config { exclude_patterns: vec!["dist/".to_string(), "!node_modules/".to_string()], ..Default::default() };
+        let documents = DocumentManager::new().unwrap();
+        let root_uri = Url::from_directory_path(root_path).unwrap();
+        let mut workspace = Workspace::new(Some(root_uri), config, documents);
+
+        workspace.discover_files().unwrap();
+
+        let indexed_files = workspace.all_indexed_files();
+        let file_paths: Vec<String> = indexed_files.iter().map(|uri| uri.path().to_string()).collect();
+
+        assert!(
+            file_paths.iter().any(|p| p.contains("src/app.py")),
+            "src/app.py should be indexed"
+        );
+        assert!(
+            !file_paths.iter().any(|p| p.contains("dist/bundle.py")),
+            "dist/bundle.py should be excluded (pattern without !)"
+        );
+        assert!(
+            !file_paths.iter().any(|p| p.contains("node_modules/pkg.py")),
+            "node_modules/pkg.py should be excluded (pattern with !)"
         );
     }
 }

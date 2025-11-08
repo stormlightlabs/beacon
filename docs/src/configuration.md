@@ -259,9 +259,9 @@ exclude_patterns = ["**/venv/**", "**/.venv/**", "**/build/**"]
 mode = "strict"
 python_version = "3.12"
 unresolved_import_severity = "error"
-
-[tool.beacon.stub_paths]
-paths = ["stubs", "typings"]
+stub_paths = ["stubs", "typings"]
+source_roots = ["src"]
+exclude_patterns = ["**/venv/**", "**/.venv/**"]
 ```
 
 ## Configuration Precedence
