@@ -9,3 +9,4 @@ title = "Beacon.rs"
 mathjax-support = true
 default-theme = "dark"
 preferred-dark-theme = "navy"
+theme = "theme"
