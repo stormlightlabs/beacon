@@ -31,7 +31,13 @@ The hover system integrates with the builtin documentation and dunder metadata m
 
 `ReferencesProvider` returns all occurrences of a symbol across open documents.
 
-`DocumentHighlightProvider` highlights occurrences within a single file.
+`DocumentHighlightProvider` highlights all occurrences of a symbol within a single file when the cursor is positioned on it.
+The provider walks the AST to identify and classify occurrences:
+
+- Variables: marked as READ or WRITE based on context (assignments are WRITE, usage is READ)
+- Function names: highlighted in both definitions and call sites
+- Function parameters: highlighted in both the parameter list and within the function body
+- Class members: highlighted across the class definition
 
 ## Symbols
 
