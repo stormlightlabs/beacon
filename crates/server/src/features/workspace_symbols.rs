@@ -7,7 +7,7 @@ use crate::workspace::Workspace;
 
 use beacon_parser::{AstNode, SymbolKind, SymbolTable};
 use lsp_types::{
-    Location, Position, Range, SymbolInformation, SymbolKind as LspSymbolKind, SymbolTag, Url, WorkspaceSymbol,
+    Location, OneOf, Position, Range, SymbolInformation, SymbolKind as LspSymbolKind, SymbolTag, Url, WorkspaceSymbol,
     WorkspaceSymbolParams,
 };
 use std::sync::Arc;
@@ -87,12 +87,132 @@ impl WorkspaceSymbolsProvider {
         }
     }
 
-    /// Resolve a workspace symbol to fill in location details
-    ///
-    /// Takes a WorkspaceSymbol and returns it with complete location information for lazy loading in some LSP clients.
+    /// Resolve a [WorkspaceSymbol] and fills in complete location information for lazy loading in some LSP clients.
     pub fn symbol_resolve(&self, symbol: WorkspaceSymbol) -> WorkspaceSymbol {
-        // TODO: Implement symbol lookup and location resolution
-        symbol
+        if matches!(symbol.location, OneOf::Left(_)) {
+            return symbol;
+        }
+
+        let uri = match &symbol.location {
+            OneOf::Right(workspace_location) => workspace_location.uri.clone(),
+            OneOf::Left(_) => return symbol,
+        };
+
+        let location = self
+            .documents
+            .get_document(&uri, |doc| {
+                let symbol_table = doc.symbol_table()?;
+                let ast = doc.ast()?;
+
+                let mut found_location: Option<Location> = None;
+                Self::find_symbol_location(&uri, ast, symbol_table, &symbol.name, &mut found_location);
+                found_location
+            })
+            .flatten();
+
+        let location = location.or_else(|| {
+            tokio::runtime::Handle::try_current().ok().and_then(|_| {
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        let workspace = self.workspace.read().await;
+                        if let Some(parse_result) = workspace.load_workspace_file(&uri) {
+                            let mut found_location: Option<Location> = None;
+                            Self::find_symbol_location(
+                                &uri,
+                                &parse_result.ast,
+                                &parse_result.symbol_table,
+                                &symbol.name,
+                                &mut found_location,
+                            );
+                            found_location
+                        } else {
+                            None
+                        }
+                    })
+                })
+            })
+        });
+
+        match location {
+            Some(loc) => WorkspaceSymbol { location: OneOf::Left(loc), ..symbol },
+            None => symbol,
+        }
+    }
+
+    /// Find a specific symbol by name in the AST
+    ///
+    /// Recursively walks the AST to find a symbol with the exact name and stores its location.
+    fn find_symbol_location(
+        uri: &Url, node: &AstNode, _symbol_table: &SymbolTable, symbol_name: &str, result: &mut Option<Location>,
+    ) {
+        if result.is_some() {
+            return;
+        }
+
+        match node {
+            AstNode::FunctionDef { name, line, col, body, .. } => {
+                if name == symbol_name {
+                    let position =
+                        Position { line: (*line as u32).saturating_sub(1), character: (*col as u32).saturating_sub(1) };
+                    let range = Range {
+                        start: position,
+                        end: Position { line: position.line, character: position.character + name.len() as u32 },
+                    };
+                    *result = Some(Location { uri: uri.clone(), range });
+                    return;
+                }
+
+                for stmt in body {
+                    Self::find_symbol_location(uri, stmt, _symbol_table, symbol_name, result);
+                    if result.is_some() {
+                        return;
+                    }
+                }
+            }
+            AstNode::ClassDef { name, line, col, body, .. } => {
+                if name == symbol_name {
+                    let position =
+                        Position { line: (*line as u32).saturating_sub(1), character: (*col as u32).saturating_sub(1) };
+                    let range = Range {
+                        start: position,
+                        end: Position { line: position.line, character: position.character + name.len() as u32 },
+                    };
+                    *result = Some(Location { uri: uri.clone(), range });
+                    return;
+                }
+
+                for stmt in body {
+                    Self::find_symbol_location(uri, stmt, _symbol_table, symbol_name, result);
+                    if result.is_some() {
+                        return;
+                    }
+                }
+            }
+            AstNode::Assignment { target, value, line, col, .. } => {
+                let target_str = target.target_to_string();
+                if target_str == symbol_name {
+                    let position =
+                        Position { line: (*line as u32).saturating_sub(1), character: (*col as u32).saturating_sub(1) };
+                    let range = Range {
+                        start: position,
+                        end: Position { line: position.line, character: position.character + target_str.len() as u32 },
+                    };
+                    *result = Some(Location { uri: uri.clone(), range });
+                    return;
+                }
+
+                Self::find_symbol_location(uri, value, _symbol_table, symbol_name, result);
+            }
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    Self::find_symbol_location(uri, stmt, _symbol_table, symbol_name, result);
+                    if result.is_some() {
+                        return;
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Collect symbols matching the query from an AST
@@ -275,6 +395,7 @@ impl WorkspaceSymbolsProvider {
 mod tests {
     use super::*;
     use crate::config::Config;
+    use lsp_types::WorkspaceLocation;
     use std::str::FromStr;
 
     #[test]
@@ -584,6 +705,42 @@ def func2():
     fn test_symbol_resolve() {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "def test_function():\n    pass";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let symbol = WorkspaceSymbol {
+            name: "test_function".to_string(),
+            kind: LspSymbolKind::FUNCTION,
+            tags: None,
+            location: lsp_types::OneOf::Right(WorkspaceLocation { uri }),
+            container_name: None,
+            data: None,
+        };
+
+        let resolved = provider.symbol_resolve(symbol);
+
+        match resolved.location {
+            lsp_types::OneOf::Left(location) => {
+                assert_eq!(location.range.start.line, 0);
+                assert_eq!(
+                    location.range.end.character,
+                    location.range.start.character + "test_function".len() as u32
+                )
+            }
+            lsp_types::OneOf::Right(_) => {
+                panic!("Expected resolved location, got URI")
+            }
+        }
+    }
+
+    #[test]
+    fn test_symbol_resolve_already_complete() {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
         let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
         let provider = WorkspaceSymbolsProvider::new(documents, workspace);
 
@@ -597,13 +754,54 @@ def func2():
             name: "test".to_string(),
             kind: LspSymbolKind::FUNCTION,
             tags: None,
-            location: lsp_types::OneOf::Left(location),
+            location: lsp_types::OneOf::Left(location.clone()),
             container_name: None,
             data: None,
         };
 
-        let _ = provider.symbol_resolve(symbol);
-        // TODO: incomplete - currently just returns the symbol unchanged
+        let resolved = provider.symbol_resolve(symbol);
+
+        match resolved.location {
+            lsp_types::OneOf::Left(resolved_location) => {
+                assert_eq!(resolved_location.range, location.range);
+                assert_eq!(resolved_location.uri, location.uri)
+            }
+            lsp_types::OneOf::Right(_) => {
+                panic!("Expected location to remain as Location")
+            }
+        }
+    }
+
+    #[test]
+    fn test_symbol_resolve_not_found() {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = "def other_function():\n    pass";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let symbol = WorkspaceSymbol {
+            name: "nonexistent".to_string(),
+            kind: LspSymbolKind::FUNCTION,
+            tags: None,
+            location: lsp_types::OneOf::Right(WorkspaceLocation { uri: uri.clone() }),
+            container_name: None,
+            data: None,
+        };
+
+        let resolved = provider.symbol_resolve(symbol);
+
+        match resolved.location {
+            lsp_types::OneOf::Right(workspace_location) => {
+                assert_eq!(workspace_location.uri, uri);
+            }
+            lsp_types::OneOf::Left(_) => {
+                panic!("Expected unresolved symbol to keep URI location")
+            }
+        }
     }
 
     #[test]
@@ -612,7 +810,6 @@ def func2():
         let config = Config::default();
         let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
         let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
-
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "def hello():\n    pass";
 

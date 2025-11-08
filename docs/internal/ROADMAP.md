@@ -68,3 +68,4 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 - [ ] Add more comprehensive stdlib stubs (os, sys, pathlib, etc.)
 - [ ] Implement type checking mode awareness (strict/balanced/loose)
 - [ ] Auto-generate stubs from Python runtime introspection
+- [ ] Pull stubs from typeshed repository

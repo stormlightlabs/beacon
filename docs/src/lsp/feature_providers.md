@@ -37,7 +37,9 @@ The hover system integrates with the builtin documentation and dunder metadata m
 
 `DocumentSymbolsProvider` walks the AST to produce hierarchical outlines (classes, functions, variables).
 
-`WorkspaceSymbolsProvider` scans all open documents, performing case-insensitive matching. It falls back to sensible defaults when nested symbols are missing from the symbol table.
+`WorkspaceSymbolsProvider` scans all open documents, performing case-insensitive matching with fuzzy search scoring.
+It falls back to sensible defaults when nested symbols are missing from the symbol table.
+The provider supports lazy symbol resolution for LSP clients that request location details on-demand.
 
 ## Semantic Enhancements
 

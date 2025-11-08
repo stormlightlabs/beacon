@@ -282,8 +282,6 @@ impl Workspace {
     /// Uses [ignore] crate to walk the workspace directory tree, respecting .gitignore files and excluding common virtual environment patterns.
     /// TODO: Make overrides configurable via [Config::exclude_patterns]
     fn discover_files(&mut self) -> Result<(), WorkspaceError> {
-        tracing::debug!("discover_files: Starting file discovery");
-
         let root_path = match &self.root_uri {
             Some(uri) if uri.scheme() == "file" => {
                 let path = PathBuf::from(uri.path());
