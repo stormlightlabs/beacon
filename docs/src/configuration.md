@@ -11,9 +11,40 @@ Beacon searches for configuration in the following order:
 
 If multiple configuration files are found, `beacon.toml` takes precedence.
 
+## TOML Structure
+
+Beacon configuration uses TOML sections to organize related settings:
+
+```toml
+[type_checking]
+mode = "balanced"
+
+[python]
+version = "3.12"
+stub_paths = ["stubs", "typings"]
+
+[workspace]
+source_roots = ["src", "lib"]
+exclude_patterns = ["**/venv/**"]
+
+[inlay_hints]
+enable = true
+variable_types = true
+
+[diagnostics]
+unresolved_imports = "warning"
+circular_imports = "warning"
+
+[advanced]
+incremental = true
+cache_size = 100
+```
+
 ## Configuration Options
 
 ### Type Checking
+
+Configure type checking behavior under the `[type_checking]` section.
 
 #### `mode`
 
@@ -27,10 +58,15 @@ Type checking strictness mode. Controls how the type checker handles annotation 
     - `"loose"`: Annotations supply bounds but can be overridden by inference
 
 ```toml
+[type_checking]
 mode = "balanced"
 ```
 
-#### `python_version`
+### Python
+
+Configure Python-specific settings under the `[python]` section.
+
+#### `version`
 
 Target Python version for feature support (e.g., pattern matching in 3.10+, PEP 695 syntax in 3.12+).
 
@@ -39,7 +75,48 @@ Target Python version for feature support (e.g., pattern matching in 3.10+, PEP 
 - **Values:** `"3.9"`, `"3.10"`, `"3.11"`, `"3.12"`, `"3.13"`
 
 ```toml
-python_version = "3.12"
+[python]
+version = "3.12"
+```
+
+#### `stub_paths`
+
+Additional paths to search for .pyi stub files.
+
+- **Type:** `array of strings`
+- **Default:** `["stubs"]`
+
+```toml
+[python]
+stub_paths = ["stubs", "typings", "~/.local/share/python-stubs"]
+```
+
+### Workspace
+
+Configure workspace settings under the `[workspace]` section.
+
+#### `source_roots`
+
+Source roots for module resolution in addition to workspace root.
+
+- **Type:** `array of strings`
+- **Default:** `[]`
+
+```toml
+[workspace]
+source_roots = ["src", "lib"]
+```
+
+#### `exclude_patterns`
+
+Glob patterns to exclude from workspace scanning.
+
+- **Type:** `array of strings`
+- **Default:** `[]`
+
+```toml
+[workspace]
+exclude_patterns = ["**/venv/**", "**/.venv/**", "**/node_modules/**"]
 ```
 
 ### Inlay Hints
@@ -94,7 +171,9 @@ parameter_names = false
 
 ### Diagnostics
 
-#### `unresolved_import_severity`
+Configure diagnostic severity levels under the `[diagnostics]` section.
+
+#### `unresolved_imports`
 
 Diagnostic severity level for imports that cannot be resolved.
 
@@ -103,10 +182,11 @@ Diagnostic severity level for imports that cannot be resolved.
 - **Values:** `"error"`, `"warning"`, `"info"`
 
 ```toml
-unresolved_import_severity = "warning"
+[diagnostics]
+unresolved_imports = "warning"
 ```
 
-#### `circular_import_severity`
+#### `circular_imports`
 
 Diagnostic severity level for circular import dependencies.
 
@@ -115,10 +195,13 @@ Diagnostic severity level for circular import dependencies.
 - **Values:** `"error"`, `"warning"`, `"info"`
 
 ```toml
-circular_import_severity = "warning"
+[diagnostics]
+circular_imports = "warning"
 ```
 
 ### Advanced Options
+
+Configure advanced performance and analysis settings under the `[advanced]` section.
 
 #### `max_any_depth`
 
@@ -129,6 +212,7 @@ Maximum depth for Any type propagation before elevating diagnostics. Higher valu
 - **Range:** `0-10`
 
 ```toml
+[advanced]
 max_any_depth = 3
 ```
 
@@ -140,6 +224,7 @@ Enable incremental type checking for faster re-analysis.
 - **Default:** `true`
 
 ```toml
+[advanced]
 incremental = true
 ```
 
@@ -151,6 +236,7 @@ Enable workspace-wide analysis and cross-file type checking.
 - **Default:** `true`
 
 ```toml
+[advanced]
 workspace_analysis = true
 ```
 
@@ -162,6 +248,7 @@ Enable caching of parse trees and type inference results.
 - **Default:** `true`
 
 ```toml
+[advanced]
 enable_caching = true
 ```
 
@@ -174,40 +261,8 @@ Maximum number of documents to cache for faster analysis.
 - **Range:** `0-1000`
 
 ```toml
+[advanced]
 cache_size = 100
-```
-
-#### `stub_paths`
-
-Additional paths to search for .pyi stub files.
-
-- **Type:** `array of strings`
-- **Default:** `["stubs"]`
-
-```toml
-stub_paths = ["stubs", "typings", "~/.local/share/python-stubs"]
-```
-
-#### `source_roots`
-
-Source roots for module resolution in addition to workspace root.
-
-- **Type:** `array of strings`
-- **Default:** `[]`
-
-```toml
-source_roots = ["src", "lib"]
-```
-
-#### `exclude_patterns`
-
-Glob patterns to exclude from workspace scanning.
-
-- **Type:** `array of strings`
-- **Default:** `[]`
-
-```toml
-exclude_patterns = ["**/venv/**", "**/.venv/**", "**/node_modules/**"]
 ```
 
 ## Example Configurations
@@ -215,53 +270,65 @@ exclude_patterns = ["**/venv/**", "**/.venv/**", "**/node_modules/**"]
 ### Basic Configuration (beacon.toml)
 
 ```toml
+[type_checking]
 mode = "strict"
-python_version = "3.12"
-unresolved_import_severity = "error"
-circular_import_severity = "warning"
+
+[python]
+version = "3.12"
+
+[diagnostics]
+unresolved_imports = "error"
+circular_imports = "warning"
 ```
 
 ### Advanced Configuration (beacon.toml)
 
 ```toml
-# Type checking configuration
+[type_checking]
 mode = "balanced"
-python_version = "3.13"
-max_any_depth = 5
 
-# Inlay hints
+[python]
+version = "3.13"
+stub_paths = ["stubs", "typings"]
+
+[workspace]
+source_roots = ["src", "lib"]
+exclude_patterns = ["**/venv/**", "**/.venv/**", "**/build/**"]
+
 [inlay_hints]
 enable = true
 variable_types = true
 function_return_types = true
 parameter_names = false
 
-# Diagnostic severity
-unresolved_import_severity = "warning"
-circular_import_severity = "info"
+[diagnostics]
+unresolved_imports = "warning"
+circular_imports = "info"
 
-# Performance settings
+[advanced]
+max_any_depth = 5
 incremental = true
 workspace_analysis = true
 enable_caching = true
 cache_size = 200
-
-# Paths
-stub_paths = ["stubs", "typings"]
-source_roots = ["src", "lib"]
-exclude_patterns = ["**/venv/**", "**/.venv/**", "**/build/**"]
 ```
 
 ### Using pyproject.toml
 
 ```toml
-[tool.beacon]
+[tool.beacon.type_checking]
 mode = "strict"
-python_version = "3.12"
-unresolved_import_severity = "error"
+
+[tool.beacon.python]
+version = "3.12"
 stub_paths = ["stubs", "typings"]
+
+[tool.beacon.workspace]
 source_roots = ["src"]
 exclude_patterns = ["**/venv/**", "**/.venv/**"]
+
+[tool.beacon.diagnostics]
+unresolved_imports = "error"
 ```
 
 ## Configuration Precedence

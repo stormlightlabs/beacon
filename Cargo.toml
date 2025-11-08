@@ -5,7 +5,7 @@ members = [
     "crates/constraints",
     "crates/core",
     "crates/parser",
-    "crates/server",
+    "crates/server", "pkg/zed",
 ]
 
 [workspace.dependencies]

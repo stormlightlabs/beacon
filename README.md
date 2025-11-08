@@ -29,7 +29,15 @@ Build from source:
 cargo build --release
 ```
 
-The CLI will be available at `target/release/beacon-cli`.
+The CLI will be available at `target/release/beacon`.
+
+Install system-wide:
+
+```sh
+cargo install --path crates/cli
+```
+
+This installs the `beacon` binary to `~/.cargo/bin`.
 
 ### Type Checking
 
@@ -37,27 +45,41 @@ Check Python files for type errors using Hindley-Milner inference:
 
 ```sh
 # Check a file
-beacon-cli typecheck example.py
+beacon typecheck example.py
 
 # Check with JSON output for CI
-beacon-cli typecheck --format json example.py
+beacon typecheck --format json example.py
 
 # Check from stdin
-cat example.py | beacon-cli typecheck
+cat example.py | beacon typecheck
 ```
 
 ### Language Server
 
+Install beacon-lsp system-wide:
+
+```sh
+cargo install --path crates/server
+```
+
+This installs the `beacon-lsp` binary to `~/.cargo/bin`, making it available in your PATH.
+
 Start the LSP server for editor integration:
 
 ```sh
-beacon-cli lsp
+beacon-lsp
 ```
 
-Alternatively, start with file logging for debugging
+Or use the CLI:
 
 ```sh
-beacon-cli lsp --log-file /tmp/beacon.log
+beacon lsp
+```
+
+For debugging, start with file logging:
+
+```sh
+beacon lsp --log-file /tmp/beacon.log
 ```
 
 ### Debug Tools
@@ -65,18 +87,23 @@ beacon-cli lsp --log-file /tmp/beacon.log
 Debug builds include additional tools for inspecting the type system:
 
 ```sh
+# Build in debug mode
+cargo build
+
 # View tree-sitter CST
-beacon-cli debug tree example.py
+target/debug/beacon debug tree example.py
 
 # Show AST with inferred types
-beacon-cli debug ast example.py
+target/debug/beacon debug ast example.py
 
 # Display generated constraints
-beacon-cli debug constraints example.py
+target/debug/beacon debug constraints example.py
 
 # Show unification results
-beacon-cli debug unify example.py
+target/debug/beacon debug unify example.py
 ```
+
+Note: Debug commands are only available in debug builds (compiled with `cargo build`), not in release builds.
 
 Full documentation: [CLI Tools](./docs/src/cli/overview.md)
 
@@ -102,9 +129,17 @@ Both systems reuse the same analyzer output, so upcoming features like type-filt
 
 ## Development
 
-### VSCode Extension Setup
+### Editor Extensions
 
-Read more in the extension [package](./pkg/vscode/README.md)
+Beacon supports VS Code, Zed, and Neovim through the Language Server Protocol.
+
+See [Editor Extensions Documentation](./docs/src/extensions/overview.md) for setup instructions.
+
+**Quick Links**:
+
+- [VS Code](./docs/src/extensions/vscode.md)
+- [Zed](./docs/src/extensions/zed.md)
+- [Neovim](./docs/src/extensions/overview.md#neovim-integration)
 
 ## Goals
 

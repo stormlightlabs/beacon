@@ -3,6 +3,10 @@ name = "beacon-cli"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "beacon"
+path = "src/main.rs"
+
 [dependencies]
 beacon-parser = { path = "../parser" }
 beacon-lsp = { path = "../server" }

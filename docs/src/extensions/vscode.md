@@ -193,12 +193,3 @@ See [Configuration](../configuration.md) for details on TOML configuration files
 
 The generated `.vsix` expects the server binary to be shipped alongside the extension or obtainable on the user’s machine.
 Adjust `extension.ts` if you plan to bundle the binary differently.
-
-## Troubleshooting
-
-- **Extension activates but features are missing**: confirm the `beacon-lsp` binary exists in `target/debug` or `target/release`.
-- **No diagnostics shown**: check the “Beacon LSP” output channel for JSON-RPC logs and run the server manually (`cargo run -p beacon-lsp`) to ensure it starts cleanly.
-- **TypeScript errors**: rerun `pnpm --filter beacon-lsp compile` and ensure dependencies are installed.
-- **Protocol tracing**: set `beacon.trace.server` to `verbose` and inspect the output to verify requests/responses.
-
-With the extension compiled and the Rust server built, you can iterate quickly—edit the TypeScript client, rebuild with `pnpm watch`, and reload the Extension Development Host (`Developer: Reload Window`) to pick up changes.

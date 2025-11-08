@@ -1,0 +1,15 @@
+id = "beacon-zed"
+name = "Beacon"
+version = "0.1.0"
+schema_version = 1
+authors = ["Owais J <desertthunder.dev@gmail.com>"]
+description = "Python language server & HM type checker"
+repository = "https://github.com/stormlightlabs/beacon"
+
+[language_servers.python]
+name = "Beacon LSP"
+language = "Python"
+
+[grammars.python]
+repository = "https://github.com/tree-sitter/py-tree-sitter"
+commit = "e2a5b21449c30c6a4fb49a55567a4699c3271f10"
