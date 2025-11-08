@@ -18,7 +18,7 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 - [ ] Diagnostics (errors/warnings) (`textDocument/publishDiagnostics`) (notification):
       The server sends diagnostics (syntax errors, type errors, warnings) as they are found.
 - [ ] "Did you mean" suggestions and annotation fixes
-- [ ] Code actions for refactoring (insert annotations, adjust Optional)
+- [x] Code actions for refactoring (insert annotations, adjust Optional)
 
 ## Infrastructure
 
@@ -42,7 +42,7 @@ Strategic milestones for delivering a Hindley-Milner type system and LSP server 
 - [x] Config hot-reload without restart
 - [x] Type checking modes (strict/balanced/loose)
 - [ ] Formatting options
-- [ ] Contributor documentation
+- [x] Contributor documentation
 - [ ] Configurable verbosity for inlay hints
 
 ### Performance & Testing
