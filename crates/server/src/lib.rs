@@ -26,6 +26,7 @@ pub mod cache;
 pub mod config;
 pub mod document;
 pub mod features;
+pub mod formatting;
 pub mod interpreter;
 pub mod introspection;
 pub mod parser;
