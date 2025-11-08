@@ -21,6 +21,7 @@
     - [Current Limitations](./lsp/limitations.md)
         - [Next Steps](./lsp/next_steps.md)
 - [Editor Extensions](./extensions/vscode.md)
+- [Configuration](./configuration.md)
 - [Research](./learn/research.md)
     - [Hindley–Milner](./learn/hm.md)
     - [Language Server Protocol](./learn/lsp_overview.md)
