@@ -19,7 +19,297 @@ Implementation details and mod-specific tasks.
 - [x] Diagnostic severity configuration
 - [x] Inlay hints configuration implementation
 - [ ] Integration tests for configuration flow (config loading and hot-reload)
-- [ ] Formatting options
+
+## Snippet Engine
+
+**Files:** `crates/server/src/snippets/mod.rs`, `crates/server/src/snippets/library.rs`, `crates/server/src/snippets/context.rs`, `crates/server/src/features/snippet_completion.rs`
+
+### Snippet Infrastructure
+
+- [ ] Create snippet module structure (`crates/server/src/snippets/`)
+- [ ] Define `Snippet` struct (trigger, body, description, placeholders, scope)
+- [ ] Implement snippet parser for LSP snippet syntax ($1, ${2:default}, $0)
+- [ ] Build snippet registry (load, query, filter snippets)
+- [ ] Define snippet categories (control-flow, types, testing, async, etc.)
+
+### Built-in Snippet Library
+
+- [ ] Control flow snippets:
+    - [ ] `if`, `elif`, `else` with proper indentation
+    - [ ] `for` loop with enumerate/range patterns
+    - [ ] `while` loop with condition
+    - [ ] `match`/`case` statement (Python 3.10+)
+- [ ] Comprehension snippets:
+    - [ ] List comprehension with filter
+    - [ ] Dict comprehension
+    - [ ] Set comprehension
+    - [ ] Generator expression
+- [ ] Context manager snippets:
+    - [ ] `with open()` for file operations
+    - [ ] Custom context manager class
+    - [ ] `@contextmanager` decorator pattern
+    - [ ] Multiple context managers
+- [ ] Exception handling snippets:
+    - [ ] `try`/`except`/`finally` block
+    - [ ] `try`/`except` with specific exception types
+    - [ ] Exception re-raising with context
+    - [ ] Custom exception class definition
+- [ ] Class definition snippets:
+    - [ ] Basic class with `__init__`
+    - [ ] `@dataclass` definition
+    - [ ] `@dataclass` with default values and types
+    - [ ] Property getter/setter pattern
+    - [ ] Abstract base class with `@abstractmethod`
+    - [ ] Protocol definition (structural typing)
+- [ ] Function snippets:
+    - [ ] Function with type annotations
+    - [ ] Function with `*args` and `**kwargs`
+    - [ ] Generator function with `yield`
+    - [ ] Async function with proper signature
+    - [ ] Lambda with type hint
+- [ ] Decorator snippets:
+    - [ ] Simple decorator function
+    - [ ] Decorator with arguments
+    - [ ] Class decorator
+    - [ ] `@property`, `@staticmethod`, `@classmethod`
+    - [ ] Functools decorators (`@lru_cache`, `@wraps`)
+- [ ] Type annotation snippets:
+    - [ ] `Optional[T]` type
+    - [ ] `Union[T1, T2]` type
+    - [ ] `List[T]`, `Dict[K, V]`, `Set[T]`, `Tuple[T, ...]`
+    - [ ] `Callable[[Args], Return]`
+    - [ ] Generic type variable definition
+    - [ ] TypedDict definition
+- [ ] Async/await snippets:
+    - [ ] `async def` function
+    - [ ] `await` expression with error handling
+    - [ ] `async with` context manager
+    - [ ] `async for` loop
+    - [ ] `asyncio.gather` pattern
+- [ ] Testing snippets:
+    - [ ] pytest test function
+    - [ ] pytest fixture
+    - [ ] `@pytest.mark.parametrize`
+    - [ ] Mock/patch pattern
+    - [ ] Async test function
+- [ ] Import snippets:
+    - [ ] Conditional import (try/except ImportError)
+    - [ ] `if TYPE_CHECKING:` block
+    - [ ] Common stdlib imports (pathlib, typing, collections)
+- [ ] File I/O snippets:
+    - [ ] Read file with pathlib
+    - [ ] Write file with context manager
+    - [ ] JSON load/dump
+    - [ ] CSV reader/writer
+
+### LSP Completion Integration
+
+- [ ] Register snippet completion provider
+- [ ] Implement `textDocument/completion` handler for snippets
+- [ ] Set `CompletionItem.kind` to `Snippet`
+- [ ] Populate `CompletionItem.insertText` with snippet body
+- [ ] Set `CompletionItem.insertTextFormat` to `Snippet`
+- [ ] Add snippet documentation to `CompletionItem.documentation`
+- [ ] Implement snippet ranking/sorting in completion list
+- [ ] Support client snippet capabilities detection
+- [ ] Handle clients without snippet support (fallback to plain text)
+
+### Context-Aware Filtering
+
+- [ ] Detect cursor position scope (module, class, function, block)
+- [ ] Filter snippets by scope:
+    - [ ] Module-level snippets (imports, class definitions)
+    - [ ] Class-level snippets (methods, properties)
+    - [ ] Function-level snippets (control flow, expressions)
+- [ ] Parse surrounding code for context hints
+- [ ] Check available imports and suggest relevant snippets
+- [ ] Detect incomplete patterns (e.g., `with` without colon)
+- [ ] Integration with type inference:
+    - [ ] Suggest typed snippets based on inferred types
+    - [ ] Fill placeholder defaults with type information
+- [ ] Respect indentation level for snippet insertion
+
+### Snippet Placeholders & Navigation
+
+- [ ] Parse placeholder syntax ($1, ${2:default}, ${3|choice1,choice2|})
+- [ ] Implement tab stop ordering ($0 for final position)
+- [ ] Support nested placeholders
+- [ ] Variable substitution:
+    - [ ] `$TM_FILENAME` - current file name
+    - [ ] `$TM_SELECTED_TEXT` - selected text
+    - [ ] `$CLIPBOARD` - clipboard content
+    - [ ] Custom variables based on context
+- [ ] Transform placeholders with regex (${1/pattern/replacement/})
+- [ ] Choice placeholders (dropdown selection)
+
+### User-Defined Snippets
+
+- [ ] Snippet definition format (JSON or TOML)
+- [ ] Load snippets from workspace config (`.beacon/snippets/`)
+- [ ] Load snippets from user config (`~/.config/beacon/snippets/`)
+- [ ] Snippet validation on load (syntax, scope, triggers)
+- [ ] Snippet priority system (user > workspace > built-in)
+- [ ] Hot-reload snippets on config change
+- [ ] Snippet conflict detection (duplicate triggers)
+- [ ] Import dependency specification for snippets
+
+### Smart Snippet Features
+
+- [ ] Auto-import insertion for snippet dependencies
+- [ ] Snippet body formatting (apply PEP8 rules)
+- [ ] Conditional snippet parts based on context
+- [ ] Snippet chaining (one snippet triggers another)
+- [ ] Multi-cursor snippet expansion
+- [ ] Snippet macros for dynamic content generation
+- [ ] Snippet templates with file-level metadata
+
+### Configuration
+
+- [ ] Add `beacon.snippets.enabled` setting
+- [ ] Add `beacon.snippets.userSnippetsPath` setting
+- [ ] Add `beacon.snippets.categories` setting (enable/disable categories)
+- [ ] Add `beacon.snippets.showDocumentation` setting
+- [ ] Add `beacon.snippets.autoImport` setting
+- [ ] Add `beacon.snippets.formatOnInsert` setting
+- [ ] Add `beacon.snippets.triggerCharacters` setting
+- [ ] Snippet ranking configuration (frequency, recency, alphabetical)
+
+### Testing & Validation
+
+- [ ] Unit tests for snippet parsing and placeholder extraction
+- [ ] Unit tests for snippet filtering by scope
+- [ ] Integration tests with LSP completion
+- [ ] Validate all built-in snippets are syntactically correct
+- [ ] Test snippet expansion with various placeholder types
+- [ ] Test context-aware snippet filtering
+- [ ] Test user-defined snippet loading and priority
+- [ ] Test snippet formatting integration
+- [ ] Performance tests (snippet lookup should be <5ms)
+
+### Documentation & Discovery
+
+- [ ] Document all built-in snippets with examples
+- [ ] Create snippet authoring guide for users
+- [ ] Snippet browsing command (list all available snippets)
+- [ ] Snippet search by keyword/description
+- [ ] Snippet usage analytics (track most-used snippets)
+- [ ] Example snippet library in documentation
+
+## PEP8 Formatting
+
+**Files:** `crates/server/src/formatting/mod.rs`, `crates/server/src/formatting/rules.rs`, `crates/server/src/formatting/config.rs`, `crates/server/src/features/formatting.rs`
+
+### Core Formatter Infrastructure
+
+- [x] Core formatter infrastructure implemented (module structure, config, token stream, context tracking, and state machine)
+
+### Whitespace & Indentation Rules
+
+- [ ] Implement indentation normalization (4 spaces, configurable)
+- [ ] Trailing whitespace removal
+- [ ] Blank line rules:
+    - [ ] Two blank lines before top-level class/function definitions
+    - [ ] One blank line between methods
+    - [ ] Maximum consecutive blank lines (default: 2)
+- [ ] Whitespace around operators (binary, comparison, assignment)
+- [ ] Whitespace after commas, colons in dicts/slices
+- [ ] No whitespace inside brackets/parentheses
+- [ ] Draft `docs/src/format/overview.md`
+- [ ] Draft `docs/src/format/whitespace.md`
+
+### Line Length & Wrapping
+
+- [ ] Line length calculation (respecting multi-byte Unicode)
+- [ ] Smart line breaking algorithm (prefer breaking at commas, operators)
+- [ ] Function call argument wrapping (vertical vs horizontal)
+- [ ] Function definition parameter wrapping
+- [ ] Collection literal wrapping (lists, dicts, sets, tuples)
+- [ ] Binary expression breaking (logical, arithmetic)
+- [ ] Parenthesized continuation vs backslash continuation
+- [ ] Preserve user-inserted line breaks when under limit
+- [ ] Draft `docs/src/format/print-width.md`
+
+### Import Formatting
+
+- [ ] Import statement parsing and grouping
+- [ ] Import sorting within groups (alphabetical)
+- [ ] PEP8 import ordering:
+    - [ ] Standard library imports
+    - [ ] Third-party imports (detect via stub paths)
+    - [ ] Local/application imports
+- [ ] Blank line insertion between import groups
+- [ ] `from` import sorting and wrapping
+- [ ] Duplicate import detection and removal
+- [ ] Unused import detection (integration with symbol table)
+- [ ] Draft `docs/src/format/imports.md`
+
+### String & Comment Formatting
+
+- [ ] String quote normalization (configurable: single, double, preserve)
+- [ ] Triple-quoted string indentation
+- [ ] f-string formatting preservation
+- [ ] Comment preservation during formatting
+- [ ] Inline comment spacing (two spaces before #)
+- [ ] Block comment formatting
+- [ ] Docstring formatting (preserve content, normalize quotes)
+- [ ] Draft `docs/src/format/strings.md`
+
+### Structural Formatting
+
+- [ ] Trailing commas in multi-line structures (tuples, lists, dicts, args)
+- [ ] Dictionary formatting (key-value alignment options)
+- [ ] Comprehension formatting (list, dict, set, generator)
+- [ ] Lambda expression formatting
+- [ ] Decorator formatting (one per line)
+- [ ] Class definition formatting
+- [ ] Type annotation spacing
+
+### LSP Integration
+
+- [ ] Implement `textDocument/formatting` handler
+- [ ] Implement `textDocument/rangeFormatting` handler
+- [ ] Register formatting capabilities in server initialization
+- [ ] Handle `DocumentFormattingOptions` from client
+- [ ] Handle `DocumentRangeFormattingOptions` from client
+- [ ] Implement `textDocument/willSaveWaitUntil` for format-on-save
+- [ ] Add formatting timeout handling (prevent LSP hangs)
+- [ ] Error recovery (return original text if formatting fails)
+
+### Configuration Integration
+
+- [ ] Add `beacon.formatting.enabled` setting
+- [ ] Add `beacon.formatting.lineLength` setting (default: 88)
+- [ ] Add `beacon.formatting.indentSize` setting (default: 4)
+- [ ] Add `beacon.formatting.quoteStyle` setting (single/double/preserve)
+- [ ] Add `beacon.formatting.trailingCommas` setting (always/multiline/never)
+- [ ] Add `beacon.formatting.maxBlankLines` setting (default: 2)
+- [ ] Add `beacon.formatting.importSorting` setting (pep8/isort/off)
+- [ ] Add `beacon.formatting.compatibilityMode` setting (black/autopep8/pep8)
+- [ ] Hot-reload formatting configuration
+- [ ] Workspace-level vs document-level config override
+
+### Testing & Validation
+
+- [ ] Unit tests for each formatting rule (whitespace, indentation, imports, etc.)
+- [ ] Idempotency tests (format(format(x)) == format(x))
+- [ ] AST preservation tests (parse(format(code)) == parse(code) modulo whitespace)
+- [ ] Integration tests with LSP protocol
+- [ ] Range formatting tests (partial document formatting)
+- [ ] Performance benchmarks:
+    - [ ] Small files (<100 lines): <10ms
+    - [ ] Medium files (100-1000 lines): <100ms
+    - [ ] Large files (1000-5000 lines): <500ms
+- [ ] Regression test suite with real-world Python files
+- [ ] Test compatibility with Black/autopep8 outputs
+- [ ] Error handling tests (malformed code, incomplete parsing)
+
+### Optimization
+
+- [ ] Incremental formatting (cache unchanged regions)
+- [ ] Parallel formatting for multiple files
+- [ ] Lazy token stream evaluation
+- [ ] Format buffer pooling (reduce allocations)
+- [ ] Short-circuit for already-formatted code detection
 
 ### Static Analysis & Linting
 
