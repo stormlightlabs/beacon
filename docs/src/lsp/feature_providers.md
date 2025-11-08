@@ -59,14 +59,21 @@ The provider supports lazy symbol resolution for LSP clients that request locati
 
 ## Code Actions
 
-`CodeActionsProvider` provides quick fixes for common issues:
+`CodeActionsProvider` provides quick fixes and refactoring actions:
+
+**Quick Fixes:**
 
 - Removing unused variables and imports
 - Wrapping types with `Optional` for None-related type errors
 - Automatically adding `from typing import Optional` when needed
-- Insert type annotations from inference (coming soon!)
+- Adding missing pattern cases in match statements
+- Removing unreachable pattern cases
+- Implementing missing protocol methods for built-in protocols (Iterable, Iterator, Sized, Callable, Sequence, Mapping)
+
+**Refactorings:**
+
+- Inserting type annotations from inferred types on variable assignments
 - Add missing imports for undefined symbols (coming soon!)
-- Implement missing protocol methods (coming soon!)
 - Extract to function/method refactorings (coming soon!)
 - Inline variable refactorings (coming soon!)
 

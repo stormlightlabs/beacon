@@ -6,12 +6,15 @@
 //! - Add missing imports
 //! - Fix type errors where possible
 
-use crate::document::DocumentManager;
+use crate::{analysis::Analyzer, document::DocumentManager};
+
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, NumberOrString, Position, Range, TextEdit,
     WorkspaceEdit,
 };
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use url::Url;
 
 trait CodeAsStr {
@@ -29,25 +32,31 @@ impl CodeAsStr for NumberOrString {
 
 pub struct CodeActionsProvider {
     documents: DocumentManager,
+    analyzer: Arc<RwLock<Analyzer>>,
 }
 
 impl CodeActionsProvider {
-    pub fn new(documents: DocumentManager) -> Self {
-        Self { documents }
+    pub fn new(documents: DocumentManager, analyzer: Arc<RwLock<Analyzer>>) -> Self {
+        Self { documents, analyzer }
     }
 
     /// Provide code actions for a range
     ///
-    /// TODO: Add refactoring actions
-    /// TODO: Add insert type annotation actions
-    /// TODO: Add convert to Optional actions
-    pub fn code_actions(&self, params: CodeActionParams) -> Vec<CodeActionOrCommand> {
+    /// Provides both diagnostic-based quick fixes and refactoring actions
+    pub async fn code_actions(&self, params: CodeActionParams) -> Vec<CodeActionOrCommand> {
         let mut actions = Vec::new();
 
         for diagnostic in &params.context.diagnostics {
             if let Some(action) = self.quick_fix_for_diagnostic(&params.text_document.uri, diagnostic) {
                 actions.push(CodeActionOrCommand::CodeAction(action));
             }
+        }
+
+        if let Some(action) = self
+            .insert_type_annotation(&params.text_document.uri, params.range.start)
+            .await
+        {
+            actions.push(CodeActionOrCommand::CodeAction(action));
         }
 
         actions
@@ -60,6 +69,7 @@ impl CodeActionsProvider {
         match code {
             "unused-variable" | "unused-import" => self.remove_unused_line(uri, diagnostic),
             "HM001" if diagnostic.message.contains("None") => self.suggest_optional(uri, diagnostic),
+            "HM006" => self.implement_protocol_methods(uri, diagnostic),
             "PM001" => self.add_missing_patterns(uri, diagnostic),
             "PM002" => self.remove_unreachable_pattern(uri, diagnostic),
             _ => None,
@@ -217,46 +227,123 @@ impl CodeActionsProvider {
         })
     }
 
-    /// TODO: Insert type annotation from inference
-    /// Get inferred type at position
-    /// Generate edit to insert type annotation
+    /// Insert type annotation from inference
+    ///
+    /// Analyzes variable assignments and offers to add type annotations based on inferred types.
     /// Example: `x = 42` -> `x: int = 42`
-    pub fn _insert_type_annotation(&self, _uri: &Url, _range: Range) -> Option<CodeAction> {
+    pub async fn insert_type_annotation(&self, uri: &Url, position: Position) -> Option<CodeAction> {
+        let mut analyzer = self.analyzer.write().await;
+        let inferred_type = analyzer.type_at_position(uri, position).ok()??;
+
+        let (line_text, line_num) = self.documents.get_document(uri, |doc| {
+            let text = doc.text();
+            let lines: Vec<&str> = text.lines().collect();
+            let line_idx = position.line as usize;
+            if line_idx < lines.len() { Some((lines[line_idx].to_string(), line_idx)) } else { None }
+        })??;
+
+        let assignment_pattern = regex::Regex::new(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*").ok()?;
+
+        if let Some(captures) = assignment_pattern.captures(&line_text) {
+            if line_text.contains(':') && line_text.find(':')? < line_text.find('=')? {
+                return None;
+            }
+
+            let var_name = captures.get(1)?.as_str();
+            let var_end = captures.get(1)?.end();
+            let type_str = Self::format_type_for_annotation(&inferred_type);
+
+            let edit = TextEdit {
+                range: Range {
+                    start: Position { line: line_num as u32, character: var_end as u32 },
+                    end: Position { line: line_num as u32, character: var_end as u32 },
+                },
+                new_text: format!(": {type_str}"),
+            };
+
+            let mut changes = HashMap::default();
+            changes.insert(uri.clone(), vec![edit]);
+
+            return Some(CodeAction {
+                title: format!("Add type annotation: {var_name}: {type_str}"),
+                kind: Some(CodeActionKind::REFACTOR),
+                diagnostics: None,
+                edit: Some(WorkspaceEdit { changes: Some(changes), document_changes: None, change_annotations: None }),
+                command: None,
+                is_preferred: Some(false),
+                disabled: None,
+                data: None,
+            });
+        }
+
         None
     }
 
-    /// TODO: Convert None to Optional
-    /// Find assignments/returns with None
-    /// Add Optional[T] annotation
-    /// Example: `def f() -> str:` with `return None` -> `def f() -> Optional[str]:`
-    pub fn _convert_to_optional(&self, _uri: &Url, _range: Range) -> Option<CodeAction> {
-        None
-    }
+    /// Format a [beacon_core::Type] for use in a type annotation, i.e. converts internal Type representation to Python syntax
+    fn format_type_for_annotation(ty: &beacon_core::Type) -> String {
+        use beacon_core::{Type, TypeCtor};
 
-    /// TODO: Add missing import
-    /// Determine appropriate module for symbol
-    /// Generate import statement edit
-    pub fn _add_missing_import(&self, _uri: &Url, _symbol: &str) -> Option<CodeAction> {
-        None
-    }
+        match ty {
+            Type::Con(TypeCtor::Int) => "int".to_string(),
+            Type::Con(TypeCtor::Float) => "float".to_string(),
+            Type::Con(TypeCtor::String) => "str".to_string(),
+            Type::Con(TypeCtor::Bool) => "bool".to_string(),
+            Type::Con(TypeCtor::NoneType) => "None".to_string(),
+            Type::Con(TypeCtor::Class(name)) => name.clone(),
+            Type::Con(TypeCtor::Protocol(Some(name))) => name.clone(),
+            Type::Con(TypeCtor::Protocol(None)) => "Protocol".to_string(),
+            Type::Con(TypeCtor::TypeVariable(name)) => name.clone(),
+            Type::Con(TypeCtor::Any) => "Any".to_string(),
+            Type::Var(tv) => format!("TypeVar('{tv}')"),
+            Type::App(ctor, elem_ty) if matches!(**ctor, Type::Con(TypeCtor::List)) => {
+                format!("list[{}]", Self::format_type_for_annotation(elem_ty))
+            }
+            Type::App(ctor, elem_ty) if matches!(**ctor, Type::Con(TypeCtor::Set)) => {
+                format!("set[{}]", Self::format_type_for_annotation(elem_ty))
+            }
+            Type::App(app_ctor, val_ty) => {
+                if let Type::App(ctor, key_ty) = &**app_ctor {
+                    if matches!(**ctor, Type::Con(TypeCtor::Dict)) {
+                        return format!(
+                            "dict[{}, {}]",
+                            Self::format_type_for_annotation(key_ty),
+                            Self::format_type_for_annotation(val_ty)
+                        );
+                    }
+                }
+                format!(
+                    "{}[{}]",
+                    Self::format_type_for_annotation(app_ctor),
+                    Self::format_type_for_annotation(val_ty)
+                )
+            }
+            Type::Tuple(elem_types) => {
+                let types = elem_types
+                    .iter()
+                    .map(Self::format_type_for_annotation)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("tuple[{types}]")
+            }
+            Type::Fun(_, _) => "Callable".to_string(),
+            Type::Union(types) => {
+                if types.len() == 2 && types.iter().any(|t| matches!(t, Type::Con(TypeCtor::NoneType))) {
+                    let inner = types
+                        .iter()
+                        .find(|t| !matches!(t, Type::Con(TypeCtor::NoneType)))
+                        .unwrap();
+                    return format!("Optional[{}]", Self::format_type_for_annotation(inner));
+                }
 
-    /// TODO: Implement missing protocol methods
-    /// For classes implementing protocols
-    /// Generate stubs for missing methods
-    pub fn _implement_protocol(&self, _uri: &Url, _range: Range) -> Option<CodeAction> {
-        None
-    }
+                types
+                    .iter()
+                    .map(Self::format_type_for_annotation)
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            }
 
-    /// TODO: Extract to function/method
-    /// Refactoring: extract selected code to new function
-    pub fn _extract_function(&self, _uri: &Url, _range: Range) -> Option<CodeAction> {
-        None
-    }
-
-    /// TODO: Inline variable
-    /// Replace variable uses with its value
-    pub fn _inline_variable(&self, _uri: &Url, _range: Range) -> Option<CodeAction> {
-        None
+            _ => "Any".to_string(),
+        }
     }
 
     /// Quick fix: Remove unreachable pattern (PM002)
@@ -404,6 +491,128 @@ impl CodeActionsProvider {
         }
     }
 
+    /// Quick fix: Implement missing protocol methods (HM006)
+    ///
+    /// Parses the diagnostic message to extract the class and protocol, then
+    /// generates stub implementations for protocols that a class doesn't satisfy.
+    fn implement_protocol_methods(&self, uri: &Url, diagnostic: &lsp_types::Diagnostic) -> Option<CodeAction> {
+        let message = &diagnostic.message;
+        let (class_name, protocol_name) = self.parse_protocol_error(message)?;
+
+        self.documents.get_document(uri, |document| {
+            let source = document.text();
+            let lines: Vec<&str> = source.lines().collect();
+            let (_, class_end, class_indent) = self.find_class_definition(&lines, &class_name)?;
+            let method_stubs = self.generate_protocol_stubs(&protocol_name, &class_indent)?;
+            let insert_line = class_end;
+
+            let edit = TextEdit {
+                range: Range {
+                    start: Position { line: insert_line as u32, character: 0 },
+                    end: Position { line: insert_line as u32, character: 0 },
+                },
+                new_text: method_stubs,
+            };
+
+            let mut changes = HashMap::default();
+            changes.insert(uri.clone(), vec![edit]);
+
+            Some(CodeAction {
+                title: format!("Implement {protocol_name} protocol methods"),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diagnostic.clone()]),
+                edit: Some(WorkspaceEdit { changes: Some(changes), document_changes: None, change_annotations: None }),
+                command: None,
+                is_preferred: Some(true),
+                disabled: None,
+                data: None,
+            })
+        })?
+    }
+
+    /// Parse protocol error message to extract class and protocol names
+    fn parse_protocol_error(&self, message: &str) -> Option<(String, String)> {
+        let pattern = regex::Regex::new(r"Type (\w+) does not satisfy protocol (\w+)").ok()?;
+        let captures = pattern.captures(message)?;
+        let class_name = captures.get(1)?.as_str().to_string();
+        let protocol_name = captures.get(2)?.as_str().to_string();
+        Some((class_name, protocol_name))
+    }
+
+    /// Find a class definition in source lines
+    fn find_class_definition(&self, lines: &[&str], class_name: &str) -> Option<(usize, usize, String)> {
+        let class_pattern = regex::Regex::new(&format!(r"^(\s*)class\s+{class_name}\s*[\(:]")).ok()?;
+
+        let mut class_start = None;
+        let mut class_indent = String::new();
+
+        for (i, line) in lines.iter().enumerate() {
+            if let Some(captures) = class_pattern.captures(line) {
+                class_start = Some(i);
+                class_indent = captures.get(1)?.as_str().to_string();
+                break;
+            }
+        }
+
+        let start = class_start?;
+
+        let mut end = start + 1;
+        for (i, line) in lines.iter().enumerate().skip(start + 1) {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let line_indent = line.len() - line.trim_start().len();
+            let class_indent_len = class_indent.len();
+
+            if line_indent <= class_indent_len {
+                end = i;
+                break;
+            }
+            end = i + 1;
+        }
+
+        Some((start, end, class_indent))
+    }
+
+    /// Generate method stubs for built-in protocols like Iterable, Iterator, Sized, etc.
+    fn generate_protocol_stubs(&self, protocol_name: &str, base_indent: &str) -> Option<String> {
+        let method_indent = format!("{base_indent}    ");
+        let body_indent = format!("{method_indent}    ");
+
+        let stubs = match protocol_name {
+            "Iterable" => {
+                format!("\n{method_indent}def __iter__(self):\n{body_indent}raise NotImplementedError\n")
+            }
+            "Iterator" => {
+                format!(
+                    "\n{method_indent}def __iter__(self):\n{body_indent}return self\n\n{method_indent}def __next__(self):\n{body_indent}raise NotImplementedError\n"
+                )
+            }
+            "Sized" => {
+                format!("\n{method_indent}def __len__(self) -> int:\n{body_indent}raise NotImplementedError\n")
+            }
+            "Callable" => {
+                format!(
+                    "\n{method_indent}def __call__(self, *args, **kwargs):\n{body_indent}raise NotImplementedError\n"
+                )
+            }
+            "Sequence" => {
+                format!(
+                    "\n{method_indent}def __getitem__(self, index):\n{body_indent}raise NotImplementedError\n\n{method_indent}def __len__(self) -> int:\n{body_indent}raise NotImplementedError\n"
+                )
+            }
+            "Mapping" => {
+                format!(
+                    "\n{method_indent}def __getitem__(self, key):\n{body_indent}raise NotImplementedError\n\n{method_indent}def __len__(self) -> int:\n{body_indent}raise NotImplementedError\n\n{method_indent}def __iter__(self):\n{body_indent}raise NotImplementedError\n"
+                )
+            }
+            _ => return None,
+        };
+
+        Some(stubs)
+    }
+
     /// Create a workspace edit for a single file
     fn _create_edit(&self, uri: &Url, edits: Vec<TextEdit>) -> WorkspaceEdit {
         let mut changes = HashMap::default();
@@ -415,10 +624,166 @@ impl CodeActionsProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
+    use beacon_core::Type;
+    use std::str::FromStr;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+    use url::Url;
 
-    #[test]
-    fn test_provider_creation() {
+    async fn create_test_provider() -> (CodeActionsProvider, Url) {
         let documents = DocumentManager::new().unwrap();
-        let _ = CodeActionsProvider::new(documents);
+        let config = Config::default();
+        let analyzer = Arc::new(RwLock::new(Analyzer::new(config, documents.clone())));
+        let provider = CodeActionsProvider::new(documents.clone(), analyzer);
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        (provider, uri)
+    }
+
+    #[tokio::test]
+    async fn test_provider_creation() {
+        let _ = create_test_provider().await;
+    }
+
+    #[tokio::test]
+    async fn test_parse_protocol_error() {
+        let (provider, _) = create_test_provider().await;
+        let message = "Type MyClass does not satisfy protocol Iterable";
+        let result = provider.parse_protocol_error(message);
+
+        assert!(result.is_some());
+        let (class_name, protocol_name) = result.unwrap();
+        assert_eq!(class_name, "MyClass");
+        assert_eq!(protocol_name, "Iterable");
+    }
+
+    #[tokio::test]
+    async fn test_find_class_definition() {
+        let (provider, _) = create_test_provider().await;
+        let source = vec![
+            "# comment",
+            "class MyClass:",
+            "    def method(self):",
+            "        pass",
+            "",
+            "def function():",
+            "    pass",
+        ];
+
+        let result = provider.find_class_definition(&source, "MyClass");
+        assert!(result.is_some());
+
+        let (start, end, indent) = result.unwrap();
+        assert_eq!(start, 1);
+        assert_eq!(end, 5);
+        assert_eq!(indent, "");
+    }
+
+    #[tokio::test]
+    async fn test_find_indented_class() {
+        let (provider, _) = create_test_provider().await;
+
+        let source = vec![
+            "if True:",
+            "    class IndentedClass:",
+            "        x: int = 5",
+            "        ",
+            "    y = 10",
+        ];
+
+        let result = provider.find_class_definition(&source, "IndentedClass");
+        assert!(result.is_some());
+
+        let (start, end, indent) = result.unwrap();
+        assert_eq!(start, 1);
+        assert_eq!(end, 4);
+        assert_eq!(indent, "    ");
+    }
+
+    #[tokio::test]
+    async fn test_generate_protocol_stubs_iterable() {
+        let (provider, _) = create_test_provider().await;
+        let stubs = provider.generate_protocol_stubs("Iterable", "");
+        assert!(stubs.is_some());
+
+        let stubs_str = stubs.unwrap();
+        assert!(stubs_str.contains("def __iter__(self):"));
+        assert!(stubs_str.contains("raise NotImplementedError"));
+    }
+
+    #[tokio::test]
+    async fn test_generate_protocol_stubs_iterator() {
+        let (provider, _) = create_test_provider().await;
+        let stubs = provider.generate_protocol_stubs("Iterator", "");
+        assert!(stubs.is_some());
+
+        let stubs_str = stubs.unwrap();
+        assert!(stubs_str.contains("def __iter__(self):"));
+        assert!(stubs_str.contains("def __next__(self):"));
+        assert!(stubs_str.contains("return self"));
+    }
+
+    #[tokio::test]
+    async fn test_generate_protocol_stubs_sized() {
+        let (provider, _) = create_test_provider().await;
+
+        let stubs = provider.generate_protocol_stubs("Sized", "");
+        assert!(stubs.is_some());
+
+        let stubs_str = stubs.unwrap();
+        assert!(stubs_str.contains("def __len__(self) -> int:"));
+    }
+
+    #[tokio::test]
+    async fn test_generate_protocol_stubs_with_indent() {
+        let (provider, _) = create_test_provider().await;
+
+        let stubs = provider.generate_protocol_stubs("Iterable", "    ");
+        assert!(stubs.is_some());
+
+        let stubs_str = stubs.unwrap();
+        assert!(stubs_str.contains("    def __iter__(self):"));
+    }
+
+    #[tokio::test]
+    async fn test_format_type_for_annotation_primitives() {
+        assert_eq!(CodeActionsProvider::format_type_for_annotation(&Type::int()), "int");
+        assert_eq!(CodeActionsProvider::format_type_for_annotation(&Type::string()), "str");
+        assert_eq!(CodeActionsProvider::format_type_for_annotation(&Type::bool()), "bool");
+        assert_eq!(CodeActionsProvider::format_type_for_annotation(&Type::float()), "float");
+    }
+
+    #[tokio::test]
+    async fn test_format_type_for_annotation_collections() {
+        let list_type = Type::list(Type::int());
+        assert_eq!(CodeActionsProvider::format_type_for_annotation(&list_type), "list[int]");
+
+        let dict_type = Type::dict(Type::string(), Type::int());
+        assert_eq!(
+            CodeActionsProvider::format_type_for_annotation(&dict_type),
+            "dict[str, int]"
+        );
+
+        let set_type = Type::set(Type::string());
+        assert_eq!(CodeActionsProvider::format_type_for_annotation(&set_type), "set[str]");
+    }
+
+    #[tokio::test]
+    async fn test_format_type_for_annotation_optional() {
+        let optional_type = Type::optional(Type::int());
+        assert_eq!(
+            CodeActionsProvider::format_type_for_annotation(&optional_type),
+            "Optional[int]"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_format_type_for_annotation_union() {
+        let union_type = Type::union(vec![Type::int(), Type::string()]);
+        let result = CodeActionsProvider::format_type_for_annotation(&union_type);
+        assert!(result.contains("int"));
+        assert!(result.contains("str"));
+        assert!(result.contains("|"));
     }
 }

@@ -67,11 +67,11 @@ impl Features {
         Self {
             diagnostics: DiagnosticProvider::new(documents.clone(), workspace.clone()),
             hover: HoverProvider::with_introspection(documents.clone(), interpreter_path, introspection_cache),
-            completion: CompletionProvider::new(documents.clone(), workspace.clone(), analyzer),
+            completion: CompletionProvider::new(documents.clone(), workspace.clone(), analyzer.clone()),
             goto_definition: GotoDefinitionProvider::new(documents.clone(), workspace.clone()),
             references: ReferencesProvider::new(documents.clone(), workspace.clone()),
             inlay_hints: InlayHintsProvider::new(documents.clone()),
-            code_actions: CodeActionsProvider::new(documents.clone()),
+            code_actions: CodeActionsProvider::new(documents.clone(), analyzer.clone()),
             semantic_tokens: SemanticTokensProvider::new(documents.clone()),
             document_symbols: DocumentSymbolsProvider::new(documents.clone()),
             document_highlight: DocumentHighlightProvider::new(documents.clone()),
@@ -370,7 +370,7 @@ impl LanguageServer for Backend {
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
-        Ok(Some(self.features.code_actions.code_actions(params)))
+        Ok(Some(self.features.code_actions.code_actions(params).await))
     }
 
     async fn semantic_tokens_full(&self, params: SemanticTokensParams) -> Result<Option<SemanticTokensResult>> {
