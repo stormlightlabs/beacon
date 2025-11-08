@@ -97,6 +97,10 @@ This is optional but helps validate links in the SUMMARY.md file. Be sure to kee
 
 - Use `just demo` or `beacon-cli debug <subcommand>` to capture ASTs, constraints, and solver output when explaining changes in your PR.
 
+### Logging
+
+See [docs](./docs/src/lsp/logging.md)
+
 ## Pull request checklist
 
 - [ ] Discussed large design changes beforehand.

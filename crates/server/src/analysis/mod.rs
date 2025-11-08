@@ -170,6 +170,9 @@ impl Analyzer {
 
     /// Analyze a document and return inferred types
     pub fn analyze(&mut self, uri: &Url) -> Result<AnalysisResult> {
+        tracing::info!(uri = %uri, "Starting analysis");
+        let start_time = std::time::Instant::now();
+
         let result = self.documents.get_document(uri, |doc| {
             let ast = doc.ast().ok_or(AnalysisError::MissingAst)?.clone();
             let symbol_table = doc.symbol_table().ok_or(AnalysisError::MissingSymbolTable)?.clone();
@@ -179,11 +182,26 @@ impl Analyzer {
 
         let (ast, symbol_table, source, version) = match result {
             Some(Ok(data)) => data,
-            Some(Err(e)) => return Err(e.into()),
-            None => return Err(AnalysisError::DocumentNotFound(uri.clone()).into()),
+            Some(Err(e)) => {
+                tracing::error!(uri = %uri, ?e, "Failed to retrieve document data");
+                return Err(e.into());
+            }
+            None => {
+                tracing::error!(uri = %uri, "Document not found");
+                return Err(AnalysisError::DocumentNotFound(uri.clone()).into());
+            }
         };
 
+        tracing::debug!(
+            uri = %uri,
+            version,
+            source_length = source.len(),
+            scopes = symbol_table.scopes.len(),
+            "Retrieved document data"
+        );
+
         if let Some(cached) = self.cache.analysis_cache.get(uri, version) {
+            tracing::debug!(uri = %uri, version, "Using cached analysis result");
             self.position_maps.insert(uri.clone(), cached.position_map.clone());
             return Ok(AnalysisResult {
                 uri: uri.clone(),
@@ -209,10 +227,23 @@ impl Analyzer {
             );
         }
 
+        tracing::debug!(uri = %uri, "Generating constraints");
         let ConstraintResult(constraints, mut type_map, position_map, class_registry) =
             walker::generate_constraints(&self.stub_cache, &ast, &symbol_table)?;
 
+        tracing::debug!(
+            uri = %uri,
+            constraint_count = constraints.constraints.len(),
+            "Constraints generated, starting solver"
+        );
+
         let (substitution, type_errors) = beacon_constraint::solver::solve_constraints(constraints, &class_registry)?;
+
+        tracing::info!(
+            uri = %uri,
+            type_error_count = type_errors.len(),
+            "Constraint solving completed"
+        );
 
         for (_node_id, ty) in type_map.iter_mut() {
             *ty = substitution.apply(ty);
@@ -243,6 +274,16 @@ impl Analyzer {
 
         self.cache.analysis_cache.insert(uri.clone(), version, cached_result);
 
+        let elapsed = start_time.elapsed();
+        tracing::info!(
+            uri = %uri,
+            version,
+            duration_ms = elapsed.as_millis(),
+            type_count = type_map.len(),
+            error_count = type_errors.len(),
+            "Analysis completed"
+        );
+
         Ok(AnalysisResult { uri: uri.clone(), version, type_map, position_map, type_errors, static_analysis })
     }
 
@@ -264,6 +305,7 @@ impl Analyzer {
 
     /// Invalidate cached analysis for a document
     pub fn invalidate(&mut self, uri: &Url) {
+        tracing::debug!(uri = %uri, "Invalidating cached analysis");
         self.cache.invalidate_document(uri);
         self.position_maps.remove(uri);
     }

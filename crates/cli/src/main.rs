@@ -2,6 +2,7 @@ mod formatters;
 
 use anyhow::{Context, Result};
 use beacon_constraint::ConstraintResult;
+use beacon_core::logging::default_log_path;
 use beacon_lsp::{Config, analysis::Analyzer, document::DocumentManager};
 use beacon_parser::{PythonHighlighter, PythonParser};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -9,8 +10,9 @@ use formatters::{format_compact, format_human, format_json, print_parse_errors, 
 use owo_colors::OwoColorize;
 use serde_json::json;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, BufRead, Read, Seek, SeekFrom};
 use std::path::PathBuf;
+use std::time::Duration;
 use tree_sitter::Node;
 use url::Url;
 
@@ -133,6 +135,18 @@ enum DebugCommands {
         /// Python file to analyze
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
+    },
+    /// Watch and display LSP server logs
+    Logs {
+        /// Follow mode - continuously watch for new log entries
+        #[arg(short, long)]
+        follow: bool,
+        /// Optional log file path (defaults to logs/lsp.log or $LSP_LOG_PATH)
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Filter logs by regex pattern
+        #[arg(long)]
+        filter: Option<String>,
     },
 }
 
@@ -345,6 +359,7 @@ fn debug_command(command: DebugCommands) -> Result<()> {
         DebugCommands::Ast { file, format } => debug_ast_command(file, format),
         DebugCommands::Constraints { file } => debug_constraints_command(file),
         DebugCommands::Unify { file } => debug_unify_command(file),
+        DebugCommands::Logs { follow, path, filter } => debug_logs_command(follow, path, filter),
     }
 }
 
@@ -574,6 +589,98 @@ fn debug_unify_command(file: Option<PathBuf>) -> Result<()> {
     }
 }
 
+#[cfg(debug_assertions)]
+fn debug_logs_command(follow: bool, path: Option<PathBuf>, filter: Option<String>) -> Result<()> {
+    let log_path = path.unwrap_or_else(default_log_path);
+
+    if !log_path.exists() {
+        anyhow::bail!(
+            "Log file does not exist: {}\n{}",
+            log_path.display(),
+            "Start the LSP server to generate logs.".dimmed()
+        );
+    }
+
+    let filter_regex = if let Some(pattern) = filter {
+        Some(regex::Regex::new(&pattern).with_context(|| format!("Invalid regex pattern: {pattern}"))?)
+    } else {
+        None
+    };
+
+    println!(
+        "{} {}",
+        "Watching log file:".cyan().bold(),
+        log_path.display().to_string().yellow()
+    );
+
+    if let Some(ref regex) = filter_regex {
+        println!("{} {}", "Filter:".cyan(), regex.as_str().yellow());
+    }
+
+    println!();
+
+    if follow {
+        let mut file =
+            fs::File::open(&log_path).with_context(|| format!("Failed to open log file: {}", log_path.display()))?;
+
+        file.seek(SeekFrom::End(0))?;
+
+        let mut reader = io::BufReader::new(file);
+        let mut line = String::new();
+
+        loop {
+            match reader.read_line(&mut line) {
+                Ok(0) => std::thread::sleep(Duration::from_millis(100)),
+                Ok(_) => {
+                    if let Some(ref regex) = filter_regex {
+                        if regex.is_match(&line) {
+                            print_log_line(&line);
+                        }
+                    } else {
+                        print_log_line(&line);
+                    }
+                    line.clear();
+                }
+                Err(e) => {
+                    anyhow::bail!("Error reading log file: {e}")
+                }
+            }
+        }
+    } else {
+        let content = fs::read_to_string(&log_path)
+            .with_context(|| format!("Failed to read log file: {}", log_path.display()))?;
+
+        for line in content.lines() {
+            if let Some(ref regex) = filter_regex {
+                if regex.is_match(line) {
+                    print_log_line(line);
+                }
+            } else {
+                print_log_line(line);
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(debug_assertions)]
+fn print_log_line(line: &str) {
+    if line.contains("ERROR") {
+        println!("{}", line.bright_red());
+    } else if line.contains("WARN") {
+        println!("{}", line.yellow());
+    } else if line.contains("INFO") {
+        println!("{}", line.bright_white());
+    } else if line.contains("DEBUG") {
+        println!("{}", line.cyan());
+    } else if line.contains("TRACE") {
+        println!("{}", line.dimmed());
+    } else {
+        println!("{line}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -581,7 +688,6 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
-    /// Test helper function that returns formatted output instead of printing
     fn format_symbol_table_for_test(table: &SymbolTable, verbose: bool) -> String {
         let mut output = String::new();
         format_scope_for_test(table, table.root_scope, 0, verbose, &mut output);
@@ -986,7 +1092,6 @@ result = obj.method(10)
         let output = format_symbol_table_for_test(&symbol_table, false);
         assert!(output.contains("Module Scope"));
 
-        // NOTE: Symbol table includes 4 builtin dunders: __name__, __file__, __doc__, __package__
         let verbose_output = format_symbol_table_for_test(&symbol_table, true);
         assert!(verbose_output.contains("Total scopes: 1"));
         assert!(verbose_output.contains("Total symbols: 4"));
@@ -1001,8 +1106,7 @@ result = obj.method(10)
         )
         .unwrap();
 
-        let result = typecheck_command(Some(temp_file.path().to_path_buf()), OutputFormat::Human, false).await;
-        let _ = result;
+        let _ = typecheck_command(Some(temp_file.path().to_path_buf()), OutputFormat::Human, false).await;
     }
 
     #[tokio::test]
@@ -1010,8 +1114,7 @@ result = obj.method(10)
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "x = 42\ny = 'hello'\nz = x + y").unwrap();
 
-        let result = typecheck_command(Some(temp_file.path().to_path_buf()), OutputFormat::Json, false).await;
-        let _ = result;
+        let _ = typecheck_command(Some(temp_file.path().to_path_buf()), OutputFormat::Json, false).await;
     }
 
     #[tokio::test]
@@ -1019,8 +1122,7 @@ result = obj.method(10)
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "def greet(name: str) -> str:\n    return f'Hello {{name}}'").unwrap();
 
-        let result = typecheck_command(Some(temp_file.path().to_path_buf()), OutputFormat::Compact, false).await;
-        let _ = result;
+        let _ = typecheck_command(Some(temp_file.path().to_path_buf()), OutputFormat::Compact, false).await;
     }
 
     #[cfg(debug_assertions)]
@@ -1074,6 +1176,40 @@ result = obj.method(10)
         writeln!(temp_file, "x = 42\ny = x + 10").unwrap();
 
         let result = debug_unify_command(Some(temp_file.path().to_path_buf()));
+        assert!(result.is_ok());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_debug_logs_command_missing_file() {
+        let non_existent_path = PathBuf::from("/tmp/non_existent_beacon_log.txt");
+        let result = debug_logs_command(false, Some(non_existent_path), None);
+        assert!(result.is_err());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_debug_logs_command_read_once() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "2025-11-08T12:15:42Z [INFO] Server initialized").unwrap();
+        writeln!(temp_file, "2025-11-08T12:15:43Z [DEBUG] Analyzing file").unwrap();
+        writeln!(temp_file, "2025-11-08T12:15:44Z [ERROR] Type error found").unwrap();
+        temp_file.flush().unwrap();
+
+        let result = debug_logs_command(false, Some(temp_file.path().to_path_buf()), None);
+        assert!(result.is_ok());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_debug_logs_command_with_filter() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "2025-11-08T12:15:42Z [INFO] Server initialized").unwrap();
+        writeln!(temp_file, "2025-11-08T12:15:43Z [DEBUG] Analyzing file").unwrap();
+        writeln!(temp_file, "2025-11-08T12:15:44Z [ERROR] Type error found").unwrap();
+        temp_file.flush().unwrap();
+
+        let result = debug_logs_command(false, Some(temp_file.path().to_path_buf()), Some("ERROR".to_string()));
         assert!(result.is_ok());
     }
 

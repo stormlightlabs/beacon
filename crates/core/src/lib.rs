@@ -10,6 +10,7 @@
 pub mod annotation_parser;
 pub mod class_metadata;
 pub mod errors;
+pub mod logging;
 pub mod protocols;
 pub mod subst;
 pub mod types;
@@ -18,6 +19,7 @@ pub mod unify;
 pub use annotation_parser::*;
 pub use class_metadata::*;
 pub use errors::*;
+pub use logging::*;
 pub use protocols::*;
 pub use subst::*;
 pub use types::*;

@@ -125,17 +125,23 @@ impl LanguageServer for Backend {
     ///
     /// Loads configuration from TOML files (beacon.toml or pyproject.toml) and merges with LSP initialization options.
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        tracing::info!("Received initialize request");
+        tracing::debug!(?params.root_uri, "Initialize params");
+
         let root_uri = params.root_uri.clone();
         let mut config = if let Some(ref uri) = root_uri {
             if let Ok(path) = uri.to_file_path() {
+                tracing::debug!(?path, "Discovering configuration");
                 match Config::discover_and_load(&path) {
                     Ok(cfg) => {
+                        tracing::info!("Configuration loaded from workspace");
                         self.client
                             .log_message(MessageType::INFO, "Configuration loaded from workspace")
                             .await;
                         cfg
                     }
                     Err(e) => {
+                        tracing::warn!(?e, "Failed to load configuration, using defaults");
                         self.client
                             .log_message(MessageType::WARNING, format!("Failed to load configuration: {e}"))
                             .await;
@@ -143,13 +149,16 @@ impl LanguageServer for Backend {
                     }
                 }
             } else {
+                tracing::debug!("Root URI is not a file path, using default config");
                 Config::default()
             }
         } else {
+            tracing::debug!("No root URI provided, using default config");
             Config::default()
         };
 
         if let Some(init_options) = params.initialization_options {
+            tracing::debug!("Applying LSP initialization options");
             config.update_from_value(init_options);
             self.client
                 .log_message(MessageType::INFO, "LSP configuration options applied")
@@ -157,6 +166,7 @@ impl LanguageServer for Backend {
         }
 
         if let Err(e) = config.validate() {
+            tracing::warn!(?e, "Configuration validation warning");
             self.client
                 .log_message(MessageType::WARNING, format!("Configuration validation warning: {e}"))
                 .await;
@@ -239,18 +249,23 @@ impl LanguageServer for Backend {
     }
 
     async fn shutdown(&self) -> Result<()> {
+        tracing::info!("Shutdown request received");
         Ok(())
     }
 
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
+        tracing::info!("Configuration change notification received");
+
         if let Some(settings) = params.settings.as_object() {
             if let Some(beacon_settings) = settings.get("beacon") {
+                tracing::debug!("Updating configuration from LSP settings");
                 let mut workspace = self.workspace.write().await;
                 let mut config = workspace.config.clone();
 
                 config.update_from_value(beacon_settings.clone());
 
                 if let Err(e) = config.validate() {
+                    tracing::warn!(?e, "Configuration validation warning");
                     self.client
                         .log_message(MessageType::WARNING, format!("Configuration validation warning: {e}"))
                         .await;
@@ -263,6 +278,7 @@ impl LanguageServer for Backend {
                 analyzer.update_config(config);
                 drop(analyzer);
 
+                tracing::info!("Configuration updated successfully");
                 self.client
                     .log_message(MessageType::INFO, "Configuration updated successfully")
                     .await;
@@ -275,24 +291,32 @@ impl LanguageServer for Backend {
         let version = params.text_document.version;
         let text = params.text_document.text;
 
+        tracing::info!(uri = %url, version, "Document opened");
+        tracing::trace!(uri = %url, text_length = text.len(), "Document content");
+
         if let Err(e) = self.documents.open_document(url.clone(), version, text) {
+            tracing::error!(uri = %url, ?e, "Failed to open document");
             self.client
                 .log_message(MessageType::ERROR, format!("Failed to open document: {e}"))
                 .await;
             return;
         }
 
+        tracing::debug!(uri = %url, "Publishing diagnostics for opened document");
         self.publish_diagnostics(url).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri.clone();
+        let version = params.text_document.version;
+        tracing::debug!(uri = %uri, version, "Document changed");
 
         match self
             .documents
             .update_document(params.text_document, params.content_changes)
         {
             Ok(_) => {
+                tracing::trace!(uri = %uri, "Document updated, invalidating analysis");
                 let mut analyzer = self.analyzer.write().await;
                 analyzer.invalidate(&uri);
 
@@ -302,6 +326,7 @@ impl LanguageServer for Backend {
                 let invalidated = workspace.invalidate_dependents(&uri);
                 let reanalyzed_count = workspace.reanalyze_affected(&invalidated, &mut analyzer);
 
+                tracing::info!(uri = %uri, reanalyzed_count, "Reanalyzed affected modules");
                 self.client
                     .log_message(
                         MessageType::INFO,
@@ -319,6 +344,7 @@ impl LanguageServer for Backend {
                 self.publish_diagnostics(uri).await;
             }
             Err(e) => {
+                tracing::error!(uri = %uri, ?e, "Failed to update document");
                 self.client
                     .log_message(MessageType::ERROR, format!("Failed to update document: {e}"))
                     .await;
@@ -327,6 +353,7 @@ impl LanguageServer for Backend {
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
+        tracing::info!(uri = %params.text_document.uri, "Document closed");
         let uri = params.text_document.uri;
         self.documents.close_document(&uri);
         self.client.publish_diagnostics(uri, Vec::new(), None).await;

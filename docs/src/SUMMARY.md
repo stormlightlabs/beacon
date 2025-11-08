@@ -17,6 +17,7 @@
     - [Static Analysis](./lsp/static_analysis.md)
         - [Rules](./lsp/lint_rules.md)
         - [Type Checker](./lsp/type_checking.md)
+    - [Logging and Observability](./lsp/logging.md)
     - [Testing Strategy](./lsp/testing.md)
     - [Current Limitations](./lsp/limitations.md)
         - [Next Steps](./lsp/next_steps.md)
