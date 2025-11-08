@@ -360,7 +360,13 @@ impl LanguageServer for Backend {
 
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
         let mut analyzer = self.analyzer.write().await;
-        Ok(Some(self.features.inlay_hints.inlay_hints(params, &mut analyzer)))
+        let workspace = self.workspace.read().await;
+        let config = &workspace.config.inlay_hints;
+        Ok(Some(self.features.inlay_hints.inlay_hints(
+            params,
+            &mut analyzer,
+            config,
+        )))
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {

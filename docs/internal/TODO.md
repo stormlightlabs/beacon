@@ -17,7 +17,7 @@ Implementation details and mod-specific tasks.
 - [x] LSP configuration via workspace settings
 - [x] Config hot-reload support
 - [x] Diagnostic severity configuration
-- [ ] Inlay hints configuration implementation
+- [x] Inlay hints configuration implementation
 - [ ] Integration tests for configuration flow (config loading and hot-reload)
 - [ ] Formatting options
 

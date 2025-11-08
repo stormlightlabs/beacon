@@ -3,6 +3,7 @@
 //! Displays inline type annotations, parameter names, and other hints.
 
 use crate::analysis::Analyzer;
+use crate::config::InlayHintsConfig;
 use crate::document::DocumentManager;
 
 use beacon_core::Type;
@@ -28,20 +29,34 @@ impl InlayHintsProvider {
     /// - Function parameter names in function calls
     /// - Function return types for functions without return type annotations
     ///
-    /// TODO: Add configuration support to conditionally enable/disable hint types
+    /// Respects configuration to conditionally enable/disable hint types:
     /// - inlayHints.enable: master toggle for all hints
     /// - inlayHints.variableTypes: toggle for variable type hints
     /// - inlayHints.functionReturnTypes: toggle for return type hints
     /// - inlayHints.parameterNames: toggle for parameter name hints
-    pub fn inlay_hints(&self, params: InlayHintParams, analyzer: &mut Analyzer) -> Vec<InlayHint> {
+    pub fn inlay_hints(
+        &self, params: InlayHintParams, analyzer: &mut Analyzer, config: &InlayHintsConfig,
+    ) -> Vec<InlayHint> {
+        if !config.enable {
+            return Vec::new();
+        }
+
         let uri = params.text_document.uri;
         let range = params.range;
 
         let mut hints = Vec::new();
 
-        self.add_variable_type_hints(&uri, range, analyzer, &mut hints);
-        self.add_parameter_hints(&uri, range, &mut hints);
-        self.add_return_type_hints(&uri, range, analyzer, &mut hints);
+        if config.variable_types {
+            self.add_variable_type_hints(&uri, range, analyzer, &mut hints);
+        }
+
+        if config.parameter_names {
+            self.add_parameter_hints(&uri, range, &mut hints);
+        }
+
+        if config.function_return_types {
+            self.add_return_type_hints(&uri, range, analyzer, &mut hints);
+        }
 
         hints
     }
@@ -506,7 +521,8 @@ w: str = "world"
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let _ = provider.inlay_hints(params, &mut analyzer);
+        let config = Config::default();
+        let _ = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
     }
 
     #[test]
@@ -529,7 +545,8 @@ y: str = "hello"
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let hints = provider.inlay_hints(params, &mut analyzer);
+        let config = Config::default();
+        let hints = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
 
         let _: Vec<_> = hints
             .iter()
@@ -563,7 +580,8 @@ def no_return():
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let _ = provider.inlay_hints(params, &mut analyzer);
+        let config = Config::default();
+        let _ = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
     }
 
     #[test]
@@ -588,7 +606,8 @@ w = True
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        for hint in &provider.inlay_hints(params, &mut analyzer) {
+        let config = Config::default();
+        for hint in &provider.inlay_hints(params, &mut analyzer, &config.inlay_hints) {
             assert!(
                 hint.position.line >= 1 && hint.position.line <= 2,
                 "Hint position {:?} should be within requested range",
@@ -625,7 +644,8 @@ if True:
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let _ = provider.inlay_hints(params, &mut analyzer);
+        let config = Config::default();
+        let _ = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
     }
 
     #[test]
@@ -688,7 +708,8 @@ empty = []
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let _ = provider.inlay_hints(params, &mut analyzer);
+        let config = Config::default();
+        let _ = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
     }
 
     #[test]
@@ -712,7 +733,8 @@ empty_dict = {}
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let _ = provider.inlay_hints(params, &mut analyzer);
+        let config = Config::default();
+        let _ = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
     }
 
     #[test]
@@ -736,7 +758,8 @@ empty_set = set()
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let _ = provider.inlay_hints(params, &mut analyzer);
+        let config = Config::default();
+        let _ = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
     }
 
     #[test]
@@ -760,7 +783,8 @@ singleton = (42,)
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let hints = provider.inlay_hints(params, &mut analyzer);
+        let config = Config::default();
+        let hints = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
 
         let type_hints: Vec<_> = hints
             .iter()
@@ -791,7 +815,8 @@ complex = [{"a": 1}, {"b": 2}]
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let _ = provider.inlay_hints(params, &mut analyzer);
+        let config = Config::default();
+        let _ = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
     }
 
     #[test]
@@ -813,7 +838,8 @@ complex = [{"a": 1}, {"b": 2}]
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let hints = provider.inlay_hints(params, &mut analyzer);
+        let config = Config::default();
+        let hints = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
 
         let any_hints: Vec<_> = hints
             .iter()
@@ -846,7 +872,8 @@ complex = [{"a": 1}, {"b": 2}]
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let hints = provider.inlay_hints(params, &mut analyzer);
+        let config = Config::default();
+        let hints = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
         let type_var_hints: Vec<_> = hints
             .iter()
             .filter(
@@ -880,7 +907,8 @@ mapping = {x: x * 2 for x in range(5)}
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let hints = provider.inlay_hints(params, &mut analyzer);
+        let config = Config::default();
+        let hints = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
 
         let type_hints: Vec<_> = hints
             .iter()
@@ -916,7 +944,8 @@ def get_mapping():
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let _ = provider.inlay_hints(params, &mut analyzer);
+        let config = Config::default();
+        let _ = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
     }
 
     #[test]
@@ -941,7 +970,13 @@ greet("Alice", 30)
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let hints = provider.inlay_hints(params, &mut analyzer);
+        let hint_config = crate::config::InlayHintsConfig {
+            enable: true,
+            variable_types: true,
+            function_return_types: true,
+            parameter_names: true,
+        };
+        let hints = provider.inlay_hints(params, &mut analyzer, &hint_config);
 
         let param_hints: Vec<_> = hints
             .iter()
@@ -983,7 +1018,13 @@ outer()
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let hints = provider.inlay_hints(params, &mut analyzer);
+        let hint_config = crate::config::InlayHintsConfig {
+            enable: true,
+            variable_types: true,
+            function_return_types: true,
+            parameter_names: true,
+        };
+        let hints = provider.inlay_hints(params, &mut analyzer, &hint_config);
 
         let param_hints: Vec<_> = hints
             .iter()
@@ -1012,7 +1053,8 @@ len([1, 2, 3])
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let hints = provider.inlay_hints(params, &mut analyzer);
+        let config = Config::default();
+        let hints = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
         let param_hints: Vec<_> = hints
             .iter()
             .filter(|h| matches!(h.kind, Some(InlayHintKind::PARAMETER)))
@@ -1104,6 +1146,120 @@ calc.add(5, 3)
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
-        let _ = provider.inlay_hints(params, &mut analyzer);
+        let config = Config::default();
+        let _ = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
+    }
+
+    #[test]
+    fn test_config_disable_all_hints() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = InlayHintsProvider::new(documents.clone());
+        let config = Config::default();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"x = 42
+def add(a, b):
+    return a + b
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let params = InlayHintParams {
+            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+        };
+
+        let disabled_config = crate::config::InlayHintsConfig {
+            enable: false,
+            variable_types: true,
+            function_return_types: true,
+            parameter_names: true,
+        };
+
+        let hints = provider.inlay_hints(params, &mut analyzer, &disabled_config);
+        assert_eq!(hints.len(), 0, "All hints should be disabled when enable=false");
+    }
+
+    #[test]
+    fn test_config_disable_variable_hints() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = InlayHintsProvider::new(documents.clone());
+        let config = Config::default();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"x = 42
+y = "hello"
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let params = InlayHintParams {
+            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+        };
+
+        let disabled_config = crate::config::InlayHintsConfig {
+            enable: true,
+            variable_types: false,
+            function_return_types: true,
+            parameter_names: false,
+        };
+
+        let hints = provider.inlay_hints(params, &mut analyzer, &disabled_config);
+        assert_eq!(
+            hints.len(),
+            0,
+            "No variable hints should be shown when variable_types=false"
+        );
+    }
+
+    #[test]
+    fn test_config_enable_only_parameter_hints() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = InlayHintsProvider::new(documents.clone());
+        let config = Config::default();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"def greet(name, age):
+    print(name, age)
+
+x = 42
+greet("Alice", 30)
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let params = InlayHintParams {
+            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+        };
+
+        let param_only_config = crate::config::InlayHintsConfig {
+            enable: true,
+            variable_types: false,
+            function_return_types: false,
+            parameter_names: true,
+        };
+
+        let hints = provider.inlay_hints(params, &mut analyzer, &param_only_config);
+
+        for hint in &hints {
+            assert_eq!(
+                hint.kind,
+                Some(InlayHintKind::PARAMETER),
+                "Only parameter hints should be shown"
+            );
+        }
+
+        assert!(
+            hints.len() >= 2,
+            "Should have at least 2 parameter hints for the function call"
+        );
     }
 }

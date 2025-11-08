@@ -27,6 +27,33 @@ impl Default for DiagnosticSeverity {
     }
 }
 
+/// Configuration for inlay hints display
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InlayHintsConfig {
+    /// Enable all inlay hints (master toggle)
+    #[serde(default = "default_true")]
+    pub enable: bool,
+
+    /// Show inlay hints for inferred variable types
+    #[serde(default = "default_true")]
+    pub variable_types: bool,
+
+    /// Show inlay hints for inferred function return types
+    #[serde(default = "default_true")]
+    pub function_return_types: bool,
+
+    /// Show inlay hints for parameter names in function calls
+    #[serde(default)]
+    pub parameter_names: bool,
+}
+
+impl Default for InlayHintsConfig {
+    fn default() -> Self {
+        Self { enable: true, variable_types: true, function_return_types: true, parameter_names: false }
+    }
+}
+
 /// Type checking strictness mode
 ///
 /// Controls how the type checker handles annotation mismatches and inference.
@@ -178,6 +205,10 @@ pub struct Config {
     /// For now, we default to Warning
     #[serde(default)]
     pub circular_import_severity: DiagnosticSeverity,
+
+    /// Inlay hints configuration
+    #[serde(default)]
+    pub inlay_hints: InlayHintsConfig,
 }
 
 fn default_max_any_depth() -> u32 {
@@ -209,6 +240,7 @@ impl Default for Config {
             exclude_patterns: Vec::new(),
             unresolved_import_severity: DiagnosticSeverity::default(),
             circular_import_severity: DiagnosticSeverity::default(),
+            inlay_hints: InlayHintsConfig::default(),
         }
     }
 }
@@ -270,6 +302,9 @@ impl Config {
             }
             if partial.circular_import_severity != defaults.circular_import_severity {
                 self.circular_import_severity = partial.circular_import_severity;
+            }
+            if partial.inlay_hints != defaults.inlay_hints {
+                self.inlay_hints = partial.inlay_hints;
             }
         }
     }
@@ -409,6 +444,10 @@ fn toml_to_json(value: toml::Value) -> serde_json::Value {
                     "exclude_patterns" => "excludePatterns".to_string(),
                     "unresolved_import_severity" => "unresolvedImportSeverity".to_string(),
                     "circular_import_severity" => "circularImportSeverity".to_string(),
+                    "inlay_hints" => "inlayHints".to_string(),
+                    "variable_types" => "variableTypes".to_string(),
+                    "function_return_types" => "functionReturnTypes".to_string(),
+                    "parameter_names" => "parameterNames".to_string(),
                     _ => key,
                 };
                 map.insert(camel_key, toml_to_json(val));
@@ -603,5 +642,119 @@ mode = "loose""#,
 
         assert_eq!(config.mode, TypeCheckingMode::Strict);
         assert_eq!(config.python_version, original_version);
+    }
+
+    #[test]
+    fn test_inlay_hints_config_defaults() {
+        let config = InlayHintsConfig::default();
+        assert!(config.enable);
+        assert!(config.variable_types);
+        assert!(config.function_return_types);
+        assert!(!config.parameter_names);
+    }
+
+    #[test]
+    fn test_inlay_hints_config_serialization() {
+        let config = InlayHintsConfig {
+            enable: true,
+            variable_types: false,
+            function_return_types: true,
+            parameter_names: true,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: InlayHintsConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, deserialized);
+    }
+
+    #[test]
+    fn test_config_with_inlay_hints() {
+        let config = Config::default();
+        assert!(config.inlay_hints.enable);
+        assert!(config.inlay_hints.variable_types);
+        assert!(config.inlay_hints.function_return_types);
+        assert!(!config.inlay_hints.parameter_names);
+    }
+
+    #[test]
+    fn test_update_inlay_hints_from_json() {
+        let json_str = r#"{
+            "inlayHints": {
+                "enable": false,
+                "variableTypes": false,
+                "functionReturnTypes": false,
+                "parameterNames": true
+            }
+        }"#;
+
+        let json_value: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        let mut config = Config::default();
+        config.update_from_value(json_value);
+
+        assert!(!config.inlay_hints.enable);
+        assert!(!config.inlay_hints.variable_types);
+        assert!(!config.inlay_hints.function_return_types);
+        assert!(config.inlay_hints.parameter_names);
+    }
+
+    #[test]
+    fn test_inlay_hints_from_toml() {
+        let toml_str = r#"
+[inlay_hints]
+enable = false
+variable_types = false
+function_return_types = true
+parameter_names = true
+"#;
+
+        let table: toml::Table = toml::from_str(toml_str).unwrap();
+        let toml_value = toml::Value::Table(table);
+        let mut config = Config::default();
+        config.load_from_toml_value(toml_value).unwrap();
+
+        assert!(!config.inlay_hints.enable);
+        assert!(!config.inlay_hints.variable_types);
+        assert!(config.inlay_hints.function_return_types);
+        assert!(config.inlay_hints.parameter_names);
+    }
+
+    #[test]
+    fn test_inlay_hints_in_beacon_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let beacon_toml_path = temp_dir.path().join("beacon.toml");
+        let toml_content = r#"mode = "strict"
+
+[inlay_hints]
+enable = true
+variable_types = false
+parameter_names = true
+"#;
+
+        fs::write(&beacon_toml_path, toml_content).unwrap();
+
+        let config = Config::discover_and_load(temp_dir.path()).unwrap();
+
+        assert_eq!(config.mode, TypeCheckingMode::Strict);
+        assert!(config.inlay_hints.enable);
+        assert!(!config.inlay_hints.variable_types);
+        assert!(config.inlay_hints.parameter_names);
+        assert!(config.inlay_hints.function_return_types);
+    }
+
+    #[test]
+    fn test_partial_inlay_hints_update() {
+        let json_str = r#"{
+            "inlayHints": {
+                "parameterNames": true
+            }
+        }"#;
+
+        let json_value: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        let mut config = Config::default();
+        let original_enable = config.inlay_hints.enable;
+
+        config.update_from_value(json_value);
+
+        assert_eq!(config.inlay_hints.enable, original_enable);
+        assert!(config.inlay_hints.parameter_names);
     }
 }

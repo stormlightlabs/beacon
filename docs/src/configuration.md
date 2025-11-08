@@ -42,6 +42,56 @@ Target Python version for feature support (e.g., pattern matching in 3.10+, PEP 
 python_version = "3.12"
 ```
 
+### Inlay Hints
+
+#### `inlay_hints.enable`
+
+Master toggle for all inlay hints.
+
+- **Type:** `boolean`
+- **Default:** `true`
+
+```toml
+[inlay_hints]
+enable = true
+```
+
+#### `inlay_hints.variable_types`
+
+Show inlay hints for inferred variable types on assignments without explicit type annotations.
+
+- **Type:** `boolean`
+- **Default:** `true`
+
+```toml
+[inlay_hints]
+variable_types = true
+```
+
+#### `inlay_hints.function_return_types`
+
+Show inlay hints for inferred function return types on functions without explicit return type annotations.
+
+- **Type:** `boolean`
+- **Default:** `true`
+
+```toml
+[inlay_hints]
+function_return_types = true
+```
+
+#### `inlay_hints.parameter_names`
+
+Show inlay hints for parameter names in function calls to improve readability.
+
+- **Type:** `boolean`
+- **Default:** `false`
+
+```toml
+[inlay_hints]
+parameter_names = false
+```
+
 ### Diagnostics
 
 #### `unresolved_import_severity`
@@ -178,6 +228,13 @@ circular_import_severity = "warning"
 mode = "balanced"
 python_version = "3.13"
 max_any_depth = 5
+
+# Inlay hints
+[inlay_hints]
+enable = true
+variable_types = true
+function_return_types = true
+parameter_names = false
 
 # Diagnostic severity
 unresolved_import_severity = "warning"
