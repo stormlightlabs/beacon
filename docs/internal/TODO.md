@@ -50,16 +50,13 @@ Implementation status for BEA diagnostic codes. See `docs/src/lsp/lint_rules.md`
 
 ### Needs Symbol Table Integration
 
-- [ ] BEA015: UnusedImport
-- [ ] BEA017: UnusedAnnotation
-- [ ] BEA018: RedefinedWhileUnused
-- [ ] BEA022: UnusedIndirectAssignment
+- [ ] BEA022: UnusedIndirectAssignment (blocked: requires Global/Nonlocal AST nodes)
 
 ### Needs Expression Evaluation
 
 - [ ] BEA023: ForwardAnnotationSyntaxError - Needs Python expression parser for annotation validation
-- [ ] BEA024: MultiValueRepeatedKeyLiteral - Requires dict key evaluation (linter.rs:340)
-- [ ] BEA029: RedundantPass - Requires separate pass (linter.rs:266)
+- [ ] BEA024: MultiValueRepeatedKeyLiteral - Requires dict key evaluation
+- [ ] BEA029: RedundantPass - Requires separate pass
 
 ### Other
 

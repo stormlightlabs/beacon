@@ -892,32 +892,66 @@ impl NameResolver {
                 self.visit_node(value)?;
 
                 for name in target.extract_target_names() {
-                    let symbol = Symbol {
-                        name,
-                        kind: SymbolKind::Variable,
-                        line: *line,
-                        col: *col,
-                        scope_id: self.current_scope,
-                        docstring: None,
-                        references: Vec::new(),
-                    };
-                    self.symbol_table.add_symbol(self.current_scope, symbol);
+                    if let Some(scope) = self.symbol_table.scopes.get(&self.current_scope) {
+                        if scope.symbols.contains_key(&name) {
+                            self.symbol_table.add_reference(
+                                &name,
+                                self.current_scope,
+                                *line,
+                                *col,
+                                ReferenceKind::Write,
+                            );
+                        } else {
+                            let mut symbol = Symbol {
+                                name: name.clone(),
+                                kind: SymbolKind::Variable,
+                                line: *line,
+                                col: *col,
+                                scope_id: self.current_scope,
+                                docstring: None,
+                                references: Vec::new(),
+                            };
+                            symbol.references.push(SymbolReference {
+                                line: *line,
+                                col: *col,
+                                kind: ReferenceKind::Write,
+                            });
+                            self.symbol_table.add_symbol(self.current_scope, symbol);
+                        }
+                    }
                 }
             }
             AstNode::AnnotatedAssignment { target, value, line, col, .. } => {
                 for name in target.extract_target_names() {
-                    self.symbol_table.add_symbol(
-                        self.current_scope,
-                        Symbol {
-                            name,
-                            kind: SymbolKind::Variable,
-                            line: *line,
-                            col: *col,
-                            scope_id: self.current_scope,
-                            docstring: None,
-                            references: Vec::new(),
-                        },
-                    );
+                    if let Some(scope) = self.symbol_table.scopes.get(&self.current_scope) {
+                        if scope.symbols.contains_key(&name) {
+                            self.symbol_table.add_reference(
+                                &name,
+                                self.current_scope,
+                                *line,
+                                *col,
+                                ReferenceKind::Write,
+                            );
+                        } else {
+                            let mut symbol = Symbol {
+                                name: name.clone(),
+                                kind: SymbolKind::Variable,
+                                line: *line,
+                                col: *col,
+                                scope_id: self.current_scope,
+                                docstring: None,
+                                references: Vec::new(),
+                            };
+                            if value.is_some() {
+                                symbol.references.push(SymbolReference {
+                                    line: *line,
+                                    col: *col,
+                                    kind: ReferenceKind::Write,
+                                });
+                            }
+                            self.symbol_table.add_symbol(self.current_scope, symbol);
+                        }
+                    }
                 }
 
                 if let Some(val) = value {

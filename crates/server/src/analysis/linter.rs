@@ -3,7 +3,8 @@
 //! Implements PyFlakes-style linting rules (BEA001-BEA030) for detecting common coding issues, style violations, and potential bugs.
 
 use super::rules::{DiagnosticMessage, RuleKind};
-use beacon_parser::{AstNode, CompareOperator, ExceptHandler, LiteralValue, SymbolTable};
+
+use beacon_parser::{AstNode, CompareOperator, ExceptHandler, LiteralValue, ReferenceKind, SymbolKind, SymbolTable};
 use rustc_hash::FxHashSet;
 
 /// Context for tracking state during AST traversal
@@ -78,7 +79,7 @@ pub struct Linter<'a> {
     /// Context for tracking state
     ctx: LinterContext,
     /// Symbol table for scope analysis
-    _symbol_table: &'a SymbolTable,
+    symbol_table: &'a SymbolTable,
     /// Source filename
     filename: String,
 }
@@ -86,12 +87,13 @@ pub struct Linter<'a> {
 impl<'a> Linter<'a> {
     /// Create a new linter for the given AST and symbol table
     pub fn new(symbol_table: &'a SymbolTable, filename: String) -> Self {
-        Self { diagnostics: Vec::new(), ctx: LinterContext::new(), _symbol_table: symbol_table, filename }
+        Self { diagnostics: Vec::new(), ctx: LinterContext::new(), symbol_table, filename }
     }
 
     /// Analyze the AST and return collected diagnostics
     pub fn analyze(&mut self, ast: &AstNode) -> Vec<DiagnosticMessage> {
         self.visit_node(ast);
+        self.check_symbol_table_rules();
         std::mem::take(&mut self.diagnostics)
     }
 
@@ -638,6 +640,120 @@ impl<'a> Linter<'a> {
             _ => 0,
         }
     }
+
+    /// Check rules that require symbol table analysis
+    ///
+    /// Called after AST traversal to check for issues detected via symbol usage patterns
+    fn check_symbol_table_rules(&mut self) {
+        self.check_unused_imports();
+        self.check_unused_annotations();
+        self.check_redefined_while_unused();
+    }
+
+    /// BEA015: UnusedImport
+    ///
+    /// Check for imports that are never read
+    fn check_unused_imports(&mut self) {
+        for scope in self.symbol_table.scopes.values() {
+            for symbol in scope.symbols.values() {
+                if symbol.kind != SymbolKind::Import {
+                    continue;
+                }
+
+                if symbol.name.starts_with('_') {
+                    continue;
+                }
+
+                let has_read = symbol.references.iter().any(|r| r.kind == ReferenceKind::Read);
+
+                if !has_read {
+                    self.report(
+                        RuleKind::UnusedImport,
+                        format!("'{}' imported but never used", symbol.name),
+                        symbol.line,
+                        symbol.col,
+                    );
+                }
+            }
+        }
+    }
+
+    /// BEA017: UnusedAnnotation
+    ///
+    /// Check for annotated variables that are never read
+    fn check_unused_annotations(&mut self) {
+        for scope in self.symbol_table.scopes.values() {
+            for symbol in scope.symbols.values() {
+                if symbol.kind != SymbolKind::Variable {
+                    continue;
+                }
+
+                if symbol.name.starts_with('_') {
+                    continue;
+                }
+
+                let has_read = symbol.references.iter().any(|r| r.kind == ReferenceKind::Read);
+                let has_write = symbol.references.iter().any(|r| r.kind == ReferenceKind::Write);
+
+                if !has_read && !has_write {
+                    self.report(
+                        RuleKind::UnusedAnnotation,
+                        format!("Annotated variable '{}' is never used", symbol.name),
+                        symbol.line,
+                        symbol.col,
+                    );
+                }
+            }
+        }
+    }
+
+    /// BEA018: RedefinedWhileUnused
+    ///
+    /// Check for variables that are redefined before the original value is used
+    fn check_redefined_while_unused(&mut self) {
+        for scope in self.symbol_table.scopes.values() {
+            for symbol in scope.symbols.values() {
+                if symbol.kind != SymbolKind::Variable {
+                    continue;
+                }
+
+                if symbol.name.starts_with('_') {
+                    continue;
+                }
+
+                let writes: Vec<_> = symbol
+                    .references
+                    .iter()
+                    .filter(|r| r.kind == ReferenceKind::Write)
+                    .collect();
+
+                if writes.len() < 2 {
+                    continue;
+                }
+
+                for i in 1..writes.len() {
+                    let prev_write = writes[i - 1];
+                    let curr_write = writes[i];
+
+                    let has_read_between = symbol.references.iter().any(|r| {
+                        r.kind == ReferenceKind::Read
+                            && ((r.line > prev_write.line) || (r.line == prev_write.line && r.col > prev_write.col))
+                            && ((r.line < curr_write.line) || (r.line == curr_write.line && r.col < curr_write.col))
+                    });
+
+                    if !has_read_between {
+                        self.report(
+                            RuleKind::RedefinedWhileUnused,
+                            format!("'{}' is redefined before being used", symbol.name),
+                            curr_write.line,
+                            curr_write.col,
+                        );
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -869,5 +985,79 @@ except:
                 .iter()
                 .any(|d| d.rule == RuleKind::FStringMissingPlaceholders)
         );
+    }
+
+    #[test]
+    fn test_unused_import() {
+        let source = "import os\nx = 5";
+        let diagnostics = lint_source(source);
+        assert!(diagnostics.iter().any(|d| d.rule == RuleKind::UnusedImport));
+    }
+
+    #[test]
+    fn test_used_import() {
+        let source = "import os\nprint(os.name)";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedImport));
+    }
+
+    #[test]
+    fn test_unused_import_with_underscore_prefix() {
+        let source = "import _private\nx = 5";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedImport));
+    }
+
+    #[test]
+    fn test_unused_annotation() {
+        let source = "x: int";
+        let diagnostics = lint_source(source);
+        assert!(diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_used_annotation() {
+        let source = "x: int = 5\nprint(x)";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_annotation_with_underscore_prefix() {
+        let source = "_x: int";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_redefined_while_unused() {
+        let source = "x = 1\nx = 2";
+        let diagnostics = lint_source(source);
+        assert!(diagnostics.iter().any(|d| d.rule == RuleKind::RedefinedWhileUnused));
+    }
+
+    #[test]
+    fn test_redefined_after_use() {
+        let source = "x = 1\nprint(x)\nx = 2";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::RedefinedWhileUnused));
+    }
+
+    #[test]
+    fn test_redefined_while_unused_with_underscore() {
+        let source = "_x = 1\n_x = 2";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::RedefinedWhileUnused));
+    }
+
+    #[test]
+    fn test_multiple_redefinitions() {
+        let source = "x = 1\nx = 2\nx = 3";
+        let diagnostics = lint_source(source);
+        let count = diagnostics
+            .iter()
+            .filter(|d| d.rule == RuleKind::RedefinedWhileUnused)
+            .count();
+        assert_eq!(count, 1);
     }
 }
