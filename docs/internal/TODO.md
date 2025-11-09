@@ -205,29 +205,15 @@ Implementation details and mod-specific tasks.
 
 ### Whitespace & Indentation Rules
 
-- [ ] Implement indentation normalization (4 spaces, configurable)
-- [ ] Trailing whitespace removal
-- [ ] Blank line rules:
-    - [ ] Two blank lines before top-level class/function definitions
-    - [ ] One blank line between methods
-    - [ ] Maximum consecutive blank lines (default: 2)
-- [ ] Whitespace around operators (binary, comparison, assignment)
-- [ ] Whitespace after commas, colons in dicts/slices
-- [ ] No whitespace inside brackets/parentheses
-- [ ] Draft `docs/src/format/overview.md`
-- [ ] Draft `docs/src/format/whitespace.md`
+- [x] Implemented whitespace and indentation rules (indentation normalization, trailing whitespace removal, blank line management, operator spacing, delimiter spacing)
+- [x] Created `docs/src/format/overview.md` and `docs/src/format/whitespace.md`
 
 ### Line Length & Wrapping
 
-- [ ] Line length calculation (respecting multi-byte Unicode)
-- [ ] Smart line breaking algorithm (prefer breaking at commas, operators)
-- [ ] Function call argument wrapping (vertical vs horizontal)
-- [ ] Function definition parameter wrapping
-- [ ] Collection literal wrapping (lists, dicts, sets, tuples)
-- [ ] Binary expression breaking (logical, arithmetic)
-- [ ] Parenthesized continuation vs backslash continuation
-- [ ] Preserve user-inserted line breaks when under limit
-- [ ] Draft `docs/src/format/print-width.md`
+- [x] Implemented line length calculation with Unicode width support
+- [x] Smart line breaking algorithm with prioritized break points (commas, operators, brackets)
+- [x] Wrapping strategies for function calls, parameters, collections, and binary expressions
+- [x] Created `docs/src/format/print-width.md`
 
 ### Import Formatting
 

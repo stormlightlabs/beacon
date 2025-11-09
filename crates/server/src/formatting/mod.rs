@@ -5,16 +5,20 @@
 
 pub mod config;
 pub mod context;
+pub mod rules;
 pub mod state;
 pub mod token_stream;
+pub mod writer;
 
 pub use config::FormatterConfig;
 pub use context::FormattingContext;
+pub use rules::FormattingRules;
 pub use state::FormatterState;
 pub use token_stream::TokenStream;
+pub use writer::FormattedWriter;
 
 use beacon_core::Result;
-use beacon_parser::{AstNode, ParsedFile};
+use beacon_parser::{AstNode, ParsedFile, PythonParser};
 
 /// Main formatter for Python code
 ///
@@ -26,50 +30,75 @@ use beacon_parser::{AstNode, ParsedFile};
 pub struct Formatter {
     #[allow(dead_code)]
     config: FormatterConfig,
+
+    parser: PythonParser,
 }
 
 impl Formatter {
     /// Create a new formatter with the given configuration
-    pub fn new(config: FormatterConfig) -> Self {
-        Self { config }
+    pub fn new(config: FormatterConfig, parser: PythonParser) -> Self {
+        Self { config, parser }
     }
 
     /// Create a formatter with default PEP8 configuration
     pub fn with_defaults() -> Self {
-        Self::new(FormatterConfig::default())
+        Self::new(FormatterConfig::default(), PythonParser::default())
     }
 
     /// Format a parsed Python file
     pub fn format_file(&self, parsed: &ParsedFile) -> Result<String> {
-        // TODO: Implement formatting pipeline
-        // 1. Create token stream from AST
-        // 2. Initialize formatting context
-        // 3. Process tokens and apply formatting rules
-        // 4. Return formatted string
-        Ok(parsed.source.clone())
+        // Create token stream from AST
+        let ast = self.parser.to_ast(parsed)?;
+        let token_stream = TokenStream::from_ast(&ast);
+
+        // Initialize writer and rules
+        let mut writer = FormattedWriter::new(&self.config);
+        let _rules = FormattingRules::new(self.config.clone());
+
+        // Process tokens and write formatted output
+        for token in token_stream {
+            writer.write_token(&token);
+        }
+
+        Ok(writer.output().to_string())
     }
 
     /// Format a specific AST node
-    pub fn format_node(&self, _node: &AstNode, source: &str) -> Result<String> {
-        // TODO: Implement node-specific formatting
-        Ok(source.to_string())
+    pub fn format_node(&self, node: &AstNode, _source: &str) -> Result<String> {
+        // Create token stream from the node
+        let token_stream = TokenStream::from_ast(node);
+
+        // Initialize writer
+        let mut writer = FormattedWriter::new(&self.config);
+
+        // Process tokens
+        for token in token_stream {
+            writer.write_token(&token);
+        }
+
+        Ok(writer.output().to_string())
     }
 
     /// Format a range within source code
-    pub fn format_range(&self, source: &str, _start_line: usize, _end_line: usize) -> Result<String> {
-        // TODO: Implement range formatting
-        // 1. Parse source
-        // 2. Find nodes within range
-        // 3. Format selected nodes
-        // 4. Reconstruct source with formatted range
-        Ok(source.to_string())
+    pub fn format_range(&mut self, source: &str, _start_line: usize, _end_line: usize) -> Result<String> {
+        // For now, format the entire source
+        // TODO: Implement proper range formatting by parsing and selecting nodes
+        let parsed = self.parser.parse(source)?;
+        self.format_file(&parsed)
     }
 
     /// Check if source code is already formatted according to config
-    pub fn is_formatted(&self, _source: &str) -> bool {
-        // TODO: Implement formatted check
-        // Could hash source and compare, or do quick heuristic checks
-        false
+    pub fn is_formatted(&mut self, source: &str) -> bool {
+        match self.parser.parse(source) {
+            Ok(parsed) => {
+                if let Ok(formatted) = self.format_file(&parsed) {
+                    source == formatted
+                } else {
+                    false
+                }
+            }
+            Err(_) => false,
+        }
     }
 }
 
@@ -86,7 +115,7 @@ mod tests {
     #[test]
     fn test_formatter_with_custom_config() {
         let config = FormatterConfig { line_length: 100, ..Default::default() };
-        let formatter = Formatter::new(config);
+        let formatter = Formatter::new(config, PythonParser::default());
         assert_eq!(formatter.config.line_length, 100);
     }
 }

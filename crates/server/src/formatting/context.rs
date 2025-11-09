@@ -13,7 +13,7 @@ use super::config::FormatterConfig;
 /// - Nesting depth (parentheses, brackets, braces)
 /// - Whether we're inside a string, comment, etc.
 #[derive(Debug, Clone)]
-pub struct FormattingContext {
+pub struct FormattingContext<'a> {
     /// Current indentation level (number of indent units)
     indent_level: usize,
 
@@ -48,12 +48,12 @@ pub struct FormattingContext {
     at_line_start: bool,
 
     /// Configuration reference
-    config: FormatterConfig,
+    config: &'a FormatterConfig,
 }
 
-impl FormattingContext {
+impl<'a> FormattingContext<'a> {
     /// Create a new formatting context with the given configuration
-    pub fn new(config: FormatterConfig) -> Self {
+    pub fn new(config: &'a FormatterConfig) -> Self {
         Self {
             indent_level: 0,
             current_column: 0,
@@ -254,7 +254,7 @@ impl FormattingContext {
 
     /// Get a reference to the configuration
     pub fn config(&self) -> &FormatterConfig {
-        &self.config
+        self.config
     }
 }
 
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn test_context_creation() {
         let config = FormatterConfig::default();
-        let ctx = FormattingContext::new(config);
+        let ctx = FormattingContext::new(&config);
 
         assert_eq!(ctx.indent_level(), 0);
         assert_eq!(ctx.current_column(), 0);
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn test_indentation() {
         let config = FormatterConfig::default();
-        let mut ctx = FormattingContext::new(config);
+        let mut ctx = FormattingContext::new(&config);
 
         ctx.indent();
         assert_eq!(ctx.indent_level(), 1);
@@ -297,7 +297,7 @@ mod tests {
     #[test]
     fn test_column_tracking() {
         let config = FormatterConfig::default();
-        let mut ctx = FormattingContext::new(config);
+        let mut ctx = FormattingContext::new(&config);
 
         assert_eq!(ctx.current_column(), 0);
         assert!(ctx.at_line_start());
@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn test_line_length_check() {
         let config = FormatterConfig { line_length: 80, ..Default::default() };
-        let mut ctx = FormattingContext::new(config);
+        let mut ctx = FormattingContext::new(&config);
 
         ctx.advance_column(70);
         assert!(!ctx.would_exceed_line_length(5));
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn test_nesting_depth() {
         let config = FormatterConfig::default();
-        let mut ctx = FormattingContext::new(config);
+        let mut ctx = FormattingContext::new(&config);
 
         assert_eq!(ctx.nesting_depth(), 0);
         assert!(!ctx.is_nested());
@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn test_string_and_comment_tracking() {
         let config = FormatterConfig::default();
-        let mut ctx = FormattingContext::new(config);
+        let mut ctx = FormattingContext::new(&config);
 
         assert!(!ctx.in_string());
         assert!(!ctx.in_comment());
@@ -371,7 +371,7 @@ mod tests {
     #[test]
     fn test_blank_line_tracking() {
         let config = FormatterConfig::default();
-        let mut ctx = FormattingContext::new(config);
+        let mut ctx = FormattingContext::new(&config);
 
         assert_eq!(ctx.consecutive_blank_lines(), 0);
 
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn test_indent_string() {
         let config = FormatterConfig { indent_size: 4, ..Default::default() };
-        let mut ctx = FormattingContext::new(config);
+        let mut ctx = FormattingContext::new(&config);
 
         assert_eq!(ctx.indent_string(), "");
 

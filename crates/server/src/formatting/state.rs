@@ -251,7 +251,7 @@ mod tests {
     fn test_state_transitions() {
         let mut sm = StateMachine::new();
         let config = FormatterConfig::default();
-        let context = FormattingContext::new(config);
+        let context = FormattingContext::new(&config);
 
         let token = Token::Keyword { text: "def".to_string(), line: 1, col: 0 };
 
@@ -264,7 +264,7 @@ mod tests {
     fn test_nested_states() {
         let mut sm = StateMachine::new();
         let config = FormatterConfig::default();
-        let context = FormattingContext::new(config);
+        let context = FormattingContext::new(&config);
 
         assert!(!sm.is_nested());
         assert_eq!(sm.nesting_depth(), 0);
@@ -287,7 +287,7 @@ mod tests {
     fn test_newline_transitions() {
         let mut sm = StateMachine::new();
         let config = FormatterConfig::default();
-        let context = FormattingContext::new(config);
+        let context = FormattingContext::new(&config);
 
         sm.transition(FormatterState::Statement);
 
@@ -301,7 +301,7 @@ mod tests {
     fn test_import_state() {
         let mut sm = StateMachine::new();
         let config = FormatterConfig::default();
-        let context = FormattingContext::new(config);
+        let context = FormattingContext::new(&config);
 
         let import_token = Token::Keyword { text: "import".to_string(), line: 1, col: 0 };
 
