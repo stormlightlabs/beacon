@@ -15,12 +15,21 @@ pub struct FormattedWriter<'a> {
 
     /// Formatting context
     context: FormattingContext<'a>,
+    next_token_text: Option<String>,
 }
 
 impl<'a> FormattedWriter<'a> {
     /// Create a new writer with the given configuration
     pub fn new(config: &'a FormatterConfig) -> Self {
-        Self { output: String::new(), context: FormattingContext::new(config) }
+        Self { output: String::new(), context: FormattingContext::new(config), next_token_text: None }
+    }
+
+    pub fn set_next_token(&mut self, token: Option<&Token>) {
+        self.next_token_text = token.and_then(|t| t.text().map(|s| s.to_string()));
+    }
+
+    pub fn peek_next_token_text(&self) -> Option<&str> {
+        self.next_token_text.as_deref()
     }
 
     /// Get the formatted output
@@ -41,14 +50,14 @@ impl<'a> FormattedWriter<'a> {
             Token::Newline { .. } => self.write_newline(),
             Token::Indent { level, .. } => self.write_indent(*level),
             Token::Dedent { .. } => {}
-            Token::Whitespace { count, .. } => self.write_spaces(*count),
+            Token::Whitespace { .. } => {}
         }
     }
 
     /// Write text to the output, updating column position
     fn write(&mut self, text: &str) {
         self.output.push_str(text);
-        self.context.advance_column(text.len());
+        self.context.advance_column(text.chars().count());
     }
 
     /// Write a keyword with appropriate spacing
@@ -77,11 +86,29 @@ impl<'a> FormattedWriter<'a> {
             return;
         }
 
+        let unary_operators = ["-", "+", "~"];
+        let is_unary = unary_operators.contains(&operator)
+            && (self.context.at_line_start()
+                || self.output.ends_with('=')
+                || self.output.ends_with(' ')
+                || self.output.ends_with('(')
+                || self.output.ends_with('[')
+                || self.output.ends_with('{')
+                || self.output.ends_with(','));
+
+        if is_unary {
+            self.write(operator);
+            return;
+        }
+
         if config.spaces_around_operators && self.is_binary_operator(operator) {
-            if !self.context.at_line_start() && self.context.current_column() > 0 {
+            if !self.context.at_line_start() && self.context.current_column() > 0 && !self.output.ends_with(' ') {
                 self.write(" ");
             }
             self.write(operator);
+            if !self.output.ends_with(' ') {
+                self.write(" ");
+            }
         } else {
             self.write(operator);
         }
@@ -110,9 +137,20 @@ impl<'a> FormattedWriter<'a> {
             }
             "," => {
                 self.write(delimiter);
+                if !matches!(self.peek_next_token_text(), Some(")") | Some("]") | Some("}"))
+                    && !self.output.ends_with(' ')
+                {
+                    self.write(" ");
+                }
             }
             ":" => {
+                let prev = self.output.trim_end().chars().last();
+                let is_slice = matches!(prev, Some('[') | Some(',') | Some(':'));
+
                 self.write(delimiter);
+                if !is_slice && !self.output.ends_with(' ') {
+                    self.write(" ");
+                }
             }
             _ => {
                 self.write(delimiter);
@@ -140,19 +178,29 @@ impl<'a> FormattedWriter<'a> {
     }
 
     /// Write a comment
-    fn write_comment(&mut self, text: &str) {
+    pub fn write_comment(&mut self, text: &str) {
         let rules = super::rules::FormattingRules::new(self.context.config().clone());
+        let is_inline = !self.context.at_line_start();
         let formatted = if rules.should_preserve_comment(text) {
             text.to_string()
         } else {
-            let is_inline = !self.context.at_line_start();
             rules.format_comment(text, is_inline)
         };
 
-        if !self.context.at_line_start() {
+        let indent_level = self.context.indent_level();
+
+        if self.output.ends_with('\n') && indent_level > 0 {
+            self.write(&"    ".repeat(indent_level));
+        }
+
+        if !self.output.ends_with('\n') && !self.output.ends_with(' ') {
             self.write("  ");
         }
+
         self.write(&formatted);
+        if !is_inline {
+            self.write("\n");
+        }
     }
 
     /// Write a newline
@@ -174,14 +222,6 @@ impl<'a> FormattedWriter<'a> {
         self.context.advance_column(indent_str.len());
     }
 
-    /// Write a specific number of spaces
-    fn write_spaces(&mut self, count: usize) {
-        for _ in 0..count {
-            self.output.push(' ');
-        }
-        self.context.advance_column(count);
-    }
-
     /// Remove trailing whitespace from the current line
     fn remove_trailing_whitespace(&mut self) {
         while self.output.ends_with(' ') || self.output.ends_with('\t') {
@@ -191,7 +231,7 @@ impl<'a> FormattedWriter<'a> {
 
     /// Check if we need space before a keyword
     fn needs_space_before_keyword(&self) -> bool {
-        !self.context.at_line_start() && self.context.current_column() > 0
+        !self.context.at_line_start() && self.context.current_column() > 0 && !self.output.ends_with(' ')
     }
 
     /// Check if we need space before an identifier
@@ -200,10 +240,17 @@ impl<'a> FormattedWriter<'a> {
             return false;
         }
 
+        if self.just_wrote_unary_operator() {
+            return false;
+        }
+
         !self.output.ends_with('(')
             && !self.output.ends_with('[')
             && !self.output.ends_with('{')
             && !self.output.ends_with('.')
+            && !self.output.ends_with('@')
+            && !self.output.ends_with(' ')
+            && !self.output.ends_with(',')
             && self.context.current_column() > 0
     }
 
@@ -213,9 +260,15 @@ impl<'a> FormattedWriter<'a> {
             return false;
         }
 
+        if self.just_wrote_unary_operator() {
+            return false;
+        }
+
         !self.output.ends_with('(')
             && !self.output.ends_with('[')
             && !self.output.ends_with('{')
+            && !self.output.ends_with(' ')
+            && !self.output.ends_with(',')
             && self.context.current_column() > 0
     }
 
@@ -225,10 +278,15 @@ impl<'a> FormattedWriter<'a> {
             return false;
         }
 
+        if self.just_wrote_unary_operator() {
+            return false;
+        }
+
         !self.output.ends_with('(')
             && !self.output.ends_with('[')
             && !self.output.ends_with('{')
             && !self.output.ends_with(',')
+            && !self.output.ends_with(' ')
             && self.context.current_column() > 0
     }
 
@@ -259,6 +317,7 @@ impl<'a> FormattedWriter<'a> {
                 | "~"
                 | "<<"
                 | ">>"
+                | "->"
                 | "="
                 | "+="
                 | "-="
@@ -277,8 +336,13 @@ impl<'a> FormattedWriter<'a> {
 
     /// Ensure we have the correct number of blank lines before a definition
     pub fn ensure_blank_lines_before_definition(&mut self, is_class: bool, is_top_level: bool) {
-        let config = self.context.config();
+        if let Some(last_line) = self.output.lines().rev().find(|l| !l.trim().is_empty()) {
+            if last_line.trim_start().starts_with('@') {
+                return;
+            }
+        }
 
+        let config = self.context.config();
         if !is_top_level {
             self.ensure_blank_lines(1);
         } else {
@@ -288,7 +352,6 @@ impl<'a> FormattedWriter<'a> {
                 } else {
                     0
                 };
-
             self.ensure_blank_lines(required);
         }
     }
@@ -330,6 +393,10 @@ impl<'a> FormattedWriter<'a> {
     /// Get mutable reference to the formatting context
     pub fn context_mut(&mut self) -> &mut FormattingContext<'a> {
         &mut self.context
+    }
+
+    fn just_wrote_unary_operator(&self) -> bool {
+        self.output.ends_with('-') || self.output.ends_with('+') || self.output.ends_with('~')
     }
 }
 

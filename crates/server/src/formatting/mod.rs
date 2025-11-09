@@ -16,11 +16,13 @@ pub use context::FormattingContext;
 pub use import::{ImportCategory, ImportSorter, ImportStatement};
 pub use rules::FormattingRules;
 pub use state::FormatterState;
+use token_stream::Comment;
 pub use token_stream::TokenStream;
 pub use writer::FormattedWriter;
 
 use beacon_core::Result;
 use beacon_parser::{AstNode, ParsedFile, PythonParser};
+use tree_sitter::Node;
 
 /// Main formatter for Python code
 ///
@@ -49,12 +51,17 @@ impl Formatter {
     /// Format a parsed Python file
     pub fn format_file(&self, parsed: &ParsedFile) -> Result<String> {
         let ast = self.parser.to_ast(parsed)?;
-        let token_stream = TokenStream::from_ast(&ast);
+        let sorted_ast = self.sort_imports_in_module(&ast);
+        let total_lines = parsed.source.lines().count().max(1);
+        let comments = Self::collect_comments(parsed, 1, total_lines);
+        let token_stream = TokenStream::from_ast_with_comments(&sorted_ast, &comments);
 
         let mut writer = FormattedWriter::new(&self.config);
         let _rules = FormattingRules::new(self.config.clone());
 
-        for token in token_stream {
+        let mut tokens = token_stream.peekable();
+        while let Some(token) = tokens.next() {
+            writer.set_next_token(tokens.peek());
             writer.write_token(&token);
         }
 
@@ -63,11 +70,14 @@ impl Formatter {
 
     /// Format a specific AST node
     pub fn format_node(&self, node: &AstNode, _source: &str) -> Result<String> {
-        let token_stream = TokenStream::from_ast(node);
+        let sorted_node = self.sort_imports_in_module(node);
+        let token_stream = TokenStream::from_ast(&sorted_node);
 
         let mut writer = FormattedWriter::new(&self.config);
 
-        for token in token_stream {
+        let mut tokens = token_stream.peekable();
+        while let Some(token) = tokens.next() {
+            writer.set_next_token(tokens.peek());
             writer.write_token(&token);
         }
 
@@ -82,9 +92,10 @@ impl Formatter {
         let parsed = self.parser.parse(source)?;
         let ast = self.parser.to_ast(&parsed)?;
 
-        let filtered_node = self.filter_node_by_range(&ast, start_line, end_line);
-
-        let token_stream = TokenStream::from_ast(&filtered_node);
+        let sorted_ast = self.sort_imports_in_module(&ast);
+        let filtered_node = self.filter_node_by_range(&sorted_ast, start_line, end_line);
+        let comments = Self::collect_comments(&parsed, start_line, end_line);
+        let token_stream = TokenStream::from_ast_with_comments(&filtered_node, &comments);
         let mut writer = FormattedWriter::new(&self.config);
 
         for token in token_stream {
@@ -156,27 +167,27 @@ impl Formatter {
                     end_col: *end_col,
                 }
             }
-            AstNode::If { test, body, elif_parts, else_body, line, col, end_line, end_col } => {
+            AstNode::If { test, body, elif_parts, else_body, line, col, end_line: _, end_col } => {
                 let filtered_body: Vec<AstNode> = body
                     .iter()
-                    .filter(|n| self.node_in_range(n, start_line, *end_line))
-                    .map(|n| self.filter_node_by_range(n, start_line, *end_line))
+                    .filter(|n| self.node_in_range(n, start_line, end_line))
+                    .map(|n| self.filter_node_by_range(n, start_line, end_line))
                     .collect();
                 let filtered_elif_parts: Vec<(AstNode, Vec<AstNode>)> = elif_parts
                     .iter()
                     .map(|(test, body)| {
                         let filtered_elif_body: Vec<AstNode> = body
                             .iter()
-                            .filter(|n| self.node_in_range(n, start_line, *end_line))
-                            .map(|n| self.filter_node_by_range(n, start_line, *end_line))
+                            .filter(|n| self.node_in_range(n, start_line, end_line))
+                            .map(|n| self.filter_node_by_range(n, start_line, end_line))
                             .collect();
                         (test.clone(), filtered_elif_body)
                     })
                     .collect();
                 let filtered_else_body = else_body.as_ref().map(|body| {
                     body.iter()
-                        .filter(|n| self.node_in_range(n, start_line, *end_line))
-                        .map(|n| self.filter_node_by_range(n, start_line, *end_line))
+                        .filter(|n| self.node_in_range(n, start_line, end_line))
+                        .map(|n| self.filter_node_by_range(n, start_line, end_line))
                         .collect()
                 });
                 AstNode::If {
@@ -186,20 +197,20 @@ impl Formatter {
                     else_body: filtered_else_body,
                     line: *line,
                     col: *col,
-                    end_line: *end_line,
+                    end_line,
                     end_col: *end_col,
                 }
             }
-            AstNode::For { target, iter, body, else_body, is_async, line, col, end_line, end_col } => {
+            AstNode::For { target, iter, body, else_body, is_async, line, col, end_line: _, end_col } => {
                 let filtered_body: Vec<AstNode> = body
                     .iter()
-                    .filter(|n| self.node_in_range(n, start_line, *end_line))
-                    .map(|n| self.filter_node_by_range(n, start_line, *end_line))
+                    .filter(|n| self.node_in_range(n, start_line, end_line))
+                    .map(|n| self.filter_node_by_range(n, start_line, end_line))
                     .collect();
                 let filtered_else_body = else_body.as_ref().map(|body| {
                     body.iter()
-                        .filter(|n| self.node_in_range(n, start_line, *end_line))
-                        .map(|n| self.filter_node_by_range(n, start_line, *end_line))
+                        .filter(|n| self.node_in_range(n, start_line, end_line))
+                        .map(|n| self.filter_node_by_range(n, start_line, end_line))
                         .collect()
                 });
                 AstNode::For {
@@ -210,20 +221,20 @@ impl Formatter {
                     is_async: *is_async,
                     line: *line,
                     col: *col,
-                    end_line: *end_line,
+                    end_line,
                     end_col: *end_col,
                 }
             }
-            AstNode::While { test, body, else_body, line, col, end_line, end_col } => {
+            AstNode::While { test, body, else_body, line, col, end_line: _, end_col } => {
                 let filtered_body: Vec<AstNode> = body
                     .iter()
-                    .filter(|n| self.node_in_range(n, start_line, *end_line))
-                    .map(|n| self.filter_node_by_range(n, start_line, *end_line))
+                    .filter(|n| self.node_in_range(n, start_line, end_line))
+                    .map(|n| self.filter_node_by_range(n, start_line, end_line))
                     .collect();
                 let filtered_else_body = else_body.as_ref().map(|body| {
                     body.iter()
-                        .filter(|n| self.node_in_range(n, start_line, *end_line))
-                        .map(|n| self.filter_node_by_range(n, start_line, *end_line))
+                        .filter(|n| self.node_in_range(n, start_line, end_line))
+                        .map(|n| self.filter_node_by_range(n, start_line, end_line))
                         .collect()
                 });
                 AstNode::While {
@@ -232,15 +243,15 @@ impl Formatter {
                     else_body: filtered_else_body,
                     line: *line,
                     col: *col,
-                    end_line: *end_line,
+                    end_line,
                     end_col: *end_col,
                 }
             }
-            AstNode::Try { body, handlers, else_body, finally_body, line, col, end_line, end_col } => {
+            AstNode::Try { body, handlers, else_body, finally_body, line, col, end_line: _, end_col } => {
                 let filtered_body: Vec<AstNode> = body
                     .iter()
-                    .filter(|n| self.node_in_range(n, start_line, *end_line))
-                    .map(|n| self.filter_node_by_range(n, start_line, *end_line))
+                    .filter(|n| self.node_in_range(n, start_line, end_line))
+                    .map(|n| self.filter_node_by_range(n, start_line, end_line))
                     .collect();
                 let filtered_handlers: Vec<_> = handlers
                     .iter()
@@ -248,8 +259,8 @@ impl Formatter {
                         let filtered_handler_body: Vec<AstNode> = h
                             .body
                             .iter()
-                            .filter(|n| self.node_in_range(n, start_line, *end_line))
-                            .map(|n| self.filter_node_by_range(n, start_line, *end_line))
+                            .filter(|n| self.node_in_range(n, start_line, end_line))
+                            .map(|n| self.filter_node_by_range(n, start_line, end_line))
                             .collect();
                         beacon_parser::ExceptHandler {
                             exception_type: h.exception_type.clone(),
@@ -264,14 +275,14 @@ impl Formatter {
                     .collect();
                 let filtered_else_body = else_body.as_ref().map(|body| {
                     body.iter()
-                        .filter(|n| self.node_in_range(n, start_line, *end_line))
-                        .map(|n| self.filter_node_by_range(n, start_line, *end_line))
+                        .filter(|n| self.node_in_range(n, start_line, end_line))
+                        .map(|n| self.filter_node_by_range(n, start_line, end_line))
                         .collect()
                 });
                 let filtered_finally_body = finally_body.as_ref().map(|body| {
                     body.iter()
-                        .filter(|n| self.node_in_range(n, start_line, *end_line))
-                        .map(|n| self.filter_node_by_range(n, start_line, *end_line))
+                        .filter(|n| self.node_in_range(n, start_line, end_line))
+                        .map(|n| self.filter_node_by_range(n, start_line, end_line))
                         .collect()
                 });
                 AstNode::Try {
@@ -281,15 +292,15 @@ impl Formatter {
                     finally_body: filtered_finally_body,
                     line: *line,
                     col: *col,
-                    end_line: *end_line,
+                    end_line,
                     end_col: *end_col,
                 }
             }
-            AstNode::With { items, body, is_async, line, col, end_line, end_col } => {
+            AstNode::With { items, body, is_async, line, col, end_line: _, end_col } => {
                 let filtered_body: Vec<AstNode> = body
                     .iter()
-                    .filter(|n| self.node_in_range(n, start_line, *end_line))
-                    .map(|n| self.filter_node_by_range(n, start_line, *end_line))
+                    .filter(|n| self.node_in_range(n, start_line, end_line))
+                    .map(|n| self.filter_node_by_range(n, start_line, end_line))
                     .collect();
                 AstNode::With {
                     items: items.clone(),
@@ -297,7 +308,7 @@ impl Formatter {
                     is_async: *is_async,
                     line: *line,
                     col: *col,
-                    end_line: *end_line,
+                    end_line,
                     end_col: *end_col,
                 }
             }
@@ -354,6 +365,38 @@ impl Formatter {
         node_line.0 <= end_line && node_line.1 >= start_line
     }
 
+    fn collect_comments(parsed: &ParsedFile, start_line: usize, end_line: usize) -> Vec<Comment> {
+        let total_lines = parsed.source.lines().count().max(1);
+        let normalized_start = start_line.max(1);
+        let normalized_end = if end_line == 0 { total_lines } else { end_line.min(total_lines) }.max(normalized_start);
+
+        let mut comments = Vec::new();
+        let root = parsed.tree.root_node();
+        Self::collect_comments_recursive(root, &parsed.source, normalized_start, normalized_end, &mut comments);
+        comments.sort_by(|a, b| (a.line, a.col).cmp(&(b.line, b.col)));
+        comments
+    }
+
+    fn collect_comments_recursive(
+        node: Node<'_>, source: &str, start_line: usize, end_line: usize, comments: &mut Vec<Comment>,
+    ) {
+        if node.kind() == "comment" {
+            let line = node.start_position().row + 1;
+            if line >= start_line && line <= end_line {
+                if let Ok(text) = node.utf8_text(source.as_bytes()) {
+                    let col = node.start_position().column + 1;
+                    comments.push(Comment { line, col, text: text.to_string() });
+                }
+            }
+            return;
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            Self::collect_comments_recursive(child, source, start_line, end_line, comments);
+        }
+    }
+
     /// Check if source code is already formatted according to config
     pub fn is_formatted(&mut self, source: &str) -> bool {
         match self.parser.parse(source) {
@@ -365,6 +408,70 @@ impl Formatter {
                 }
             }
             Err(_) => false,
+        }
+    }
+
+    /// Sort imports in a module AST node
+    fn sort_imports_in_module(&self, node: &AstNode) -> AstNode {
+        match node {
+            AstNode::Module { body, docstring } => {
+                let prefix_len = body
+                    .iter()
+                    .take_while(|stmt| !matches!(stmt, AstNode::Import { .. } | AstNode::ImportFrom { .. }))
+                    .count();
+
+                let mut import_block = Vec::new();
+                let mut idx = prefix_len;
+                while idx < body.len() {
+                    match &body[idx] {
+                        AstNode::Import { .. } | AstNode::ImportFrom { .. } => {
+                            import_block.push(body[idx].clone());
+                            idx += 1;
+                        }
+                        _ => break,
+                    }
+                }
+
+                if import_block.is_empty() {
+                    return node.clone();
+                }
+
+                let mut sorted_imports: Vec<_> = import_block
+                    .into_iter()
+                    .filter_map(|i| ImportStatement::from_ast(&i))
+                    .collect();
+                sorted_imports.sort();
+
+                let mut sorted_body = Vec::new();
+                sorted_body.extend_from_slice(&body[..prefix_len]);
+
+                for import_stmt in sorted_imports {
+                    if import_stmt.is_from_import {
+                        sorted_body.push(AstNode::ImportFrom {
+                            module: import_stmt.module,
+                            names: import_stmt.names,
+                            line: import_stmt.line,
+                            col: 0,
+                            end_line: import_stmt.line,
+                            end_col: 0,
+                        });
+                    } else {
+                        sorted_body.push(AstNode::Import {
+                            module: import_stmt.module,
+                            alias: import_stmt.alias,
+                            line: import_stmt.line,
+                            col: 0,
+                            end_line: import_stmt.line,
+                            end_col: 0,
+                        });
+                    }
+                }
+
+                sorted_body.extend_from_slice(&body[idx..]);
+
+                AstNode::Module { body: sorted_body, docstring: docstring.clone() }
+            }
+            _ => node.clone(),
         }
     }
 }

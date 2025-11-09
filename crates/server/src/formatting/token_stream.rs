@@ -4,7 +4,8 @@
 //! Tokens represent syntactic elements with their associated metadata
 //! (position, whitespace requirements, etc.).
 
-use beacon_parser::{AstNode, Pattern};
+use super::import::{ImportCategory, categorize_import};
+use beacon_parser::{AstNode, LiteralValue, Pattern};
 
 /// Token type representing syntactic elements for formatting
 #[derive(Debug, Clone, PartialEq)]
@@ -92,6 +93,17 @@ pub struct TokenStream {
     position: usize,
 }
 
+/// Parsed comment metadata used for reinserting comments into the token stream
+#[derive(Debug, Clone)]
+pub struct Comment {
+    /// 1-based line number of the comment
+    pub line: usize,
+    /// 1-based column where the comment starts
+    pub col: usize,
+    /// Raw comment text (e.g. "# comment")
+    pub text: String,
+}
+
 impl TokenStream {
     /// Create a new token stream from an AST node
     ///
@@ -100,6 +112,15 @@ impl TokenStream {
         let mut generator = TokenGenerator::new();
         generator.visit_node(node);
         Self { tokens: generator.tokens, position: 0 }
+    }
+
+    /// Create a token stream from an AST node and merge in comments collected from the source.
+    pub fn from_ast_with_comments(node: &AstNode, comments: &[Comment]) -> Self {
+        let mut generator = TokenGenerator::new();
+        generator.visit_node(node);
+        let tokens = if comments.is_empty() { generator.tokens } else { merge_comments(generator.tokens, comments) };
+
+        Self { tokens, position: 0 }
     }
 
     /// Create an empty token stream
@@ -150,6 +171,50 @@ impl Iterator for TokenStream {
             None
         }
     }
+}
+
+fn merge_comments(mut tokens: Vec<Token>, comments: &[Comment]) -> Vec<Token> {
+    if comments.is_empty() {
+        return tokens;
+    }
+
+    let mut merged = Vec::with_capacity(tokens.len() + comments.len());
+    let mut comment_iter = comments.iter().peekable();
+
+    for token in tokens.drain(..) {
+        while let Some(comment) = comment_iter.peek() {
+            if comment_precedes_token(comment, &token) {
+                merged.push(Token::Comment { text: comment.text.clone(), line: comment.line, col: comment.col });
+                comment_iter.next();
+            } else {
+                break;
+            }
+        }
+
+        merged.push(token);
+    }
+
+    for comment in comment_iter {
+        merged.push(Token::Comment { text: comment.text.clone(), line: comment.line, col: comment.col });
+    }
+
+    merged
+}
+
+fn comment_precedes_token(comment: &Comment, token: &Token) -> bool {
+    if comment.line < token.line() {
+        return true;
+    }
+
+    if comment.line == token.line() {
+        return comment.col <= token_column(token);
+    }
+
+    false
+}
+
+fn token_column(token: &Token) -> usize {
+    token.col().unwrap_or(usize::MAX)
 }
 
 /// Generates tokens from an AST
@@ -240,8 +305,47 @@ impl TokenGenerator {
     fn visit_node(&mut self, node: &AstNode) {
         match node {
             AstNode::Module { body, .. } => {
-                for stmt in body {
+                let mut first_stmt = true;
+                let mut start_index = 0;
+                if let Some(first) = body.first() {
+                    if Self::is_string_literal(first) {
+                        self.emit_docstring(first, true);
+                        start_index = 1;
+                        first_stmt = false;
+                    }
+                }
+
+                let mut last_import_category: Option<ImportCategory> = None;
+                let mut previous_was_import = false;
+                for stmt in &body[start_index..] {
+                    if let Some(category) = Self::import_category(stmt) {
+                        if let Some(prev) = last_import_category {
+                            if prev != category {
+                                let line = Self::node_start_line(stmt);
+                                self.tokens.push(Token::Newline { line });
+                            }
+                        }
+                        last_import_category = Some(category);
+                    } else {
+                        last_import_category = None;
+                    }
+
+                    if previous_was_import
+                        && !matches!(stmt, AstNode::Import { .. } | AstNode::ImportFrom { .. })
+                        && !Self::is_top_level_definition(stmt)
+                    {
+                        let line = Self::node_start_line(stmt);
+                        self.tokens.push(Token::Newline { line });
+                    }
+
+                    if !first_stmt && Self::is_top_level_definition(stmt) {
+                        let line = Self::node_start_line(stmt);
+                        self.tokens.push(Token::Newline { line });
+                        self.tokens.push(Token::Newline { line });
+                    }
                     self.visit_node(stmt);
+                    first_stmt = false;
+                    previous_was_import = matches!(stmt, AstNode::Import { .. } | AstNode::ImportFrom { .. });
                 }
             }
             AstNode::FunctionDef { name, args, body, return_type, decorators, is_async, line, col, .. } => {
@@ -271,9 +375,31 @@ impl TokenGenerator {
                 for (i, param) in args.iter().enumerate() {
                     self.tokens
                         .push(Token::Identifier { text: param.name.clone(), line: param.line, col: param.col });
+                    if let Some(annotation) = &param.type_annotation {
+                        self.tokens
+                            .push(Token::Delimiter { text: ":".to_string(), line: param.line, col: param.col });
+                        self.tokens
+                            .push(Token::Whitespace { count: 1, line: param.line, col: param.col });
+                        self.tokens.push(Token::Identifier {
+                            text: annotation.clone(),
+                            line: param.line,
+                            col: param.col,
+                        });
+                    }
+                    if let Some(default) = &param.default_value {
+                        self.tokens
+                            .push(Token::Whitespace { count: 1, line: param.line, col: param.col });
+                        self.tokens
+                            .push(Token::Operator { text: "=".to_string(), line: param.line, col: param.col });
+                        self.tokens
+                            .push(Token::Whitespace { count: 1, line: param.line, col: param.col });
+                        self.visit_node(default);
+                    }
                     if i < args.len() - 1 {
                         self.tokens
                             .push(Token::Delimiter { text: ",".to_string(), line: param.line, col: param.col });
+                        self.tokens
+                            .push(Token::Whitespace { count: 1, line: param.line, col: param.col });
                     }
                 }
                 self.tokens
@@ -291,12 +417,27 @@ impl TokenGenerator {
                 self.tokens.push(Token::Newline { line: *line });
 
                 self.current_indent += 1;
-                for stmt in body {
+                let mut previous_was_docstring = false;
+                for (idx, stmt) in body.iter().enumerate() {
+                    if idx > 0 && matches!(stmt, AstNode::FunctionDef { .. }) && !previous_was_docstring {
+                        let line = Self::node_start_line(stmt);
+                        self.tokens.push(Token::Newline { line });
+                        self.tokens.push(Token::Newline { line });
+                    }
+
                     self.tokens
                         .push(Token::Indent { level: self.current_indent, line: *line });
-                    self.visit_node(stmt);
+                    if idx == 0 && Self::is_string_literal(stmt) {
+                        self.emit_docstring(stmt, true);
+                        previous_was_docstring = true;
+                    } else {
+                        self.visit_node(stmt);
+                        previous_was_docstring = false;
+                    }
                 }
                 self.current_indent -= 1;
+                self.tokens
+                    .push(Token::Dedent { level: self.current_indent, line: *line });
             }
             AstNode::Return { value, line, col, .. } => {
                 self.tokens
@@ -344,12 +485,30 @@ impl TokenGenerator {
                 self.tokens.push(Token::Newline { line: *line });
 
                 self.current_indent += 1;
-                for stmt in body {
+                let mut last_kind = None;
+                for (idx, stmt) in body.iter().enumerate() {
+                    let kind = Self::class_item_kind(stmt);
+                    if matches!(kind, ClassItemKind::Method) {
+                        if let Some(ClassItemKind::Docstring | ClassItemKind::Attribute | ClassItemKind::Method) =
+                            last_kind
+                        {
+                            let line = Self::node_start_line(stmt);
+                            self.tokens.push(Token::Newline { line });
+                        }
+                    }
+
                     self.tokens
                         .push(Token::Indent { level: self.current_indent, line: *line });
-                    self.visit_node(stmt);
+                    if idx == 0 && matches!(kind, ClassItemKind::Docstring) {
+                        self.emit_docstring(stmt, true);
+                    } else {
+                        self.visit_node(stmt);
+                    }
+                    last_kind = Some(kind);
                 }
                 self.current_indent -= 1;
+                self.tokens
+                    .push(Token::Dedent { level: self.current_indent, line: *line });
             }
             AstNode::Assignment { target, value, line, col, .. } => {
                 self.visit_node(target);
@@ -380,34 +539,31 @@ impl TokenGenerator {
                 self.tokens
                     .push(Token::Identifier { text: name.clone(), line: *line, col: *col });
             }
-            AstNode::Literal { value, line, col, .. } => {
-                use beacon_parser::LiteralValue;
-                match value {
-                    LiteralValue::String { value: s, prefix } => {
-                        let quote = if s.contains('\n') { "\"\"\"" } else { "\"" };
-                        let text = format!("{prefix}{quote}{s}{quote}");
-                        self.tokens
-                            .push(Token::StringLiteral { text, line: *line, col: *col, quote_char: '"' });
-                    }
-                    LiteralValue::Integer(i) => {
-                        self.tokens
-                            .push(Token::NumberLiteral { text: i.to_string(), line: *line, col: *col });
-                    }
-                    LiteralValue::Float(f) => {
-                        self.tokens
-                            .push(Token::NumberLiteral { text: f.to_string(), line: *line, col: *col });
-                    }
-                    LiteralValue::Boolean(b) => {
-                        let text = if *b { "True" } else { "False" };
-                        self.tokens
-                            .push(Token::Keyword { text: text.to_string(), line: *line, col: *col });
-                    }
-                    LiteralValue::None => {
-                        self.tokens
-                            .push(Token::Keyword { text: "None".to_string(), line: *line, col: *col });
-                    }
+            AstNode::Literal { value, line, col, .. } => match value {
+                LiteralValue::String { value: s, prefix } => {
+                    let quote = if s.contains('\n') { "\"\"\"" } else { "\"" };
+                    let text = format!("{prefix}{quote}{s}{quote}");
+                    self.tokens
+                        .push(Token::StringLiteral { text, line: *line, col: *col, quote_char: '"' });
                 }
-            }
+                LiteralValue::Integer(i) => {
+                    self.tokens
+                        .push(Token::NumberLiteral { text: i.to_string(), line: *line, col: *col });
+                }
+                LiteralValue::Float(f) => {
+                    self.tokens
+                        .push(Token::NumberLiteral { text: f.to_string(), line: *line, col: *col });
+                }
+                LiteralValue::Boolean(b) => {
+                    let text = if *b { "True" } else { "False" };
+                    self.tokens
+                        .push(Token::Keyword { text: text.to_string(), line: *line, col: *col });
+                }
+                LiteralValue::None => {
+                    self.tokens
+                        .push(Token::Keyword { text: "None".to_string(), line: *line, col: *col });
+                }
+            },
             AstNode::Call { function, args, keywords, line, col, .. } => {
                 self.tokens
                     .push(Token::Identifier { text: function.clone(), line: *line, col: *col });
@@ -523,8 +679,12 @@ impl TokenGenerator {
                     self.visit_node(stmt);
                 }
                 self.current_indent -= 1;
+                self.tokens
+                    .push(Token::Dedent { level: self.current_indent, line: *line });
 
                 for (elif_test, elif_body) in elif_parts {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: *line });
                     self.tokens
                         .push(Token::Keyword { text: "elif".to_string(), line: *line, col: *col });
                     self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
@@ -540,9 +700,13 @@ impl TokenGenerator {
                         self.visit_node(stmt);
                     }
                     self.current_indent -= 1;
+                    self.tokens
+                        .push(Token::Dedent { level: self.current_indent, line: *line });
                 }
 
                 if let Some(else_stmts) = else_body {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: *line });
                     self.tokens
                         .push(Token::Keyword { text: "else".to_string(), line: *line, col: *col });
                     self.tokens
@@ -556,6 +720,8 @@ impl TokenGenerator {
                         self.visit_node(stmt);
                     }
                     self.current_indent -= 1;
+                    self.tokens
+                        .push(Token::Dedent { level: self.current_indent, line: *line });
                 }
             }
             AstNode::For { target, iter, body, else_body, is_async, line, col, .. } => {
@@ -585,8 +751,12 @@ impl TokenGenerator {
                     self.visit_node(stmt);
                 }
                 self.current_indent -= 1;
+                self.tokens
+                    .push(Token::Dedent { level: self.current_indent, line: *line });
 
                 if let Some(else_stmts) = else_body {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: *line });
                     self.tokens
                         .push(Token::Keyword { text: "else".to_string(), line: *line, col: *col });
                     self.tokens
@@ -600,6 +770,8 @@ impl TokenGenerator {
                         self.visit_node(stmt);
                     }
                     self.current_indent -= 1;
+                    self.tokens
+                        .push(Token::Dedent { level: self.current_indent, line: *line });
                 }
             }
             AstNode::While { test, body, else_body, line, col, .. } => {
@@ -618,8 +790,12 @@ impl TokenGenerator {
                     self.visit_node(stmt);
                 }
                 self.current_indent -= 1;
+                self.tokens
+                    .push(Token::Dedent { level: self.current_indent, line: *line });
 
                 if let Some(else_stmts) = else_body {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: *line });
                     self.tokens
                         .push(Token::Keyword { text: "else".to_string(), line: *line, col: *col });
                     self.tokens
@@ -633,6 +809,8 @@ impl TokenGenerator {
                         self.visit_node(stmt);
                     }
                     self.current_indent -= 1;
+                    self.tokens
+                        .push(Token::Dedent { level: self.current_indent, line: *line });
                 }
             }
             AstNode::Import { module, alias, line, col, .. } => {
@@ -789,8 +967,12 @@ impl TokenGenerator {
                     self.visit_node(stmt);
                 }
                 self.current_indent -= 1;
+                self.tokens
+                    .push(Token::Dedent { level: self.current_indent, line: *line });
 
                 for handler in handlers {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: handler.line });
                     self.tokens.push(Token::Keyword {
                         text: "except".to_string(),
                         line: handler.line,
@@ -832,9 +1014,13 @@ impl TokenGenerator {
                         self.visit_node(stmt);
                     }
                     self.current_indent -= 1;
+                    self.tokens
+                        .push(Token::Dedent { level: self.current_indent, line: *line });
                 }
 
                 if let Some(else_stmts) = else_body {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: *line });
                     self.tokens
                         .push(Token::Keyword { text: "else".to_string(), line: *line, col: *col });
                     self.tokens
@@ -848,9 +1034,13 @@ impl TokenGenerator {
                         self.visit_node(stmt);
                     }
                     self.current_indent -= 1;
+                    self.tokens
+                        .push(Token::Dedent { level: self.current_indent, line: *line });
                 }
 
                 if let Some(finally_stmts) = finally_body {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: *line });
                     self.tokens
                         .push(Token::Keyword { text: "finally".to_string(), line: *line, col: *col });
                     self.tokens
@@ -864,6 +1054,8 @@ impl TokenGenerator {
                         self.visit_node(stmt);
                     }
                     self.current_indent -= 1;
+                    self.tokens
+                        .push(Token::Dedent { level: self.current_indent, line: *line });
                 }
             }
             AstNode::With { items, body, is_async, line, col, .. } => {
@@ -904,6 +1096,8 @@ impl TokenGenerator {
                     self.visit_node(stmt);
                 }
                 self.current_indent -= 1;
+                self.tokens
+                    .push(Token::Dedent { level: self.current_indent, line: *line });
             }
             AstNode::Lambda { args, body, line, col, .. } => {
                 self.tokens
@@ -1137,17 +1331,72 @@ impl TokenGenerator {
                         self.visit_node(stmt);
                     }
                     self.current_indent -= 1;
+                    self.tokens
+                        .push(Token::Dedent { level: self.current_indent, line: *line });
                 }
                 self.current_indent -= 1;
+                self.tokens
+                    .push(Token::Dedent { level: self.current_indent, line: *line });
             }
         }
     }
+
+    fn emit_docstring(&mut self, node: &AstNode, add_blank_line: bool) {
+        if let AstNode::Literal { value: LiteralValue::String { value, prefix }, line, .. } = node {
+            let text = format!("{prefix}\"\"\"{value}\"\"\"");
+            self.tokens
+                .push(Token::StringLiteral { text, line: *line, col: 0, quote_char: '"' });
+            self.tokens.push(Token::Newline { line: *line });
+            if add_blank_line {
+                self.tokens.push(Token::Newline { line: *line });
+            }
+        }
+    }
+
+    fn is_string_literal(node: &AstNode) -> bool {
+        matches!(node, AstNode::Literal { value: LiteralValue::String { .. }, .. })
+    }
+
+    fn import_category(node: &AstNode) -> Option<ImportCategory> {
+        match node {
+            AstNode::Import { module, .. } | AstNode::ImportFrom { module, .. } => Some(categorize_import(module)),
+            _ => None,
+        }
+    }
+
+    fn class_item_kind(node: &AstNode) -> ClassItemKind {
+        match node {
+            AstNode::Literal { value: LiteralValue::String { .. }, .. } => ClassItemKind::Docstring,
+            AstNode::Assignment { .. } | AstNode::AnnotatedAssignment { .. } => ClassItemKind::Attribute,
+            AstNode::FunctionDef { .. } => ClassItemKind::Method,
+            _ => ClassItemKind::Other,
+        }
+    }
+
+    fn is_top_level_definition(node: &AstNode) -> bool {
+        matches!(node, AstNode::FunctionDef { .. } | AstNode::ClassDef { .. })
+    }
+
+    fn node_start_line(node: &AstNode) -> usize {
+        match node {
+            AstNode::FunctionDef { line, .. } | AstNode::ClassDef { line, .. } => *line,
+            _ => 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClassItemKind {
+    Docstring,
+    Attribute,
+    Method,
+    Other,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beacon_parser::{AstNode, Parameter};
+    use beacon_parser::{AstNode, ExceptHandler, MatchCase, Parameter};
 
     #[test]
     fn test_empty_token_stream() {
@@ -1487,7 +1736,6 @@ mod tests {
 
     #[test]
     fn test_try_except_tokens() {
-        use beacon_parser::ExceptHandler;
         let node = AstNode::Try {
             body: vec![AstNode::Pass { line: 2, col: 4, end_line: 2, end_col: 8 }],
             handlers: vec![ExceptHandler {
@@ -1651,7 +1899,6 @@ mod tests {
 
     #[test]
     fn test_match_with_value_pattern() {
-        use beacon_parser::MatchCase;
         let node = AstNode::Match {
             subject: Box::new(AstNode::Identifier {
                 name: "value".to_string(),
@@ -1698,7 +1945,6 @@ mod tests {
 
     #[test]
     fn test_match_with_sequence_pattern() {
-        use beacon_parser::MatchCase;
         let node = AstNode::Match {
             subject: Box::new(AstNode::Identifier {
                 name: "data".to_string(),
@@ -1749,7 +1995,6 @@ mod tests {
 
     #[test]
     fn test_match_with_mapping_pattern() {
-        use beacon_parser::MatchCase;
         let node = AstNode::Match {
             subject: Box::new(AstNode::Identifier {
                 name: "data".to_string(),
@@ -1799,7 +2044,6 @@ mod tests {
 
     #[test]
     fn test_match_with_class_pattern() {
-        use beacon_parser::MatchCase;
         let node = AstNode::Match {
             subject: Box::new(AstNode::Identifier {
                 name: "obj".to_string(),
@@ -1858,7 +2102,6 @@ mod tests {
 
     #[test]
     fn test_match_with_as_pattern() {
-        use beacon_parser::MatchCase;
         let node = AstNode::Match {
             subject: Box::new(AstNode::Identifier {
                 name: "value".to_string(),
@@ -1903,7 +2146,6 @@ mod tests {
 
     #[test]
     fn test_match_with_wildcard_pattern() {
-        use beacon_parser::MatchCase;
         let node = AstNode::Match {
             subject: Box::new(AstNode::Identifier {
                 name: "value".to_string(),
@@ -1934,7 +2176,6 @@ mod tests {
 
     #[test]
     fn test_match_with_or_pattern() {
-        use beacon_parser::MatchCase;
         let node = AstNode::Match {
             subject: Box::new(AstNode::Identifier {
                 name: "value".to_string(),

@@ -10,6 +10,7 @@ The Beacon CLI provides command-line tools for parsing, type checking, and analy
 - `highlight` - Syntax highlighting with optional colors
 - `check` - Validate Python syntax for parse errors
 - `resolve` - Analyze name resolution and display symbol tables
+- `format` - Run the Beacon formatter without starting the language server
 
 ### Type Checking
 

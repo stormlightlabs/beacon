@@ -6,7 +6,10 @@ use crate::document::DocumentManager;
 use crate::formatting::{Formatter, FormatterConfig};
 
 use beacon_parser::PythonParser;
-use lsp_types::{DocumentFormattingParams, DocumentRangeFormattingParams, Position, Range, TextEdit};
+use lsp_types::{
+    DocumentFormattingParams, DocumentOnTypeFormattingParams, DocumentRangeFormattingParams, Position, Range,
+    TextDocumentSaveReason as TextSaveReason, TextEdit, WillSaveTextDocumentParams,
+};
 
 /// Provider for document formatting features
 ///
@@ -106,6 +109,105 @@ impl FormattingProvider {
             }
             Err(e) => {
                 tracing::error!(?uri, ?e, "Failed to format range");
+                None
+            }
+        }
+    }
+
+    /// Format document on save
+    ///
+    /// Called when a document is about to be saved, formats the entire document if configured.
+    pub fn format_on_save(
+        &self, params: &WillSaveTextDocumentParams, config: &FormatterConfig,
+    ) -> Option<Vec<TextEdit>> {
+        let uri = &params.text_document.uri;
+
+        if params.reason != TextSaveReason::MANUAL {
+            tracing::debug!(?uri, ?params.reason, "Skipping format-on-save (not manual save)");
+            return None;
+        }
+
+        tracing::debug!(?uri, "Format-on-save triggered");
+
+        let (content, line_count) = self.documents.get_document(uri, |doc| {
+            let text = doc.text();
+            let lines = text.lines().count();
+            (text, lines)
+        })?;
+
+        let parser = PythonParser::default();
+        let mut formatter = Formatter::new(config.clone(), parser);
+
+        match formatter.format_range(&content, 0, line_count) {
+            Ok(formatted) => {
+                if formatted == content {
+                    tracing::debug!(?uri, "Document already formatted");
+                    return None;
+                }
+
+                let edit = TextEdit {
+                    range: Range {
+                        start: Position { line: 0, character: 0 },
+                        end: Position { line: line_count as u32, character: 0 },
+                    },
+                    new_text: formatted,
+                };
+
+                tracing::debug!(?uri, "Format-on-save completed successfully");
+                Some(vec![edit])
+            }
+            Err(e) => {
+                tracing::error!(?uri, ?e, "Failed to format on save");
+                None
+            }
+        }
+    }
+
+    /// Format on type
+    ///
+    /// Automatically formats code as the user types. Triggered after specific characters (e.g., `:` in function definitions).
+    pub fn on_type_format(
+        &self, params: &DocumentOnTypeFormattingParams, config: &FormatterConfig,
+    ) -> Option<Vec<TextEdit>> {
+        let uri = &params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+        let trigger_char = &params.ch;
+
+        tracing::debug!(?uri, ?position, trigger_char, "On-type formatting triggered");
+
+        let (content, line_count) = self.documents.get_document(uri, |doc| {
+            let text = doc.text();
+            let lines = text.lines().count();
+            (text, lines)
+        })?;
+
+        let parser = PythonParser::default();
+        let mut formatter = Formatter::new(config.clone(), parser);
+
+        let current_line = position.line as usize;
+        let start_line = current_line.saturating_sub(1);
+        let end_line = (current_line + 2).min(line_count);
+
+        match formatter.format_range(&content, start_line, end_line) {
+            Ok(formatted) => {
+                if formatted == content {
+                    tracing::debug!(?uri, "Code already formatted");
+                    return None;
+                }
+
+                let edit = TextEdit {
+                    range: Range {
+                        start: Position { line: 0, character: 0 },
+                        end: Position { line: line_count as u32, character: 0 },
+                    },
+                    new_text: formatted,
+                };
+
+                tracing::debug!(?uri, "On-type formatting completed");
+                Some(vec![edit])
+            }
+            Err(e) => {
+                tracing::error!(?uri, ?e, "Failed to format on type");
                 None
             }
         }

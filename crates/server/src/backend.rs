@@ -220,6 +220,10 @@ impl LanguageServer for Backend {
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_range_formatting_provider: Some(OneOf::Left(true)),
+                document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
+                    first_trigger_character: ":".to_string(),
+                    more_trigger_character: Some(vec!["\n".to_string()]),
+                }),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -447,6 +451,18 @@ impl LanguageServer for Backend {
         let workspace = self.workspace.read().await;
         let config = &workspace.config.formatting;
         Ok(self.features.formatting.format_range(&params, config))
+    }
+
+    async fn on_type_formatting(&self, params: DocumentOnTypeFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let workspace = self.workspace.read().await;
+        let config = &workspace.config.formatting;
+        Ok(self.features.formatting.on_type_format(&params, config))
+    }
+
+    async fn will_save_wait_until(&self, params: WillSaveTextDocumentParams) -> Result<Option<Vec<TextEdit>>> {
+        let workspace = self.workspace.read().await;
+        let config = &workspace.config.formatting;
+        Ok(self.features.formatting.format_on_save(&params, config))
     }
 }
 

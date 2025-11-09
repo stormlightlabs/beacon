@@ -231,8 +231,8 @@ Implemented trailing comma handling, decorator spacing, type annotation rules, l
 
 Implemented `textDocument/formatting` and `textDocument/rangeFormatting` handlers with proper LSP capabilities registration, error recovery, and configuration integration through the workspace config.
 
-- [ ] Implement `textDocument/willSaveWaitUntil` for format-on-save
-- [ ] Implement `textDocument/onTypeFormatting` for automatic formatting as user types (e.g., after typing `:` in function definitions)
+- [x] Implement `textDocument/willSaveWaitUntil` for format-on-save
+- [x] Implement `textDocument/onTypeFormatting` for automatic formatting as user types (e.g., after typing `:` in function definitions)
 - [ ] Support `# beacon: disable` comments to skip formatting for specific regions
 - [ ] Add performance monitoring to track formatting duration and emit warnings for slow operations (threshold-based)
 - [ ] Implement configurable timeout for large files to prevent LSP hangs
@@ -243,10 +243,10 @@ Added `FormatterConfig` to main LSP `Config` with full LSP/TOML support for all 
 
 ### Testing & Validation
 
-- [ ] Unit tests for each formatting rule (whitespace, indentation, imports, etc.)
-- [ ] Idempotency tests (format(format(x)) == format(x))
-- [ ] AST preservation tests (parse(format(code)) == parse(code) modulo whitespace)
-- [ ] Range formatting tests (partial document formatting)
+- [x] Unit tests for each formatting rule (whitespace, indentation, imports, etc.)
+- [x] Idempotency tests (format(format(x)) == format(x))
+- [x] AST preservation tests (parse(format(code)) == parse(code) modulo whitespace)
+- [x] Range formatting tests (partial document formatting)
 - [ ] Integration tests with LSP protocol
 - [ ] Performance benchmarks:
     - [ ] Small files (<100 lines): <10ms

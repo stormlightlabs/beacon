@@ -90,7 +90,6 @@ impl ImportStatement {
         let mut sorted_names = self.names.clone();
         sorted_names.sort();
 
-        // Check if all names fit on one line
         let single_line = format!("from {} import {}", self.module, sorted_names.join(", "));
 
         if single_line.len() <= max_line_length {
@@ -135,8 +134,12 @@ impl Ord for ImportStatement {
 }
 
 /// Categorize an import module as stdlib, third-party, or local
-fn categorize_import(module: &str) -> ImportCategory {
+pub(crate) fn categorize_import(module: &str) -> ImportCategory {
     let base_module = module.split('.').next().unwrap_or(module);
+
+    if base_module == "__future__" {
+        return ImportCategory::StandardLibrary;
+    }
 
     if module.starts_with('.') || module.starts_with("..") {
         return ImportCategory::Local;

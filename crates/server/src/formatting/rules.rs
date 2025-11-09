@@ -428,14 +428,19 @@ impl FormattingRules {
     ///
     /// Ensures comments have proper spacing and alignment.
     pub fn format_comment(&self, comment: &str, _is_inline: bool) -> String {
-        let trimmed = comment.trim();
-
+        let trimmed = comment.trim_start();
         if !trimmed.starts_with('#') {
             return comment.to_string();
         }
 
-        let content = trimmed[1..].trim_start();
-        if content.is_empty() { "#".to_string() } else { format!("# {content}") }
+        let hash_count = trimmed.chars().take_while(|&c| c == '#').count();
+        let content = trimmed[hash_count..].trim();
+
+        if content.is_empty() {
+            "#".repeat(hash_count)
+        } else {
+            format!("{} {}", "#".repeat(hash_count), content)
+        }
     }
 
     /// Check if a comment should be preserved as-is

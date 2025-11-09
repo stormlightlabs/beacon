@@ -3,7 +3,12 @@ mod formatters;
 use anyhow::{Context, Result};
 use beacon_constraint::ConstraintResult;
 use beacon_core::logging::default_log_path;
-use beacon_lsp::{Config, analysis::Analyzer, document::DocumentManager};
+use beacon_lsp::{
+    Config,
+    analysis::Analyzer,
+    document::DocumentManager,
+    formatting::{Formatter, FormatterConfig},
+};
 use beacon_parser::{PythonHighlighter, PythonParser};
 use clap::{Parser, Subcommand, ValueEnum};
 use formatters::{format_compact, format_human, format_json, print_parse_errors, print_symbol_table};
@@ -49,6 +54,21 @@ enum Commands {
         /// Show tree-sitter CST structure
         #[arg(short, long)]
         tree: bool,
+    },
+    /// Format Python source code without starting the language server
+    Format {
+        /// Python file to format (reads from stdin if omitted)
+        #[arg(value_name = "FILE")]
+        file: Option<PathBuf>,
+        /// Overwrite the provided file with formatted output
+        #[arg(long, conflicts_with = "output")]
+        write: bool,
+        /// Fail if formatting would change the input
+        #[arg(long, conflicts_with = "write")]
+        check: bool,
+        /// Write formatted output to a different file
+        #[arg(long, conflicts_with = "write")]
+        output: Option<PathBuf>,
     },
     /// Highlight Python source code with syntax colors
     Highlight {
@@ -159,6 +179,7 @@ async fn main() -> Result<()> {
         Commands::Resolve { file, verbose } => resolve_command(&read_input(file)?, verbose),
         Commands::Typecheck { file, format, workspace } => typecheck_command(file, format, workspace).await,
         Commands::Lsp { tcp, log_file } => lsp_command(tcp, log_file).await,
+        Commands::Format { file, write, check, output } => format_command(file, write, check, output),
 
         #[cfg(debug_assertions)]
         Commands::Debug { command } => debug_command(command),
@@ -176,6 +197,45 @@ fn read_input(file: Option<PathBuf>) -> Result<String> {
             Ok(buffer)
         }
     }
+}
+
+fn format_command(file: Option<PathBuf>, write: bool, check: bool, output: Option<PathBuf>) -> Result<()> {
+    let source = read_input(file.clone())?;
+    let mut formatter = Formatter::new(FormatterConfig::default(), PythonParser::default());
+    let formatted = formatter
+        .format_range(&source, 0, source.lines().count())
+        .with_context(|| "Failed to format source")?;
+
+    if check {
+        if source == formatted {
+            return Ok(());
+        }
+        let target = file
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "stdin".to_string());
+        anyhow::bail!("Formatting would change {target}");
+    }
+
+    if write {
+        let path = file
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("--write requires a file path"))?;
+        if source != formatted {
+            fs::write(path, &formatted)
+                .with_context(|| format!("Failed to write formatted code to {}", path.display()))?;
+        }
+        return Ok(());
+    }
+
+    if let Some(out_path) = output {
+        fs::write(&out_path, &formatted)
+            .with_context(|| format!("Failed to write formatted output to {}", out_path.display()))?;
+    } else {
+        print!("{formatted}");
+    }
+
+    Ok(())
 }
 
 fn parse_command(source: &str, pretty: bool, show_tree: bool) -> Result<()> {

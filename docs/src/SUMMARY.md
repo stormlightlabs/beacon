@@ -25,6 +25,7 @@
 - [CLI](./cli/overview.md)
     - [Type Checking](./cli/typecheck.md)
     - [Language Server](./cli/lsp.md)
+    - [Formatter](./cli/format.md)
     - [Debug Tools](./cli/debug.md)
 - [Research](./learn/research.md)
     - [Hindley–Milner](./learn/hm.md)
