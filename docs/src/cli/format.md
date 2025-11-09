@@ -1,6 +1,6 @@
 # Formatter CLI
 
-The `format` command exposes Beacon's Python formatter without having to spin up the language server.  
+The `format` command exposes Beacon's Python formatter without having to spin up the language server.
 It is helpful for debugging formatter behaviour (for example, while comparing
 `samples/capabilities_support.py` against the generated `samples/capabilities_support_formatted.py`).
 

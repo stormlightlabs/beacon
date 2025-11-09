@@ -16,12 +16,18 @@ pub struct FormattedWriter<'a> {
     /// Formatting context
     context: FormattingContext<'a>,
     next_token_text: Option<String>,
+    just_wrote_keyword_equal: bool,
 }
 
 impl<'a> FormattedWriter<'a> {
     /// Create a new writer with the given configuration
     pub fn new(config: &'a FormatterConfig) -> Self {
-        Self { output: String::new(), context: FormattingContext::new(config), next_token_text: None }
+        Self {
+            output: String::new(),
+            context: FormattingContext::new(config),
+            next_token_text: None,
+            just_wrote_keyword_equal: false,
+        }
     }
 
     pub fn set_next_token(&mut self, token: Option<&Token>) {
@@ -43,10 +49,11 @@ impl<'a> FormattedWriter<'a> {
             Token::Keyword { text, .. } => self.write_keyword(text),
             Token::Identifier { text, .. } => self.write_identifier(text),
             Token::Operator { text, .. } => self.write_operator(text),
+            Token::KeywordEqual { .. } => self.write_keyword_equal(),
             Token::Delimiter { text, .. } => self.write_delimiter(text),
             Token::StringLiteral { text, .. } => self.write_string(text),
             Token::NumberLiteral { text, .. } => self.write_number(text),
-            Token::Comment { text, .. } => self.write_comment(text),
+            Token::Comment { text, indent_hint, .. } => self.write_comment(text, *indent_hint),
             Token::Newline { .. } => self.write_newline(),
             Token::Indent { level, .. } => self.write_indent(*level),
             Token::Dedent { .. } => {}
@@ -62,6 +69,7 @@ impl<'a> FormattedWriter<'a> {
 
     /// Write a keyword with appropriate spacing
     fn write_keyword(&mut self, keyword: &str) {
+        self.clear_keyword_equal_flag();
         if self.needs_space_before_keyword() {
             self.write(" ");
         }
@@ -70,7 +78,9 @@ impl<'a> FormattedWriter<'a> {
 
     /// Write an identifier with appropriate spacing
     fn write_identifier(&mut self, identifier: &str) {
-        if self.needs_space_before_identifier() {
+        let skip_space = self.just_wrote_keyword_equal;
+        self.clear_keyword_equal_flag();
+        if self.needs_space_before_identifier() && !skip_space {
             self.write(" ");
         }
         self.write(identifier);
@@ -78,6 +88,7 @@ impl<'a> FormattedWriter<'a> {
 
     /// Write an operator with appropriate spacing
     fn write_operator(&mut self, operator: &str) {
+        self.clear_keyword_equal_flag();
         let config = self.context.config();
 
         let no_space_operators = [".", "@"];
@@ -114,8 +125,14 @@ impl<'a> FormattedWriter<'a> {
         }
     }
 
+    fn write_keyword_equal(&mut self) {
+        self.write("=");
+        self.just_wrote_keyword_equal = true;
+    }
+
     /// Write a delimiter with appropriate spacing
     fn write_delimiter(&mut self, delimiter: &str) {
+        self.clear_keyword_equal_flag();
         match delimiter {
             "(" | "[" | "{" => {
                 self.write(delimiter);
@@ -160,7 +177,9 @@ impl<'a> FormattedWriter<'a> {
 
     /// Write a string literal
     fn write_string(&mut self, text: &str) {
-        if self.needs_space_before_string() {
+        let skip_space = self.just_wrote_keyword_equal;
+        self.clear_keyword_equal_flag();
+        if self.needs_space_before_string() && !skip_space {
             self.write(" ");
         }
 
@@ -171,40 +190,58 @@ impl<'a> FormattedWriter<'a> {
 
     /// Write a number literal
     fn write_number(&mut self, text: &str) {
-        if self.needs_space_before_number() {
+        let skip_space = self.just_wrote_keyword_equal;
+        self.clear_keyword_equal_flag();
+        if self.needs_space_before_number() && !skip_space {
             self.write(" ");
         }
         self.write(text);
     }
 
     /// Write a comment
-    pub fn write_comment(&mut self, text: &str) {
+    pub fn write_comment(&mut self, text: &str, indent_hint: Option<usize>) {
+        self.clear_keyword_equal_flag();
         let rules = super::rules::FormattingRules::new(self.context.config().clone());
-        let is_inline = !self.context.at_line_start();
+        let line_blank = self.current_line_is_blank();
         let formatted = if rules.should_preserve_comment(text) {
             text.to_string()
         } else {
-            rules.format_comment(text, is_inline)
+            rules.format_comment(text, !line_blank)
         };
-
-        let indent_level = self.context.indent_level();
-
-        if self.output.ends_with('\n') && indent_level > 0 {
-            self.write(&"    ".repeat(indent_level));
+        let mut indent_str = self.context.indent_string();
+        if indent_str.is_empty() {
+            if let Some(level) = indent_hint {
+                if level > 0 {
+                    indent_str = self.context.config().indent_string().repeat(level);
+                }
+            }
         }
 
-        if !self.output.ends_with('\n') && !self.output.ends_with(' ') {
-            self.write("  ");
-        }
-
-        self.write(&formatted);
-        if !is_inline {
-            self.write("\n");
+        if line_blank {
+            if !self.output.ends_with('\n') {
+                self.write_newline();
+            }
+            if !indent_str.is_empty() {
+                self.write(&indent_str);
+            }
+            self.write(&formatted);
+            self.write_newline();
+        } else {
+            if self.output.ends_with(' ') {
+                if !self.output.ends_with("  ") {
+                    self.write(" ");
+                }
+            } else {
+                self.write("  ");
+            }
+            self.write(&formatted);
+            self.write_newline();
         }
     }
 
     /// Write a newline
     fn write_newline(&mut self) {
+        self.clear_keyword_equal_flag();
         self.remove_trailing_whitespace();
         self.output.push('\n');
         self.context.newline();
@@ -212,6 +249,7 @@ impl<'a> FormattedWriter<'a> {
 
     /// Write indentation for the given level
     fn write_indent(&mut self, level: usize) {
+        self.clear_keyword_equal_flag();
         if !self.context.at_line_start() {
             self.write_newline();
         }
@@ -398,6 +436,15 @@ impl<'a> FormattedWriter<'a> {
     fn just_wrote_unary_operator(&self) -> bool {
         self.output.ends_with('-') || self.output.ends_with('+') || self.output.ends_with('~')
     }
+
+    fn clear_keyword_equal_flag(&mut self) {
+        self.just_wrote_keyword_equal = false;
+    }
+
+    fn current_line_is_blank(&self) -> bool {
+        let line_start = self.output.rfind('\n').map(|idx| idx + 1).unwrap_or(0);
+        self.output[line_start..].trim().is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -475,9 +522,8 @@ mod tests {
         let mut writer = FormattedWriter::new(&config);
 
         writer.write("code");
-        writer.write_token(&Token::Comment { text: "# comment".to_string(), line: 1, col: 10 });
-
-        assert_eq!(writer.output(), "code  # comment");
+        writer.write_token(&Token::Comment { text: "# comment".to_string(), line: 1, col: 10, indent_hint: None });
+        assert_eq!(writer.output(), "code  # comment\n");
     }
 
     #[test]

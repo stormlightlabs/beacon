@@ -119,6 +119,7 @@ pub enum AstNode {
     Import {
         module: String,
         alias: Option<String>,
+        extra_modules: Vec<(String, Option<String>)>,
         line: usize,
         col: usize,
         end_line: usize,
@@ -793,8 +794,13 @@ impl PythonParser {
                 Ok(AstNode::Return { value: value.map(Box::new), line, col, end_line, end_col })
             }
             "import_statement" => {
-                let (module, alias) = self.extract_import_info(&node, source)?;
-                Ok(AstNode::Import { module, alias, line, col, end_line, end_col })
+                let modules = self.extract_import_info(&node, source)?;
+                let mut iter = modules.into_iter();
+                let (module, alias) = iter
+                    .next()
+                    .ok_or_else(|| ParseError::TreeSitterError("Missing import name".to_string()))?;
+                let extra_modules: Vec<_> = iter.collect();
+                Ok(AstNode::Import { module, alias, extra_modules, line, col, end_line, end_col })
             }
             "import_from_statement" => {
                 let (module, names) = self.extract_import_from_info(&node, source)?;
@@ -1403,45 +1409,42 @@ impl PythonParser {
         Ok(elements)
     }
 
-    fn extract_import_info(&self, node: &Node, source: &str) -> Result<(String, Option<String>)> {
-        let mut module = String::new();
-        let mut alias = None;
+    fn extract_import_info(&self, node: &Node, source: &str) -> Result<Vec<(String, Option<String>)>> {
+        let mut modules = Vec::new();
 
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             match child.kind() {
                 "dotted_name" | "identifier" => {
-                    if module.is_empty() {
-                        module = child
-                            .utf8_text(source.as_bytes())
-                            .map_err(|_| ParseError::InvalidUtf8)?
-                            .to_string();
+                    if let Ok(name) = child.utf8_text(source.as_bytes()) {
+                        if name != "import" {
+                            modules.push((name.to_string(), None));
+                        }
                     }
                 }
                 "aliased_import" => {
                     if let Some(name_node) = child.child_by_field_name("name") {
-                        module = name_node
+                        let module = name_node
                             .utf8_text(source.as_bytes())
                             .map_err(|_| ParseError::InvalidUtf8)?
                             .to_string();
-                    }
-                    if let Some(alias_node) = child.child_by_field_name("alias") {
-                        alias = Some(
-                            alias_node
-                                .utf8_text(source.as_bytes())
-                                .map_err(|_| ParseError::InvalidUtf8)?
-                                .to_string(),
-                        );
+                        let alias = child
+                            .child_by_field_name("alias")
+                            .and_then(|alias_node| alias_node.utf8_text(source.as_bytes()).ok())
+                            .map(|s| s.to_string());
+                        modules.push((module, alias));
                     }
                 }
                 _ => {}
             }
         }
 
-        if module.is_empty() {
+        modules.retain(|(name, _)| !name.is_empty());
+
+        if modules.is_empty() {
             Err(ParseError::TreeSitterError("Missing import name".to_string()).into())
         } else {
-            Ok((module, alias))
+            Ok(modules)
         }
     }
 
@@ -1712,16 +1715,40 @@ impl PythonParser {
         let col = start_position.column + 1;
         let end_line = end_position.row + 1;
         let end_col = end_position.column + 1;
-        let exception_type = node
-            .children(&mut node.walk())
-            .find(|n| n.kind() == "dotted_name" || n.kind() == "identifier")
+        let mut exception_type = node
+            .child_by_field_name("type")
             .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-            .map(|s| s.to_string());
+            .map(|s| s.to_string())
+            .or_else(|| {
+                node.children(&mut node.walk())
+                    .find(|n| n.kind() == "dotted_name" || n.kind() == "identifier")
+                    .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                    .map(|s| s.to_string())
+            });
+
+        let mut pattern_alias = None;
+        if let Some(pattern) = node.children(&mut node.walk()).find(|n| n.kind() == "as_pattern") {
+            let mut cursor = pattern.walk();
+            for child in pattern.children(&mut cursor) {
+                match child.kind() {
+                    "dotted_name" | "identifier" => {
+                        if exception_type.is_none() {
+                            exception_type = child.utf8_text(source.as_bytes()).ok().map(|s| s.to_string());
+                        }
+                    }
+                    "as_pattern_target" => {
+                        pattern_alias = child.utf8_text(source.as_bytes()).ok().map(|s| s.to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         let name = node
             .child_by_field_name("name")
             .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-            .map(|s| s.to_string());
+            .map(|s| s.to_string())
+            .or(pattern_alias);
 
         let body_node = node
             .children(&mut node.walk())

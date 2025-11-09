@@ -16,6 +16,8 @@ pub enum Token {
     Identifier { text: String, line: usize, col: usize },
     /// Operator (+, -, *, /, etc.)
     Operator { text: String, line: usize, col: usize },
+    /// Keyword/default argument equal sign (no spaces)
+    KeywordEqual { line: usize, col: usize },
     /// Delimiter (parenthesis, bracket, brace, comma, colon)
     Delimiter { text: String, line: usize, col: usize },
     /// String literal
@@ -28,7 +30,12 @@ pub enum Token {
     /// Number literal
     NumberLiteral { text: String, line: usize, col: usize },
     /// Comment
-    Comment { text: String, line: usize, col: usize },
+    Comment {
+        text: String,
+        line: usize,
+        col: usize,
+        indent_hint: Option<usize>,
+    },
     /// Newline
     Newline { line: usize },
     /// Indentation change
@@ -46,6 +53,7 @@ impl Token {
             Token::Keyword { line, .. }
             | Token::Identifier { line, .. }
             | Token::Operator { line, .. }
+            | Token::KeywordEqual { line, .. }
             | Token::Delimiter { line, .. }
             | Token::StringLiteral { line, .. }
             | Token::NumberLiteral { line, .. }
@@ -63,6 +71,7 @@ impl Token {
             Token::Keyword { col, .. }
             | Token::Identifier { col, .. }
             | Token::Operator { col, .. }
+            | Token::KeywordEqual { col, .. }
             | Token::Delimiter { col, .. }
             | Token::StringLiteral { col, .. }
             | Token::NumberLiteral { col, .. }
@@ -82,6 +91,7 @@ impl Token {
             | Token::StringLiteral { text, .. }
             | Token::NumberLiteral { text, .. }
             | Token::Comment { text, .. } => Some(text),
+            Token::KeywordEqual { .. } => Some("="),
             Token::Newline { .. } | Token::Indent { .. } | Token::Dedent { .. } | Token::Whitespace { .. } => None,
         }
     }
@@ -102,6 +112,8 @@ pub struct Comment {
     pub col: usize,
     /// Raw comment text (e.g. "# comment")
     pub text: String,
+    /// Indent level hint inferred from tree-sitter block nesting
+    pub indent_level: usize,
 }
 
 impl TokenStream {
@@ -184,7 +196,12 @@ fn merge_comments(mut tokens: Vec<Token>, comments: &[Comment]) -> Vec<Token> {
     for token in tokens.drain(..) {
         while let Some(comment) = comment_iter.peek() {
             if comment_precedes_token(comment, &token) {
-                merged.push(Token::Comment { text: comment.text.clone(), line: comment.line, col: comment.col });
+                merged.push(Token::Comment {
+                    text: comment.text.clone(),
+                    line: comment.line,
+                    col: comment.col,
+                    indent_hint: Some(comment.indent_level),
+                });
                 comment_iter.next();
             } else {
                 break;
@@ -195,7 +212,12 @@ fn merge_comments(mut tokens: Vec<Token>, comments: &[Comment]) -> Vec<Token> {
     }
 
     for comment in comment_iter {
-        merged.push(Token::Comment { text: comment.text.clone(), line: comment.line, col: comment.col });
+        merged.push(Token::Comment {
+            text: comment.text.clone(),
+            line: comment.line,
+            col: comment.col,
+            indent_hint: Some(comment.indent_level),
+        });
     }
 
     merged
@@ -419,6 +441,10 @@ impl TokenGenerator {
                 self.current_indent += 1;
                 let mut previous_was_docstring = false;
                 for (idx, stmt) in body.iter().enumerate() {
+                    let stmt_line = match Self::node_start_line(stmt) {
+                        0 => *line,
+                        other => other,
+                    };
                     if idx > 0 && matches!(stmt, AstNode::FunctionDef { .. }) && !previous_was_docstring {
                         let line = Self::node_start_line(stmt);
                         self.tokens.push(Token::Newline { line });
@@ -426,7 +452,7 @@ impl TokenGenerator {
                     }
 
                     self.tokens
-                        .push(Token::Indent { level: self.current_indent, line: *line });
+                        .push(Token::Indent { level: self.current_indent, line: stmt_line });
                     if idx == 0 && Self::is_string_literal(stmt) {
                         self.emit_docstring(stmt, true);
                         previous_was_docstring = true;
@@ -487,6 +513,10 @@ impl TokenGenerator {
                 self.current_indent += 1;
                 let mut last_kind = None;
                 for (idx, stmt) in body.iter().enumerate() {
+                    let stmt_line = match Self::node_start_line(stmt) {
+                        0 => *line,
+                        other => other,
+                    };
                     let kind = Self::class_item_kind(stmt);
                     if matches!(kind, ClassItemKind::Method) {
                         if let Some(ClassItemKind::Docstring | ClassItemKind::Attribute | ClassItemKind::Method) =
@@ -498,7 +528,7 @@ impl TokenGenerator {
                     }
 
                     self.tokens
-                        .push(Token::Indent { level: self.current_indent, line: *line });
+                        .push(Token::Indent { level: self.current_indent, line: stmt_line });
                     if idx == 0 && matches!(kind, ClassItemKind::Docstring) {
                         self.emit_docstring(stmt, true);
                     } else {
@@ -582,8 +612,7 @@ impl TokenGenerator {
                 for (i, (key, val)) in keywords.iter().enumerate() {
                     self.tokens
                         .push(Token::Identifier { text: key.clone(), line: *line, col: *col });
-                    self.tokens
-                        .push(Token::Operator { text: "=".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::KeywordEqual { line: *line, col: *col });
                     self.visit_node(val);
                     if i < keywords.len() - 1 {
                         self.tokens
@@ -1379,7 +1408,45 @@ impl TokenGenerator {
 
     fn node_start_line(node: &AstNode) -> usize {
         match node {
-            AstNode::FunctionDef { line, .. } | AstNode::ClassDef { line, .. } => *line,
+            AstNode::FunctionDef { line, .. }
+            | AstNode::ClassDef { line, .. }
+            | AstNode::Assignment { line, .. }
+            | AstNode::AnnotatedAssignment { line, .. }
+            | AstNode::Return { line, .. }
+            | AstNode::Import { line, .. }
+            | AstNode::ImportFrom { line, .. }
+            | AstNode::If { line, .. }
+            | AstNode::For { line, .. }
+            | AstNode::While { line, .. }
+            | AstNode::Try { line, .. }
+            | AstNode::With { line, .. }
+            | AstNode::Literal { line, .. }
+            | AstNode::Identifier { line, .. }
+            | AstNode::Call { line, .. }
+            | AstNode::BinaryOp { line, .. }
+            | AstNode::UnaryOp { line, .. }
+            | AstNode::Compare { line, .. }
+            | AstNode::Lambda { line, .. }
+            | AstNode::Subscript { line, .. }
+            | AstNode::Pass { line, .. }
+            | AstNode::Break { line, .. }
+            | AstNode::Continue { line, .. }
+            | AstNode::Raise { line, .. }
+            | AstNode::Tuple { line, .. }
+            | AstNode::List { line, .. }
+            | AstNode::Dict { line, .. }
+            | AstNode::Set { line, .. }
+            | AstNode::Yield { line, .. }
+            | AstNode::YieldFrom { line, .. }
+            | AstNode::Await { line, .. }
+            | AstNode::Assert { line, .. }
+            | AstNode::Starred { line, .. }
+            | AstNode::ListComp { line, .. }
+            | AstNode::DictComp { line, .. }
+            | AstNode::SetComp { line, .. }
+            | AstNode::GeneratorExp { line, .. }
+            | AstNode::NamedExpr { line, .. }
+            | AstNode::Match { line, .. } => *line,
             _ => 0,
         }
     }
@@ -1632,7 +1699,15 @@ mod tests {
 
     #[test]
     fn test_import_tokens() {
-        let node = AstNode::Import { module: "os".to_string(), alias: None, line: 1, col: 0, end_line: 1, end_col: 9 };
+        let node = AstNode::Import {
+            module: "os".to_string(),
+            alias: None,
+            extra_modules: Vec::new(),
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 9,
+        };
 
         let stream = TokenStream::from_ast(&node);
         let tokens: Vec<Token> = stream.collect();

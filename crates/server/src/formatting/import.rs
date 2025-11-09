@@ -9,6 +9,8 @@ use std::cmp::Ordering;
 /// Import category for PEP8 grouping
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ImportCategory {
+    /// __future__ imports (must appear first)
+    Future,
     /// Standard library imports
     StandardLibrary,
     /// Third-party package imports
@@ -47,27 +49,46 @@ impl PartialEq for ImportStatement {
 impl Eq for ImportStatement {}
 
 impl ImportStatement {
-    /// Create an import statement from an AST node
-    pub fn from_ast(node: &AstNode) -> Option<Self> {
+    /// Create import statements from an AST node (splits multi-imports)
+    pub fn from_ast_multi(node: &AstNode) -> Vec<Self> {
         match node {
-            AstNode::Import { module, alias, line, .. } => Some(Self {
-                category: categorize_import(module),
-                module: module.clone(),
-                alias: alias.clone(),
-                names: Vec::new(),
-                is_from_import: false,
-                line: *line,
-            }),
-            AstNode::ImportFrom { module, names, line, .. } => Some(Self {
+            AstNode::Import { module, alias, extra_modules, line, .. } => {
+                let mut statements = Vec::new();
+                statements.push(Self {
+                    category: categorize_import(module),
+                    module: module.clone(),
+                    alias: alias.clone(),
+                    names: Vec::new(),
+                    is_from_import: false,
+                    line: *line,
+                });
+                for (module, alias) in extra_modules {
+                    statements.push(Self {
+                        category: categorize_import(module),
+                        module: module.clone(),
+                        alias: alias.clone(),
+                        names: Vec::new(),
+                        is_from_import: false,
+                        line: *line,
+                    });
+                }
+                statements
+            }
+            AstNode::ImportFrom { module, names, line, .. } => vec![Self {
                 category: categorize_import(module),
                 module: module.clone(),
                 alias: None,
                 names: names.clone(),
                 is_from_import: true,
                 line: *line,
-            }),
-            _ => None,
+            }],
+            _ => Vec::new(),
         }
+    }
+
+    /// Create a single import statement from an AST node
+    pub fn from_ast(node: &AstNode) -> Option<Self> {
+        Self::from_ast_multi(node).into_iter().next()
     }
 
     /// Format the import statement as a string
@@ -138,7 +159,7 @@ pub(crate) fn categorize_import(module: &str) -> ImportCategory {
     let base_module = module.split('.').next().unwrap_or(module);
 
     if base_module == "__future__" {
-        return ImportCategory::StandardLibrary;
+        return ImportCategory::Future;
     }
 
     if module.starts_with('.') || module.starts_with("..") {
@@ -374,7 +395,7 @@ impl ImportSorter {
 
     /// Add an import from an AST node
     pub fn add_import(&mut self, node: &AstNode) {
-        if let Some(import) = ImportStatement::from_ast(node) {
+        for import in ImportStatement::from_ast_multi(node) {
             self.imports.push(import);
         }
     }
@@ -408,7 +429,7 @@ impl ImportSorter {
         let stdlib: Vec<_> = self
             .imports
             .iter()
-            .filter(|i| i.category == ImportCategory::StandardLibrary)
+            .filter(|i| matches!(i.category, ImportCategory::Future | ImportCategory::StandardLibrary))
             .collect();
 
         let third_party: Vec<_> = self
@@ -439,6 +460,7 @@ mod tests {
 
     #[test]
     fn test_categorize_stdlib() {
+        assert_eq!(categorize_import("__future__"), ImportCategory::Future);
         assert_eq!(categorize_import("os"), ImportCategory::StandardLibrary);
         assert_eq!(categorize_import("sys"), ImportCategory::StandardLibrary);
         assert_eq!(categorize_import("json"), ImportCategory::StandardLibrary);
@@ -460,7 +482,15 @@ mod tests {
 
     #[test]
     fn test_import_from_ast_simple() {
-        let node = AstNode::Import { module: "os".to_string(), alias: None, line: 1, col: 0, end_line: 1, end_col: 9 };
+        let node = AstNode::Import {
+            module: "os".to_string(),
+            alias: None,
+            extra_modules: Vec::new(),
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 9,
+        };
         let import = ImportStatement::from_ast(&node).unwrap();
         assert_eq!(import.module, "os");
         assert_eq!(import.alias, None);
@@ -473,6 +503,7 @@ mod tests {
         let node = AstNode::Import {
             module: "numpy".to_string(),
             alias: Some("np".to_string()),
+            extra_modules: Vec::new(),
             line: 1,
             col: 0,
             end_line: 1,
@@ -609,6 +640,7 @@ mod tests {
         sorter.add_import(&AstNode::Import {
             module: "numpy".to_string(),
             alias: Some("np".to_string()),
+            extra_modules: Vec::new(),
             line: 3,
             col: 0,
             end_line: 3,
@@ -618,6 +650,7 @@ mod tests {
         sorter.add_import(&AstNode::Import {
             module: "os".to_string(),
             alias: None,
+            extra_modules: Vec::new(),
             line: 1,
             col: 0,
             end_line: 1,
@@ -647,6 +680,7 @@ mod tests {
         sorter.add_import(&AstNode::Import {
             module: "os".to_string(),
             alias: None,
+            extra_modules: Vec::new(),
             line: 1,
             col: 0,
             end_line: 1,
@@ -656,6 +690,7 @@ mod tests {
         sorter.add_import(&AstNode::Import {
             module: "numpy".to_string(),
             alias: None,
+            extra_modules: Vec::new(),
             line: 2,
             col: 0,
             end_line: 2,
@@ -676,6 +711,7 @@ mod tests {
         sorter.add_import(&AstNode::Import {
             module: "os".to_string(),
             alias: None,
+            extra_modules: Vec::new(),
             line: 1,
             col: 0,
             end_line: 1,
@@ -685,6 +721,7 @@ mod tests {
         sorter.add_import(&AstNode::Import {
             module: "os".to_string(),
             alias: None,
+            extra_modules: Vec::new(),
             line: 5,
             col: 0,
             end_line: 5,

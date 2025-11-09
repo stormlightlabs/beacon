@@ -2527,7 +2527,15 @@ mod tests {
             name: "foo".to_string(),
             args: vec![],
             body: vec![
-                AstNode::Import { module: "os".to_string(), alias: None, line: 2, col: 5, end_line: 2, end_col: 5 },
+                AstNode::Import {
+                    module: "os".to_string(),
+                    alias: None,
+                    extra_modules: Vec::new(),
+                    line: 2,
+                    col: 5,
+                    end_line: 2,
+                    end_col: 5,
+                },
                 AstNode::Assignment {
                     target: Box::new(AstNode::Identifier {
                         name: "path".to_string(),
@@ -2599,6 +2607,7 @@ mod tests {
                 AstNode::Import {
                     module: "numpy".to_string(),
                     alias: Some("np".to_string()),
+                    extra_modules: Vec::new(),
                     line: 2,
                     col: 5,
                     end_line: 2,

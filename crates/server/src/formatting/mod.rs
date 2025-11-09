@@ -372,20 +372,27 @@ impl Formatter {
 
         let mut comments = Vec::new();
         let root = parsed.tree.root_node();
-        Self::collect_comments_recursive(root, &parsed.source, normalized_start, normalized_end, &mut comments);
+        Self::collect_comments_recursive(root, &parsed.source, normalized_start, normalized_end, 0, &mut comments);
         comments.sort_by(|a, b| (a.line, a.col).cmp(&(b.line, b.col)));
         comments
     }
 
     fn collect_comments_recursive(
-        node: Node<'_>, source: &str, start_line: usize, end_line: usize, comments: &mut Vec<Comment>,
+        node: Node<'_>, source: &str, start_line: usize, end_line: usize, indent_level: usize,
+        comments: &mut Vec<Comment>,
     ) {
         if node.kind() == "comment" {
             let line = node.start_position().row + 1;
             if line >= start_line && line <= end_line {
                 if let Ok(text) = node.utf8_text(source.as_bytes()) {
                     let col = node.start_position().column + 1;
-                    comments.push(Comment { line, col, text: text.to_string() });
+                    let mut inferred_indent = indent_level;
+                    if let Some(sibling) = node.next_named_sibling() {
+                        if sibling.kind() == "block" {
+                            inferred_indent = inferred_indent.saturating_add(1);
+                        }
+                    }
+                    comments.push(Comment { line, col, text: text.to_string(), indent_level: inferred_indent });
                 }
             }
             return;
@@ -393,7 +400,8 @@ impl Formatter {
 
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            Self::collect_comments_recursive(child, source, start_line, end_line, comments);
+            let child_indent = if node.kind() == "block" { indent_level + 1 } else { indent_level };
+            Self::collect_comments_recursive(child, source, start_line, end_line, child_indent, comments);
         }
     }
 
@@ -438,7 +446,7 @@ impl Formatter {
 
                 let mut sorted_imports: Vec<_> = import_block
                     .into_iter()
-                    .filter_map(|i| ImportStatement::from_ast(&i))
+                    .flat_map(|i| ImportStatement::from_ast_multi(&i))
                     .collect();
                 sorted_imports.sort();
 
@@ -459,6 +467,7 @@ impl Formatter {
                         sorted_body.push(AstNode::Import {
                             module: import_stmt.module,
                             alias: import_stmt.alias,
+                            extra_modules: Vec::new(),
                             line: import_stmt.line,
                             col: 0,
                             end_line: import_stmt.line,
