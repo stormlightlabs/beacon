@@ -79,8 +79,6 @@ The `linter` and `rules` modules implement static checks beyond type correctness
 Many BEA-series diagnostic codes are implemented, with others awaiting parser or symbol table enhancements.
 See the table of linting [rules](./lint_rules.md) for details.
 
-## Utilities & Future Work
+## Utilities
 
 Beyond inference and CFG analysis, the module exposes helpers for locating unbound identifiers, invalidating cached results when documents change, and bridging between symbol-table scopes and LSP positions.
-
-Outstanding work includes scaling CFG/data-flow analysis to whole modules, improving incremental re-analysis granularity, and extracting the constraint solver into a standalone crate.

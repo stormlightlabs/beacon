@@ -225,40 +225,21 @@ Implemented intelligent string quote normalization with escape-avoidance, docstr
 
 ### Structural Formatting
 
-- [ ] Trailing commas in multi-line structures (tuples, lists, dicts, args)
-- [ ] Dictionary formatting (key-value alignment options)
-- [ ] Comprehension formatting (list, dict, set, generator)
-- [ ] Lambda expression formatting
-- [ ] Decorator formatting (one per line)
-- [ ] Class definition formatting
-- [ ] Type annotation spacing
-- [ ] Draft `docs/src/format/structure.md`
+Implemented trailing comma handling, decorator spacing, type annotation rules, lambda wrapping, dictionary value indentation, comprehension wrapping strategies, and context-aware blank line management for classes and functions.
 
 ### LSP Integration
 
-- [ ] Implement `textDocument/formatting` handler
-- [ ] Implement `textDocument/rangeFormatting` handler
-- [ ] Register formatting capabilities in server initialization
-- [ ] Handle `DocumentFormattingOptions` from client
-- [ ] Handle `DocumentRangeFormattingOptions` from client
+Implemented `textDocument/formatting` and `textDocument/rangeFormatting` handlers with proper LSP capabilities registration, error recovery, and configuration integration through the workspace config.
+
 - [ ] Implement `textDocument/willSaveWaitUntil` for format-on-save
-- [ ] Add formatting timeout handling (prevent LSP hangs)
-- [ ] Error recovery (return original text if formatting fails)
-- [ ] Draft `docs/src/lsp/formatter.md`
+- [ ] Implement `textDocument/onTypeFormatting` for automatic formatting as user types (e.g., after typing `:` in function definitions)
+- [ ] Support `# beacon: disable` comments to skip formatting for specific regions
+- [ ] Add performance monitoring to track formatting duration and emit warnings for slow operations (threshold-based)
+- [ ] Implement configurable timeout for large files to prevent LSP hangs
 
 ### Configuration Integration
 
-- [ ] Add `beacon.formatting.enabled` setting
-- [ ] Add `beacon.formatting.lineLength` setting (default: 88)
-- [ ] Add `beacon.formatting.indentSize` setting (default: 4)
-- [ ] Add `beacon.formatting.quoteStyle` setting (single/double/preserve)
-- [ ] Add `beacon.formatting.trailingCommas` setting (always/multiline/never)
-- [ ] Add `beacon.formatting.maxBlankLines` setting (default: 2)
-- [ ] Add `beacon.formatting.importSorting` setting (pep8/isort/off)
-- [ ] Add `beacon.formatting.compatibilityMode` setting (black/autopep8/pep8)
-- [ ] Hot-reload formatting configuration
-- [ ] Workspace-level vs document-level config override
-- [ ] Update `docs/src/configuration.md`
+Added `FormatterConfig` to main LSP `Config` with full LSP/TOML support for all formatting options (line length, indent size, quote style, trailing commas, blank lines, import sorting, compatibility mode), hot-reload support via `did_change_configuration`, and comprehensive tests for JSON/TOML loading.
 
 ### Testing & Validation
 

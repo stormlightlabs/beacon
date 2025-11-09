@@ -21,10 +21,6 @@ Editors use the resulting tree to populate outline panes, breadcrumbs, or naviga
 ## Workspace State
 
 - The `Workspace` struct records the `root_uri` supplied during initialization.
-- Future enhancements will:
-    - Crawl the filesystem to discover modules outside the current editor session.
-    - Populate caches for unopened files, enabling cross-file references and renames.
-    - Track configuration and environment settings at the workspace level.
 
 ## Notifications and Logging
 

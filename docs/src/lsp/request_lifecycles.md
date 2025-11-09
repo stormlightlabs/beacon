@@ -39,7 +39,7 @@ These operations are pure reads when possible, avoiding locks beyond short-lived
 
 `workspace/symbol` → aggregates symbols from every open document, performing case-insensitive matching.
 
-`workspaceSymbol/resolve` → currently a no-op passthrough; in future it will supplement symbols with locations on demand.
+`workspaceSymbol/resolve` → currently a no-op passthrough
 
 ## Semantic Tokens & Inlay Hints
 

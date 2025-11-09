@@ -363,6 +363,65 @@ impl FormattingRules {
     }
 }
 
+/// Structural formatting rules
+impl FormattingRules {
+    /// Determine if a trailing comma should be added to a multi-line structure
+    pub fn should_add_trailing_comma(&self, is_multiline: bool, context: &FormattingContext) -> bool {
+        use super::config::TrailingCommas;
+
+        match self.config.trailing_commas {
+            TrailingCommas::Always => true,
+            TrailingCommas::Multiline => is_multiline && context.is_nested(),
+            TrailingCommas::Never => false,
+        }
+    }
+
+    /// Format decorator spacing
+    ///
+    /// Ensures each decorator is on its own line with proper indentation.
+    pub fn format_decorator(&self, decorator_text: &str) -> String {
+        let trimmed = decorator_text.trim();
+        if !trimmed.starts_with('@') { format!("@{trimmed}") } else { trimmed.to_string() }
+    }
+
+    /// Calculate spacing around type annotations
+    ///
+    /// Determines the appropriate spacing for type annotations (e.g., x: int, -> str).
+    pub fn type_annotation_spacing(&self) -> (usize, usize) {
+        (0, 1)
+    }
+
+    /// Determine if a lambda should be wrapped to multiple lines
+    pub fn should_wrap_lambda(&self, lambda_width: usize, context: &FormattingContext) -> bool {
+        context.current_column() + lambda_width > self.config.line_length
+    }
+
+    /// Format dictionary key-value alignment
+    ///
+    /// Returns the preferred indentation for dictionary values in multi-line dicts.
+    pub fn dict_value_indent(&self, context: &FormattingContext, key_width: usize) -> usize {
+        if context.is_nested() { context.indent_level() + 1 } else { key_width + 2 }
+    }
+
+    /// Determine wrapping strategy for comprehensions
+    pub fn comprehension_wrapping_strategy(&self, total_width: usize, context: &FormattingContext) -> WrappingStrategy {
+        let available = context.remaining_line_space();
+        if total_width <= available { WrappingStrategy::Horizontal } else { WrappingStrategy::Vertical }
+    }
+
+    /// Get required blank lines before a class definition
+    pub fn blank_lines_for_class(&self, context: &FormattingContext) -> usize {
+        let is_top_level = context.indent_level() == 0;
+        self.blank_lines_before_class(is_top_level)
+    }
+
+    /// Get required blank lines before a function definition
+    pub fn blank_lines_for_function(&self, context: &FormattingContext, is_method: bool) -> usize {
+        let is_top_level = context.indent_level() == 0;
+        self.blank_lines_before_function(is_top_level, is_method)
+    }
+}
+
 /// Comment formatting rules
 impl FormattingRules {
     /// Format a comment with appropriate spacing
@@ -403,13 +462,12 @@ impl FormattingRules {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::formatting::config::QuoteStyle;
+    use crate::formatting::config::{QuoteStyle, TrailingCommas};
 
     #[test]
     fn test_text_width_ascii() {
         let config = FormatterConfig::default();
         let rules = FormattingRules::new(config);
-
         assert_eq!(rules.text_width("hello"), 5);
         assert_eq!(rules.text_width(""), 0);
     }
@@ -434,7 +492,6 @@ mod tests {
         let config = FormatterConfig::default();
         let rules = FormattingRules::new(config.clone());
         let mut context = FormattingContext::new(&config);
-
         let token = Token::Operator { text: "+".to_string(), line: 1, col: 10 };
 
         assert_eq!(rules.should_break_before(&token, &context), BreakDecision::NoBreak);
@@ -447,7 +504,6 @@ mod tests {
     fn test_break_priority() {
         let config = FormatterConfig::default();
         let rules = FormattingRules::new(config);
-
         let comma = Token::Delimiter { text: ",".to_string(), line: 1, col: 10 };
         let (can_break, priority) = rules.break_priority(&comma);
         assert!(can_break);
@@ -657,5 +713,108 @@ This is a docstring
 
         let inline_comment = "# single line";
         assert!(!rules.needs_blank_lines_around_comment(inline_comment, &context));
+    }
+
+    #[test]
+    fn test_trailing_comma_always() {
+        let config = FormatterConfig { trailing_commas: TrailingCommas::Always, ..Default::default() };
+        let rules = FormattingRules::new(config.clone());
+        let context = FormattingContext::new(&config);
+        assert!(rules.should_add_trailing_comma(true, &context));
+        assert!(rules.should_add_trailing_comma(false, &context));
+    }
+
+    #[test]
+    fn test_trailing_comma_multiline() {
+        let config = FormatterConfig { trailing_commas: TrailingCommas::Multiline, ..Default::default() };
+        let rules = FormattingRules::new(config.clone());
+        let mut context = FormattingContext::new(&config);
+        context.enter_paren();
+        assert!(rules.should_add_trailing_comma(true, &context));
+        assert!(!rules.should_add_trailing_comma(false, &context));
+    }
+
+    #[test]
+    fn test_trailing_comma_never() {
+        let config = FormatterConfig { trailing_commas: TrailingCommas::Never, ..Default::default() };
+        let rules = FormattingRules::new(config.clone());
+        let context = FormattingContext::new(&config);
+        assert!(!rules.should_add_trailing_comma(true, &context));
+        assert!(!rules.should_add_trailing_comma(false, &context));
+    }
+
+    #[test]
+    fn test_format_decorator() {
+        let config = FormatterConfig::default();
+        let rules = FormattingRules::new(config);
+        assert_eq!(rules.format_decorator("@property"), "@property");
+        assert_eq!(rules.format_decorator("property"), "@property");
+        assert_eq!(rules.format_decorator("  @decorator  "), "@decorator");
+    }
+
+    #[test]
+    fn test_type_annotation_spacing() {
+        let config = FormatterConfig::default();
+        let rules = FormattingRules::new(config);
+        let (before, after) = rules.type_annotation_spacing();
+        assert_eq!(before, 0);
+        assert_eq!(after, 1);
+    }
+
+    #[test]
+    fn test_should_wrap_lambda() {
+        let config = FormatterConfig { line_length: 80, ..Default::default() };
+        let rules = FormattingRules::new(config.clone());
+        let mut context = FormattingContext::new(&config);
+        context.advance_column(70);
+        assert!(!rules.should_wrap_lambda(5, &context));
+        assert!(rules.should_wrap_lambda(20, &context));
+    }
+
+    #[test]
+    fn test_dict_value_indent() {
+        let config = FormatterConfig { indent_size: 4, ..Default::default() };
+        let rules = FormattingRules::new(config.clone());
+        let mut context = FormattingContext::new(&config);
+        context.enter_brace();
+        let indent = rules.dict_value_indent(&context, 10);
+        assert_eq!(indent, 1);
+    }
+
+    #[test]
+    fn test_comprehension_wrapping_horizontal() {
+        let config = FormatterConfig { line_length: 80, ..Default::default() };
+        let rules = FormattingRules::new(config.clone());
+        let mut context = FormattingContext::new(&config);
+        context.advance_column(10);
+        let strategy = rules.comprehension_wrapping_strategy(30, &context);
+        assert_eq!(strategy, WrappingStrategy::Horizontal);
+    }
+
+    #[test]
+    fn test_comprehension_wrapping_vertical() {
+        let config = FormatterConfig { line_length: 80, ..Default::default() };
+        let rules = FormattingRules::new(config.clone());
+        let mut context = FormattingContext::new(&config);
+        context.advance_column(10);
+        let strategy = rules.comprehension_wrapping_strategy(100, &context);
+        assert_eq!(strategy, WrappingStrategy::Vertical);
+    }
+
+    #[test]
+    fn test_blank_lines_for_class() {
+        let config = FormatterConfig { blank_line_before_class: true, ..Default::default() };
+        let rules = FormattingRules::new(config.clone());
+        let context = FormattingContext::new(&config);
+        assert_eq!(rules.blank_lines_for_class(&context), 2);
+    }
+
+    #[test]
+    fn test_blank_lines_for_function() {
+        let config = FormatterConfig { blank_line_before_function: true, ..Default::default() };
+        let rules = FormattingRules::new(config.clone());
+        let context = FormattingContext::new(&config);
+        assert_eq!(rules.blank_lines_for_function(&context, false), 2);
+        assert_eq!(rules.blank_lines_for_function(&context, true), 2);
     }
 }

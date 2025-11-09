@@ -35,6 +35,12 @@ variable_types = true
 unresolved_imports = "warning"
 circular_imports = "warning"
 
+[formatting]
+enabled = true
+line_length = 88
+quote_style = "double"
+trailing_commas = "multiline"
+
 [advanced]
 incremental = true
 cache_size = 100
@@ -199,6 +205,185 @@ Diagnostic severity level for circular import dependencies.
 circular_imports = "warning"
 ```
 
+### Formatting
+
+Configure code formatting behavior under the `[formatting]` section. Beacon provides PEP8-compliant formatting through the LSP.
+
+#### `formatting.enabled`
+
+Master toggle for code formatting.
+
+- **Type:** `boolean`
+- **Default:** `true`
+
+```toml
+[formatting]
+enabled = true
+```
+
+#### `formatting.line_length`
+
+Maximum line length before wrapping.
+
+- **Type:** `integer`
+- **Default:** `88` (Black-compatible)
+- **Range:** `20-200`
+
+```toml
+[formatting]
+line_length = 88
+```
+
+#### `formatting.indent_size`
+
+Number of spaces per indentation level.
+
+- **Type:** `integer`
+- **Default:** `4`
+- **Range:** `2-8`
+
+```toml
+[formatting]
+indent_size = 4
+```
+
+#### `formatting.quote_style`
+
+String quote style preference.
+
+- **Type:** `string`
+- **Default:** `"double"`
+- **Values:**
+    - `"single"`: Use single quotes for strings
+    - `"double"`: Use double quotes for strings
+    - `"preserve"`: Keep existing quote style
+
+```toml
+[formatting]
+quote_style = "double"
+```
+
+#### `formatting.trailing_commas`
+
+Trailing comma behavior in multi-line structures.
+
+- **Type:** `string`
+- **Default:** `"multiline"`
+- **Values:**
+    - `"always"`: Add trailing commas to all multi-line structures
+    - `"multiline"`: Add trailing commas only to multi-line nested structures
+    - `"never"`: Never add trailing commas
+
+```toml
+[formatting]
+trailing_commas = "multiline"
+```
+
+#### `formatting.max_blank_lines`
+
+Maximum consecutive blank lines allowed.
+
+- **Type:** `integer`
+- **Default:** `2`
+- **Range:** `0-5`
+
+```toml
+[formatting]
+max_blank_lines = 2
+```
+
+#### `formatting.import_sorting`
+
+Import statement sorting style.
+
+- **Type:** `string`
+- **Default:** `"pep8"`
+- **Values:**
+    - `"pep8"`: stdlib, third-party, local
+    - `"isort"`: isort-compatible sorting
+    - `"off"`: Disable import sorting
+
+```toml
+[formatting]
+import_sorting = "pep8"
+```
+
+#### `formatting.compatibility_mode`
+
+Compatibility with other Python formatters.
+
+- **Type:** `string`
+- **Default:** `"black"`
+- **Values:**
+    - `"black"`: Black formatter compatibility (88 char line length)
+    - `"autopep8"`: autopep8 compatibility (79 char line length)
+    - `"pep8"`: Strict PEP8 (79 char line length)
+
+```toml
+[formatting]
+compatibility_mode = "black"
+```
+
+#### `formatting.use_tabs`
+
+Use tabs instead of spaces for indentation (not recommended).
+
+- **Type:** `boolean`
+- **Default:** `false`
+
+```toml
+[formatting]
+use_tabs = false
+```
+
+#### `formatting.normalize_docstring_quotes`
+
+Normalize quotes in docstrings to match quote_style.
+
+- **Type:** `boolean`
+- **Default:** `true`
+
+```toml
+[formatting]
+normalize_docstring_quotes = true
+```
+
+#### `formatting.spaces_around_operators`
+
+Add spaces around binary operators.
+
+- **Type:** `boolean`
+- **Default:** `true`
+
+```toml
+[formatting]
+spaces_around_operators = true
+```
+
+#### `formatting.blank_line_before_class`
+
+Add blank lines before class definitions.
+
+- **Type:** `boolean`
+- **Default:** `true`
+
+```toml
+[formatting]
+blank_line_before_class = true
+```
+
+#### `formatting.blank_line_before_function`
+
+Add blank lines before function definitions.
+
+- **Type:** `boolean`
+- **Default:** `true`
+
+```toml
+[formatting]
+blank_line_before_function = true
+```
+
 ### Advanced Options
 
 Configure advanced performance and analysis settings under the `[advanced]` section.
@@ -305,6 +490,14 @@ parameter_names = false
 unresolved_imports = "warning"
 circular_imports = "info"
 
+[formatting]
+enabled = true
+line_length = 100
+indent_size = 4
+quote_style = "double"
+trailing_commas = "multiline"
+import_sorting = "pep8"
+
 [advanced]
 max_any_depth = 5
 incremental = true
@@ -329,6 +522,12 @@ exclude_patterns = ["**/venv/**", "**/.venv/**"]
 
 [tool.beacon.diagnostics]
 unresolved_imports = "error"
+
+[tool.beacon.formatting]
+enabled = true
+line_length = 88
+quote_style = "double"
+trailing_commas = "multiline"
 ```
 
 ## Configuration Precedence

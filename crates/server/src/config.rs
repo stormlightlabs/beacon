@@ -205,6 +205,10 @@ pub struct Config {
     /// Inlay hints configuration
     #[serde(default)]
     pub inlay_hints: InlayHintsConfig,
+
+    /// Formatting configuration
+    #[serde(default)]
+    pub formatting: crate::formatting::FormatterConfig,
 }
 
 fn default_max_any_depth() -> u32 {
@@ -237,6 +241,7 @@ impl Default for Config {
             unresolved_import_severity: DiagnosticSeverity::default(),
             circular_import_severity: DiagnosticSeverity::default(),
             inlay_hints: InlayHintsConfig::default(),
+            formatting: crate::formatting::FormatterConfig::default(),
         }
     }
 }
@@ -252,9 +257,7 @@ impl Config {
     /// Merges user-provided configuration with existing settings.
     /// LSP settings take precedence over TOML configuration.
     pub fn update_from_value(&mut self, value: serde_json::Value) {
-        // Parse as Config (camelCase for LSP) and merge non-default values
         if let Ok(partial) = serde_json::from_value::<Config>(value) {
-            // Only update fields that differ from defaults
             let defaults = Config::default();
 
             if partial.mode != defaults.mode {
@@ -302,14 +305,14 @@ impl Config {
             if partial.inlay_hints != defaults.inlay_hints {
                 self.inlay_hints = partial.inlay_hints;
             }
+            if partial.formatting != defaults.formatting {
+                self.formatting = partial.formatting;
+            }
         }
     }
 
     /// Validate configuration and return any errors
-    ///
-    /// Checks that stub paths exist and are accessible.
     pub fn validate(&self) -> Result<()> {
-        // Validate stub paths exist and are readable
         for stub_path in &self.stub_paths {
             if !stub_path.exists() {
                 tracing::warn!("Stub path does not exist: {}", stub_path.display());
@@ -318,14 +321,12 @@ impl Config {
             }
         }
 
-        // Validate source roots exist
         for source_root in &self.source_roots {
             if !source_root.exists() {
                 tracing::warn!("Source root does not exist: {}", source_root.display());
             }
         }
 
-        // Validate cache size is reasonable
         if self.cache_size == 0 {
             tracing::warn!("Cache size is 0, caching will be ineffective");
         }
@@ -353,7 +354,6 @@ impl Config {
     pub fn discover_and_load(workspace_root: &Path) -> Result<Self> {
         let mut config = Config::default();
 
-        // Try beacon.toml first
         let beacon_toml = workspace_root.join("beacon.toml");
         if beacon_toml.exists() {
             tracing::info!("Loading configuration from {}", beacon_toml.display());
@@ -361,7 +361,6 @@ impl Config {
             return Ok(config);
         }
 
-        // Try pyproject.toml [tool.beacon] section
         let pyproject_toml = workspace_root.join("pyproject.toml");
         if pyproject_toml.exists() {
             tracing::info!(
@@ -380,7 +379,6 @@ impl Config {
             }
         }
 
-        // No configuration found, return defaults
         tracing::debug!("No beacon.toml or pyproject.toml found, using defaults");
         Ok(config)
     }
@@ -444,6 +442,18 @@ fn toml_to_json(value: toml::Value) -> serde_json::Value {
                     "variable_types" => "variableTypes".to_string(),
                     "function_return_types" => "functionReturnTypes".to_string(),
                     "parameter_names" => "parameterNames".to_string(),
+                    "line_length" => "lineLength".to_string(),
+                    "indent_size" => "indentSize".to_string(),
+                    "quote_style" => "quoteStyle".to_string(),
+                    "trailing_commas" => "trailingCommas".to_string(),
+                    "max_blank_lines" => "maxBlankLines".to_string(),
+                    "import_sorting" => "importSorting".to_string(),
+                    "compatibility_mode" => "compatibilityMode".to_string(),
+                    "use_tabs" => "useTabs".to_string(),
+                    "normalize_docstring_quotes" => "normalizeDocstringQuotes".to_string(),
+                    "spaces_around_operators" => "spacesAroundOperators".to_string(),
+                    "blank_line_before_class" => "blankLineBeforeClass".to_string(),
+                    "blank_line_before_function" => "blankLineBeforeFunction".to_string(),
                     _ => key,
                 };
                 map.insert(camel_key, toml_to_json(val));
@@ -920,5 +930,85 @@ circular_import_severity = "info"
         assert_eq!(config.stub_paths[0], PathBuf::from("/custom/stubs"));
         assert_eq!(config.unresolved_import_severity, DiagnosticSeverity::Error);
         assert_eq!(config.circular_import_severity, DiagnosticSeverity::Info);
+    }
+
+    #[test]
+    fn test_formatting_config_default() {
+        let config = Config::default();
+        assert!(config.formatting.enabled);
+        assert_eq!(config.formatting.line_length, 88);
+        assert_eq!(config.formatting.indent_size, 4);
+    }
+
+    #[test]
+    fn test_formatting_config_from_json() {
+        let json_str = r#"{
+            "formatting": {
+                "enabled": true,
+                "lineLength": 100,
+                "indentSize": 2,
+                "quoteStyle": "single"
+            }
+        }"#;
+
+        let json_value: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        let mut config = Config::default();
+        config.update_from_value(json_value);
+
+        assert!(config.formatting.enabled);
+        assert_eq!(config.formatting.line_length, 100);
+        assert_eq!(config.formatting.indent_size, 2);
+        assert_eq!(
+            config.formatting.quote_style,
+            crate::formatting::config::QuoteStyle::Single
+        );
+    }
+
+    #[test]
+    fn test_formatting_config_from_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let beacon_toml_path = temp_dir.path().join("beacon.toml");
+        let toml_content = r#"
+[formatting]
+enabled = true
+line_length = 120
+indent_size = 2
+quote_style = "single"
+trailing_commas = "always"
+"#;
+
+        fs::write(&beacon_toml_path, toml_content).unwrap();
+
+        let config = Config::discover_and_load(temp_dir.path()).unwrap();
+
+        assert!(config.formatting.enabled);
+        assert_eq!(config.formatting.line_length, 120);
+        assert_eq!(config.formatting.indent_size, 2);
+        assert_eq!(
+            config.formatting.quote_style,
+            crate::formatting::config::QuoteStyle::Single
+        );
+        assert_eq!(
+            config.formatting.trailing_commas,
+            crate::formatting::config::TrailingCommas::Always
+        );
+    }
+
+    #[test]
+    fn test_formatting_config_hot_reload() {
+        let json_str = r#"{
+            "formatting": {
+                "lineLength": 79
+            }
+        }"#;
+
+        let json_value: serde_json::Value = serde_json::from_str(json_str).unwrap();
+        let mut config = Config::default();
+        let original_enabled = config.formatting.enabled;
+
+        config.update_from_value(json_value);
+
+        assert_eq!(config.formatting.enabled, original_enabled);
+        assert_eq!(config.formatting.line_length, 79);
     }
 }
