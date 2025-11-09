@@ -360,6 +360,7 @@ impl Formatter {
             AstNode::GeneratorExp { line, end_line: node_end, .. } => (*line, *node_end),
             AstNode::NamedExpr { line, end_line: node_end, .. } => (*line, *node_end),
             AstNode::Match { line, end_line: node_end, .. } => (*line, *node_end),
+            AstNode::ParenthesizedExpression { line, end_line: node_end, .. } => (*line, *node_end),
         };
 
         node_line.0 <= end_line && node_line.1 >= start_line

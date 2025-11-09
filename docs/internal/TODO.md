@@ -247,12 +247,12 @@ Added `FormatterConfig` to main LSP `Config` with full LSP/TOML support for all 
 - [x] Idempotency tests (format(format(x)) == format(x))
 - [x] AST preservation tests (parse(format(code)) == parse(code) modulo whitespace)
 - [x] Range formatting tests (partial document formatting)
-- [ ] Integration tests with LSP protocol
+- [x] Integration tests with LSP protocol
+- [x] Regression test suite with real-world Python files
 - [ ] Performance benchmarks:
     - [ ] Small files (<100 lines): <10ms
     - [ ] Medium files (100-1000 lines): <100ms
     - [ ] Large files (1000-5000 lines): <500ms
-- [ ] Regression test suite with real-world Python files
 - [ ] Test compatibility with Black/autopep8 outputs
 - [ ] Error handling tests (malformed code, incomplete parsing)
 

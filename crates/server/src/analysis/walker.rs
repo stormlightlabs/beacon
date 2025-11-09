@@ -106,7 +106,8 @@ fn get_node_position(node: &AstNode) -> (usize, usize, usize, usize) {
         | AstNode::Break { line, col, end_line, end_col, .. }
         | AstNode::Continue { line, col, end_line, end_col, .. }
         | AstNode::Assert { line, col, end_line, end_col, .. }
-        | AstNode::Starred { line, col, end_line, end_col, .. } => (*line, *col, *end_line, *end_col),
+        | AstNode::Starred { line, col, end_line, end_col, .. }
+        | AstNode::ParenthesizedExpression { line, col, end_line, end_col, .. } => (*line, *col, *end_line, *end_col),
     }
 }
 
@@ -187,7 +188,7 @@ fn check_node_for_yield(node: &AstNode) -> bool {
         | AstNode::Import { .. }
         | AstNode::ImportFrom { .. } => false,
         AstNode::Module { .. } => false,
-        AstNode::Assert { .. } | AstNode::Starred { .. } => false,
+        AstNode::Assert { .. } | AstNode::Starred { .. } | AstNode::ParenthesizedExpression { .. } => false,
     }
 }
 
@@ -1500,6 +1501,9 @@ fn visit_node_with_context(
         }
         AstNode::Pass { .. } | AstNode::Break { .. } | AstNode::Continue { .. } => Ok(Type::none()),
         AstNode::Assert { .. } | AstNode::Starred { .. } => Ok(Type::none()),
+        AstNode::ParenthesizedExpression { expression, .. } => {
+            visit_node_with_context(expression, env, ctx, stub_cache, expr_ctx)
+        }
     }
 }
 

@@ -1333,6 +1333,13 @@ impl TokenGenerator {
                     .push(Token::Operator { text: "*".to_string(), line: *line, col: *col });
                 self.visit_node(value);
             }
+            AstNode::ParenthesizedExpression { expression, line, col, .. } => {
+                self.tokens
+                    .push(Token::Delimiter { text: "(".to_string(), line: *line, col: *col });
+                self.visit_node(expression);
+                self.tokens
+                    .push(Token::Delimiter { text: ")".to_string(), line: *line, col: *col });
+            }
             AstNode::Match { subject, cases, line, col, .. } => {
                 self.tokens
                     .push(Token::Keyword { text: "match".to_string(), line: *line, col: *col });
@@ -1451,6 +1458,7 @@ impl TokenGenerator {
             | AstNode::Await { line, .. }
             | AstNode::Assert { line, .. }
             | AstNode::Starred { line, .. }
+            | AstNode::ParenthesizedExpression { line, .. }
             | AstNode::ListComp { line, .. }
             | AstNode::DictComp { line, .. }
             | AstNode::SetComp { line, .. }

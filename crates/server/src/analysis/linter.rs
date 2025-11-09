@@ -376,6 +376,9 @@ impl<'a> Linter<'a> {
             | AstNode::Await { .. }
             | AstNode::Identifier { .. }
             | AstNode::Starred { .. } => {}
+            AstNode::ParenthesizedExpression { expression, .. } => {
+                self.visit_node(expression);
+            }
         }
     }
 

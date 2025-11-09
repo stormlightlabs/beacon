@@ -556,7 +556,8 @@ impl SemanticTokensProvider {
             | AstNode::Continue { line, col, .. }
             | AstNode::Raise { line, col, .. }
             | AstNode::Assert { line, col, .. }
-            | AstNode::Starred { line, col, .. } => (*line, *col),
+            | AstNode::Starred { line, col, .. }
+            | AstNode::ParenthesizedExpression { line, col, .. } => (*line, *col),
         }
     }
 

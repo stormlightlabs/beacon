@@ -402,6 +402,14 @@ pub enum AstNode {
         end_line: usize,
         end_col: usize,
     },
+    /// Parenthesized expression: (expr) - preserves explicit parentheses
+    ParenthesizedExpression {
+        expression: Box<AstNode>,
+        line: usize,
+        col: usize,
+        end_line: usize,
+        end_col: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -945,7 +953,16 @@ impl PythonParser {
                 Ok(AstNode::Set { elements, line, col, end_line, end_col })
             }
             "parenthesized_expression" => match node.named_child(0) {
-                Some(child) => self.node_to_ast(child, source),
+                Some(child) => {
+                    let expression = self.node_to_ast(child, source)?;
+                    Ok(AstNode::ParenthesizedExpression {
+                        expression: Box::new(expression),
+                        line,
+                        col,
+                        end_line,
+                        end_col,
+                    })
+                }
                 None => Ok(AstNode::Identifier { name: "<empty_parens>".to_string(), line, col, end_line, end_col }),
             },
             "boolean_operator" => {
