@@ -379,6 +379,11 @@ impl TokenGenerator {
                     self.tokens.push(Token::Newline { line: *line });
                 }
 
+                if !decorators.is_empty() {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: *line });
+                }
+
                 if *is_async {
                     self.tokens
                         .push(Token::Keyword { text: "async".to_string(), line: *line, col: *col });
@@ -481,6 +486,11 @@ impl TokenGenerator {
                     self.tokens
                         .push(Token::Identifier { text: decorator.clone(), line: *line, col: col + 1 });
                     self.tokens.push(Token::Newline { line: *line });
+                }
+
+                if !decorators.is_empty() {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: *line });
                 }
 
                 self.tokens

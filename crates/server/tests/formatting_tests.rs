@@ -491,6 +491,79 @@ def foo():
 }
 
 #[test]
+fn test_decorator_indentation_in_class() {
+    let source = r#"class Animal:
+    @abstractmethod
+    def make_sound(self):
+        pass
+
+    @property
+    def name(self):
+        return "animal"
+
+    @classmethod
+    def create(cls):
+        return cls()
+
+    @staticmethod
+    def helper():
+        pass
+"#;
+    let formatted = format_code(source);
+
+    assert!(
+        formatted.contains("    @abstractmethod\n    def make_sound"),
+        "abstractmethod decorator not properly indented:\n{formatted}"
+    );
+    assert!(
+        formatted.contains("    @property\n    def name"),
+        "property decorator not properly indented:\n{formatted}"
+    );
+    assert!(
+        formatted.contains("    @classmethod\n    def create"),
+        "classmethod decorator not properly indented:\n{formatted}"
+    );
+    assert!(
+        formatted.contains("    @staticmethod\n    def helper"),
+        "staticmethod decorator not properly indented:\n{formatted}"
+    );
+
+    let second_format = format_code(&formatted);
+    assert_eq!(
+        formatted, second_format,
+        "Decorator formatting should be idempotent.\nFirst:\n{formatted}\nSecond:\n{second_format}"
+    );
+}
+
+#[test]
+fn test_nested_class_decorator_indentation() {
+    let source = r#"class Outer:
+    @decorator
+    class Inner:
+        @method_decorator
+        def method(self):
+            pass
+"#;
+    let formatted = format_code(source);
+
+    assert!(
+        formatted.contains("    @decorator\n    class Inner"),
+        "Nested class decorator not properly indented:\n{formatted}"
+    );
+
+    assert!(
+        formatted.contains("        @method_decorator\n        def method"),
+        "Nested method decorator not properly indented:\n{formatted}"
+    );
+
+    let second_format = format_code(&formatted);
+    assert_eq!(
+        formatted, second_format,
+        "Nested decorator formatting should be idempotent"
+    );
+}
+
+#[test]
 fn test_multiple_decorators_preserve_group() {
     let source = r#"@a
 @b
