@@ -264,5 +264,3 @@ The following areas have limited or no logging coverage (documented in roadmap):
 - Configuration hot-reload events (currently limited)
 - WebSocket/TCP transport logging (when using `--tcp`)
 - Stub cache operations and introspection queries
-
-These will be addressed in future iterations as observability requirements emerge.

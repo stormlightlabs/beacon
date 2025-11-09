@@ -78,4 +78,3 @@ Beacon's LSP focuses on delivering a fast, editor-friendly surface for the Beaco
 - **Full workspace indexing**: we limit operations to open documents until indexing and cache management mature.
 - **Formatting and linting**: formatting endpoints and lint integrations are planned but not part of the initial release.
 - **Editor-specific UX**: we stick to LSP-standard capabilities instead of bespoke VS Code UI components.
-- **Heavy configuration**: configuration parsing is minimal; user options will be respected in a future milestone.

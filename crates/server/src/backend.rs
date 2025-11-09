@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::document::DocumentManager;
 use crate::workspace::Workspace;
 use crate::{analysis, cache, features::*, interpreter};
+
 use lsp_types::{
     CodeActionProviderCapability, CompletionOptions, HoverProviderCapability, InitializeParams, InitializeResult,
     InlayHintServerCapabilities, OneOf, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
@@ -19,8 +20,6 @@ use tower_lsp::{Client, LanguageServer, jsonrpc::Result, lsp_types::*};
 
 /// LSP Backend implements the LSP LanguageServer trait and coordinates all features.
 /// TODO: Implement additional LSP methods:
-/// - formatting
-/// - range_formatting
 /// - on_type_formatting
 /// - execute_command
 pub struct Backend {
@@ -56,6 +55,7 @@ struct Features {
     workspace_symbols: WorkspaceSymbolsProvider,
     folding_range: FoldingRangeProvider,
     signature_help: SignatureHelpProvider,
+    formatting: FormattingProvider,
 }
 
 impl Features {
@@ -78,7 +78,8 @@ impl Features {
             rename: RenameProvider::new(documents.clone()),
             workspace_symbols: WorkspaceSymbolsProvider::new(documents.clone(), workspace),
             folding_range: FoldingRangeProvider::new(documents.clone()),
-            signature_help: SignatureHelpProvider::new(documents),
+            signature_help: SignatureHelpProvider::new(documents.clone()),
+            formatting: FormattingProvider::new(documents),
         }
     }
 }
@@ -217,6 +218,12 @@ impl LanguageServer for Backend {
                 )),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+                document_formatting_provider: Some(OneOf::Left(true)),
+                document_range_formatting_provider: Some(OneOf::Left(true)),
+                document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
+                    first_trigger_character: ":".to_string(),
+                    more_trigger_character: Some(vec!["\n".to_string()]),
+                }),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -432,6 +439,30 @@ impl LanguageServer for Backend {
 
     async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
         Ok(self.features.folding_range.folding_range(params))
+    }
+
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let workspace = self.workspace.read().await;
+        let config = &workspace.config.formatting;
+        Ok(self.features.formatting.format_document(&params, config))
+    }
+
+    async fn range_formatting(&self, params: DocumentRangeFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let workspace = self.workspace.read().await;
+        let config = &workspace.config.formatting;
+        Ok(self.features.formatting.format_range(&params, config))
+    }
+
+    async fn on_type_formatting(&self, params: DocumentOnTypeFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let workspace = self.workspace.read().await;
+        let config = &workspace.config.formatting;
+        Ok(self.features.formatting.on_type_format(&params, config))
+    }
+
+    async fn will_save_wait_until(&self, params: WillSaveTextDocumentParams) -> Result<Option<Vec<TextEdit>>> {
+        let workspace = self.workspace.read().await;
+        let config = &workspace.config.formatting;
+        Ok(self.features.formatting.format_on_save(&params, config))
     }
 }
 
@@ -1110,5 +1141,23 @@ mod tests {
         let _ = &backend.analyzer;
         let _ = &backend.workspace;
         let _ = &backend.features;
+    }
+
+    #[test]
+    fn test_backend_has_formatting_feature() {
+        let service = create_backend();
+        let backend = service.inner();
+        let _ = &backend.features.formatting;
+    }
+
+    #[tokio::test]
+    async fn test_formatting_capability_advertised() {
+        let service = create_backend();
+        let backend = service.inner();
+        let params = InitializeParams::default();
+        let result = backend.initialize(params).await.unwrap();
+
+        assert!(result.capabilities.document_formatting_provider.is_some());
+        assert!(result.capabilities.document_range_formatting_provider.is_some());
     }
 }

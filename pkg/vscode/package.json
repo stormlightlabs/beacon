@@ -117,6 +117,114 @@
           ],
           "description": "Diagnostic severity level for circular imports."
         },
+        "beacon.formatting.enabled": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable code formatting. When enabled, Beacon will format Python code according to PEP8 conventions."
+        },
+        "beacon.formatting.lineLength": {
+          "scope": "resource",
+          "type": "number",
+          "default": 88,
+          "minimum": 20,
+          "maximum": 200,
+          "description": "Maximum line length before wrapping. Default is 88 (Black-compatible)."
+        },
+        "beacon.formatting.indentSize": {
+          "scope": "resource",
+          "type": "number",
+          "default": 4,
+          "minimum": 2,
+          "maximum": 8,
+          "description": "Number of spaces per indentation level."
+        },
+        "beacon.formatting.quoteStyle": {
+          "scope": "resource",
+          "type": "string",
+          "enum": ["single", "double", "preserve"],
+          "default": "double",
+          "enumDescriptions": [
+            "Use single quotes for strings",
+            "Use double quotes for strings",
+            "Keep existing quote style"
+          ],
+          "description": "String quote style preference."
+        },
+        "beacon.formatting.trailingCommas": {
+          "scope": "resource",
+          "type": "string",
+          "enum": ["always", "multiline", "never"],
+          "default": "multiline",
+          "enumDescriptions": [
+            "Add trailing commas to all multi-line structures",
+            "Add trailing commas only to multi-line nested structures",
+            "Never add trailing commas"
+          ],
+          "description": "Trailing comma behavior in multi-line structures."
+        },
+        "beacon.formatting.maxBlankLines": {
+          "scope": "resource",
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 5,
+          "description": "Maximum consecutive blank lines allowed."
+        },
+        "beacon.formatting.importSorting": {
+          "scope": "resource",
+          "type": "string",
+          "enum": ["pep8", "isort", "off"],
+          "default": "pep8",
+          "enumDescriptions": [
+            "PEP8-style sorting (stdlib, third-party, local)",
+            "isort-compatible sorting",
+            "Disable import sorting"
+          ],
+          "description": "Import statement sorting style."
+        },
+        "beacon.formatting.compatibilityMode": {
+          "scope": "resource",
+          "type": "string",
+          "enum": ["black", "autopep8", "pep8"],
+          "default": "black",
+          "enumDescriptions": [
+            "Black formatter compatibility (88 char line length)",
+            "autopep8 compatibility (79 char line length)",
+            "Strict PEP8 (79 char line length)"
+          ],
+          "description": "Compatibility with other Python formatters."
+        },
+        "beacon.formatting.useTabs": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": false,
+          "description": "Use tabs instead of spaces for indentation (not recommended for Python)."
+        },
+        "beacon.formatting.normalizeDocstringQuotes": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Normalize quotes in docstrings to match quoteStyle setting."
+        },
+        "beacon.formatting.spacesAroundOperators": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Add spaces around binary operators."
+        },
+        "beacon.formatting.blankLineBeforeClass": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Add blank lines before class definitions (2 for top-level, 1 for nested)."
+        },
+        "beacon.formatting.blankLineBeforeFunction": {
+          "scope": "resource",
+          "type": "boolean",
+          "default": true,
+          "description": "Add blank lines before function definitions (2 for top-level, 1 for methods)."
+        },
         "beacon.advanced.maxAnyDepth": {
           "scope": "resource",
           "type": "number",

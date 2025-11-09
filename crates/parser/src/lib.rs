@@ -119,6 +119,7 @@ pub enum AstNode {
     Import {
         module: String,
         alias: Option<String>,
+        extra_modules: Vec<(String, Option<String>)>,
         line: usize,
         col: usize,
         end_line: usize,
@@ -793,12 +794,21 @@ impl PythonParser {
                 Ok(AstNode::Return { value: value.map(Box::new), line, col, end_line, end_col })
             }
             "import_statement" => {
-                let (module, alias) = self.extract_import_info(&node, source)?;
-                Ok(AstNode::Import { module, alias, line, col, end_line, end_col })
+                let modules = self.extract_import_info(&node, source)?;
+                let mut iter = modules.into_iter();
+                let (module, alias) = iter
+                    .next()
+                    .ok_or_else(|| ParseError::TreeSitterError("Missing import name".to_string()))?;
+                let extra_modules: Vec<_> = iter.collect();
+                Ok(AstNode::Import { module, alias, extra_modules, line, col, end_line, end_col })
             }
             "import_from_statement" => {
                 let (module, names) = self.extract_import_from_info(&node, source)?;
                 Ok(AstNode::ImportFrom { module, names, line, col, end_line, end_col })
+            }
+            "future_import_statement" => {
+                let names = self.extract_future_import_names(&node, source);
+                Ok(AstNode::ImportFrom { module: "__future__".to_string(), names, line, col, end_line, end_col })
             }
             "attribute" => {
                 let (object, attribute) = self.extract_attribute_info(&node, source)?;
@@ -1166,13 +1176,18 @@ impl PythonParser {
         if let Some(arg_list) = node.child_by_field_name("superclasses") {
             let mut cursor = arg_list.walk();
             for child in arg_list.children(&mut cursor) {
-                if child.kind() == "keyword_argument" {
+                if child.kind() == "keyword_argument"
+                    || child.kind() == ","
+                    || child.kind() == "("
+                    || child.kind() == ")"
+                {
                     continue;
                 }
-                if child.kind() == "identifier" || child.kind() == "attribute" {
-                    if let Ok(base_name) = child.utf8_text(source.as_bytes()) {
-                        bases.push(base_name.to_string());
-                    }
+                if child.is_extra() {
+                    continue;
+                }
+                if let Ok(base_name) = child.utf8_text(source.as_bytes()) {
+                    bases.push(base_name.to_string());
                 }
             }
         }
@@ -1295,12 +1310,10 @@ impl PythonParser {
                                 prefix = start_text[..pos].to_string();
                             }
                         }
-                    } else if child.kind() == "string_content" {
+                    } else if child.kind() == "string_content" || child.kind() == "interpolation" {
                         if let Ok(text) = child.utf8_text(source.as_bytes()) {
                             content.push_str(text);
                         }
-                    } else if child.kind() == "interpolation" {
-                        content.push_str("{}");
                     }
                 }
                 Ok(LiteralValue::String { value: content, prefix })
@@ -1396,45 +1409,42 @@ impl PythonParser {
         Ok(elements)
     }
 
-    fn extract_import_info(&self, node: &Node, source: &str) -> Result<(String, Option<String>)> {
-        let mut module = String::new();
-        let mut alias = None;
+    fn extract_import_info(&self, node: &Node, source: &str) -> Result<Vec<(String, Option<String>)>> {
+        let mut modules = Vec::new();
 
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             match child.kind() {
                 "dotted_name" | "identifier" => {
-                    if module.is_empty() {
-                        module = child
-                            .utf8_text(source.as_bytes())
-                            .map_err(|_| ParseError::InvalidUtf8)?
-                            .to_string();
+                    if let Ok(name) = child.utf8_text(source.as_bytes()) {
+                        if name != "import" {
+                            modules.push((name.to_string(), None));
+                        }
                     }
                 }
                 "aliased_import" => {
                     if let Some(name_node) = child.child_by_field_name("name") {
-                        module = name_node
+                        let module = name_node
                             .utf8_text(source.as_bytes())
                             .map_err(|_| ParseError::InvalidUtf8)?
                             .to_string();
-                    }
-                    if let Some(alias_node) = child.child_by_field_name("alias") {
-                        alias = Some(
-                            alias_node
-                                .utf8_text(source.as_bytes())
-                                .map_err(|_| ParseError::InvalidUtf8)?
-                                .to_string(),
-                        );
+                        let alias = child
+                            .child_by_field_name("alias")
+                            .and_then(|alias_node| alias_node.utf8_text(source.as_bytes()).ok())
+                            .map(|s| s.to_string());
+                        modules.push((module, alias));
                     }
                 }
                 _ => {}
             }
         }
 
-        if module.is_empty() {
+        modules.retain(|(name, _)| !name.is_empty());
+
+        if modules.is_empty() {
             Err(ParseError::TreeSitterError("Missing import name".to_string()).into())
         } else {
-            Ok((module, alias))
+            Ok(modules)
         }
     }
 
@@ -1473,6 +1483,24 @@ impl PythonParser {
         }
 
         Ok((module, names))
+    }
+
+    fn extract_future_import_names(&self, node: &Node, source: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "dotted_name" | "identifier" => {
+                    if let Ok(text) = child.utf8_text(source.as_bytes()) {
+                        if text != "__future__" && text != "from" && text != "import" {
+                            names.push(text.to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        names
     }
 
     fn extract_attribute_info(&self, node: &Node, source: &str) -> Result<(AstNode, String)> {
@@ -1658,21 +1686,26 @@ impl PythonParser {
             }
         }
 
-        let else_body = node
-            .children(&mut node.walk())
-            .find(|n| n.kind() == "else_clause")
-            .and_then(|n| n.child_by_field_name("body"))
-            .map(|n| self.extract_body(&n, source))
-            .transpose()?;
-
-        let finally_body = node
-            .children(&mut node.walk())
-            .find(|n| n.kind() == "finally_clause")
-            .and_then(|n| n.child_by_field_name("body"))
-            .map(|n| self.extract_body(&n, source))
-            .transpose()?;
+        let else_body = self.extract_clause_body(node, "else_clause", source)?;
+        let finally_body = self.extract_clause_body(node, "finally_clause", source)?;
 
         Ok(InfoTry(body, handlers, else_body, finally_body))
+    }
+
+    fn extract_clause_body(&self, node: &Node, clause_kind: &str, source: &str) -> Result<Option<Vec<AstNode>>> {
+        let mut cursor = node.walk();
+        if let Some(clause) = node.children(&mut cursor).find(|n| n.kind() == clause_kind) {
+            if let Some(body) = clause.child_by_field_name("body") {
+                return self.extract_body(&body, source).map(Some);
+            }
+
+            let mut clause_cursor = clause.walk();
+            if let Some(block) = clause.children(&mut clause_cursor).find(|n| n.kind() == "block") {
+                return self.extract_body(&block, source).map(Some);
+            }
+        }
+
+        Ok(None)
     }
 
     fn extract_except_handler(&self, node: &Node, source: &str) -> Result<ExceptHandler> {
@@ -1682,16 +1715,40 @@ impl PythonParser {
         let col = start_position.column + 1;
         let end_line = end_position.row + 1;
         let end_col = end_position.column + 1;
-        let exception_type = node
-            .children(&mut node.walk())
-            .find(|n| n.kind() == "dotted_name" || n.kind() == "identifier")
+        let mut exception_type = node
+            .child_by_field_name("type")
             .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-            .map(|s| s.to_string());
+            .map(|s| s.to_string())
+            .or_else(|| {
+                node.children(&mut node.walk())
+                    .find(|n| n.kind() == "dotted_name" || n.kind() == "identifier")
+                    .and_then(|n| n.utf8_text(source.as_bytes()).ok())
+                    .map(|s| s.to_string())
+            });
+
+        let mut pattern_alias = None;
+        if let Some(pattern) = node.children(&mut node.walk()).find(|n| n.kind() == "as_pattern") {
+            let mut cursor = pattern.walk();
+            for child in pattern.children(&mut cursor) {
+                match child.kind() {
+                    "dotted_name" | "identifier" => {
+                        if exception_type.is_none() {
+                            exception_type = child.utf8_text(source.as_bytes()).ok().map(|s| s.to_string());
+                        }
+                    }
+                    "as_pattern_target" => {
+                        pattern_alias = child.utf8_text(source.as_bytes()).ok().map(|s| s.to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         let name = node
             .child_by_field_name("name")
             .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-            .map(|s| s.to_string());
+            .map(|s| s.to_string())
+            .or(pattern_alias);
 
         let body_node = node
             .children(&mut node.walk())
@@ -2950,6 +3007,74 @@ def foo():
                 AstNode::FunctionDef { docstring, .. } => {
                     assert!(docstring.is_none());
                 }
+                _ => panic!("Expected function definition"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_future_import_parsing() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "from __future__ import annotations\n";
+
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::ImportFrom { module, names, .. } => {
+                    assert_eq!(module, "__future__");
+                    assert_eq!(names, &["annotations".to_string()]);
+                }
+                _ => panic!("Expected ImportFrom node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_class_bases_with_generic() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "class Foo(Generic[T]):\n    pass\n";
+
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::ClassDef { bases, .. } => {
+                    assert_eq!(bases, &["Generic[T]".to_string()]);
+                }
+                _ => panic!("Expected ClassDef"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_fstring_interpolation_preserved() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"
+def describe(self, item):
+    return f"{self.value}: {item}"
+"#;
+
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::FunctionDef { body, .. } => match &body[0] {
+                    AstNode::Return { value: Some(literal), .. } => match literal.as_ref() {
+                        AstNode::Literal { value: LiteralValue::String { value, prefix }, .. } => {
+                            assert_eq!(prefix, "f");
+                            assert_eq!(value, r#"{self.value}: {item}"#);
+                        }
+                        _ => panic!("Expected literal string"),
+                    },
+                    _ => panic!("Expected return statement"),
+                },
                 _ => panic!("Expected function definition"),
             },
             _ => panic!("Expected module"),

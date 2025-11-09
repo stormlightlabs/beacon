@@ -65,6 +65,21 @@ function getBeaconConfig() {
       functionReturnTypes: config.get("inlayHints.functionReturnTypes", true),
       parameterNames: config.get("inlayHints.parameterNames", false),
     },
+    formatting: {
+      enabled: config.get("formatting.enabled", true),
+      lineLength: config.get("formatting.lineLength", 88),
+      indentSize: config.get("formatting.indentSize", 4),
+      quoteStyle: config.get("formatting.quoteStyle", "double"),
+      trailingCommas: config.get("formatting.trailingCommas", "multiline"),
+      maxBlankLines: config.get("formatting.maxBlankLines", 2),
+      importSorting: config.get("formatting.importSorting", "pep8"),
+      compatibilityMode: config.get("formatting.compatibilityMode", "black"),
+      useTabs: config.get("formatting.useTabs", false),
+      normalizeDocstringQuotes: config.get("formatting.normalizeDocstringQuotes", true),
+      spacesAroundOperators: config.get("formatting.spacesAroundOperators", true),
+      blankLineBeforeClass: config.get("formatting.blankLineBeforeClass", true),
+      blankLineBeforeFunction: config.get("formatting.blankLineBeforeFunction", true),
+    },
     interpreterPath: config.get("python.interpreterPath", ""),
   };
 }
