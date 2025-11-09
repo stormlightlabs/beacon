@@ -1,7 +1,6 @@
 //! Formatted code writer
 //!
-//! Generates formatted Python code by processing tokens and applying
-//! whitespace, indentation, and line-breaking rules.
+//! Generates formatted Python code by processing tokens and applying whitespace, indentation, and line-breaking rules.
 
 use super::config::FormatterConfig;
 use super::context::FormattingContext;
@@ -9,8 +8,7 @@ use super::token_stream::Token;
 
 /// Writes formatted Python code
 ///
-/// Processes tokens from the token stream and emits properly formatted
-/// output according to PEP8 rules and configuration settings.
+/// Processes tokens from the token stream and emits properly formatted output according to PEP8 rules and configuration settings.
 pub struct FormattedWriter<'a> {
     /// Output buffer
     output: String,
@@ -42,7 +40,7 @@ impl<'a> FormattedWriter<'a> {
             Token::Comment { text, .. } => self.write_comment(text),
             Token::Newline { .. } => self.write_newline(),
             Token::Indent { level, .. } => self.write_indent(*level),
-            Token::Dedent { .. } => {} // Dedents are handled by indent level changes
+            Token::Dedent { .. } => {}
             Token::Whitespace { count, .. } => self.write_spaces(*count),
         }
     }
@@ -73,20 +71,17 @@ impl<'a> FormattedWriter<'a> {
     fn write_operator(&mut self, operator: &str) {
         let config = self.context.config();
 
-        // Special cases for operators that don't need spaces
         let no_space_operators = [".", "@"];
         if no_space_operators.contains(&operator) {
             self.write(operator);
             return;
         }
 
-        // Add spaces around binary operators if configured
         if config.spaces_around_operators && self.is_binary_operator(operator) {
             if !self.context.at_line_start() && self.context.current_column() > 0 {
                 self.write(" ");
             }
             self.write(operator);
-            // Space after operator will be added naturally
         } else {
             self.write(operator);
         }
@@ -96,7 +91,6 @@ impl<'a> FormattedWriter<'a> {
     fn write_delimiter(&mut self, delimiter: &str) {
         match delimiter {
             "(" | "[" | "{" => {
-                // No space before opening delimiter in most cases
                 self.write(delimiter);
                 match delimiter {
                     "(" => self.context.enter_paren(),
@@ -106,7 +100,6 @@ impl<'a> FormattedWriter<'a> {
                 }
             }
             ")" | "]" | "}" => {
-                // No space before closing delimiter
                 self.write(delimiter);
                 match delimiter {
                     ")" => self.context.exit_paren(),
@@ -116,11 +109,9 @@ impl<'a> FormattedWriter<'a> {
                 }
             }
             "," => {
-                // No space before comma, space after
                 self.write(delimiter);
             }
             ":" => {
-                // No space before colon in most cases
                 self.write(delimiter);
             }
             _ => {
@@ -134,7 +125,10 @@ impl<'a> FormattedWriter<'a> {
         if self.needs_space_before_string() {
             self.write(" ");
         }
-        self.write(text);
+
+        let rules = super::rules::FormattingRules::new(self.context.config().clone());
+        let normalized = rules.normalize_quotes(text);
+        self.write(&normalized);
     }
 
     /// Write a number literal
@@ -147,18 +141,23 @@ impl<'a> FormattedWriter<'a> {
 
     /// Write a comment
     fn write_comment(&mut self, text: &str) {
-        // Inline comments should have two spaces before them
+        let rules = super::rules::FormattingRules::new(self.context.config().clone());
+        let formatted = if rules.should_preserve_comment(text) {
+            text.to_string()
+        } else {
+            let is_inline = !self.context.at_line_start();
+            rules.format_comment(text, is_inline)
+        };
+
         if !self.context.at_line_start() {
             self.write("  ");
         }
-        self.write(text);
+        self.write(&formatted);
     }
 
     /// Write a newline
     fn write_newline(&mut self) {
-        // Remove trailing whitespace
         self.remove_trailing_whitespace();
-
         self.output.push('\n');
         self.context.newline();
     }
@@ -201,7 +200,6 @@ impl<'a> FormattedWriter<'a> {
             return false;
         }
 
-        // Need space after keywords, operators, etc.
         !self.output.ends_with('(')
             && !self.output.ends_with('[')
             && !self.output.ends_with('{')
@@ -282,10 +280,8 @@ impl<'a> FormattedWriter<'a> {
         let config = self.context.config();
 
         if !is_top_level {
-            // One blank line between methods
             self.ensure_blank_lines(1);
         } else {
-            // Two blank lines before top-level definitions
             let required =
                 if (is_class && config.blank_line_before_class) || (!is_class && config.blank_line_before_function) {
                     2
@@ -303,7 +299,6 @@ impl<'a> FormattedWriter<'a> {
         let max_allowed = config.max_blank_lines;
         let target = n.min(max_allowed);
 
-        // Count current blank lines at the end of output
         let mut current_blank = 0;
         let lines: Vec<&str> = self.output.rsplitn(target + 2, '\n').collect();
         for line in lines.iter().skip(1) {
@@ -314,13 +309,11 @@ impl<'a> FormattedWriter<'a> {
             }
         }
 
-        // Add or remove lines to match target
         if current_blank < target {
             for _ in current_blank..target {
                 self.output.push('\n');
             }
         } else if current_blank > target {
-            // Remove excess blank lines
             for _ in target..current_blank {
                 if let Some(last_newline) = self.output.rfind('\n') {
                     self.output.truncate(last_newline);
@@ -427,7 +420,6 @@ mod tests {
 
         writer.write_token(&Token::Indent { level: 1, line: 1 });
         writer.write("code");
-
         assert_eq!(writer.output(), "    code");
     }
 
@@ -440,7 +432,6 @@ mod tests {
         writer.ensure_blank_lines_before_definition(false, true);
         writer.write("def foo():");
 
-        // Should have 2 blank lines before top-level function
         let output = writer.output();
         assert!(output.contains("\n\n\ndef foo():") || output.contains("line1\n\n\ndef"));
     }

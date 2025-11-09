@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod context;
+pub mod import;
 pub mod rules;
 pub mod state;
 pub mod token_stream;
@@ -12,6 +13,7 @@ pub mod writer;
 
 pub use config::FormatterConfig;
 pub use context::FormattingContext;
+pub use import::{ImportCategory, ImportSorter, ImportStatement};
 pub use rules::FormattingRules;
 pub use state::FormatterState;
 pub use token_stream::TokenStream;
@@ -30,7 +32,6 @@ use beacon_parser::{AstNode, ParsedFile, PythonParser};
 pub struct Formatter {
     #[allow(dead_code)]
     config: FormatterConfig,
-
     parser: PythonParser,
 }
 
@@ -47,15 +48,12 @@ impl Formatter {
 
     /// Format a parsed Python file
     pub fn format_file(&self, parsed: &ParsedFile) -> Result<String> {
-        // Create token stream from AST
         let ast = self.parser.to_ast(parsed)?;
         let token_stream = TokenStream::from_ast(&ast);
 
-        // Initialize writer and rules
         let mut writer = FormattedWriter::new(&self.config);
         let _rules = FormattingRules::new(self.config.clone());
 
-        // Process tokens and write formatted output
         for token in token_stream {
             writer.write_token(&token);
         }
@@ -65,13 +63,10 @@ impl Formatter {
 
     /// Format a specific AST node
     pub fn format_node(&self, node: &AstNode, _source: &str) -> Result<String> {
-        // Create token stream from the node
         let token_stream = TokenStream::from_ast(node);
 
-        // Initialize writer
         let mut writer = FormattedWriter::new(&self.config);
 
-        // Process tokens
         for token in token_stream {
             writer.write_token(&token);
         }

@@ -217,28 +217,11 @@ Implementation details and mod-specific tasks.
 
 ### Import Formatting
 
-- [ ] Import statement parsing and grouping
-- [ ] Import sorting within groups (alphabetical)
-- [ ] PEP8 import ordering:
-    - [ ] Standard library imports
-    - [ ] Third-party imports (detect via stub paths)
-    - [ ] Local/application imports
-- [ ] Blank line insertion between import groups
-- [ ] `from` import sorting and wrapping
-- [ ] Duplicate import detection and removal
-- [ ] Unused import detection (integration with symbol table)
-- [ ] Draft `docs/src/format/imports.md`
+Implemented PEP8-compliant import sorting with automatic grouping (stdlib/third-party/local), alphabetical ordering, multi-line wrapping, and deduplication.
 
 ### String & Comment Formatting
 
-- [ ] String quote normalization (configurable: single, double, preserve)
-- [ ] Triple-quoted string indentation
-- [ ] f-string formatting preservation
-- [ ] Comment preservation during formatting
-- [ ] Inline comment spacing (two spaces before #)
-- [ ] Block comment formatting
-- [ ] Docstring formatting (preserve content, normalize quotes)
-- [ ] Draft `docs/src/format/strings.md`
+Implemented intelligent string quote normalization with escape-avoidance, docstring formatting, and comment spacing while preserving special directives (type: ignore, noqa, etc.).
 
 ### Structural Formatting
 
@@ -249,6 +232,7 @@ Implementation details and mod-specific tasks.
 - [ ] Decorator formatting (one per line)
 - [ ] Class definition formatting
 - [ ] Type annotation spacing
+- [ ] Draft `docs/src/format/structure.md`
 
 ### LSP Integration
 
@@ -260,6 +244,7 @@ Implementation details and mod-specific tasks.
 - [ ] Implement `textDocument/willSaveWaitUntil` for format-on-save
 - [ ] Add formatting timeout handling (prevent LSP hangs)
 - [ ] Error recovery (return original text if formatting fails)
+- [ ] Draft `docs/src/lsp/formatter.md`
 
 ### Configuration Integration
 
@@ -273,6 +258,7 @@ Implementation details and mod-specific tasks.
 - [ ] Add `beacon.formatting.compatibilityMode` setting (black/autopep8/pep8)
 - [ ] Hot-reload formatting configuration
 - [ ] Workspace-level vs document-level config override
+- [ ] Update `docs/src/configuration.md`
 
 ### Testing & Validation
 

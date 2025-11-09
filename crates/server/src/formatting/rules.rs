@@ -45,13 +45,11 @@ impl FormattingRules {
 
     /// Determine if we should break before a token
     pub fn should_break_before(&self, token: &Token, context: &FormattingContext) -> BreakDecision {
-        // Never break inside strings or comments
         if context.in_string() || context.in_comment() {
             return BreakDecision::NoBreak;
         }
 
         match token {
-            // Can break before operators in expressions
             Token::Operator { text, .. } => {
                 if self.is_breakable_operator(text) {
                     if context.is_nested() { BreakDecision::CanBreak } else { BreakDecision::NoBreak }
@@ -60,10 +58,8 @@ impl FormattingRules {
                 }
             }
 
-            // Can break after commas
             Token::Delimiter { text, .. } if text == "," => BreakDecision::CanBreak,
 
-            // Can break at opening brackets if nested
             Token::Delimiter { text, .. } if matches!(text.as_str(), "(" | "[" | "{") => {
                 if context.is_nested() && context.nesting_depth() > 1 {
                     BreakDecision::CanBreak
@@ -78,7 +74,6 @@ impl FormattingRules {
 
     /// Determine the indentation level for a wrapped line
     pub fn wrapped_line_indent(&self, context: &FormattingContext, base_indent: usize) -> usize {
-        // If we're inside parentheses/brackets, add one indent level
         if context.is_nested() { base_indent + 1 } else { base_indent }
     }
 
@@ -124,12 +119,10 @@ impl FormattingRules {
 
             current_width += token_width;
 
-            // Check if we've exceeded the line length
             if current_width > max_width {
                 return best_break.or(Some(idx));
             }
 
-            // Evaluate break priority
             let (can_break, priority) = self.break_priority(token);
             if can_break && priority > best_break_priority {
                 best_break = Some(idx);
@@ -141,50 +134,28 @@ impl FormattingRules {
     }
 
     /// Get the priority of breaking at this token
-    ///
-    /// Returns (can_break, priority) where higher priority means
-    /// this is a better place to break.
     fn break_priority(&self, token: &Token) -> (bool, u8) {
         match token {
-            // Prefer breaking after commas
             Token::Delimiter { text, .. } if text == "," => (true, 10),
-
-            // Can break before binary operators
             Token::Operator { text, .. } if self.is_breakable_operator(text) => (true, 5),
-
-            // Can break at opening brackets
             Token::Delimiter { text, .. } if matches!(text.as_str(), "(" | "[" | "{") => (true, 3),
-
             _ => (false, 0),
         }
     }
 
     /// Check if we should preserve a user-inserted line break
     pub fn should_preserve_line_break(&self, context: &FormattingContext) -> bool {
-        // Preserve line breaks if we're under the limit
         context.current_column() < self.config.line_length
     }
 
     /// Calculate indentation for function/method parameters
     pub fn parameter_indentation(&self, context: &FormattingContext, is_hanging: bool) -> usize {
-        if is_hanging {
-            // Hanging indent: align with opening parenthesis
-            context.current_column()
-        } else {
-            // Regular indent: one level deeper than function def
-            context.indent_level() + 1
-        }
+        if is_hanging { context.current_column() } else { context.indent_level() + 1 }
     }
 
     /// Calculate indentation for collection literals
     pub fn collection_indentation(&self, context: &FormattingContext, is_hanging: bool) -> usize {
-        if is_hanging {
-            // Hanging indent: align with opening bracket
-            context.current_column()
-        } else {
-            // Regular indent: one level deeper
-            context.indent_level() + 1
-        }
+        if is_hanging { context.current_column() } else { context.indent_level() + 1 }
     }
 
     /// Determine wrapping strategy for a function call
@@ -192,13 +163,10 @@ impl FormattingRules {
         let available = context.remaining_line_space();
 
         if args_width <= available {
-            // All arguments fit on one line
             WrappingStrategy::Horizontal
         } else if args_width > self.config.line_length / 2 {
-            // Arguments are too long, use vertical layout
             WrappingStrategy::Vertical
         } else {
-            // Try to fit multiple arguments per line
             WrappingStrategy::Mixed
         }
     }
@@ -206,13 +174,7 @@ impl FormattingRules {
     /// Determine wrapping strategy for a collection literal
     pub fn collection_wrapping_strategy(&self, elements_width: usize, context: &FormattingContext) -> WrappingStrategy {
         let available = context.remaining_line_space();
-
-        if elements_width <= available {
-            WrappingStrategy::Horizontal
-        } else {
-            // Use vertical layout for collections
-            WrappingStrategy::Vertical
-        }
+        if elements_width <= available { WrappingStrategy::Horizontal } else { WrappingStrategy::Vertical }
     }
 
     /// Get the configuration
@@ -262,9 +224,186 @@ impl FormattingRules {
     }
 }
 
+/// String formatting rules
+impl FormattingRules {
+    /// Normalize string quotes according to configuration
+    ///
+    /// Converts string quotes to the configured style (single, double, or preserve).
+    /// Handles edge cases like strings containing quotes and f-strings.
+    pub fn normalize_quotes(&self, text: &str) -> String {
+        use super::config::QuoteStyle;
+
+        if self.config.quote_style == QuoteStyle::Preserve {
+            return text.to_string();
+        }
+
+        let is_triple_quoted = text.starts_with("\"\"\"")
+            || text.starts_with("'''")
+            || text.starts_with("r\"\"\"")
+            || text.starts_with("r'''")
+            || text.starts_with("f\"\"\"")
+            || text.starts_with("f'''");
+
+        if is_triple_quoted {
+            return self.normalize_triple_quoted_string(text);
+        }
+
+        let (prefix, rest) = self.extract_string_prefix(text);
+
+        let current_quote = if rest.starts_with('\'') {
+            '\''
+        } else if rest.starts_with('"') {
+            '"'
+        } else {
+            return text.to_string();
+        };
+
+        let target_quote = match self.config.quote_style {
+            QuoteStyle::Single => '\'',
+            QuoteStyle::Double => '"',
+            QuoteStyle::Preserve => return text.to_string(),
+        };
+
+        if current_quote == target_quote {
+            return text.to_string();
+        }
+
+        let content = &rest[1..rest.len() - 1];
+
+        if content.contains(target_quote) && !content.contains(current_quote) {
+            return text.to_string();
+        }
+
+        format!("{prefix}{target_quote}{content}{target_quote}")
+    }
+
+    /// Extract string prefix (r, f, rf, etc.)
+    fn extract_string_prefix<'a>(&self, text: &'a str) -> (&'a str, &'a str) {
+        let prefixes = ["rf", "fr", "rb", "br", "r", "f", "b", "u"];
+
+        for prefix in &prefixes {
+            if text.to_lowercase().starts_with(prefix) {
+                return (&text[..prefix.len()], &text[prefix.len()..]);
+            }
+        }
+
+        ("", text)
+    }
+
+    /// Normalize triple-quoted strings (docstrings)
+    fn normalize_triple_quoted_string(&self, text: &str) -> String {
+        use super::config::QuoteStyle;
+
+        if !self.config.normalize_docstring_quotes {
+            return text.to_string();
+        }
+
+        let (prefix, rest) = self.extract_string_prefix(text);
+
+        let current_triple = if rest.starts_with("'''") {
+            "'''"
+        } else if rest.starts_with("\"\"\"") {
+            "\"\"\""
+        } else {
+            return text.to_string();
+        };
+
+        let target_triple = match self.config.quote_style {
+            QuoteStyle::Single => "'''",
+            QuoteStyle::Double => "\"\"\"",
+            QuoteStyle::Preserve => return text.to_string(),
+        };
+
+        if current_triple == target_triple {
+            return text.to_string();
+        }
+
+        let content = &rest[3..rest.len() - 3];
+
+        if content.contains(target_triple) {
+            return text.to_string();
+        }
+
+        format!("{prefix}{target_triple}{content}{target_triple}")
+    }
+
+    /// Check if a string is a docstring
+    ///
+    /// A docstring is the first statement in a module, function, class, or method.
+    pub fn is_docstring(&self, text: &str) -> bool {
+        text.starts_with("\"\"\"") || text.starts_with("'''")
+    }
+
+    /// Format indentation for a triple-quoted string
+    ///
+    /// Ensures consistent indentation inside multi-line docstrings.
+    pub fn format_docstring_indentation(&self, text: &str, base_indent: usize) -> String {
+        let lines: Vec<&str> = text.lines().collect();
+
+        if lines.len() <= 1 {
+            return text.to_string();
+        }
+
+        let indent = " ".repeat(base_indent);
+        let mut result = String::new();
+
+        result.push_str(lines[0]);
+        result.push('\n');
+
+        for line in &lines[1..] {
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+                result.push_str(&indent);
+                result.push_str(trimmed);
+            }
+            result.push('\n');
+        }
+
+        result
+    }
+}
+
+/// Comment formatting rules
+impl FormattingRules {
+    /// Format a comment with appropriate spacing
+    ///
+    /// Ensures comments have proper spacing and alignment.
+    pub fn format_comment(&self, comment: &str, _is_inline: bool) -> String {
+        let trimmed = comment.trim();
+
+        if !trimmed.starts_with('#') {
+            return comment.to_string();
+        }
+
+        let content = trimmed[1..].trim_start();
+        if content.is_empty() { "#".to_string() } else { format!("# {content}") }
+    }
+
+    /// Check if a comment should be preserved as-is
+    ///
+    /// Some special comments (like type: ignore, noqa) should be preserved exactly.
+    pub fn should_preserve_comment(&self, comment: &str) -> bool {
+        let trimmed = comment.trim();
+
+        trimmed.contains("type: ignore")
+            || trimmed.contains("noqa")
+            || trimmed.contains("pylint:")
+            || trimmed.contains("mypy:")
+            || trimmed.contains("flake8:")
+            || trimmed.starts_with("# fmt:")
+            || trimmed.starts_with("# black:")
+    }
+
+    /// Determine if a block comment should have blank lines around it
+    pub fn needs_blank_lines_around_comment(&self, comment: &str, context: &FormattingContext) -> bool {
+        context.indent_level() == 0 && comment.lines().count() > 1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::formatting::config::QuoteStyle;
 
     #[test]
     fn test_text_width_ascii() {
@@ -279,8 +418,6 @@ mod tests {
     fn test_text_width_unicode() {
         let config = FormatterConfig::default();
         let rules = FormattingRules::new(config);
-
-        // Emoji and CJK characters may have different widths
         assert!(rules.text_width("你好") >= 2);
     }
 
@@ -288,7 +425,6 @@ mod tests {
     fn test_line_length_check() {
         let config = FormatterConfig { line_length: 80, ..Default::default() };
         let rules = FormattingRules::new(config);
-
         assert!(!rules.would_exceed_line_length(70, "hello"));
         assert!(rules.would_exceed_line_length(70, "this is a very long string"));
     }
@@ -301,10 +437,8 @@ mod tests {
 
         let token = Token::Operator { text: "+".to_string(), line: 1, col: 10 };
 
-        // Not nested - should not break
         assert_eq!(rules.should_break_before(&token, &context), BreakDecision::NoBreak);
 
-        // Nested - can break
         context.enter_paren();
         assert_eq!(rules.should_break_before(&token, &context), BreakDecision::CanBreak);
     }
@@ -329,7 +463,6 @@ mod tests {
     fn test_blank_lines_before_class() {
         let config = FormatterConfig { blank_line_before_class: true, ..Default::default() };
         let rules = FormattingRules::new(config);
-
         assert_eq!(rules.blank_lines_before_class(true), 2);
         assert_eq!(rules.blank_lines_before_class(false), 1);
     }
@@ -338,7 +471,6 @@ mod tests {
     fn test_blank_lines_before_function() {
         let config = FormatterConfig { blank_line_before_function: true, ..Default::default() };
         let rules = FormattingRules::new(config);
-
         assert_eq!(rules.blank_lines_before_function(true, false), 2);
         assert_eq!(rules.blank_lines_before_function(false, true), 1);
         assert_eq!(rules.blank_lines_before_function(false, false), 0);
@@ -348,7 +480,6 @@ mod tests {
     fn test_max_blank_lines() {
         let config = FormatterConfig { max_blank_lines: 2, ..Default::default() };
         let rules = FormattingRules::new(config);
-
         assert!(!rules.exceeds_max_blank_lines(1));
         assert!(!rules.exceeds_max_blank_lines(2));
         assert!(rules.exceeds_max_blank_lines(3));
@@ -393,7 +524,138 @@ mod tests {
         ];
 
         let break_point = rules.find_best_break_point(&tokens, &context, 80);
-        // Should prefer breaking after the comma
         assert!(break_point.is_none() || break_point == Some(4));
+    }
+
+    #[test]
+    fn test_normalize_quotes_double_to_single() {
+        let config = FormatterConfig { quote_style: QuoteStyle::Single, ..Default::default() };
+        let rules = FormattingRules::new(config);
+        assert_eq!(rules.normalize_quotes(r#""hello""#), "'hello'");
+        assert_eq!(rules.normalize_quotes(r#""world""#), "'world'");
+    }
+
+    #[test]
+    fn test_normalize_quotes_single_to_double() {
+        let config = FormatterConfig { quote_style: QuoteStyle::Double, ..Default::default() };
+        let rules = FormattingRules::new(config);
+        assert_eq!(rules.normalize_quotes("'hello'"), r#""hello""#);
+        assert_eq!(rules.normalize_quotes("'world'"), r#""world""#);
+    }
+
+    #[test]
+    fn test_normalize_quotes_preserve() {
+        let config = FormatterConfig { quote_style: QuoteStyle::Preserve, ..Default::default() };
+        let rules = FormattingRules::new(config);
+        assert_eq!(rules.normalize_quotes(r#""hello""#), r#""hello""#);
+        assert_eq!(rules.normalize_quotes("'world'"), "'world'");
+    }
+
+    #[test]
+    fn test_normalize_quotes_with_prefix() {
+        let config = FormatterConfig { quote_style: QuoteStyle::Double, ..Default::default() };
+        let rules = FormattingRules::new(config);
+        assert_eq!(rules.normalize_quotes("r'hello'"), r#"r"hello""#);
+        assert_eq!(rules.normalize_quotes("f'world'"), r#"f"world""#);
+        assert_eq!(rules.normalize_quotes("rf'test'"), r#"rf"test""#);
+    }
+
+    #[test]
+    fn test_normalize_quotes_avoid_escaping() {
+        let config = FormatterConfig { quote_style: QuoteStyle::Double, ..Default::default() };
+        let rules = FormattingRules::new(config);
+        assert_eq!(rules.normalize_quotes(r#"'He said "hello"'"#), r#"'He said "hello"'"#);
+    }
+
+    #[test]
+    fn test_normalize_triple_quoted_string() {
+        let config = FormatterConfig { quote_style: QuoteStyle::Double, ..Default::default() };
+        let rules = FormattingRules::new(config);
+        assert_eq!(rules.normalize_quotes("'''docstring'''"), r#""""docstring""""#);
+    }
+
+    #[test]
+    fn test_normalize_triple_quoted_preserve_if_contains_target() {
+        let config = FormatterConfig { quote_style: QuoteStyle::Double, ..Default::default() };
+        let rules = FormattingRules::new(config);
+        let input = r#"'''He said """hello""" to me'''"#;
+        assert_eq!(rules.normalize_quotes(input), input);
+    }
+
+    #[test]
+    fn test_is_docstring() {
+        let config = FormatterConfig::default();
+        let rules = FormattingRules::new(config);
+        assert!(rules.is_docstring(r#""""This is a docstring""""#));
+        assert!(rules.is_docstring("'''This is also a docstring'''"));
+        assert!(!rules.is_docstring(r#""Regular string""#));
+        assert!(!rules.is_docstring("'Regular string'"));
+    }
+
+    #[test]
+    fn test_format_docstring_indentation() {
+        let config = FormatterConfig::default();
+        let rules = FormattingRules::new(config);
+        let docstring = r#""""
+This is a docstring
+    with mixed indentation
+        and multiple levels
+""""#;
+
+        let formatted = rules.format_docstring_indentation(docstring, 4);
+        assert!(formatted.contains("    This is a docstring"));
+        assert!(formatted.contains("    with mixed indentation"));
+    }
+
+    #[test]
+    fn test_extract_string_prefix() {
+        let config = FormatterConfig::default();
+        let rules = FormattingRules::new(config);
+        assert_eq!(rules.extract_string_prefix(r#"r"hello""#), ("r", r#""hello""#));
+        assert_eq!(rules.extract_string_prefix(r#"f"world""#), ("f", r#""world""#));
+        assert_eq!(rules.extract_string_prefix(r#"rf"test""#), ("rf", r#""test""#));
+        assert_eq!(rules.extract_string_prefix(r#"FR"test""#), ("FR", r#""test""#));
+        assert_eq!(rules.extract_string_prefix(r#""plain""#), ("", r#""plain""#));
+    }
+
+    #[test]
+    fn test_format_comment_basic() {
+        let config = FormatterConfig::default();
+        let rules = FormattingRules::new(config);
+        assert_eq!(rules.format_comment("#comment", false), "# comment");
+        assert_eq!(rules.format_comment("#  comment", false), "# comment");
+        assert_eq!(rules.format_comment("# comment ", false), "# comment");
+    }
+
+    #[test]
+    fn test_format_comment_empty() {
+        let config = FormatterConfig::default();
+        let rules = FormattingRules::new(config);
+        assert_eq!(rules.format_comment("#", false), "#");
+        assert_eq!(rules.format_comment("#  ", false), "#");
+    }
+
+    #[test]
+    fn test_should_preserve_comment() {
+        let config = FormatterConfig::default();
+        let rules = FormattingRules::new(config);
+        assert!(rules.should_preserve_comment("# type: ignore"));
+        assert!(rules.should_preserve_comment("# noqa: E501"));
+        assert!(rules.should_preserve_comment("# pylint: disable=line-too-long"));
+        assert!(rules.should_preserve_comment("# mypy: ignore"));
+        assert!(rules.should_preserve_comment("# fmt: off"));
+        assert!(!rules.should_preserve_comment("# regular comment"));
+    }
+
+    #[test]
+    fn test_needs_blank_lines_around_comment() {
+        let config = FormatterConfig::default();
+        let rules = FormattingRules::new(config.clone());
+        let context = FormattingContext::new(&config);
+        let block_comment = "# This is a block comment\n# that spans multiple lines";
+        assert!(rules.needs_blank_lines_around_comment(block_comment, &context));
+
+        let inline_comment = "# single line";
+        assert!(!rules.needs_blank_lines_around_comment(inline_comment, &context));
     }
 }
