@@ -3465,6 +3465,7 @@ mod tests {
                 },
                 AstNode::Literal { value: LiteralValue::Boolean(true), line: 1, col: 14, end_line: 1, end_col: 14 },
             ],
+            is_parenthesized: true,
             line: 1,
             col: 5,
             end_line: 1,

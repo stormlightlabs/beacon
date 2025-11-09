@@ -69,8 +69,9 @@ impl<'a> FormattedWriter<'a> {
 
     /// Write a keyword with appropriate spacing
     fn write_keyword(&mut self, keyword: &str) {
+        let skip_space = self.just_wrote_keyword_equal;
         self.clear_keyword_equal_flag();
-        if self.needs_space_before_keyword() {
+        if self.needs_space_before_keyword() && !skip_space {
             self.write(" ");
         }
         self.write(keyword);
@@ -100,11 +101,15 @@ impl<'a> FormattedWriter<'a> {
             return;
         }
 
+        let lambda_context = self.output.ends_with("lambda") || self.output.ends_with("lambda ");
         let is_param_splat = (operator == "*" || operator == "**")
-            && (self.output.ends_with('(') || self.output.ends_with(", "))
+            && (self.output.ends_with('(') || self.output.ends_with(", ") || lambda_context)
             && matches!(self.peek_next_token_text(), Some(text) if !text.starts_with('*') && text != "(");
 
         if is_param_splat {
+            if !(self.output.ends_with('(') || self.output.ends_with(", ") || self.output.ends_with(' ')) {
+                self.write(" ");
+            }
             self.write(operator);
             return;
         }
@@ -310,7 +315,12 @@ impl<'a> FormattedWriter<'a> {
 
     /// Check if we need space before a keyword
     fn needs_space_before_keyword(&self) -> bool {
-        !self.context.at_line_start() && self.context.current_column() > 0 && !self.output.ends_with(' ')
+        !self.context.at_line_start()
+            && self.context.current_column() > 0
+            && !self.output.ends_with(' ')
+            && !self.output.ends_with('(')
+            && !self.output.ends_with('[')
+            && !self.output.ends_with('{')
     }
 
     /// Check if we need space before an identifier

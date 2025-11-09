@@ -3,7 +3,7 @@
 //! Real-world Python code samples to ensure the formatter handles various edge cases.
 //! These tests focus on patterns that the formatter currently handles correctly.
 //!
-//! See FORMATTER_KNOWN_ISSUES.md for documented limitations and failing patterns.
+//! Refer to `docs/src/testing.md` for the current formatter testing strategy.
 
 use beacon_lsp::formatting::{Formatter, FormatterConfig};
 use beacon_parser::PythonParser;
@@ -252,7 +252,6 @@ def compute():
 }
 
 #[test]
-#[ignore = "Formatter doesn't add spaces after commas in type parameters - see FORMATTER_KNOWN_ISSUES.md"]
 fn test_type_annotations_basic() {
     let source = r#"from typing import Union,Optional,List,Dict
 
@@ -304,6 +303,28 @@ def read_file(filename:str)->str:
 }
 
 #[test]
+fn test_typevar_assignments() {
+    let source = r#"from typing import TypeVar,Generic,Protocol
+
+T=TypeVar('T')
+K=TypeVar('K',covariant=True)
+ValueType=TypeVar('ValueType',bound=int)
+
+class Repository(Protocol[ValueType]):
+    def get(self,key:str)->ValueType:
+        ...
+"#;
+
+    let formatted = format_code(source);
+    assert!(formatted.contains("from typing import TypeVar, Generic, Protocol"));
+    assert!(formatted.contains("T = TypeVar(\"T\")"));
+    assert!(formatted.contains("K = TypeVar(\"K\", covariant=True)"));
+    assert!(formatted.contains("ValueType = TypeVar(\"ValueType\", bound=int)"));
+    assert!(formatted.contains("class Repository(Protocol[ValueType]):"));
+    assert!(formatted.contains("def get(self, key: str) -> ValueType:"));
+    assert_idempotent(source, "TypeVar assignments");
+}
+#[test]
 fn test_string_formatting() {
     let source = r#"def format_message(name:str,age:int)->str:
     basic=f"Hello {name}"
@@ -317,6 +338,41 @@ fn test_string_formatting() {
     assert!(formatted.contains("basic = f\"Hello {name}\""));
     assert!(formatted.contains("detailed = f\"{name} is {age} years old\""));
     assert_idempotent(source, "String formatting");
+}
+
+#[test]
+fn test_data_science_method_calls() {
+    let source = r#"import pandas as pd
+
+def clean(df):
+    features=df.drop('target',axis=1)
+    normalized=features.fillna(method='ffill',limit=2)
+    grouped=normalized.groupby('region',as_index=False)
+    summary=grouped.agg(total=('value','sum'))
+    return summary
+"#;
+
+    let formatted = format_code(source);
+    assert!(formatted.contains("features = df.drop(\"target\", axis=1)"));
+    assert!(formatted.contains("normalized = features.fillna(method=\"ffill\", limit=2)"));
+    assert!(formatted.contains("grouped = normalized.groupby(\"region\", as_index=False)"));
+    assert!(formatted.contains("summary = grouped.agg(total=(\"value\", \"sum\"))"));
+    assert_idempotent(source, "Data science method calls");
+}
+
+#[test]
+fn test_complex_lambda_and_functional() {
+    let source = r#"from functools import reduce
+
+compose=lambda *funcs: reduce(lambda f,g: lambda x:f(g(x)),funcs,lambda x:x)
+pipeline=lambda data: compose(lambda x: x.strip(),lambda x:x.lower())(data)
+"#;
+
+    let formatted = format_code(source);
+
+    assert!(formatted.contains("compose = lambda *funcs: reduce(lambda f, g: lambda x: f(g(x)), funcs, lambda x: x)"));
+    assert!(formatted.contains("pipeline = lambda data: compose(lambda x: x.strip(),lambda x:x.lower())(data)"));
+    assert_idempotent(source, "Complex lambda and functional pipelines");
 }
 
 #[test]
@@ -424,7 +480,6 @@ fn test_dictionary_and_list_operations() {
 }
 
 #[test]
-#[ignore = "Formatter adds parentheses to tuple assignments and removes spaces - see FORMATTER_KNOWN_ISSUES.md"]
 fn test_generators_and_yield() {
     let source = r#"def fibonacci(n:int):
     a,b=0,1

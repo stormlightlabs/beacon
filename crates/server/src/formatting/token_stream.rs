@@ -7,6 +7,54 @@
 use super::import::{ImportCategory, categorize_import};
 use beacon_parser::{AstNode, LiteralValue, Pattern};
 
+fn normalize_type_annotation(annotation: &str) -> String {
+    if !annotation.contains(',') {
+        return annotation.to_string();
+    }
+
+    let mut result = String::with_capacity(annotation.len());
+    let mut chars = annotation.chars().peekable();
+    let mut in_string = false;
+    let mut current_quote = '\0';
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' | '"' => {
+                if in_string {
+                    result.push(ch);
+                    if ch == current_quote {
+                        in_string = false;
+                    }
+                } else {
+                    in_string = true;
+                    current_quote = ch;
+                    result.push(ch);
+                }
+            }
+            '\\' if in_string => {
+                result.push(ch);
+                if let Some(next) = chars.next() {
+                    result.push(next);
+                }
+            }
+            ',' if !in_string => {
+                result.push(',');
+                while matches!(chars.peek(), Some(' ')) {
+                    chars.next();
+                }
+
+                match chars.peek() {
+                    Some(')') | Some(']') | Some('}') | Some(',') => {}
+                    _ => result.push(' '),
+                }
+            }
+            _ => result.push(ch),
+        }
+    }
+
+    result
+}
+
 /// Token type representing syntactic elements for formatting
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
@@ -368,9 +416,12 @@ impl TokenGenerator {
                     }
 
                     if !first_stmt && !Self::is_top_level_definition(stmt) {
-                        if let Some(prev_line) = previous_line {
-                            if current_line > prev_line + 1 {
-                                self.tokens.push(Token::Newline { line: current_line });
+                        let is_import = matches!(stmt, AstNode::Import { .. } | AstNode::ImportFrom { .. });
+                        if !(previous_was_import && is_import) {
+                            if let Some(prev_line) = previous_line {
+                                if current_line > prev_line + 1 {
+                                    self.tokens.push(Token::Newline { line: current_line });
+                                }
                             }
                         }
                     }
@@ -440,11 +491,9 @@ impl TokenGenerator {
                             .push(Token::Delimiter { text: ":".to_string(), line: param.line, col: param.col });
                         self.tokens
                             .push(Token::Whitespace { count: 1, line: param.line, col: param.col });
-                        self.tokens.push(Token::Identifier {
-                            text: annotation.clone(),
-                            line: param.line,
-                            col: param.col,
-                        });
+                        let normalized = normalize_type_annotation(annotation);
+                        self.tokens
+                            .push(Token::Identifier { text: normalized, line: param.line, col: param.col });
                     }
                     if let Some(default) = &param.default_value {
                         self.tokens
@@ -468,8 +517,9 @@ impl TokenGenerator {
                 if let Some(ret_type) = return_type {
                     self.tokens
                         .push(Token::Operator { text: "->".to_string(), line: *line, col: *col });
+                    let normalized = normalize_type_annotation(ret_type);
                     self.tokens
-                        .push(Token::Identifier { text: ret_type.clone(), line: *line, col: *col });
+                        .push(Token::Identifier { text: normalized, line: *line, col: *col });
                 }
 
                 self.tokens
@@ -597,8 +647,9 @@ impl TokenGenerator {
                 self.tokens
                     .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
                 self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                let normalized = normalize_type_annotation(type_annotation);
                 self.tokens
-                    .push(Token::Identifier { text: type_annotation.clone(), line: *line, col: *col });
+                    .push(Token::Identifier { text: normalized, line: *line, col: *col });
                 if let Some(val) = value {
                     self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
                     self.tokens
@@ -954,9 +1005,12 @@ impl TokenGenerator {
                 }
                 self.tokens.push(Token::Newline { line: *line });
             }
-            AstNode::Tuple { elements, line, col, .. } => {
-                self.tokens
-                    .push(Token::Delimiter { text: "(".to_string(), line: *line, col: *col });
+            AstNode::Tuple { elements, is_parenthesized, line, col, .. } => {
+                let wrap = *is_parenthesized;
+                if wrap {
+                    self.tokens
+                        .push(Token::Delimiter { text: "(".to_string(), line: *line, col: *col });
+                }
                 for (i, elem) in elements.iter().enumerate() {
                     self.visit_node(elem);
                     if i < elements.len() - 1 {
@@ -968,8 +1022,10 @@ impl TokenGenerator {
                             .push(Token::Delimiter { text: ",".to_string(), line: *line, col: *col });
                     }
                 }
-                self.tokens
-                    .push(Token::Delimiter { text: ")".to_string(), line: *line, col: *col });
+                if wrap {
+                    self.tokens
+                        .push(Token::Delimiter { text: ")".to_string(), line: *line, col: *col });
+                }
             }
             AstNode::List { elements, line, col, .. } => {
                 self.tokens
