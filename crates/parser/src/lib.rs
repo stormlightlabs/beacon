@@ -3969,10 +3969,16 @@ count: int = 0"#;
         match parser.to_ast(&parsed).unwrap() {
             AstNode::Module { body, .. } => match &body[0] {
                 AstNode::Assignment { value, .. } => {
-                    assert!(matches!(
-                        value.as_ref(),
-                        AstNode::Literal { value: LiteralValue::Integer(1), .. }
-                    ));
+                    match value.as_ref() {
+                        AstNode::Literal { value: LiteralValue::Integer(1), .. } => {}
+                        AstNode::ParenthesizedExpression { expression, .. } => {
+                            assert!(matches!(
+                                expression.as_ref(),
+                                AstNode::Literal { value: LiteralValue::Integer(1), .. }
+                            ));
+                        }
+                        other => panic!("Expected literal or parenthesized literal, got {other:?}"),
+                    }
                 }
                 _ => panic!("Expected Assignment node"),
             },
