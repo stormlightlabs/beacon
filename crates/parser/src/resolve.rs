@@ -696,6 +696,9 @@ impl NameResolver {
             | AstNode::ImportFrom { .. }
             | AstNode::Assert { .. }
             | AstNode::Starred { .. } => {}
+            AstNode::ParenthesizedExpression { expression, .. } => {
+                self.track_references(expression)?;
+            }
         }
 
         Ok(())
@@ -793,7 +796,8 @@ impl NameResolver {
             | AstNode::Continue { line, col, .. }
             | AstNode::Raise { line, col, .. }
             | AstNode::Assert { line, col, .. }
-            | AstNode::Starred { line, col, .. } => {
+            | AstNode::Starred { line, col, .. }
+            | AstNode::ParenthesizedExpression { line, col, .. } => {
                 let start_byte = self.line_col_to_byte_offset(*line, *col);
                 let mut end_byte = start_byte;
                 for (i, ch) in self.source[start_byte..].chars().enumerate() {
@@ -1246,6 +1250,9 @@ impl NameResolver {
             | AstNode::Continue { .. }
             | AstNode::Assert { .. }
             | AstNode::Starred { .. } => {}
+            AstNode::ParenthesizedExpression { expression, .. } => {
+                self.visit_node(expression)?;
+            }
         }
 
         Ok(())

@@ -331,6 +331,7 @@ pub enum AstNode {
     /// Tuple literal: (1, 2, 3) or (x,)
     Tuple {
         elements: Vec<AstNode>,
+        is_parenthesized: bool,
         line: usize,
         col: usize,
         end_line: usize,
@@ -397,6 +398,14 @@ pub enum AstNode {
     /// Starred expression: *value (used in unpacking)
     Starred {
         value: Box<AstNode>,
+        line: usize,
+        col: usize,
+        end_line: usize,
+        end_col: usize,
+    },
+    /// Parenthesized expression: (expr) - preserves explicit parentheses
+    ParenthesizedExpression {
+        expression: Box<AstNode>,
         line: usize,
         col: usize,
         end_line: usize,
@@ -557,9 +566,9 @@ impl AstNode {
     pub fn target_to_string(&self) -> String {
         match self {
             AstNode::Identifier { name, .. } => name.clone(),
-            AstNode::Tuple { elements, .. } => {
+            AstNode::Tuple { elements, is_parenthesized, .. } => {
                 let names: Vec<String> = elements.iter().map(|e| e.target_to_string()).collect();
-                format!("({})", names.join(", "))
+                if *is_parenthesized { format!("({})", names.join(", ")) } else { names.join(", ") }
             }
             AstNode::List { elements, .. } => {
                 let names: Vec<String> = elements.iter().map(|e| e.target_to_string()).collect();
@@ -928,9 +937,10 @@ impl PythonParser {
                     Err(ParseError::MissingNode("await value".to_string()).into())
                 }
             }
-            "tuple" | "expression_list" => {
+            "tuple" | "expression_list" | "pattern_list" => {
                 let elements = self.extract_tuple_elements(&node, source)?;
-                Ok(AstNode::Tuple { elements, line, col, end_line, end_col })
+                let is_parenthesized = node.kind() == "tuple";
+                Ok(AstNode::Tuple { elements, is_parenthesized, line, col, end_line, end_col })
             }
             "list" => {
                 let elements = self.extract_list_elements(&node, source)?;
@@ -945,7 +955,16 @@ impl PythonParser {
                 Ok(AstNode::Set { elements, line, col, end_line, end_col })
             }
             "parenthesized_expression" => match node.named_child(0) {
-                Some(child) => self.node_to_ast(child, source),
+                Some(child) => {
+                    let expression = self.node_to_ast(child, source)?;
+                    Ok(AstNode::ParenthesizedExpression {
+                        expression: Box::new(expression),
+                        line,
+                        col,
+                        end_line,
+                        end_col,
+                    })
+                }
                 None => Ok(AstNode::Identifier { name: "<empty_parens>".to_string(), line, col, end_line, end_col }),
             },
             "boolean_operator" => {
@@ -1003,18 +1022,28 @@ impl PythonParser {
     }
 
     fn extract_function_args(&self, node: &Node, source: &str) -> Result<Vec<Parameter>> {
-        let params_node = node.child_by_field_name("parameters");
-        let mut args = Vec::new();
-
-        if let Some(params) = params_node {
-            let mut cursor = params.walk();
-            for child in params.children(&mut cursor) {
-                if let Some(param) = self.extract_parameter(&child, source)? {
-                    args.push(param);
-                }
-            }
+        if node.kind() == "lambda_parameters" {
+            return self.extract_parameter_list(node, source);
         }
 
+        if let Some(params) = node.child_by_field_name("parameters") {
+            return self.extract_parameter_list(&params, source);
+        }
+
+        Ok(Vec::new())
+    }
+
+    fn extract_parameter_list(&self, params: &Node, source: &str) -> Result<Vec<Parameter>> {
+        let mut args = Vec::new();
+        let mut cursor = params.walk();
+        for child in params.children(&mut cursor) {
+            if child.is_extra() || child.kind() == "," {
+                continue;
+            }
+            if let Some(param) = self.extract_parameter(&child, source)? {
+                args.push(param);
+            }
+        }
         Ok(args)
     }
 
@@ -1026,6 +1055,20 @@ impl PythonParser {
                 let end_position = node.end_position();
                 Ok(Some(Parameter {
                     name: arg_name.to_string(),
+                    line: start_position.row + 1,
+                    col: start_position.column + 1,
+                    end_line: end_position.row + 1,
+                    end_col: end_position.column + 1,
+                    type_annotation: None,
+                    default_value: None,
+                }))
+            }
+            "list_splat_pattern" | "dictionary_splat_pattern" => {
+                let arg_text = node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
+                let start_position = node.start_position();
+                let end_position = node.end_position();
+                Ok(Some(Parameter {
+                    name: arg_text.to_string(),
                     line: start_position.row + 1,
                     col: start_position.column + 1,
                     end_line: end_position.row + 1,
@@ -1238,6 +1281,9 @@ impl PythonParser {
             .child_by_field_name("function")
             .ok_or_else(|| ParseError::TreeSitterError("Missing call function".to_string()))?;
 
+        // TODO: Instead of collapsing chained calls like `compose(lambda..., lambda...)`
+        // into a single string here, emit nested Call + Lambda nodes so the formatter
+        // can reason about spacing inside method chains.
         let function = function_node
             .utf8_text(source.as_bytes())
             .map_err(|_| ParseError::InvalidUtf8)?;
@@ -2154,7 +2200,7 @@ impl PythonParser {
                     }
 
                     match child.kind() {
-                        "{" | "}" | "," => continue,
+                        "{" | "}" | "," | ":" => continue,
                         "case_pattern" => {
                             let pattern = self.extract_pattern(&child, source)?;
                             if let Some(key) = pending_key.take() {
@@ -3923,10 +3969,16 @@ count: int = 0"#;
         match parser.to_ast(&parsed).unwrap() {
             AstNode::Module { body, .. } => match &body[0] {
                 AstNode::Assignment { value, .. } => {
-                    assert!(matches!(
-                        value.as_ref(),
-                        AstNode::Literal { value: LiteralValue::Integer(1), .. }
-                    ));
+                    match value.as_ref() {
+                        AstNode::Literal { value: LiteralValue::Integer(1), .. } => {}
+                        AstNode::ParenthesizedExpression { expression, .. } => {
+                            assert!(matches!(
+                                expression.as_ref(),
+                                AstNode::Literal { value: LiteralValue::Integer(1), .. }
+                            ));
+                        }
+                        other => panic!("Expected literal or parenthesized literal, got {other:?}"),
+                    }
                 }
                 _ => panic!("Expected Assignment node"),
             },

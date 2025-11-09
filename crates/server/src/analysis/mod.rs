@@ -595,6 +595,9 @@ impl Analyzer {
             | AstNode::Break { .. }
             | AstNode::Continue { .. } => {}
             AstNode::Assert { .. } | AstNode::Starred { .. } => {}
+            AstNode::ParenthesizedExpression { expression, .. } => {
+                Self::collect_unbound_in_node(expression, symbol_table, text, unbound);
+            }
         }
     }
 

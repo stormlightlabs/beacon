@@ -98,7 +98,9 @@ impl Formatter {
         let token_stream = TokenStream::from_ast_with_comments(&filtered_node, &comments);
         let mut writer = FormattedWriter::new(&self.config);
 
-        for token in token_stream {
+        let mut tokens = token_stream.peekable();
+        while let Some(token) = tokens.next() {
+            writer.set_next_token(tokens.peek());
             writer.write_token(&token);
         }
 
@@ -360,6 +362,7 @@ impl Formatter {
             AstNode::GeneratorExp { line, end_line: node_end, .. } => (*line, *node_end),
             AstNode::NamedExpr { line, end_line: node_end, .. } => (*line, *node_end),
             AstNode::Match { line, end_line: node_end, .. } => (*line, *node_end),
+            AstNode::ParenthesizedExpression { line, end_line: node_end, .. } => (*line, *node_end),
         };
 
         node_line.0 <= end_line && node_line.1 >= start_line

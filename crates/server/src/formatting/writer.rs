@@ -69,8 +69,9 @@ impl<'a> FormattedWriter<'a> {
 
     /// Write a keyword with appropriate spacing
     fn write_keyword(&mut self, keyword: &str) {
+        let skip_space = self.just_wrote_keyword_equal;
         self.clear_keyword_equal_flag();
-        if self.needs_space_before_keyword() {
+        if self.needs_space_before_keyword() && !skip_space {
             self.write(" ");
         }
         self.write(keyword);
@@ -80,7 +81,10 @@ impl<'a> FormattedWriter<'a> {
     fn write_identifier(&mut self, identifier: &str) {
         let skip_space = self.just_wrote_keyword_equal;
         self.clear_keyword_equal_flag();
-        if self.needs_space_before_identifier() && !skip_space {
+
+        let after_param_splat = self.output.ends_with('*');
+
+        if self.needs_space_before_identifier() && !skip_space && !after_param_splat {
             self.write(" ");
         }
         self.write(identifier);
@@ -93,6 +97,19 @@ impl<'a> FormattedWriter<'a> {
 
         let no_space_operators = [".", "@"];
         if no_space_operators.contains(&operator) {
+            self.write(operator);
+            return;
+        }
+
+        let lambda_context = self.output.ends_with("lambda") || self.output.ends_with("lambda ");
+        let is_param_splat = (operator == "*" || operator == "**")
+            && (self.output.ends_with('(') || self.output.ends_with(", ") || lambda_context)
+            && matches!(self.peek_next_token_text(), Some(text) if !text.starts_with('*') && text != "(");
+
+        if is_param_splat {
+            if !(self.output.ends_with('(') || self.output.ends_with(", ") || self.output.ends_with(' ')) {
+                self.write(" ");
+            }
             self.write(operator);
             return;
         }
@@ -135,6 +152,35 @@ impl<'a> FormattedWriter<'a> {
         self.clear_keyword_equal_flag();
         match delimiter {
             "(" | "[" | "{" => {
+                let needs_space_before = match delimiter {
+                    "{" => {
+                        !self.context.at_line_start()
+                            && !self.output.ends_with(' ')
+                            && !self.output.ends_with('(')
+                            && !self.output.ends_with('[')
+                            && !self.output.ends_with('{')
+                            && self.context.current_column() > 0
+                    }
+                    "(" => {
+                        let last_word = self
+                            .output
+                            .trim_end()
+                            .rsplit(|c: char| c.is_whitespace() || c == '(' || c == '[' || c == '{')
+                            .next()
+                            .unwrap_or("");
+
+                        matches!(
+                            last_word,
+                            "while" | "if" | "elif" | "for" | "except" | "with" | "assert" | "return" | "yield"
+                        ) && !self.output.ends_with(' ')
+                    }
+                    _ => false,
+                };
+
+                if needs_space_before {
+                    self.write(" ");
+                }
+
                 self.write(delimiter);
                 match delimiter {
                     "(" => self.context.enter_paren(),
@@ -269,7 +315,12 @@ impl<'a> FormattedWriter<'a> {
 
     /// Check if we need space before a keyword
     fn needs_space_before_keyword(&self) -> bool {
-        !self.context.at_line_start() && self.context.current_column() > 0 && !self.output.ends_with(' ')
+        !self.context.at_line_start()
+            && self.context.current_column() > 0
+            && !self.output.ends_with(' ')
+            && !self.output.ends_with('(')
+            && !self.output.ends_with('[')
+            && !self.output.ends_with('{')
     }
 
     /// Check if we need space before an identifier
@@ -369,6 +420,7 @@ impl<'a> FormattedWriter<'a> {
                 | "^="
                 | "<<="
                 | ">>="
+                | ":="
         )
     }
 

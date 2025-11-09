@@ -16,4 +16,4 @@ Made with ⚡️ by Stormlight Labs.
 
 Stormlight Labs is just me, [Owais](https://github.com/desertthunder). Support my work on [Ko-fi](https://ko-fi.com/desertthunder).
 
-[![Brainmade](https://brainmade.org/88x31-dark.png)](https://brainmade.org)
+[<img src="https://brainmade.org/white-logo.png" width="100px" alt="Brain Made"/>](https://brainmade.org)

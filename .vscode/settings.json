@@ -32,5 +32,8 @@
   "files.exclude": {
     "**/node_modules": true,
     "**/target": false
+  },
+  "markdownlint.config": {
+    "MD033": false
   }
 }

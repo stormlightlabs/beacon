@@ -2,6 +2,9 @@
 
 Implementation details and mod-specific tasks.
 
+> NOTE: Parser/config/analyzer/HM/linter/completion integration tests are tracked in
+> `docs/internal/ROADMAP.md` under the Integration Test milestone.
+
 ## LSP Features
 
 **Files:** `crates/server/src/features/diagnostics.rs`, `crates/server/src/features/code_actions.rs`
@@ -18,7 +21,6 @@ Implementation details and mod-specific tasks.
 - [x] Config hot-reload support
 - [x] Diagnostic severity configuration
 - [x] Inlay hints configuration implementation
-- [ ] Integration tests for configuration flow (config loading and hot-reload)
 
 ## Snippet Engine
 
@@ -102,8 +104,6 @@ Implementation details and mod-specific tasks.
     - [ ] JSON load/dump
     - [ ] CSV reader/writer
 
-### LSP Completion Integration
-
 - [ ] Register snippet completion provider
 - [ ] Implement `textDocument/completion` handler for snippets
 - [ ] Set `CompletionItem.kind` to `Snippet`
@@ -178,7 +178,6 @@ Implementation details and mod-specific tasks.
 
 - [ ] Unit tests for snippet parsing and placeholder extraction
 - [ ] Unit tests for snippet filtering by scope
-- [ ] Integration tests with LSP completion
 - [ ] Validate all built-in snippets are syntactically correct
 - [ ] Test snippet expansion with various placeholder types
 - [ ] Test context-aware snippet filtering
@@ -237,8 +236,6 @@ Implemented `textDocument/formatting` and `textDocument/rangeFormatting` handler
 - [ ] Add performance monitoring to track formatting duration and emit warnings for slow operations (threshold-based)
 - [ ] Implement configurable timeout for large files to prevent LSP hangs
 
-### Configuration Integration
-
 Added `FormatterConfig` to main LSP `Config` with full LSP/TOML support for all formatting options (line length, indent size, quote style, trailing commas, blank lines, import sorting, compatibility mode), hot-reload support via `did_change_configuration`, and comprehensive tests for JSON/TOML loading.
 
 ### Testing & Validation
@@ -247,12 +244,11 @@ Added `FormatterConfig` to main LSP `Config` with full LSP/TOML support for all 
 - [x] Idempotency tests (format(format(x)) == format(x))
 - [x] AST preservation tests (parse(format(code)) == parse(code) modulo whitespace)
 - [x] Range formatting tests (partial document formatting)
-- [ ] Integration tests with LSP protocol
+- [x] Regression test suite with real-world Python files
 - [ ] Performance benchmarks:
     - [ ] Small files (<100 lines): <10ms
     - [ ] Medium files (100-1000 lines): <100ms
     - [ ] Large files (1000-5000 lines): <500ms
-- [ ] Regression test suite with real-world Python files
 - [ ] Test compatibility with Black/autopep8 outputs
 - [ ] Error handling tests (malformed code, incomplete parsing)
 

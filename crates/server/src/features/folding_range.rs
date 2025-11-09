@@ -400,7 +400,8 @@ impl FoldingRangeProvider {
             | AstNode::NamedExpr { line, .. }
             | AstNode::Await { line, .. }
             | AstNode::Assert { line, .. }
-            | AstNode::Starred { line, .. } => *line,
+            | AstNode::Starred { line, .. }
+            | AstNode::ParenthesizedExpression { line, .. } => *line,
         }
     }
 

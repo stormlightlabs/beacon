@@ -226,7 +226,8 @@ impl DocumentSymbolsProvider {
             | AstNode::Continue { line, col, .. }
             | AstNode::Raise { line, col, .. }
             | AstNode::Assert { line, col, .. }
-            | AstNode::Starred { line, col, .. } => {
+            | AstNode::Starred { line, col, .. }
+            | AstNode::ParenthesizedExpression { line, col, .. } => {
                 Position { line: (*line).saturating_sub(1) as u32, character: (*col + 10).saturating_sub(1) as u32 }
             }
         }
