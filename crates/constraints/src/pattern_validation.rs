@@ -43,7 +43,6 @@ fn validate_literal_pattern_type(literal: &AstNode, subject_type: &Type) -> Resu
             LiteralValue::Boolean(_) => Type::bool(),
             LiteralValue::None => Type::none(),
         },
-        // Identifiers in pattern context could be constants - allow them
         AstNode::Identifier { .. } => return Ok(()),
         _ => return Ok(()),
     };
@@ -173,14 +172,11 @@ fn is_mapping_type(ty: &Type) -> bool {
 
 /// Validate pattern structure compatibility with subject type
 ///
-/// Only validates tuples with known length for now.
 /// TODO: Add validation for sequences where we can infer constraints.
 pub fn validate_pattern_structure(pattern: &Pattern, subject_type: &Type) -> Result<(), TypeError> {
     match (pattern, subject_type) {
-        // Validate tuple pattern arity
         (Pattern::MatchSequence(patterns), Type::App(ctor, _)) => {
             if let Type::Con(TypeCtor::Tuple) = ctor.as_ref() {
-                // Extract tuple arity from type structure
                 if let Some(arity) = extract_tuple_arity(subject_type) {
                     if patterns.len() != arity {
                         return Err(TypeError::PatternStructureMismatch {
@@ -194,7 +190,6 @@ pub fn validate_pattern_structure(pattern: &Pattern, subject_type: &Type) -> Res
             }
             Ok(())
         }
-        // For other patterns, structure validation happens during binding extraction
         _ => Ok(()),
     }
 }

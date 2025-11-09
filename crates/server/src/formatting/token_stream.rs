@@ -4,7 +4,7 @@
 //! Tokens represent syntactic elements with their associated metadata
 //! (position, whitespace requirements, etc.).
 
-use beacon_parser::AstNode;
+use beacon_parser::{AstNode, Pattern};
 
 /// Token type representing syntactic elements for formatting
 #[derive(Debug, Clone, PartialEq)]
@@ -163,6 +163,79 @@ impl TokenGenerator {
         Self { tokens: Vec::new(), current_indent: 0 }
     }
 
+    /// Visit a pattern and generate tokens
+    ///
+    /// Converts Pattern nodes from match statements into formatting tokens,
+    /// handling all pattern types including values, sequences, mappings, classes,
+    /// as-patterns, and or-patterns.
+    fn visit_pattern(&mut self, pattern: &Pattern, line: usize, col: usize) {
+        match pattern {
+            Pattern::MatchValue(node) => {
+                self.visit_node(node);
+            }
+            Pattern::MatchSequence(patterns) => {
+                self.tokens.push(Token::Delimiter { text: "[".to_string(), line, col });
+                for (i, pat) in patterns.iter().enumerate() {
+                    self.visit_pattern(pat, line, col);
+                    if i < patterns.len() - 1 {
+                        self.tokens.push(Token::Delimiter { text: ",".to_string(), line, col });
+                        self.tokens.push(Token::Whitespace { count: 1, line, col });
+                    }
+                }
+                self.tokens.push(Token::Delimiter { text: "]".to_string(), line, col });
+            }
+            Pattern::MatchMapping { keys, patterns } => {
+                self.tokens.push(Token::Delimiter { text: "{".to_string(), line, col });
+                for (i, (key, pat)) in keys.iter().zip(patterns.iter()).enumerate() {
+                    self.visit_node(key);
+                    self.tokens.push(Token::Delimiter { text: ":".to_string(), line, col });
+                    self.tokens.push(Token::Whitespace { count: 1, line, col });
+                    self.visit_pattern(pat, line, col);
+                    if i < keys.len() - 1 {
+                        self.tokens.push(Token::Delimiter { text: ",".to_string(), line, col });
+                        self.tokens.push(Token::Whitespace { count: 1, line, col });
+                    }
+                }
+                self.tokens.push(Token::Delimiter { text: "}".to_string(), line, col });
+            }
+            Pattern::MatchClass { cls, patterns } => {
+                self.tokens.push(Token::Identifier { text: cls.clone(), line, col });
+                self.tokens.push(Token::Delimiter { text: "(".to_string(), line, col });
+                for (i, pat) in patterns.iter().enumerate() {
+                    self.visit_pattern(pat, line, col);
+                    if i < patterns.len() - 1 {
+                        self.tokens.push(Token::Delimiter { text: ",".to_string(), line, col });
+                        self.tokens.push(Token::Whitespace { count: 1, line, col });
+                    }
+                }
+                self.tokens.push(Token::Delimiter { text: ")".to_string(), line, col });
+            }
+            Pattern::MatchAs { pattern, name } => {
+                if let Some(pat) = pattern {
+                    self.visit_pattern(pat, line, col);
+                    self.tokens.push(Token::Whitespace { count: 1, line, col });
+                    self.tokens.push(Token::Keyword { text: "as".to_string(), line, col });
+                    self.tokens.push(Token::Whitespace { count: 1, line, col })
+                }
+                if let Some(n) = name {
+                    self.tokens.push(Token::Identifier { text: n.clone(), line, col })
+                } else if pattern.is_none() {
+                    self.tokens.push(Token::Identifier { text: "_".to_string(), line, col })
+                }
+            }
+            Pattern::MatchOr(patterns) => {
+                for (i, pat) in patterns.iter().enumerate() {
+                    self.visit_pattern(pat, line, col);
+                    if i < patterns.len() - 1 {
+                        self.tokens.push(Token::Whitespace { count: 1, line, col });
+                        self.tokens.push(Token::Operator { text: "|".to_string(), line, col });
+                        self.tokens.push(Token::Whitespace { count: 1, line, col });
+                    }
+                }
+            }
+        }
+    }
+
     /// Visit an AST node and generate tokens
     fn visit_node(&mut self, node: &AstNode) {
         match node {
@@ -234,8 +307,839 @@ impl TokenGenerator {
                 }
                 self.tokens.push(Token::Newline { line: *line });
             }
-            // TODO: Implement token generation for other node types
-            _ => {}
+            AstNode::ClassDef { name, bases, body, decorators, line, col, .. } => {
+                for decorator in decorators {
+                    self.tokens
+                        .push(Token::Operator { text: "@".to_string(), line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Identifier { text: decorator.clone(), line: *line, col: col + 1 });
+                    self.tokens.push(Token::Newline { line: *line });
+                }
+
+                self.tokens
+                    .push(Token::Keyword { text: "class".to_string(), line: *line, col: *col });
+                self.tokens
+                    .push(Token::Whitespace { count: 1, line: *line, col: col + 5 });
+                self.tokens
+                    .push(Token::Identifier { text: name.clone(), line: *line, col: col + 6 });
+
+                if !bases.is_empty() {
+                    self.tokens
+                        .push(Token::Delimiter { text: "(".to_string(), line: *line, col: *col });
+                    for (i, base) in bases.iter().enumerate() {
+                        self.tokens
+                            .push(Token::Identifier { text: base.clone(), line: *line, col: *col });
+                        if i < bases.len() - 1 {
+                            self.tokens
+                                .push(Token::Delimiter { text: ",".to_string(), line: *line, col: *col });
+                            self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                        }
+                    }
+                    self.tokens
+                        .push(Token::Delimiter { text: ")".to_string(), line: *line, col: *col });
+                }
+
+                self.tokens
+                    .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Newline { line: *line });
+
+                self.current_indent += 1;
+                for stmt in body {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: *line });
+                    self.visit_node(stmt);
+                }
+                self.current_indent -= 1;
+            }
+            AstNode::Assignment { target, value, line, col, .. } => {
+                self.visit_node(target);
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.tokens
+                    .push(Token::Operator { text: "=".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.visit_node(value);
+                self.tokens.push(Token::Newline { line: *line });
+            }
+            AstNode::AnnotatedAssignment { target, type_annotation, value, line, col, .. } => {
+                self.visit_node(target);
+                self.tokens
+                    .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.tokens
+                    .push(Token::Identifier { text: type_annotation.clone(), line: *line, col: *col });
+                if let Some(val) = value {
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Operator { text: "=".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.visit_node(val);
+                }
+                self.tokens.push(Token::Newline { line: *line });
+            }
+            AstNode::Identifier { name, line, col, .. } => {
+                self.tokens
+                    .push(Token::Identifier { text: name.clone(), line: *line, col: *col });
+            }
+            AstNode::Literal { value, line, col, .. } => {
+                use beacon_parser::LiteralValue;
+                match value {
+                    LiteralValue::String { value: s, prefix } => {
+                        let quote = if s.contains('\n') { "\"\"\"" } else { "\"" };
+                        let text = format!("{prefix}{quote}{s}{quote}");
+                        self.tokens
+                            .push(Token::StringLiteral { text, line: *line, col: *col, quote_char: '"' });
+                    }
+                    LiteralValue::Integer(i) => {
+                        self.tokens
+                            .push(Token::NumberLiteral { text: i.to_string(), line: *line, col: *col });
+                    }
+                    LiteralValue::Float(f) => {
+                        self.tokens
+                            .push(Token::NumberLiteral { text: f.to_string(), line: *line, col: *col });
+                    }
+                    LiteralValue::Boolean(b) => {
+                        let text = if *b { "True" } else { "False" };
+                        self.tokens
+                            .push(Token::Keyword { text: text.to_string(), line: *line, col: *col });
+                    }
+                    LiteralValue::None => {
+                        self.tokens
+                            .push(Token::Keyword { text: "None".to_string(), line: *line, col: *col });
+                    }
+                }
+            }
+            AstNode::Call { function, args, keywords, line, col, .. } => {
+                self.tokens
+                    .push(Token::Identifier { text: function.clone(), line: *line, col: *col });
+                self.tokens
+                    .push(Token::Delimiter { text: "(".to_string(), line: *line, col: *col });
+
+                for (i, arg) in args.iter().enumerate() {
+                    self.visit_node(arg);
+                    if i < args.len() - 1 || !keywords.is_empty() {
+                        self.tokens
+                            .push(Token::Delimiter { text: ",".to_string(), line: *line, col: *col });
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    }
+                }
+
+                for (i, (key, val)) in keywords.iter().enumerate() {
+                    self.tokens
+                        .push(Token::Identifier { text: key.clone(), line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Operator { text: "=".to_string(), line: *line, col: *col });
+                    self.visit_node(val);
+                    if i < keywords.len() - 1 {
+                        self.tokens
+                            .push(Token::Delimiter { text: ",".to_string(), line: *line, col: *col });
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    }
+                }
+
+                self.tokens
+                    .push(Token::Delimiter { text: ")".to_string(), line: *line, col: *col });
+            }
+            AstNode::BinaryOp { left, op, right, line, col, .. } => {
+                self.visit_node(left);
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+
+                use beacon_parser::BinaryOperator;
+                let op_text = match op {
+                    BinaryOperator::Add => "+",
+                    BinaryOperator::Sub => "-",
+                    BinaryOperator::Mult => "*",
+                    BinaryOperator::Div => "/",
+                    BinaryOperator::FloorDiv => "//",
+                    BinaryOperator::Mod => "%",
+                    BinaryOperator::Pow => "**",
+                    BinaryOperator::BitOr => "|",
+                    BinaryOperator::BitXor => "^",
+                    BinaryOperator::BitAnd => "&",
+                    BinaryOperator::LeftShift => "<<",
+                    BinaryOperator::RightShift => ">>",
+                    BinaryOperator::MatMult => "@",
+                    BinaryOperator::And => "and",
+                    BinaryOperator::Or => "or",
+                };
+                self.tokens
+                    .push(Token::Operator { text: op_text.to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.visit_node(right);
+            }
+            AstNode::UnaryOp { op, operand, line, col, .. } => {
+                use beacon_parser::UnaryOperator;
+                let op_text = match op {
+                    UnaryOperator::Not => "not",
+                    UnaryOperator::Plus => "+",
+                    UnaryOperator::Minus => "-",
+                    UnaryOperator::Invert => "~",
+                };
+                self.tokens
+                    .push(Token::Operator { text: op_text.to_string(), line: *line, col: *col });
+                if matches!(op, beacon_parser::UnaryOperator::Not) {
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                }
+                self.visit_node(operand);
+            }
+            AstNode::Compare { left, ops, comparators, line, col, .. } => {
+                self.visit_node(left);
+
+                use beacon_parser::CompareOperator;
+                for (i, op) in ops.iter().enumerate() {
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    let op_text = match op {
+                        CompareOperator::Eq => "==",
+                        CompareOperator::NotEq => "!=",
+                        CompareOperator::Lt => "<",
+                        CompareOperator::LtE => "<=",
+                        CompareOperator::Gt => ">",
+                        CompareOperator::GtE => ">=",
+                        CompareOperator::Is => "is",
+                        CompareOperator::IsNot => "is not",
+                        CompareOperator::In => "in",
+                        CompareOperator::NotIn => "not in",
+                    };
+                    self.tokens
+                        .push(Token::Operator { text: op_text.to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    if let Some(comparator) = comparators.get(i) {
+                        self.visit_node(comparator);
+                    }
+                }
+            }
+            AstNode::If { test, body, elif_parts, else_body, line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "if".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.visit_node(test);
+                self.tokens
+                    .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Newline { line: *line });
+
+                self.current_indent += 1;
+                for stmt in body {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: *line });
+                    self.visit_node(stmt);
+                }
+                self.current_indent -= 1;
+
+                for (elif_test, elif_body) in elif_parts {
+                    self.tokens
+                        .push(Token::Keyword { text: "elif".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.visit_node(elif_test);
+                    self.tokens
+                        .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Newline { line: *line });
+
+                    self.current_indent += 1;
+                    for stmt in elif_body {
+                        self.tokens
+                            .push(Token::Indent { level: self.current_indent, line: *line });
+                        self.visit_node(stmt);
+                    }
+                    self.current_indent -= 1;
+                }
+
+                if let Some(else_stmts) = else_body {
+                    self.tokens
+                        .push(Token::Keyword { text: "else".to_string(), line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Newline { line: *line });
+
+                    self.current_indent += 1;
+                    for stmt in else_stmts {
+                        self.tokens
+                            .push(Token::Indent { level: self.current_indent, line: *line });
+                        self.visit_node(stmt);
+                    }
+                    self.current_indent -= 1;
+                }
+            }
+            AstNode::For { target, iter, body, else_body, is_async, line, col, .. } => {
+                if *is_async {
+                    self.tokens
+                        .push(Token::Keyword { text: "async".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                }
+                self.tokens
+                    .push(Token::Keyword { text: "for".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.tokens
+                    .push(Token::Identifier { text: target.clone(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.tokens
+                    .push(Token::Keyword { text: "in".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.visit_node(iter);
+                self.tokens
+                    .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Newline { line: *line });
+
+                self.current_indent += 1;
+                for stmt in body {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: *line });
+                    self.visit_node(stmt);
+                }
+                self.current_indent -= 1;
+
+                if let Some(else_stmts) = else_body {
+                    self.tokens
+                        .push(Token::Keyword { text: "else".to_string(), line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Newline { line: *line });
+
+                    self.current_indent += 1;
+                    for stmt in else_stmts {
+                        self.tokens
+                            .push(Token::Indent { level: self.current_indent, line: *line });
+                        self.visit_node(stmt);
+                    }
+                    self.current_indent -= 1;
+                }
+            }
+            AstNode::While { test, body, else_body, line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "while".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.visit_node(test);
+                self.tokens
+                    .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Newline { line: *line });
+
+                self.current_indent += 1;
+                for stmt in body {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: *line });
+                    self.visit_node(stmt);
+                }
+                self.current_indent -= 1;
+
+                if let Some(else_stmts) = else_body {
+                    self.tokens
+                        .push(Token::Keyword { text: "else".to_string(), line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Newline { line: *line });
+
+                    self.current_indent += 1;
+                    for stmt in else_stmts {
+                        self.tokens
+                            .push(Token::Indent { level: self.current_indent, line: *line });
+                        self.visit_node(stmt);
+                    }
+                    self.current_indent -= 1;
+                }
+            }
+            AstNode::Import { module, alias, line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "import".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.tokens
+                    .push(Token::Identifier { text: module.clone(), line: *line, col: *col });
+                if let Some(alias_name) = alias {
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Keyword { text: "as".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Identifier { text: alias_name.clone(), line: *line, col: *col });
+                }
+                self.tokens.push(Token::Newline { line: *line });
+            }
+            AstNode::ImportFrom { module, names, line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "from".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.tokens
+                    .push(Token::Identifier { text: module.clone(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.tokens
+                    .push(Token::Keyword { text: "import".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+
+                for (i, name) in names.iter().enumerate() {
+                    self.tokens
+                        .push(Token::Identifier { text: name.clone(), line: *line, col: *col });
+                    if i < names.len() - 1 {
+                        self.tokens
+                            .push(Token::Delimiter { text: ",".to_string(), line: *line, col: *col });
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    }
+                }
+                self.tokens.push(Token::Newline { line: *line });
+            }
+            AstNode::Attribute { object, attribute, line, col, .. } => {
+                self.visit_node(object);
+                self.tokens
+                    .push(Token::Delimiter { text: ".".to_string(), line: *line, col: *col });
+                self.tokens
+                    .push(Token::Identifier { text: attribute.clone(), line: *line, col: *col });
+            }
+            AstNode::Pass { line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "pass".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Newline { line: *line });
+            }
+            AstNode::Break { line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "break".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Newline { line: *line });
+            }
+            AstNode::Continue { line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "continue".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Newline { line: *line });
+            }
+            AstNode::Raise { exc, line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "raise".to_string(), line: *line, col: *col });
+                if let Some(exception) = exc {
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.visit_node(exception);
+                }
+                self.tokens.push(Token::Newline { line: *line });
+            }
+            AstNode::Tuple { elements, line, col, .. } => {
+                self.tokens
+                    .push(Token::Delimiter { text: "(".to_string(), line: *line, col: *col });
+                for (i, elem) in elements.iter().enumerate() {
+                    self.visit_node(elem);
+                    if i < elements.len() - 1 {
+                        self.tokens
+                            .push(Token::Delimiter { text: ",".to_string(), line: *line, col: *col });
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    } else if elements.len() == 1 {
+                        self.tokens
+                            .push(Token::Delimiter { text: ",".to_string(), line: *line, col: *col });
+                    }
+                }
+                self.tokens
+                    .push(Token::Delimiter { text: ")".to_string(), line: *line, col: *col });
+            }
+            AstNode::List { elements, line, col, .. } => {
+                self.tokens
+                    .push(Token::Delimiter { text: "[".to_string(), line: *line, col: *col });
+                for (i, elem) in elements.iter().enumerate() {
+                    self.visit_node(elem);
+                    if i < elements.len() - 1 {
+                        self.tokens
+                            .push(Token::Delimiter { text: ",".to_string(), line: *line, col: *col });
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    }
+                }
+                self.tokens
+                    .push(Token::Delimiter { text: "]".to_string(), line: *line, col: *col });
+            }
+            AstNode::Dict { keys, values, line, col, .. } => {
+                self.tokens
+                    .push(Token::Delimiter { text: "{".to_string(), line: *line, col: *col });
+                for (i, (key, value)) in keys.iter().zip(values.iter()).enumerate() {
+                    self.visit_node(key);
+                    self.tokens
+                        .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.visit_node(value);
+                    if i < keys.len() - 1 {
+                        self.tokens
+                            .push(Token::Delimiter { text: ",".to_string(), line: *line, col: *col });
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    }
+                }
+                self.tokens
+                    .push(Token::Delimiter { text: "}".to_string(), line: *line, col: *col });
+            }
+            AstNode::Set { elements, line, col, .. } => {
+                self.tokens
+                    .push(Token::Delimiter { text: "{".to_string(), line: *line, col: *col });
+                for (i, elem) in elements.iter().enumerate() {
+                    self.visit_node(elem);
+                    if i < elements.len() - 1 {
+                        self.tokens
+                            .push(Token::Delimiter { text: ",".to_string(), line: *line, col: *col });
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    }
+                }
+                self.tokens
+                    .push(Token::Delimiter { text: "}".to_string(), line: *line, col: *col });
+            }
+            AstNode::Subscript { value, slice, line, col, .. } => {
+                self.visit_node(value);
+                self.tokens
+                    .push(Token::Delimiter { text: "[".to_string(), line: *line, col: *col });
+                self.visit_node(slice);
+                self.tokens
+                    .push(Token::Delimiter { text: "]".to_string(), line: *line, col: *col });
+            }
+            AstNode::Try { body, handlers, else_body, finally_body, line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "try".to_string(), line: *line, col: *col });
+                self.tokens
+                    .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Newline { line: *line });
+
+                self.current_indent += 1;
+                for stmt in body {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: *line });
+                    self.visit_node(stmt);
+                }
+                self.current_indent -= 1;
+
+                for handler in handlers {
+                    self.tokens.push(Token::Keyword {
+                        text: "except".to_string(),
+                        line: handler.line,
+                        col: handler.col,
+                    });
+                    if let Some(exc_type) = &handler.exception_type {
+                        self.tokens
+                            .push(Token::Whitespace { count: 1, line: handler.line, col: handler.col });
+                        self.tokens.push(Token::Identifier {
+                            text: exc_type.clone(),
+                            line: handler.line,
+                            col: handler.col,
+                        });
+                        if let Some(name) = &handler.name {
+                            self.tokens
+                                .push(Token::Whitespace { count: 1, line: handler.line, col: handler.col });
+                            self.tokens.push(Token::Keyword {
+                                text: "as".to_string(),
+                                line: handler.line,
+                                col: handler.col,
+                            });
+                            self.tokens
+                                .push(Token::Whitespace { count: 1, line: handler.line, col: handler.col });
+                            self.tokens.push(Token::Identifier {
+                                text: name.clone(),
+                                line: handler.line,
+                                col: handler.col,
+                            });
+                        }
+                    }
+                    self.tokens
+                        .push(Token::Delimiter { text: ":".to_string(), line: handler.line, col: handler.col });
+                    self.tokens.push(Token::Newline { line: handler.line });
+
+                    self.current_indent += 1;
+                    for stmt in &handler.body {
+                        self.tokens
+                            .push(Token::Indent { level: self.current_indent, line: handler.line });
+                        self.visit_node(stmt);
+                    }
+                    self.current_indent -= 1;
+                }
+
+                if let Some(else_stmts) = else_body {
+                    self.tokens
+                        .push(Token::Keyword { text: "else".to_string(), line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Newline { line: *line });
+
+                    self.current_indent += 1;
+                    for stmt in else_stmts {
+                        self.tokens
+                            .push(Token::Indent { level: self.current_indent, line: *line });
+                        self.visit_node(stmt);
+                    }
+                    self.current_indent -= 1;
+                }
+
+                if let Some(finally_stmts) = finally_body {
+                    self.tokens
+                        .push(Token::Keyword { text: "finally".to_string(), line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Newline { line: *line });
+
+                    self.current_indent += 1;
+                    for stmt in finally_stmts {
+                        self.tokens
+                            .push(Token::Indent { level: self.current_indent, line: *line });
+                        self.visit_node(stmt);
+                    }
+                    self.current_indent -= 1;
+                }
+            }
+            AstNode::With { items, body, is_async, line, col, .. } => {
+                if *is_async {
+                    self.tokens
+                        .push(Token::Keyword { text: "async".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                }
+                self.tokens
+                    .push(Token::Keyword { text: "with".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+
+                for (i, item) in items.iter().enumerate() {
+                    self.visit_node(&item.context_expr);
+                    if let Some(var) = &item.optional_vars {
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                        self.tokens
+                            .push(Token::Keyword { text: "as".to_string(), line: *line, col: *col });
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                        self.tokens
+                            .push(Token::Identifier { text: var.clone(), line: *line, col: *col });
+                    }
+                    if i < items.len() - 1 {
+                        self.tokens
+                            .push(Token::Delimiter { text: ",".to_string(), line: *line, col: *col });
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    }
+                }
+
+                self.tokens
+                    .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Newline { line: *line });
+
+                self.current_indent += 1;
+                for stmt in body {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: *line });
+                    self.visit_node(stmt);
+                }
+                self.current_indent -= 1;
+            }
+            AstNode::Lambda { args, body, line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "lambda".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+
+                for (i, param) in args.iter().enumerate() {
+                    self.tokens
+                        .push(Token::Identifier { text: param.name.clone(), line: param.line, col: param.col });
+                    if i < args.len() - 1 {
+                        self.tokens
+                            .push(Token::Delimiter { text: ",".to_string(), line: param.line, col: param.col });
+                        self.tokens
+                            .push(Token::Whitespace { count: 1, line: param.line, col: param.col });
+                    }
+                }
+
+                self.tokens
+                    .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.visit_node(body);
+            }
+            AstNode::ListComp { element, generators, line, col, .. } => {
+                self.tokens
+                    .push(Token::Delimiter { text: "[".to_string(), line: *line, col: *col });
+                self.visit_node(element);
+
+                for comp in generators {
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Keyword { text: "for".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Identifier { text: comp.target.clone(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Keyword { text: "in".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.visit_node(&comp.iter);
+
+                    for cond in &comp.ifs {
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                        self.tokens
+                            .push(Token::Keyword { text: "if".to_string(), line: *line, col: *col });
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                        self.visit_node(cond);
+                    }
+                }
+
+                self.tokens
+                    .push(Token::Delimiter { text: "]".to_string(), line: *line, col: *col });
+            }
+            AstNode::DictComp { key, value, generators, line, col, .. } => {
+                self.tokens
+                    .push(Token::Delimiter { text: "{".to_string(), line: *line, col: *col });
+                self.visit_node(key);
+                self.tokens
+                    .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.visit_node(value);
+
+                for comp in generators {
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Keyword { text: "for".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Identifier { text: comp.target.clone(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Keyword { text: "in".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.visit_node(&comp.iter);
+
+                    for cond in &comp.ifs {
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                        self.tokens
+                            .push(Token::Keyword { text: "if".to_string(), line: *line, col: *col });
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                        self.visit_node(cond);
+                    }
+                }
+
+                self.tokens
+                    .push(Token::Delimiter { text: "}".to_string(), line: *line, col: *col });
+            }
+            AstNode::SetComp { element, generators, line, col, .. } => {
+                self.tokens
+                    .push(Token::Delimiter { text: "{".to_string(), line: *line, col: *col });
+                self.visit_node(element);
+
+                for comp in generators {
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Keyword { text: "for".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Identifier { text: comp.target.clone(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Keyword { text: "in".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.visit_node(&comp.iter);
+
+                    for cond in &comp.ifs {
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                        self.tokens
+                            .push(Token::Keyword { text: "if".to_string(), line: *line, col: *col });
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                        self.visit_node(cond);
+                    }
+                }
+
+                self.tokens
+                    .push(Token::Delimiter { text: "}".to_string(), line: *line, col: *col });
+            }
+            AstNode::GeneratorExp { element, generators, line, col, .. } => {
+                self.tokens
+                    .push(Token::Delimiter { text: "(".to_string(), line: *line, col: *col });
+                self.visit_node(element);
+
+                for g in generators {
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Keyword { text: "for".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Identifier { text: g.target.clone(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Keyword { text: "in".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.visit_node(&g.iter);
+
+                    for cond in &g.ifs {
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                        self.tokens
+                            .push(Token::Keyword { text: "if".to_string(), line: *line, col: *col });
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                        self.visit_node(cond);
+                    }
+                }
+
+                self.tokens
+                    .push(Token::Delimiter { text: ")".to_string(), line: *line, col: *col });
+            }
+            AstNode::NamedExpr { target, value, line, col, .. } => {
+                self.tokens
+                    .push(Token::Identifier { text: target.clone(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.tokens
+                    .push(Token::Operator { text: ":=".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.visit_node(value);
+            }
+            AstNode::Yield { value, line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "yield".to_string(), line: *line, col: *col });
+                if let Some(val) = value {
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.visit_node(val);
+                }
+            }
+            AstNode::YieldFrom { value, line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "yield".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.tokens
+                    .push(Token::Keyword { text: "from".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.visit_node(value);
+            }
+            AstNode::Await { value, line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "await".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.visit_node(value);
+            }
+            AstNode::Assert { test, msg, line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "assert".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.visit_node(test);
+                if let Some(message) = msg {
+                    self.tokens
+                        .push(Token::Delimiter { text: ",".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.visit_node(message);
+                }
+                self.tokens.push(Token::Newline { line: *line });
+            }
+            AstNode::Starred { value, line, col, .. } => {
+                self.tokens
+                    .push(Token::Operator { text: "*".to_string(), line: *line, col: *col });
+                self.visit_node(value);
+            }
+            AstNode::Match { subject, cases, line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "match".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                self.visit_node(subject);
+                self.tokens
+                    .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                self.tokens.push(Token::Newline { line: *line });
+
+                self.current_indent += 1;
+                for case in cases {
+                    self.tokens
+                        .push(Token::Indent { level: self.current_indent, line: *line });
+                    self.tokens
+                        .push(Token::Keyword { text: "case".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+
+                    self.visit_pattern(&case.pattern, *line, *col);
+
+                    if let Some(guard) = &case.guard {
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                        self.tokens
+                            .push(Token::Keyword { text: "if".to_string(), line: *line, col: *col });
+                        self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                        self.visit_node(guard);
+                    }
+                    self.tokens
+                        .push(Token::Delimiter { text: ":".to_string(), line: *line, col: *col });
+                    self.tokens.push(Token::Newline { line: *line });
+
+                    self.current_indent += 1;
+                    for stmt in &case.body {
+                        self.tokens
+                            .push(Token::Indent { level: self.current_indent, line: *line });
+                        self.visit_node(stmt);
+                    }
+                    self.current_indent -= 1;
+                }
+                self.current_indent -= 1;
+            }
         }
     }
 }
@@ -306,6 +1210,798 @@ mod tests {
             tokens
                 .iter()
                 .any(|t| matches!(t, Token::Keyword { text, .. } if text == "def"))
+        );
+    }
+
+    #[test]
+    fn test_class_def_tokens() {
+        let node = AstNode::ClassDef {
+            name: "MyClass".to_string(),
+            bases: vec!["BaseClass".to_string()],
+            metaclass: None,
+            body: vec![AstNode::Pass { line: 2, col: 4, end_line: 2, end_col: 8 }],
+            docstring: None,
+            decorators: vec![],
+            line: 1,
+            col: 0,
+            end_line: 2,
+            end_col: 8,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "class"))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Identifier { text, .. } if text == "MyClass"))
+        );
+    }
+
+    #[test]
+    fn test_assignment_tokens() {
+        let node = AstNode::Assignment {
+            target: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 0, end_line: 1, end_col: 1 }),
+            value: Box::new(AstNode::Literal {
+                value: beacon_parser::LiteralValue::Integer(42),
+                line: 1,
+                col: 4,
+                end_line: 1,
+                end_col: 6,
+            }),
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 6,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Operator { text, .. } if text == "="))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Identifier { text, .. } if text == "x"))
+        );
+    }
+
+    #[test]
+    fn test_binary_op_tokens() {
+        let node = AstNode::BinaryOp {
+            left: Box::new(AstNode::Literal {
+                value: beacon_parser::LiteralValue::Integer(1),
+                line: 1,
+                col: 0,
+                end_line: 1,
+                end_col: 1,
+            }),
+            op: beacon_parser::BinaryOperator::Add,
+            right: Box::new(AstNode::Literal {
+                value: beacon_parser::LiteralValue::Integer(2),
+                line: 1,
+                col: 4,
+                end_line: 1,
+                end_col: 5,
+            }),
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 5,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Operator { text, .. } if text == "+"))
+        );
+    }
+
+    #[test]
+    fn test_if_statement_tokens() {
+        let node = AstNode::If {
+            test: Box::new(AstNode::Literal {
+                value: beacon_parser::LiteralValue::Boolean(true),
+                line: 1,
+                col: 3,
+                end_line: 1,
+                end_col: 7,
+            }),
+            body: vec![AstNode::Pass { line: 2, col: 4, end_line: 2, end_col: 8 }],
+            elif_parts: vec![],
+            else_body: None,
+            line: 1,
+            col: 0,
+            end_line: 2,
+            end_col: 8,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "if"))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "pass"))
+        );
+    }
+
+    #[test]
+    fn test_for_loop_tokens() {
+        let node = AstNode::For {
+            target: "i".to_string(),
+            iter: Box::new(AstNode::Call {
+                function: "range".to_string(),
+                args: vec![AstNode::Literal {
+                    value: beacon_parser::LiteralValue::Integer(10),
+                    line: 1,
+                    col: 16,
+                    end_line: 1,
+                    end_col: 18,
+                }],
+                keywords: vec![],
+                line: 1,
+                col: 11,
+                end_line: 1,
+                end_col: 19,
+            }),
+            body: vec![AstNode::Pass { line: 2, col: 4, end_line: 2, end_col: 8 }],
+            else_body: None,
+            is_async: false,
+            line: 1,
+            col: 0,
+            end_line: 2,
+            end_col: 8,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "for"))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "in"))
+        );
+    }
+
+    #[test]
+    fn test_import_tokens() {
+        let node = AstNode::Import { module: "os".to_string(), alias: None, line: 1, col: 0, end_line: 1, end_col: 9 };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "import"))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Identifier { text, .. } if text == "os"))
+        );
+    }
+
+    #[test]
+    fn test_list_tokens() {
+        let node = AstNode::List {
+            elements: vec![
+                AstNode::Literal {
+                    value: beacon_parser::LiteralValue::Integer(1),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                },
+                AstNode::Literal {
+                    value: beacon_parser::LiteralValue::Integer(2),
+                    line: 1,
+                    col: 4,
+                    end_line: 1,
+                    end_col: 5,
+                },
+            ],
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 6,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Delimiter { text, .. } if text == "["))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Delimiter { text, .. } if text == "]"))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Delimiter { text, .. } if text == ","))
+        );
+    }
+
+    #[test]
+    fn test_dict_tokens() {
+        let node = AstNode::Dict {
+            keys: vec![AstNode::Literal {
+                value: beacon_parser::LiteralValue::String { value: "key".to_string(), prefix: String::new() },
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 6,
+            }],
+            values: vec![AstNode::Literal {
+                value: beacon_parser::LiteralValue::Integer(42),
+                line: 1,
+                col: 8,
+                end_line: 1,
+                end_col: 10,
+            }],
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 11,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Delimiter { text, .. } if text == "{"))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Delimiter { text, .. } if text == "}"))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Delimiter { text, .. } if text == ":"))
+        );
+    }
+
+    #[test]
+    fn test_try_except_tokens() {
+        use beacon_parser::ExceptHandler;
+        let node = AstNode::Try {
+            body: vec![AstNode::Pass { line: 2, col: 4, end_line: 2, end_col: 8 }],
+            handlers: vec![ExceptHandler {
+                exception_type: Some("Exception".to_string()),
+                name: None,
+                body: vec![AstNode::Pass { line: 4, col: 4, end_line: 4, end_col: 8 }],
+                line: 3,
+                col: 0,
+                end_line: 4,
+                end_col: 8,
+            }],
+            else_body: None,
+            finally_body: None,
+            line: 1,
+            col: 0,
+            end_line: 4,
+            end_col: 8,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "try"))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "except"))
+        );
+    }
+
+    #[test]
+    fn test_lambda_tokens() {
+        let node = AstNode::Lambda {
+            args: vec![Parameter {
+                name: "x".to_string(),
+                line: 1,
+                col: 7,
+                end_line: 1,
+                end_col: 8,
+                type_annotation: None,
+                default_value: None,
+            }],
+            body: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 10, end_line: 1, end_col: 11 }),
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 11,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "lambda"))
+        );
+    }
+
+    #[test]
+    fn test_yield_tokens() {
+        let node = AstNode::Yield {
+            value: Some(Box::new(AstNode::Literal {
+                value: beacon_parser::LiteralValue::Integer(42),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 8,
+            })),
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 8,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "yield"))
+        );
+    }
+
+    #[test]
+    fn test_await_tokens() {
+        let node = AstNode::Await {
+            value: Box::new(AstNode::Call {
+                function: "async_func".to_string(),
+                args: vec![],
+                keywords: vec![],
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 18,
+            }),
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 18,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "await"))
+        );
+    }
+
+    #[test]
+    fn test_assert_tokens() {
+        let node = AstNode::Assert {
+            test: Box::new(AstNode::Literal {
+                value: beacon_parser::LiteralValue::Boolean(true),
+                line: 1,
+                col: 7,
+                end_line: 1,
+                end_col: 11,
+            }),
+            msg: None,
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 11,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "assert"))
+        );
+    }
+
+    #[test]
+    fn test_break_continue_tokens() {
+        let break_node = AstNode::Break { line: 1, col: 0, end_line: 1, end_col: 5 };
+        let continue_node = AstNode::Continue { line: 2, col: 0, end_line: 2, end_col: 8 };
+
+        let stream1 = TokenStream::from_ast(&break_node);
+        let tokens1: Vec<Token> = stream1.collect();
+        assert!(
+            tokens1
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "break"))
+        );
+
+        let stream2 = TokenStream::from_ast(&continue_node);
+        let tokens2: Vec<Token> = stream2.collect();
+        assert!(
+            tokens2
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "continue"))
+        );
+    }
+
+    #[test]
+    fn test_match_with_value_pattern() {
+        use beacon_parser::MatchCase;
+        let node = AstNode::Match {
+            subject: Box::new(AstNode::Identifier {
+                name: "value".to_string(),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 11,
+            }),
+            cases: vec![MatchCase {
+                pattern: Pattern::MatchValue(AstNode::Literal {
+                    value: beacon_parser::LiteralValue::Integer(42),
+                    line: 2,
+                    col: 9,
+                    end_line: 2,
+                    end_col: 11,
+                }),
+                guard: None,
+                body: vec![AstNode::Pass { line: 3, col: 8, end_line: 3, end_col: 12 }],
+            }],
+            line: 1,
+            col: 0,
+            end_line: 3,
+            end_col: 12,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "match"))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "case"))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::NumberLiteral { text, .. } if text == "42"))
+        );
+    }
+
+    #[test]
+    fn test_match_with_sequence_pattern() {
+        use beacon_parser::MatchCase;
+        let node = AstNode::Match {
+            subject: Box::new(AstNode::Identifier {
+                name: "data".to_string(),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 10,
+            }),
+            cases: vec![MatchCase {
+                pattern: Pattern::MatchSequence(vec![
+                    Pattern::MatchValue(AstNode::Literal {
+                        value: beacon_parser::LiteralValue::Integer(1),
+                        line: 2,
+                        col: 10,
+                        end_line: 2,
+                        end_col: 11,
+                    }),
+                    Pattern::MatchValue(AstNode::Literal {
+                        value: beacon_parser::LiteralValue::Integer(2),
+                        line: 2,
+                        col: 13,
+                        end_line: 2,
+                        end_col: 14,
+                    }),
+                ]),
+                guard: None,
+                body: vec![AstNode::Pass { line: 3, col: 8, end_line: 3, end_col: 12 }],
+            }],
+            line: 1,
+            col: 0,
+            end_line: 3,
+            end_col: 12,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Delimiter { text, .. } if text == "["))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Delimiter { text, .. } if text == "]"))
+        );
+    }
+
+    #[test]
+    fn test_match_with_mapping_pattern() {
+        use beacon_parser::MatchCase;
+        let node = AstNode::Match {
+            subject: Box::new(AstNode::Identifier {
+                name: "data".to_string(),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 10,
+            }),
+            cases: vec![MatchCase {
+                pattern: Pattern::MatchMapping {
+                    keys: vec![AstNode::Literal {
+                        value: beacon_parser::LiteralValue::String { value: "name".to_string(), prefix: String::new() },
+                        line: 2,
+                        col: 10,
+                        end_line: 2,
+                        end_col: 16,
+                    }],
+                    patterns: vec![Pattern::MatchAs { pattern: None, name: Some("n".to_string()) }],
+                },
+                guard: None,
+                body: vec![AstNode::Pass { line: 3, col: 8, end_line: 3, end_col: 12 }],
+            }],
+            line: 1,
+            col: 0,
+            end_line: 3,
+            end_col: 12,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Delimiter { text, .. } if text == "{"))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Delimiter { text, .. } if text == "}"))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Identifier { text, .. } if text == "n"))
+        );
+    }
+
+    #[test]
+    fn test_match_with_class_pattern() {
+        use beacon_parser::MatchCase;
+        let node = AstNode::Match {
+            subject: Box::new(AstNode::Identifier {
+                name: "obj".to_string(),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 9,
+            }),
+            cases: vec![MatchCase {
+                pattern: Pattern::MatchClass {
+                    cls: "Point".to_string(),
+                    patterns: vec![
+                        Pattern::MatchValue(AstNode::Literal {
+                            value: beacon_parser::LiteralValue::Integer(0),
+                            line: 2,
+                            col: 16,
+                            end_line: 2,
+                            end_col: 17,
+                        }),
+                        Pattern::MatchValue(AstNode::Literal {
+                            value: beacon_parser::LiteralValue::Integer(0),
+                            line: 2,
+                            col: 19,
+                            end_line: 2,
+                            end_col: 20,
+                        }),
+                    ],
+                },
+                guard: None,
+                body: vec![AstNode::Pass { line: 3, col: 8, end_line: 3, end_col: 12 }],
+            }],
+            line: 1,
+            col: 0,
+            end_line: 3,
+            end_col: 12,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Identifier { text, .. } if text == "Point"))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Delimiter { text, .. } if text == "("))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Delimiter { text, .. } if text == ")"))
+        );
+    }
+
+    #[test]
+    fn test_match_with_as_pattern() {
+        use beacon_parser::MatchCase;
+        let node = AstNode::Match {
+            subject: Box::new(AstNode::Identifier {
+                name: "value".to_string(),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 11,
+            }),
+            cases: vec![MatchCase {
+                pattern: Pattern::MatchAs {
+                    pattern: Some(Box::new(Pattern::MatchValue(AstNode::Literal {
+                        value: beacon_parser::LiteralValue::Integer(42),
+                        line: 2,
+                        col: 9,
+                        end_line: 2,
+                        end_col: 11,
+                    }))),
+                    name: Some("x".to_string()),
+                },
+                guard: None,
+                body: vec![AstNode::Pass { line: 3, col: 8, end_line: 3, end_col: 12 }],
+            }],
+            line: 1,
+            col: 0,
+            end_line: 3,
+            end_col: 12,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "as"))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Identifier { text, .. } if text == "x"))
+        );
+    }
+
+    #[test]
+    fn test_match_with_wildcard_pattern() {
+        use beacon_parser::MatchCase;
+        let node = AstNode::Match {
+            subject: Box::new(AstNode::Identifier {
+                name: "value".to_string(),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 11,
+            }),
+            cases: vec![MatchCase {
+                pattern: Pattern::MatchAs { pattern: None, name: None },
+                guard: None,
+                body: vec![AstNode::Pass { line: 3, col: 8, end_line: 3, end_col: 12 }],
+            }],
+            line: 1,
+            col: 0,
+            end_line: 3,
+            end_col: 12,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Identifier { text, .. } if text == "_"))
+        );
+    }
+
+    #[test]
+    fn test_match_with_or_pattern() {
+        use beacon_parser::MatchCase;
+        let node = AstNode::Match {
+            subject: Box::new(AstNode::Identifier {
+                name: "value".to_string(),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 11,
+            }),
+            cases: vec![MatchCase {
+                pattern: Pattern::MatchOr(vec![
+                    Pattern::MatchValue(AstNode::Literal {
+                        value: beacon_parser::LiteralValue::Integer(1),
+                        line: 2,
+                        col: 9,
+                        end_line: 2,
+                        end_col: 10,
+                    }),
+                    Pattern::MatchValue(AstNode::Literal {
+                        value: beacon_parser::LiteralValue::Integer(2),
+                        line: 2,
+                        col: 13,
+                        end_line: 2,
+                        end_col: 14,
+                    }),
+                ]),
+                guard: None,
+                body: vec![AstNode::Pass { line: 3, col: 8, end_line: 3, end_col: 12 }],
+            }],
+            line: 1,
+            col: 0,
+            end_line: 3,
+            end_col: 12,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Operator { text, .. } if text == "|"))
+        );
+    }
+
+    #[test]
+    fn test_raise_tokens() {
+        let node = AstNode::Raise {
+            exc: Some(Box::new(AstNode::Call {
+                function: "ValueError".to_string(),
+                args: vec![],
+                keywords: vec![],
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 18,
+            })),
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 18,
+        };
+
+        let stream = TokenStream::from_ast(&node);
+        let tokens: Vec<Token> = stream.collect();
+        assert!(
+            tokens
+                .iter()
+                .any(|t| matches!(t, Token::Keyword { text, .. } if text == "raise"))
         );
     }
 }

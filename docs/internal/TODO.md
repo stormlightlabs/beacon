@@ -246,8 +246,8 @@ Added `FormatterConfig` to main LSP `Config` with full LSP/TOML support for all 
 - [ ] Unit tests for each formatting rule (whitespace, indentation, imports, etc.)
 - [ ] Idempotency tests (format(format(x)) == format(x))
 - [ ] AST preservation tests (parse(format(code)) == parse(code) modulo whitespace)
-- [ ] Integration tests with LSP protocol
 - [ ] Range formatting tests (partial document formatting)
+- [ ] Integration tests with LSP protocol
 - [ ] Performance benchmarks:
     - [ ] Small files (<100 lines): <10ms
     - [ ] Medium files (100-1000 lines): <100ms
