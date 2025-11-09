@@ -98,7 +98,9 @@ impl Formatter {
         let token_stream = TokenStream::from_ast_with_comments(&filtered_node, &comments);
         let mut writer = FormattedWriter::new(&self.config);
 
-        for token in token_stream {
+        let mut tokens = token_stream.peekable();
+        while let Some(token) = tokens.next() {
+            writer.set_next_token(tokens.peek());
             writer.write_token(&token);
         }
 

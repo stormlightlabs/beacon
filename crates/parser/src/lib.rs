@@ -1051,6 +1051,20 @@ impl PythonParser {
                     default_value: None,
                 }))
             }
+            "list_splat_pattern" | "dictionary_splat_pattern" => {
+                let arg_text = node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
+                let start_position = node.start_position();
+                let end_position = node.end_position();
+                Ok(Some(Parameter {
+                    name: arg_text.to_string(),
+                    line: start_position.row + 1,
+                    col: start_position.column + 1,
+                    end_line: end_position.row + 1,
+                    end_col: end_position.column + 1,
+                    type_annotation: None,
+                    default_value: None,
+                }))
+            }
             "typed_parameter" | "typed_default_parameter" => {
                 let mut name = None;
                 let mut type_annotation = None;
@@ -2171,7 +2185,7 @@ impl PythonParser {
                     }
 
                     match child.kind() {
-                        "{" | "}" | "," => continue,
+                        "{" | "}" | "," | ":" => continue,
                         "case_pattern" => {
                             let pattern = self.extract_pattern(&child, source)?;
                             if let Some(key) = pending_key.take() {

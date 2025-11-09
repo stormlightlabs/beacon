@@ -41,7 +41,6 @@ class User(models.Model):
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("from django.db import models"));
     assert!(formatted.contains("class User(models.Model):"));
     assert!(formatted.contains("def __str__(self):"));
@@ -68,7 +67,6 @@ async def read_item(item_id:int,q:Optional[str]=None):
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("from fastapi import FastAPI, Depends, HTTPException"));
     assert!(formatted.contains("name: str"));
     assert!(formatted.contains("description: Optional[str] = None"));
@@ -90,7 +88,6 @@ def filter_data(items:list,threshold:int)->list:
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("def process_items(data: list) -> list:"));
     assert!(formatted.contains("result = []"));
     assert!(formatted.contains("if item > 0:"));
@@ -121,7 +118,6 @@ class AsyncDatabase:
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("def __init__(self, url: str):"));
     assert!(formatted.contains("async def __aenter__(self):"));
     assert!(formatted.contains("async def __aexit__(self, exc_type, exc_val, exc_tb):"));
@@ -143,7 +139,6 @@ fn test_nested_comprehensions() {
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("matrix = [[i * j for j in range(5)] for i in range(5)]"));
     assert!(formatted.contains("flattened = [item for row in matrix for item in row]"));
     assert!(formatted.contains("filtered = {x for x in flattened if x % 2 == 0}"));
@@ -167,7 +162,6 @@ class Product:
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("from dataclasses import dataclass"));
     assert!(formatted.contains("@dataclass"));
     assert!(formatted.contains("name: str"));
@@ -204,7 +198,6 @@ def cleanup():
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("logger = logging.getLogger(__name__)"));
     assert!(formatted.contains("def process_data(data: dict) -> dict:"));
     assert!(formatted.contains("except ValueError as e:"));
@@ -230,7 +223,6 @@ class Dog(Animal):
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("def __init__(self, name: str):"));
     assert!(formatted.contains("def speak(self) -> str:"));
     assert!(formatted.contains("class Dog(Animal):"));
@@ -252,7 +244,6 @@ def compute():
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("def timer(func):"));
     assert!(formatted.contains("def wrapper():"));
     assert!(formatted.contains("@timer"));
@@ -278,7 +269,6 @@ def find_item(items:List[int],target:int)->Optional[int]:
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("from typing import Union, Optional, List, Dict"));
     assert!(formatted.contains("def parse_value(value: Union[str, int]) -> int:"));
     assert!(formatted.contains("def find_item(items: List[int], target: int) -> Optional[int]:"));
@@ -306,7 +296,6 @@ def read_file(filename:str)->str:
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("def __init__(self, filename: str):"));
     assert!(formatted.contains("def __enter__(self):"));
     assert!(formatted.contains("def __exit__(self, exc_type, exc_val, exc_tb):"));
@@ -324,7 +313,6 @@ fn test_string_formatting() {
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("def format_message(name: str, age: int) -> str:"));
     assert!(formatted.contains("basic = f\"Hello {name}\""));
     assert!(formatted.contains("detailed = f\"{name} is {age} years old\""));
@@ -354,7 +342,6 @@ def loop_example(items:list):
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("if value < 0:"));
     assert!(formatted.contains("elif value == 0:"));
     assert!(formatted.contains("for item in items:"));
@@ -375,7 +362,6 @@ def main():
 "#;
 
     let formatted = format_code(source);
-
     let os_pos = formatted.find("import os").unwrap();
     let sys_pos = formatted.find("import sys").unwrap();
     assert!(os_pos < sys_pos, "Imports should be alphabetically sorted");
@@ -410,7 +396,6 @@ class APIClient:
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("def __init__(self, base_url: str):"));
     assert!(formatted.contains("async def __aenter__(self):"));
     assert!(formatted.contains("async def get(self, endpoint: str) -> Dict:"));
@@ -432,7 +417,6 @@ fn test_dictionary_and_list_operations() {
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("data = {\"name\": \"Alice\", \"age\": 30, \"city\": \"NYC\"}"));
     assert!(formatted.contains("numbers = [1, 2, 3, 4, 5]"));
     assert!(formatted.contains("filtered = [x for x in numbers if x > 2]"));
@@ -454,10 +438,69 @@ def process_chunks(data:list,size:int):
 "#;
 
     let formatted = format_code(source);
-
     assert!(formatted.contains("def fibonacci(n: int):"));
     assert!(formatted.contains("a, b = 0, 1"));
     assert!(formatted.contains("yield a"));
     assert!(formatted.contains("def process_chunks(data: list, size: int):"));
     assert_idempotent(source, "Generators and yield");
+}
+
+#[test]
+fn test_walrus_operator_patterns() {
+    let source = r#"while (line:=f.readline()):
+    process(line)
+
+if (n:=len(data))>10:
+    print(f"Large dataset: {n}")
+"#;
+
+    let formatted = format_code(source);
+    let expected = r#"while (line := f.readline()):
+    process(line)
+if (n := len(data)) > 10:
+    print(f"Large dataset: {n}")"#;
+
+    assert_eq!(
+        formatted, expected,
+        "Walrus formatting should normalize spaces and structure"
+    );
+    assert_idempotent(source, "Walrus operator");
+}
+
+#[test]
+fn test_match_statement_python310() {
+    let source = r#"match command:
+    case {"action":"create","name":name}:
+        return create_item(name)
+    case {"action":"delete","id":item_id}:
+        return delete_item(item_id)
+    case _:
+        return "Unknown action"
+"#;
+
+    let formatted = format_code(source);
+    assert!(formatted.contains("match command:"));
+    assert!(formatted.contains(r#"case {"action": "create", "name": name}:"#));
+    assert!(formatted.contains(r#"case {"action": "delete", "id": item_id}:"#));
+    assert_idempotent(source, "Match statement with dict patterns");
+}
+
+#[test]
+fn test_decorator_patterns() {
+    let source = r#"def timer(func):
+    def wrapper(*args,**kwargs):
+        result=func(*args,**kwargs)
+        return result
+    return wrapper
+
+@timer
+def compute(x:int,y:int,*extras,**options):
+    return x+y
+"#;
+
+    let formatted = format_code(source);
+    assert!(formatted.contains("def wrapper(*args, **kwargs):"));
+    assert!(formatted.contains("result = func(*args, **kwargs)"));
+    assert!(formatted.contains("def compute(x: int, y: int, *extras, **options):"));
+    assert_idempotent(source, "Decorator patterns with args/kwargs");
 }

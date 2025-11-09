@@ -339,12 +339,15 @@ impl TokenGenerator {
 
                 let mut last_import_category: Option<ImportCategory> = None;
                 let mut previous_was_import = false;
+                let mut previous_line: Option<usize> = None;
+
                 for stmt in &body[start_index..] {
+                    let current_line = Self::node_start_line(stmt);
+
                     if let Some(category) = Self::import_category(stmt) {
                         if let Some(prev) = last_import_category {
                             if prev != category {
-                                let line = Self::node_start_line(stmt);
-                                self.tokens.push(Token::Newline { line });
+                                self.tokens.push(Token::Newline { line: current_line });
                             }
                         }
                         last_import_category = Some(category);
@@ -356,18 +359,26 @@ impl TokenGenerator {
                         && !matches!(stmt, AstNode::Import { .. } | AstNode::ImportFrom { .. })
                         && !Self::is_top_level_definition(stmt)
                     {
-                        let line = Self::node_start_line(stmt);
-                        self.tokens.push(Token::Newline { line });
+                        self.tokens.push(Token::Newline { line: current_line });
                     }
 
                     if !first_stmt && Self::is_top_level_definition(stmt) {
-                        let line = Self::node_start_line(stmt);
-                        self.tokens.push(Token::Newline { line });
-                        self.tokens.push(Token::Newline { line });
+                        self.tokens.push(Token::Newline { line: current_line });
+                        self.tokens.push(Token::Newline { line: current_line });
                     }
+
+                    if !first_stmt && !Self::is_top_level_definition(stmt) {
+                        if let Some(prev_line) = previous_line {
+                            if current_line > prev_line + 1 {
+                                self.tokens.push(Token::Newline { line: current_line });
+                            }
+                        }
+                    }
+
                     self.visit_node(stmt);
                     first_stmt = false;
                     previous_was_import = matches!(stmt, AstNode::Import { .. } | AstNode::ImportFrom { .. });
+                    previous_line = Some(current_line);
                 }
             }
             AstNode::FunctionDef { name, args, body, return_type, decorators, is_async, line, col, .. } => {
@@ -400,8 +411,30 @@ impl TokenGenerator {
                 self.tokens
                     .push(Token::Delimiter { text: "(".to_string(), line: *line, col: *col });
                 for (i, param) in args.iter().enumerate() {
-                    self.tokens
-                        .push(Token::Identifier { text: param.name.clone(), line: param.line, col: param.col });
+                    if param.name.starts_with("**") {
+                        self.tokens
+                            .push(Token::Operator { text: "**".to_string(), line: param.line, col: param.col });
+                        self.tokens.push(Token::Identifier {
+                            text: param.name[2..].to_string(),
+                            line: param.line,
+                            col: param.col + 2,
+                        });
+                    } else if param.name.starts_with('*') {
+                        self.tokens
+                            .push(Token::Operator { text: "*".to_string(), line: param.line, col: param.col });
+                        self.tokens.push(Token::Identifier {
+                            text: param.name[1..].to_string(),
+                            line: param.line,
+                            col: param.col + 1,
+                        });
+                    } else {
+                        self.tokens.push(Token::Identifier {
+                            text: param.name.clone(),
+                            line: param.line,
+                            col: param.col,
+                        });
+                    }
+
                     if let Some(annotation) = &param.type_annotation {
                         self.tokens
                             .push(Token::Delimiter { text: ":".to_string(), line: param.line, col: param.col });
@@ -1144,8 +1177,30 @@ impl TokenGenerator {
                 self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
 
                 for (i, param) in args.iter().enumerate() {
-                    self.tokens
-                        .push(Token::Identifier { text: param.name.clone(), line: param.line, col: param.col });
+                    if param.name.starts_with("**") {
+                        self.tokens
+                            .push(Token::Operator { text: "**".to_string(), line: param.line, col: param.col });
+                        self.tokens.push(Token::Identifier {
+                            text: param.name[2..].to_string(),
+                            line: param.line,
+                            col: param.col + 2,
+                        });
+                    } else if param.name.starts_with('*') {
+                        self.tokens
+                            .push(Token::Operator { text: "*".to_string(), line: param.line, col: param.col });
+                        self.tokens.push(Token::Identifier {
+                            text: param.name[1..].to_string(),
+                            line: param.line,
+                            col: param.col + 1,
+                        });
+                    } else {
+                        self.tokens.push(Token::Identifier {
+                            text: param.name.clone(),
+                            line: param.line,
+                            col: param.col,
+                        });
+                    }
+
                     if i < args.len() - 1 {
                         self.tokens
                             .push(Token::Delimiter { text: ",".to_string(), line: param.line, col: param.col });
