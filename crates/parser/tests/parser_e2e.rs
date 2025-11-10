@@ -1,4 +1,4 @@
-use beacon_parser::{AstNode, BinaryOperator, CompareOperator, LiteralValue, PythonParser, UnaryOperator};
+use beacon_parser::{AstNode, BinaryOperator, CompareOperator, LiteralValue, Pattern, PythonParser, UnaryOperator};
 
 /// Helper function to parse and return the AST
 fn parse_to_ast(source: &str) -> AstNode {
@@ -909,5 +909,675 @@ fn test_mixed_call_and_attribute_chain() {
             _ => panic!("Expected Call for final()"),
         },
         _ => panic!("Expected Assignment"),
+    }
+}
+
+// ============================================================================
+// Pattern Matching (3.10+)
+// ============================================================================
+
+#[test]
+fn test_basic_match_statement() {
+    let source = r#"match value:
+    case 1:
+        result = "one"
+    case 2:
+        result = "two""#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::Match { subject, cases, .. } => {
+            assert!(matches!(*subject, AstNode::Identifier { name, .. } if name == "value"));
+            assert_eq!(cases.len(), 2, "Should have two cases");
+
+            match &cases[0].pattern {
+                Pattern::MatchValue(node) => {
+                    assert!(matches!(node, AstNode::Literal { value: LiteralValue::Integer(1), .. }));
+                }
+                _ => panic!("Expected MatchValue pattern for first case"),
+            }
+
+            match &cases[1].pattern {
+                Pattern::MatchValue(node) => {
+                    assert!(matches!(node, AstNode::Literal { value: LiteralValue::Integer(2), .. }));
+                }
+                _ => panic!("Expected MatchValue pattern for second case"),
+            }
+
+            assert_eq!(cases[0].body.len(), 1);
+            assert_eq!(cases[1].body.len(), 1);
+            assert!(cases[0].guard.is_none());
+            assert!(cases[1].guard.is_none());
+        }
+        _ => panic!("Expected Match statement"),
+    }
+}
+
+#[test]
+fn test_match_with_sequence_pattern() {
+    let source = r#"match point:
+    case [x, y]:
+        distance = (x**2 + y**2) ** 0.5"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::Match { subject, cases, .. } => {
+            assert!(matches!(*subject, AstNode::Identifier { name, .. } if name == "point"));
+            assert_eq!(cases.len(), 1);
+
+            match &cases[0].pattern {
+                Pattern::MatchSequence(patterns) => {
+                    assert_eq!(patterns.len(), 2);
+                }
+                _ => panic!("Expected MatchSequence pattern"),
+            }
+
+            assert_eq!(cases[0].body.len(), 1);
+            assert!(cases[0].guard.is_none());
+        }
+        _ => panic!("Expected Match statement"),
+    }
+}
+
+#[test]
+fn test_pattern_matching_with_guards() {
+    let source = r#"match value:
+    case x if x > 0:
+        result = "positive"
+    case x if x < 0:
+        result = "negative""#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::Match { cases, .. } => {
+            assert_eq!(cases.len(), 2);
+
+            assert!(cases[0].guard.is_some(), "First case should have a guard");
+            assert!(cases[1].guard.is_some(), "Second case should have a guard");
+
+            match &cases[0].guard {
+                Some(guard) => {
+                    assert!(matches!(guard, AstNode::Compare { .. }));
+                }
+                None => panic!("Expected guard on first case"),
+            }
+
+            match &cases[1].guard {
+                Some(guard) => {
+                    assert!(matches!(guard, AstNode::Compare { .. }));
+                }
+                None => panic!("Expected guard on second case"),
+            }
+        }
+        _ => panic!("Expected Match statement"),
+    }
+}
+
+#[test]
+fn test_nested_patterns() {
+    let source = r#"match data:
+    case [1, [2, 3]]:
+        result = "nested"
+    case [[a, b], [c, d]]:
+        result = "matrix""#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::Match { cases, .. } => {
+            assert_eq!(cases.len(), 2);
+
+            match &cases[0].pattern {
+                Pattern::MatchSequence(patterns) => {
+                    assert_eq!(patterns.len(), 2);
+                    match &patterns[1] {
+                        Pattern::MatchSequence(inner) => {
+                            assert_eq!(inner.len(), 2, "Nested sequence should have 2 elements");
+                        }
+                        _ => panic!("Expected nested MatchSequence pattern"),
+                    }
+                }
+                _ => panic!("Expected MatchSequence for first case"),
+            }
+
+            match &cases[1].pattern {
+                Pattern::MatchSequence(patterns) => {
+                    assert_eq!(patterns.len(), 2);
+                    match &patterns[0] {
+                        Pattern::MatchSequence(inner) => {
+                            assert_eq!(inner.len(), 2);
+                        }
+                        _ => panic!("Expected nested MatchSequence"),
+                    }
+                    match &patterns[1] {
+                        Pattern::MatchSequence(inner) => {
+                            assert_eq!(inner.len(), 2);
+                        }
+                        _ => panic!("Expected nested MatchSequence"),
+                    }
+                }
+                _ => panic!("Expected MatchSequence for second case"),
+            }
+        }
+        _ => panic!("Expected Match statement"),
+    }
+}
+
+#[test]
+fn test_multiple_match_cases() {
+    let source = r#"match command:
+    case "quit":
+        exit()
+    case "help":
+        show_help()
+    case "start":
+        start_game()
+    case _:
+        unknown_command()"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::Match { cases, .. } => {
+            assert_eq!(cases.len(), 4, "Should have four cases");
+
+            for (i, case) in cases[0..3].iter().enumerate() {
+                match &case.pattern {
+                    Pattern::MatchValue(node) => {
+                        assert!(matches!(
+                            node,
+                            AstNode::Literal { value: LiteralValue::String { .. }, .. }
+                        ));
+                    }
+                    _ => panic!("Case {i} should have MatchValue pattern"),
+                }
+                assert_eq!(case.body.len(), 1);
+            }
+
+            match &cases[3].pattern {
+                Pattern::MatchAs { pattern, name } => {
+                    assert!(pattern.is_none(), "Wildcard should have no sub-pattern");
+                    assert!(name.is_none(), "Wildcard _ should have no binding");
+                }
+                _ => panic!("Last case should be wildcard MatchAs"),
+            }
+        }
+        _ => panic!("Expected Match statement"),
+    }
+}
+
+#[test]
+fn test_match_with_or_patterns() {
+    let source = r#"match value:
+    case 1 | 2 | 3:
+        result = "small number""#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::Match { cases, .. } => {
+            assert_eq!(cases.len(), 1);
+
+            match &cases[0].pattern {
+                Pattern::MatchOr(patterns) => {
+                    assert_eq!(patterns.len(), 3, "Or pattern should have 3 alternatives");
+                }
+                _ => panic!("Expected MatchOr pattern"),
+            }
+        }
+        _ => panic!("Expected Match statement"),
+    }
+}
+
+#[test]
+fn test_match_with_mapping_pattern() {
+    let source = r#"match config:
+    case {"mode": "debug"}:
+        enable_debug()"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::Match { cases, .. } => {
+            assert_eq!(cases.len(), 1);
+
+            match &cases[0].pattern {
+                Pattern::MatchMapping { keys, patterns } => {
+                    assert_eq!(keys.len(), 1);
+                    assert_eq!(patterns.len(), 1);
+                }
+                _ => panic!("Expected MatchMapping pattern"),
+            }
+        }
+        _ => panic!("Expected Match statement"),
+    }
+}
+
+#[test]
+fn test_match_with_capture_pattern() {
+    let source = r#"match value:
+    case 1:
+        result = "one"
+    case x:
+        result = x"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::Match { cases, .. } => {
+            assert_eq!(cases.len(), 2);
+
+            match &cases[0].pattern {
+                Pattern::MatchValue(_) => {}
+                _ => panic!("First case should be MatchValue"),
+            }
+
+            match &cases[1].pattern {
+                Pattern::MatchAs { pattern, name } => {
+                    assert!(pattern.is_none(), "Capture pattern should have no sub-pattern");
+                    assert_eq!(name.as_deref(), Some("x"), "Should capture to variable 'x'");
+                }
+                _ => panic!("Second case should be capture MatchAs"),
+            }
+        }
+        _ => panic!("Expected Match statement"),
+    }
+}
+
+#[test]
+fn test_match_with_as_pattern() {
+    let source = r#"match point:
+    case [x, y] as p:
+        distance = (x**2 + y**2) ** 0.5"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::Match { cases, .. } => {
+            assert_eq!(cases.len(), 1);
+
+            match &cases[0].pattern {
+                Pattern::MatchAs { pattern, name } => {
+                    assert!(pattern.is_some(), "Should have sub-pattern");
+                    assert_eq!(name.as_deref(), Some("p"), "Should bind to 'p'");
+
+                    match pattern.as_deref() {
+                        Some(Pattern::MatchSequence(patterns)) => {
+                            assert_eq!(patterns.len(), 2);
+                        }
+                        _ => panic!("Sub-pattern should be MatchSequence"),
+                    }
+                }
+                _ => panic!("Expected MatchAs pattern"),
+            }
+        }
+        _ => panic!("Expected Match statement"),
+    }
+}
+
+#[test]
+fn test_complex_match_with_guards_and_nested_patterns() {
+    let source = r#"match data:
+    case [x, y] if x > y:
+        result = "first larger"
+    case [x, [y, z]] if y == z:
+        result = "nested equal"
+    case _:
+        result = "default""#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::Match { cases, .. } => {
+            assert_eq!(cases.len(), 3);
+
+            match &cases[0].pattern {
+                Pattern::MatchSequence(patterns) => {
+                    assert_eq!(patterns.len(), 2);
+                }
+                _ => panic!("First case should be MatchSequence"),
+            }
+            assert!(cases[0].guard.is_some(), "First case should have guard");
+
+            match &cases[1].pattern {
+                Pattern::MatchSequence(patterns) => {
+                    assert_eq!(patterns.len(), 2);
+                    match &patterns[1] {
+                        Pattern::MatchSequence(inner) => {
+                            assert_eq!(inner.len(), 2);
+                        }
+                        _ => panic!("Second element should be nested MatchSequence"),
+                    }
+                }
+                _ => panic!("Second case should be MatchSequence"),
+            }
+            assert!(cases[1].guard.is_some(), "Second case should have guard");
+
+            match &cases[2].pattern {
+                Pattern::MatchAs { pattern, name } => {
+                    assert!(pattern.is_none());
+                    assert!(name.is_none());
+                }
+                _ => panic!("Third case should be wildcard"),
+            }
+            assert!(cases[2].guard.is_none(), "Wildcard case should not have guard");
+        }
+        _ => panic!("Expected Match statement"),
+    }
+}
+
+// ============================================================================
+// Type Annotations
+// ============================================================================
+
+#[test]
+fn test_function_parameter_annotations_simple() {
+    let source = r#"def greet(name: str, age: int):
+    pass"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::FunctionDef { args, .. } => {
+            assert_eq!(args.len(), 2);
+
+            assert_eq!(args[0].name, "name");
+            assert_eq!(args[0].type_annotation, Some("str".to_string()));
+
+            assert_eq!(args[1].name, "age");
+            assert_eq!(args[1].type_annotation, Some("int".to_string()));
+        }
+        _ => panic!("Expected FunctionDef"),
+    }
+}
+
+#[test]
+fn test_function_parameter_annotations_generic() {
+    let source = r#"def process(items: List[str], mapping: Dict[str, int]):
+    pass"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::FunctionDef { args, .. } => {
+            assert_eq!(args.len(), 2);
+
+            assert_eq!(args[0].name, "items");
+            assert_eq!(args[0].type_annotation, Some("List[str]".to_string()));
+
+            assert_eq!(args[1].name, "mapping");
+            assert_eq!(args[1].type_annotation, Some("Dict[str, int]".to_string()));
+        }
+        _ => panic!("Expected FunctionDef"),
+    }
+}
+
+#[test]
+fn test_function_parameter_annotations_mixed() {
+    let source = r#"def func(a: int, b, c: str = "default"):
+    pass"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::FunctionDef { args, .. } => {
+            assert_eq!(args.len(), 3);
+
+            assert_eq!(args[0].name, "a");
+            assert_eq!(args[0].type_annotation, Some("int".to_string()));
+            assert!(args[0].default_value.is_none());
+
+            assert_eq!(args[1].name, "b");
+            assert_eq!(args[1].type_annotation, None, "Parameter b should not have annotation");
+            assert!(args[1].default_value.is_none());
+
+            assert_eq!(args[2].name, "c");
+            assert_eq!(args[2].type_annotation, Some("str".to_string()));
+            assert!(args[2].default_value.is_some(), "Parameter c should have default value");
+        }
+        _ => panic!("Expected FunctionDef"),
+    }
+}
+
+#[test]
+fn test_return_type_annotation_simple() {
+    let source = r#"def calculate() -> int:
+    return 42"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::FunctionDef { return_type, .. } => {
+            assert_eq!(return_type, Some("int".to_string()));
+        }
+        _ => panic!("Expected FunctionDef"),
+    }
+}
+
+#[test]
+fn test_return_type_annotation_generic() {
+    let source = r#"def get_items() -> List[int]:
+    return [1, 2, 3]"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::FunctionDef { return_type, .. } => {
+            assert_eq!(return_type, Some("List[int]".to_string()));
+        }
+        _ => panic!("Expected FunctionDef"),
+    }
+}
+
+#[test]
+fn test_return_type_annotation_complex() {
+    let source = r#"def get_mapping() -> Dict[str, List[int]]:
+    return {}"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::FunctionDef { return_type, .. } => {
+            assert_eq!(return_type, Some("Dict[str, List[int]]".to_string()));
+        }
+        _ => panic!("Expected FunctionDef"),
+    }
+}
+
+#[test]
+fn test_return_type_annotation_pep585() {
+    let source = r#"def modern_syntax() -> list[str]:
+    return []"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::FunctionDef { return_type, .. } => {
+            assert_eq!(return_type, Some("list[str]".to_string()));
+        }
+        _ => panic!("Expected FunctionDef"),
+    }
+}
+
+#[test]
+fn test_function_full_annotations() {
+    let source = r#"def process(data: List[str], count: int = 10) -> Dict[str, int]:
+    return {}"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::FunctionDef { name, args, return_type, .. } => {
+            assert_eq!(name, "process");
+            assert_eq!(args.len(), 2);
+
+            assert_eq!(args[0].name, "data");
+            assert_eq!(args[0].type_annotation, Some("List[str]".to_string()));
+            assert!(args[0].default_value.is_none());
+
+            assert_eq!(args[1].name, "count");
+            assert_eq!(args[1].type_annotation, Some("int".to_string()));
+            assert!(args[1].default_value.is_some());
+
+            assert_eq!(return_type, Some("Dict[str, int]".to_string()));
+        }
+        _ => panic!("Expected FunctionDef"),
+    }
+}
+
+#[test]
+fn test_generic_types_with_single_parameter() {
+    let source = r#"def func(items: List[int]):
+    pass"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::FunctionDef { args, .. } => {
+            assert_eq!(args[0].type_annotation, Some("List[int]".to_string()));
+        }
+        _ => panic!("Expected FunctionDef"),
+    }
+}
+
+#[test]
+fn test_generic_types_with_multiple_parameters() {
+    let source = r#"def func(data: Dict[str, int]):
+    pass"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::FunctionDef { args, .. } => {
+            assert_eq!(args[0].type_annotation, Some("Dict[str, int]".to_string()));
+        }
+        _ => panic!("Expected FunctionDef"),
+    }
+}
+
+#[test]
+fn test_generic_types_nested() {
+    let source = r#"def func(data: List[Dict[str, int]]):
+    pass"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::FunctionDef { args, .. } => {
+            assert_eq!(args[0].type_annotation, Some("List[Dict[str, int]]".to_string()));
+        }
+        _ => panic!("Expected FunctionDef"),
+    }
+}
+
+#[test]
+fn test_generic_types_pep585_lowercase() {
+    let source = r#"def modern(data: list[int], mapping: dict[str, int]):
+    pass"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::FunctionDef { args, .. } => {
+            assert_eq!(args.len(), 2);
+            assert_eq!(args[0].type_annotation, Some("list[int]".to_string()));
+            assert_eq!(args[1].type_annotation, Some("dict[str, int]".to_string()));
+        }
+        _ => panic!("Expected FunctionDef"),
+    }
+}
+
+#[test]
+fn test_typevar_simple_declaration() {
+    let source = r#"T = TypeVar("T")"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::Assignment { target, value, .. } => {
+            assert!(matches!(*target, AstNode::Identifier { name, .. } if name == "T"));
+            match *value {
+                AstNode::Call { function, args, .. } => {
+                    assert!(matches!(*function, AstNode::Identifier { name, .. } if name == "TypeVar"));
+                    assert_eq!(args.len(), 1);
+                    assert!(matches!(
+                        args[0],
+                        AstNode::Literal { value: LiteralValue::String { value: ref s, .. }, .. } if s == "T"
+                    ));
+                }
+                _ => panic!("Expected Call to TypeVar"),
+            }
+        }
+        _ => panic!("Expected Assignment"),
+    }
+}
+
+#[test]
+fn test_typevar_constrained() {
+    let source = r#"T = TypeVar("T", int, str)"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::Assignment { target, value, .. } => {
+            assert!(matches!(*target, AstNode::Identifier { name, .. } if name == "T"));
+            match *value {
+                AstNode::Call { function, args, .. } => {
+                    assert!(matches!(*function, AstNode::Identifier { name, .. } if name == "TypeVar"));
+                    assert_eq!(args.len(), 3, "Should have name + 2 constraints");
+                }
+                _ => panic!("Expected Call to TypeVar"),
+            }
+        }
+        _ => panic!("Expected Assignment"),
+    }
+}
+
+#[test]
+fn test_typevar_with_bound() {
+    let source = r#"T = TypeVar("T", bound=BaseClass)"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::Assignment { target, value, .. } => {
+            assert!(matches!(*target, AstNode::Identifier { name, .. } if name == "T"));
+            match *value {
+                AstNode::Call { function, args, keywords, .. } => {
+                    assert!(matches!(*function, AstNode::Identifier { name, .. } if name == "TypeVar"));
+                    assert_eq!(args.len(), 1, "Should have just the name as positional arg");
+                    assert_eq!(keywords.len(), 1, "Should have one keyword argument");
+                    assert_eq!(keywords[0].0, "bound", "Keyword should be 'bound'");
+                    assert!(matches!(keywords[0].1, AstNode::Identifier { name: ref n, .. } if n == "BaseClass"));
+                }
+                _ => panic!("Expected Call to TypeVar"),
+            }
+        }
+        _ => panic!("Expected Assignment"),
+    }
+}
+
+#[test]
+fn test_variable_annotation() {
+    let source = r#"x: int = 5"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::AnnotatedAssignment { target, type_annotation, value, .. } => {
+            assert!(matches!(*target, AstNode::Identifier { name, .. } if name == "x"));
+            assert_eq!(type_annotation, "int");
+            assert!(value.is_some());
+            match value.unwrap().as_ref() {
+                AstNode::Literal { value: LiteralValue::Integer(5), .. } => {}
+                _ => panic!("Expected Integer literal with value 5"),
+            }
+        }
+        _ => panic!("Expected AnnotatedAssignment"),
+    }
+}
+
+#[test]
+fn test_variable_annotation_without_value() {
+    let source = r#"y: str"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::AnnotatedAssignment { target, type_annotation, value, .. } => {
+            assert!(matches!(*target, AstNode::Identifier { name, .. } if name == "y"));
+            assert_eq!(type_annotation, "str");
+            assert!(value.is_none(), "Should have no initial value");
+        }
+        _ => panic!("Expected AnnotatedAssignment"),
+    }
+}
+
+#[test]
+fn test_variable_annotation_generic() {
+    let source = r#"items: List[int] = []"#;
+
+    let ast = parse_to_ast(source);
+    match extract_first_stmt(ast) {
+        AstNode::AnnotatedAssignment { type_annotation, .. } => {
+            assert_eq!(type_annotation, "List[int]");
+        }
+        _ => panic!("Expected AnnotatedAssignment"),
     }
 }

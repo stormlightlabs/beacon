@@ -62,17 +62,17 @@ None - all identified gaps have been resolved.
 
 ### Pattern Matching (3.10+)
 
-- [ ] Basic match statement
-- [ ] Pattern matching with guards
-- [ ] Nested patterns
-- [ ] Multiple match cases
+- [x] Basic match statement
+- [x] Pattern matching with guards
+- [x] Nested patterns
+- [x] Multiple match cases
 
 ### Type Annotations
 
-- [ ] Function parameter annotations
-- [ ] Return type annotations
-- [ ] Generic types with subscripts
-- [ ] TypeVar declarations
+- [x] Function parameter annotations
+- [x] Return type annotations
+- [x] Generic types with subscripts
+- [x] TypeVar declarations
 
 ### Comprehensions
 

@@ -5048,4 +5048,188 @@ with context_manager as value:
             _ => panic!("Expected module"),
         }
     }
+
+    #[test]
+    fn test_generic_type_annotations() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"def process(items: List[str], mapping: Dict[str, int]) -> List[int]:
+    pass"#;
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::FunctionDef { args, return_type, .. } => {
+                    assert_eq!(args.len(), 2);
+                    assert_eq!(args[0].name, "items");
+                    assert_eq!(args[0].type_annotation, Some("List[str]".to_string()));
+                    assert_eq!(args[1].name, "mapping");
+                    assert_eq!(args[1].type_annotation, Some("Dict[str, int]".to_string()));
+                    assert_eq!(return_type, &Some("List[int]".to_string()));
+                }
+                _ => panic!("Expected function definition"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_nested_generic_type_annotations() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"def complex_func(data: List[Dict[str, int]]) -> Dict[str, List[int]]:
+    pass"#;
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::FunctionDef { args, return_type, .. } => {
+                    assert_eq!(args.len(), 1);
+                    assert_eq!(args[0].name, "data");
+                    assert_eq!(args[0].type_annotation, Some("List[Dict[str, int]]".to_string()));
+                    assert_eq!(return_type, &Some("Dict[str, List[int]]".to_string()));
+                }
+                _ => panic!("Expected function definition"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_pep585_lowercase_generic_annotations() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"def modern(data: list[int], mapping: dict[str, int]) -> list[str]:
+    pass"#;
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::FunctionDef { args, return_type, .. } => {
+                    assert_eq!(args.len(), 2);
+                    assert_eq!(args[0].type_annotation, Some("list[int]".to_string()));
+                    assert_eq!(args[1].type_annotation, Some("dict[str, int]".to_string()));
+                    assert_eq!(return_type, &Some("list[str]".to_string()));
+                }
+                _ => panic!("Expected function definition"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_typevar_declaration() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"T = TypeVar("T")"#;
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { target, value, .. } => {
+                    match target.as_ref() {
+                        AstNode::Identifier { name, .. } => assert_eq!(name, "T"),
+                        _ => panic!("Expected identifier"),
+                    }
+                    match value.as_ref() {
+                        AstNode::Call { function, args, .. } => {
+                            match function.as_ref() {
+                                AstNode::Identifier { name, .. } => assert_eq!(name, "TypeVar"),
+                                _ => panic!("Expected TypeVar identifier"),
+                            }
+                            assert_eq!(args.len(), 1);
+                            match &args[0] {
+                                AstNode::Literal { value: LiteralValue::String { value: s, .. }, .. } => {
+                                    assert_eq!(s, "T");
+                                }
+                                _ => panic!("Expected string literal"),
+                            }
+                        }
+                        _ => panic!("Expected call"),
+                    }
+                }
+                _ => panic!("Expected assignment"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_typevar_constrained() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"T = TypeVar("T", int, str)"#;
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => match value.as_ref() {
+                    AstNode::Call { function, args, .. } => {
+                        match function.as_ref() {
+                            AstNode::Identifier { name, .. } => assert_eq!(name, "TypeVar"),
+                            _ => panic!("Expected TypeVar identifier"),
+                        }
+                        assert_eq!(args.len(), 3, "Should have name + 2 constraints");
+                    }
+                    _ => panic!("Expected call"),
+                },
+                _ => panic!("Expected assignment"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_typevar_with_keyword_bound() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"T = TypeVar("T", bound=BaseClass)"#;
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Assignment { value, .. } => match value.as_ref() {
+                    AstNode::Call { function, args, keywords, .. } => {
+                        match function.as_ref() {
+                            AstNode::Identifier { name, .. } => assert_eq!(name, "TypeVar"),
+                            _ => panic!("Expected TypeVar identifier"),
+                        }
+                        assert_eq!(args.len(), 1, "Should have just the name");
+                        assert_eq!(keywords.len(), 1, "Should have one keyword argument");
+                        assert_eq!(keywords[0].0, "bound");
+                        match &keywords[0].1 {
+                            AstNode::Identifier { name, .. } => assert_eq!(name, "BaseClass"),
+                            _ => panic!("Expected identifier for bound value"),
+                        }
+                    }
+                    _ => panic!("Expected call"),
+                },
+                _ => panic!("Expected assignment"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_annotated_assignment_with_generic_type() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = r#"items: List[int] = []"#;
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::AnnotatedAssignment { target, type_annotation, value, .. } => {
+                    match target.as_ref() {
+                        AstNode::Identifier { name, .. } => assert_eq!(name, "items"),
+                        _ => panic!("Expected identifier"),
+                    }
+                    assert_eq!(type_annotation, "List[int]");
+                    assert!(value.is_some());
+                }
+                _ => panic!("Expected annotated assignment"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
 }
