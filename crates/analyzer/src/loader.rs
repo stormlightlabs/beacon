@@ -297,138 +297,209 @@ pub fn extract_stub_classes_into_registry(
 /// Functions with @overload are signature declarations only; the function without @overload
 /// (if present) becomes the implementation signature.
 pub fn process_class_methods(body: &[AstNode], metadata: &mut ClassMetadata, ctx: &mut StubTypeContext) {
+    let methods_by_name = collect_methods(body, metadata, ctx);
+
+    for (method_name, method_infos) in methods_by_name {
+        handle_method_group(method_name, method_infos, metadata);
+    }
+}
+
+fn collect_methods(
+    body: &[AstNode],
+    metadata: &mut ClassMetadata,
+    ctx: &mut StubTypeContext,
+) -> HashMap<String, Vec<MethodInfo>> {
     let mut methods_by_name: HashMap<String, Vec<MethodInfo>> = HashMap::new();
 
     for stmt in body {
-        if let AstNode::AnnotatedAssignment { target, type_annotation, .. } = stmt {
-            if let Some(attr_type) = parse_type_annotation(type_annotation, ctx) {
-                metadata.add_field(target.target_to_string(), attr_type);
+        match stmt {
+            AstNode::AnnotatedAssignment { target, type_annotation, .. } => {
+                add_field_from_annotation(metadata, ctx, target, type_annotation);
             }
-            continue;
-        }
-
-        if let AstNode::FunctionDef { name: method_name, args: params, return_type, decorators, .. } = stmt {
-            let mut param_list: Vec<(String, beacon_core::Type)> = Vec::new();
-
-            let has_self = params.first().map(|p| p.name == "self").unwrap_or(false);
-            let has_cls = params.first().map(|p| p.name == "cls").unwrap_or(false);
-
-            if has_self {
-                param_list.push(("self".to_string(), beacon_core::Type::any()));
-            } else if has_cls {
-                param_list.push(("cls".to_string(), beacon_core::Type::any()));
+            AstNode::FunctionDef { name, args, return_type, decorators, .. } => {
+                let info = build_method_info(args, return_type, decorators, ctx);
+                methods_by_name.entry(name.clone()).or_default().push(info);
             }
-
-            let start_idx = if has_self || has_cls { 1 } else { 0 };
-            for param in params.iter().skip(start_idx) {
-                if let Some(ann) = &param.type_annotation {
-                    if let Some(ty) = parse_type_annotation(ann, ctx) {
-                        param_list.push((param.name.clone(), ty));
-                    }
-                }
-            }
-
-            let ret_type = return_type
-                .as_ref()
-                .and_then(|ann| parse_type_annotation(ann, ctx))
-                .unwrap_or_else(beacon_core::Type::any);
-
-            let is_overload = decorators.iter().any(|d| d == "overload");
-
-            methods_by_name
-                .entry(method_name.clone())
-                .or_default()
-                .push(MethodInfo {
-                    params: param_list,
-                    return_type: ret_type,
-                    decorators: decorators.clone(),
-                    is_overload,
-                });
+            _ => {}
         }
     }
 
-    for (method_name, method_infos) in methods_by_name {
-        if method_name == "__init__" {
-            if let Some(info) = method_infos.first() {
-                let func_type = beacon_core::Type::fun(info.params.clone(), info.return_type.clone());
-                metadata.set_init_type(func_type);
+    methods_by_name
+}
+
+fn add_field_from_annotation(
+    metadata: &mut ClassMetadata,
+    ctx: &mut StubTypeContext,
+    target: &AstNode,
+    type_annotation: &str,
+) {
+    if let Some(attr_type) = parse_type_annotation(type_annotation, ctx) {
+        metadata.add_field(target.target_to_string(), attr_type);
+    }
+}
+
+fn build_method_info(
+    params: &[beacon_parser::Parameter],
+    return_type: &Option<String>,
+    decorators: &[String],
+    ctx: &mut StubTypeContext,
+) -> MethodInfo {
+    let mut param_list: Vec<(String, Type)> = Vec::new();
+    let has_self = params.first().map(|p| p.name == "self").unwrap_or(false);
+    let has_cls = params.first().map(|p| p.name == "cls").unwrap_or(false);
+
+    if has_self {
+        param_list.push(("self".to_string(), Type::any()));
+    } else if has_cls {
+        param_list.push(("cls".to_string(), Type::any()));
+    }
+
+    let start_idx = if has_self || has_cls { 1 } else { 0 };
+    for param in params.iter().skip(start_idx) {
+        if let Some(ann) = &param.type_annotation {
+            if let Some(ty) = parse_type_annotation(ann, ctx) {
+                param_list.push((param.name.clone(), ty));
             }
-            continue;
         }
+    }
 
-        if method_name == "__new__" {
-            if let Some(info) = method_infos.first() {
-                let func_type = beacon_core::Type::fun(info.params.clone(), info.return_type.clone());
-                metadata.set_new_type(func_type);
-            }
-            continue;
+    let ret_type = return_type.as_ref().and_then(|ann| parse_type_annotation(ann, ctx)).unwrap_or_else(Type::any);
+    let is_overload = decorators.iter().any(|d| d == "overload");
+
+    MethodInfo { params: param_list, return_type: ret_type, decorators: decorators.to_vec(), is_overload }
+}
+
+fn handle_method_group(method_name: String, method_infos: Vec<MethodInfo>, metadata: &mut ClassMetadata) {
+    if method_infos.is_empty() {
+        return;
+    }
+
+    if handle_special_method(&method_name, &method_infos, metadata) {
+        return;
+    }
+
+    let decorator_flags = MethodDecoratorFlags::from(&method_infos[0].decorators);
+
+    if decorator_flags.property {
+        metadata.add_property(method_name, method_infos[0].return_type.clone());
+        return;
+    }
+
+    let has_overloads = method_infos.iter().any(|info| info.is_overload) && method_infos.len() > 1;
+
+    if has_overloads {
+        handle_overloaded_method(method_name, method_infos, decorator_flags, metadata);
+    } else {
+        register_non_overloaded_method(method_name, &method_infos[0], decorator_flags, metadata);
+    }
+}
+
+fn handle_special_method(
+    method_name: &str,
+    method_infos: &[MethodInfo],
+    metadata: &mut ClassMetadata,
+) -> bool {
+    if method_name == "__init__" {
+        if let Some(info) = method_infos.first() {
+            let func_type = Type::fun(info.params.clone(), info.return_type.clone());
+            metadata.set_init_type(func_type);
         }
+        return true;
+    }
 
-        let first_info = &method_infos[0];
-        let has_property = first_info.decorators.iter().any(|d| d == "property");
-        let has_staticmethod = first_info.decorators.iter().any(|d| d == "staticmethod");
-        let has_classmethod = first_info.decorators.iter().any(|d| d == "classmethod");
-
-        if has_property {
-            metadata.add_property(method_name.clone(), first_info.return_type.clone());
-            continue;
+    if method_name == "__new__" {
+        if let Some(info) = method_infos.first() {
+            let func_type = Type::fun(info.params.clone(), info.return_type.clone());
+            metadata.set_new_type(func_type);
         }
+        return true;
+    }
 
-        let has_overloads = method_infos.iter().any(|info| info.is_overload);
+    false
+}
 
-        if has_overloads && method_infos.len() > 1 {
-            let mut overload_sigs = Vec::new();
-            let mut implementation = None;
+fn handle_overloaded_method(
+    method_name: String,
+    method_infos: Vec<MethodInfo>,
+    decorator_flags: MethodDecoratorFlags,
+    metadata: &mut ClassMetadata,
+) {
+    let overload_set = build_overload_set(method_infos, decorator_flags.staticmethod);
 
-            for info in method_infos {
-                let mut params = info.params.clone();
+    if decorator_flags.staticmethod {
+        if let Some(impl_type) = overload_set.implementation.clone() {
+            metadata.add_staticmethod(method_name, impl_type);
+        } else if let Some(first_sig) = overload_set.signatures.first() {
+            metadata.add_staticmethod(method_name, first_sig.clone());
+        }
+    } else if decorator_flags.classmethod {
+        if let Some(impl_type) = overload_set.implementation.clone() {
+            metadata.add_classmethod(method_name, impl_type);
+        } else if let Some(first_sig) = overload_set.signatures.first() {
+            metadata.add_classmethod(method_name, first_sig.clone());
+        }
+    } else {
+        metadata.add_overloaded_method(method_name, overload_set);
+    }
+}
 
-                if has_staticmethod && !params.is_empty() {
-                    params = params.iter().skip(1).cloned().collect();
-                }
+fn build_overload_set(method_infos: Vec<MethodInfo>, treat_as_static: bool) -> beacon_core::OverloadSet {
+    let mut overload_sigs = Vec::new();
+    let mut implementation = None;
 
-                let func_type = Type::fun(params, info.return_type.clone());
+    for info in method_infos {
+        let params = adjust_params_for_static(&info.params, treat_as_static);
+        let func_type = Type::fun(params, info.return_type.clone());
 
-                if info.is_overload {
-                    overload_sigs.push(func_type);
-                } else {
-                    implementation = Some(func_type);
-                }
-            }
-
-            let overload_set = beacon_core::OverloadSet { signatures: overload_sigs, implementation };
-
-            if has_staticmethod {
-                if let Some(impl_type) = overload_set.implementation.clone() {
-                    metadata.add_staticmethod(method_name.clone(), impl_type);
-                } else if let Some(first_sig) = overload_set.signatures.first() {
-                    metadata.add_staticmethod(method_name.clone(), first_sig.clone());
-                }
-            } else if has_classmethod {
-                if let Some(impl_type) = overload_set.implementation.clone() {
-                    metadata.add_classmethod(method_name.clone(), impl_type);
-                } else if let Some(first_sig) = overload_set.signatures.first() {
-                    metadata.add_classmethod(method_name.clone(), first_sig.clone());
-                }
-            } else {
-                metadata.add_overloaded_method(method_name.clone(), overload_set);
-            }
+        if info.is_overload {
+            overload_sigs.push(func_type);
         } else {
-            let mut params = first_info.params.clone();
+            implementation = Some(func_type);
+        }
+    }
 
-            if has_staticmethod && !params.is_empty() {
-                params = params.iter().skip(1).cloned().collect();
-            }
+    beacon_core::OverloadSet { signatures: overload_sigs, implementation }
+}
 
-            let func_type = Type::fun(params, first_info.return_type.clone());
+fn register_non_overloaded_method(
+    method_name: String,
+    method_info: &MethodInfo,
+    decorator_flags: MethodDecoratorFlags,
+    metadata: &mut ClassMetadata,
+) {
+    let params = adjust_params_for_static(&method_info.params, decorator_flags.staticmethod);
+    let func_type = Type::fun(params, method_info.return_type.clone());
 
-            if has_staticmethod {
-                metadata.add_staticmethod(method_name.clone(), func_type);
-            } else if has_classmethod {
-                metadata.add_classmethod(method_name.clone(), func_type);
-            } else {
-                metadata.add_method(method_name.clone(), func_type);
-            }
+    if decorator_flags.staticmethod {
+        metadata.add_staticmethod(method_name, func_type);
+    } else if decorator_flags.classmethod {
+        metadata.add_classmethod(method_name, func_type);
+    } else {
+        metadata.add_method(method_name, func_type);
+    }
+}
+
+fn adjust_params_for_static(params: &[(String, Type)], is_static: bool) -> Vec<(String, Type)> {
+    if is_static && !params.is_empty() {
+        params.iter().skip(1).cloned().collect()
+    } else {
+        params.to_vec()
+    }
+}
+
+#[derive(Clone, Copy)]
+struct MethodDecoratorFlags {
+    property: bool,
+    staticmethod: bool,
+    classmethod: bool,
+}
+
+impl MethodDecoratorFlags {
+    fn from(decorators: &[String]) -> Self {
+        Self {
+            property: decorators.iter().any(|d| d == "property"),
+            staticmethod: decorators.iter().any(|d| d == "staticmethod"),
+            classmethod: decorators.iter().any(|d| d == "classmethod"),
         }
     }
 }

@@ -4,7 +4,10 @@
 
 use super::rules::{DiagnosticMessage, RuleKind};
 
-use beacon_parser::{AstNode, CompareOperator, ExceptHandler, LiteralValue, ReferenceKind, SymbolKind, SymbolTable};
+use beacon_parser::{
+    AstNode, CompareOperator, Comprehension, ExceptHandler, LiteralValue, MatchCase, ReferenceKind, SymbolKind,
+    SymbolTable, WithItem,
+};
 use rustc_hash::FxHashSet;
 
 /// Context for tracking state during AST traversal
@@ -106,173 +109,35 @@ impl<'a> Linter<'a> {
     /// Visit an AST node and check all applicable rules
     fn visit_node(&mut self, node: &AstNode) {
         match node {
-            AstNode::Module { body, .. } => {
-                for stmt in body {
-                    self.visit_node(stmt);
-                }
-            }
-            AstNode::FunctionDef { name, args, body, .. } => {
-                self.check_duplicate_arguments(args, name);
-                self.ctx.enter_function();
-                for stmt in body {
-                    self.visit_node(stmt);
-                }
-                self.ctx.exit_function();
-            }
-            AstNode::ClassDef { body, .. } => {
-                self.ctx.enter_class();
-                for stmt in body {
-                    self.visit_node(stmt);
-                }
-                self.ctx.exit_class();
-            }
-            AstNode::Return { line, col, value, .. } => {
-                self.check_return_outside_function(*line, *col);
-                if let Some(val) = value {
-                    self.visit_node(val);
-                }
-            }
-            AstNode::Break { line, col, .. } => {
-                self.check_break_outside_loop(*line, *col);
-            }
-            AstNode::Continue { line, col, .. } => {
-                self.check_continue_outside_loop(*line, *col);
-            }
+            AstNode::Module { body, .. } => self.visit_body(body),
+            AstNode::FunctionDef { name, args, body, .. } => self.visit_function_def(name, args, body),
+            AstNode::ClassDef { body, .. } => self.visit_class_def(body),
+            AstNode::Return { line, col, value, .. } => self.visit_return(*line, *col, value.as_deref()),
+            AstNode::Break { line, col, .. } => self.check_break_outside_loop(*line, *col),
+            AstNode::Continue { line, col, .. } => self.check_continue_outside_loop(*line, *col),
             AstNode::For { target, iter, body, else_body, line, col, .. } => {
-                self.visit_node(iter);
-
-                for var_name in target.extract_target_names() {
-                    if self.ctx.is_import(&var_name) {
-                        self.report(
-                            RuleKind::ImportShadowedByLoopVar,
-                            format!("Import '{var_name}' shadowed by loop variable"),
-                            *line,
-                            *col,
-                        );
-                    }
-
-                    self.ctx.add_loop_var(var_name);
-                }
-                self.ctx.enter_loop();
-                for stmt in body {
-                    self.visit_node(stmt);
-                }
-                self.ctx.exit_loop();
-
-                if let Some(else_stmts) = else_body {
-                    for stmt in else_stmts {
-                        self.visit_node(stmt);
-                    }
-                }
+                self.visit_for_loop(target, iter, body, else_body, *line, *col);
             }
             AstNode::While { test, body, else_body, .. } => {
-                self.visit_node(test);
-                self.ctx.enter_loop();
-                for stmt in body {
-                    self.visit_node(stmt);
-                }
-                self.ctx.exit_loop();
-
-                if let Some(else_stmts) = else_body {
-                    for stmt in else_stmts {
-                        self.visit_node(stmt);
-                    }
-                }
+                self.visit_while_loop(test, body, else_body);
             }
             AstNode::If { test, body, elif_parts, else_body, line, col, .. } => {
-                self.check_if_tuple(test, *line, *col);
-                self.visit_node(test);
-
-                for stmt in body {
-                    self.visit_node(stmt);
-                }
-
-                for (elif_test, elif_body) in elif_parts {
-                    self.visit_node(elif_test);
-                    for stmt in elif_body {
-                        self.visit_node(stmt);
-                    }
-                }
-
-                if let Some(else_stmts) = else_body {
-                    for stmt in else_stmts {
-                        self.visit_node(stmt);
-                    }
-                }
+                self.visit_if_statement(test, body, elif_parts, else_body, *line, *col);
             }
             AstNode::Try { body, handlers, else_body, finally_body, line, col, .. } => {
-                self.check_default_except_not_last(handlers, *line, *col);
-
-                for stmt in body {
-                    self.visit_node(stmt);
-                }
-
-                for handler in handlers {
-                    self.check_empty_except(handler);
-                    for stmt in &handler.body {
-                        self.visit_node(stmt);
-                    }
-                }
-
-                if let Some(else_stmts) = else_body {
-                    for stmt in else_stmts {
-                        self.visit_node(stmt);
-                    }
-                }
-
-                if let Some(finally_stmts) = finally_body {
-                    for stmt in finally_stmts {
-                        self.visit_node(stmt);
-                    }
-                }
+                self.visit_try_statement(body, handlers, else_body, finally_body, *line, *col);
             }
-            AstNode::Raise { exc, line, col, .. } => {
-                if let Some(exception) = exc {
-                    self.check_raise_not_implemented(exception, *line, *col);
-                    self.visit_node(exception);
-                }
-            }
+            AstNode::Raise { exc, line, col, .. } => self.visit_raise(exc.as_deref(), *line, *col),
             AstNode::Compare { left, ops, comparators, line, col, .. } => {
-                self.check_is_literal(left, ops, comparators, *line, *col);
-                self.visit_node(left);
-                for comp in comparators {
-                    self.visit_node(comp);
-                }
+                self.visit_compare(left, ops, comparators, *line, *col);
             }
-            AstNode::Import { module, alias, line, col, .. } => {
-                let import_name = alias.as_ref().unwrap_or(module).clone();
-                self.ctx.add_import(import_name);
-                let _ = (line, col);
-            }
+            AstNode::Import { module, alias, .. } => self.track_import(module, alias),
             AstNode::ImportFrom { module: _, names, line, col, .. } => {
-                let is_star_import = names.is_empty();
-                if is_star_import {
-                    if self.ctx.function_depth > 0 || self.ctx.class_depth > 0 {
-                        self.report(
-                            RuleKind::ImportStarNotPermitted,
-                            "from module import * not allowed inside function or class".to_string(),
-                            *line,
-                            *col,
-                        );
-                    }
-                    self.report(
-                        RuleKind::ImportStarUsed,
-                        "import * prevents detection of undefined names".to_string(),
-                        *line,
-                        *col,
-                    );
-                } else {
-                    for name in names {
-                        self.ctx.add_import(name.clone());
-                    }
-                }
+                self.visit_from_import(names, *line, *col);
             }
-            // TODO: BEA029 will be checked in a separate pass since we need to know if the block has other content
             AstNode::Pass { .. } => {}
             AstNode::Assignment { target, value, line, col, .. } => {
-                self.check_two_starred_expressions(target, *line, *col);
-                self.check_too_many_expressions_in_starred_assignment(target, value, *line, *col);
-                self.visit_node(value);
+                self.visit_assignment(target, value, *line, *col);
             }
             AstNode::Assert { test, line, col, .. } => {
                 self.check_assert_tuple(test, *line, *col);
@@ -284,46 +149,20 @@ impl<'a> Linter<'a> {
                     self.visit_node(val);
                 }
             }
-            AstNode::Call { args, .. } => {
-                for arg in args {
-                    self.visit_node(arg);
-                }
-            }
+            AstNode::Call { args, .. } => self.visit_body(args),
             AstNode::BinaryOp { left, right, .. } => {
                 self.visit_node(left);
                 self.visit_node(right);
             }
-            AstNode::UnaryOp { operand, .. } => {
-                self.visit_node(operand);
-            }
-            AstNode::Attribute { object, .. } => {
-                self.visit_node(object);
-            }
+            AstNode::UnaryOp { operand, .. } => self.visit_node(operand),
+            AstNode::Attribute { object, .. } => self.visit_node(object),
             AstNode::Subscript { value, slice, .. } => {
                 self.visit_node(value);
                 self.visit_node(slice);
             }
-            AstNode::Literal { value, line, col, .. } => {
-                if let LiteralValue::String { value: s, prefix } = value {
-                    self.check_fstring_missing_placeholders(s, prefix, *line, *col);
-                }
-            }
-            AstNode::With { items, body, .. } => {
-                for item in items {
-                    self.visit_node(&item.context_expr);
-                }
-                for stmt in body {
-                    self.visit_node(stmt);
-                }
-            }
-            AstNode::Match { subject, cases, .. } => {
-                self.visit_node(subject);
-                for case in cases {
-                    for stmt in &case.body {
-                        self.visit_node(stmt);
-                    }
-                }
-            }
+            AstNode::Literal { value, line, col, .. } => self.visit_literal(value, *line, *col),
+            AstNode::With { items, body, .. } => self.visit_with(items, body),
+            AstNode::Match { subject, cases, .. } => self.visit_match(subject, cases),
             AstNode::Lambda { body, .. } => {
                 self.ctx.enter_function();
                 self.visit_node(body);
@@ -332,39 +171,14 @@ impl<'a> Linter<'a> {
             AstNode::ListComp { element, generators, .. }
             | AstNode::SetComp { element, generators, .. }
             | AstNode::GeneratorExp { element, generators, .. } => {
-                for generator in generators {
-                    self.visit_node(&generator.iter);
-                    for if_clause in &generator.ifs {
-                        self.visit_node(if_clause);
-                    }
-                }
-                self.visit_node(element);
+                self.visit_comprehension(element, generators);
             }
-            AstNode::DictComp { key, value, generators, line, col, .. } => {
-                for generator in generators {
-                    self.visit_node(&generator.iter);
-                    for if_clause in &generator.ifs {
-                        self.visit_node(if_clause);
-                    }
-                }
-                // TODO: Check for repeated keys - need to evaluate expressions
-                let _ = (key, value, line, col);
-                self.visit_node(key);
-                self.visit_node(value);
+            AstNode::DictComp { key, value, generators, .. } => {
+                self.visit_dict_comprehension(key, value, generators);
             }
-            AstNode::NamedExpr { value, .. } => {
-                self.visit_node(value);
-            }
-            AstNode::Tuple { elements, .. } => {
-                for element in elements {
-                    self.visit_node(element);
-                }
-            }
-            AstNode::List { elements, .. } | AstNode::Set { elements, .. } => {
-                for element in elements {
-                    self.visit_node(element);
-                }
-            }
+            AstNode::NamedExpr { value, .. } => self.visit_node(value),
+            AstNode::Tuple { elements, .. } => self.visit_body(elements),
+            AstNode::List { elements, .. } | AstNode::Set { elements, .. } => self.visit_body(elements),
             AstNode::Dict { keys, values, .. } => {
                 for key in keys {
                     self.visit_node(key);
@@ -378,10 +192,217 @@ impl<'a> Linter<'a> {
             | AstNode::Await { .. }
             | AstNode::Identifier { .. }
             | AstNode::Starred { .. } => {}
-            AstNode::ParenthesizedExpression { expression, .. } => {
-                self.visit_node(expression);
+            AstNode::ParenthesizedExpression { expression, .. } => self.visit_node(expression),
+        }
+    }
+
+    fn visit_body(&mut self, body: &[AstNode]) {
+        for stmt in body {
+            self.visit_node(stmt);
+        }
+    }
+
+    fn visit_optional_body(&mut self, body: &Option<Vec<AstNode>>) {
+        if let Some(stmts) = body {
+            self.visit_body(stmts);
+        }
+    }
+
+    fn visit_function_def(&mut self, name: &str, args: &[beacon_parser::Parameter], body: &[AstNode]) {
+        self.check_duplicate_arguments(args, name);
+        self.ctx.enter_function();
+        self.visit_body(body);
+        self.ctx.exit_function();
+    }
+
+    fn visit_class_def(&mut self, body: &[AstNode]) {
+        self.ctx.enter_class();
+        self.visit_body(body);
+        self.ctx.exit_class();
+    }
+
+    fn visit_return(&mut self, line: usize, col: usize, value: Option<&AstNode>) {
+        self.check_return_outside_function(line, col);
+        if let Some(val) = value {
+            self.visit_node(val);
+        }
+    }
+
+    fn visit_for_loop(
+        &mut self,
+        target: &AstNode,
+        iter: &AstNode,
+        body: &[AstNode],
+        else_body: &Option<Vec<AstNode>>,
+        line: usize,
+        col: usize,
+    ) {
+        self.visit_node(iter);
+
+        for var_name in target.extract_target_names() {
+            if self.ctx.is_import(&var_name) {
+                self.report(
+                    RuleKind::ImportShadowedByLoopVar,
+                    format!("Import '{var_name}' shadowed by loop variable"),
+                    line,
+                    col,
+                );
+            }
+
+            self.ctx.add_loop_var(var_name);
+        }
+
+        self.ctx.enter_loop();
+        self.visit_body(body);
+        self.ctx.exit_loop();
+        self.visit_optional_body(else_body);
+    }
+
+    fn visit_while_loop(&mut self, test: &AstNode, body: &[AstNode], else_body: &Option<Vec<AstNode>>) {
+        self.visit_node(test);
+        self.ctx.enter_loop();
+        self.visit_body(body);
+        self.ctx.exit_loop();
+        self.visit_optional_body(else_body);
+    }
+
+    fn visit_if_statement(
+        &mut self,
+        test: &AstNode,
+        body: &[AstNode],
+        elif_parts: &[(AstNode, Vec<AstNode>)],
+        else_body: &Option<Vec<AstNode>>,
+        line: usize,
+        col: usize,
+    ) {
+        self.check_if_tuple(test, line, col);
+        self.visit_node(test);
+        self.visit_body(body);
+
+        for (elif_test, elif_body) in elif_parts {
+            self.visit_node(elif_test);
+            self.visit_body(elif_body);
+        }
+
+        self.visit_optional_body(else_body);
+    }
+
+    fn visit_try_statement(
+        &mut self,
+        body: &[AstNode],
+        handlers: &[ExceptHandler],
+        else_body: &Option<Vec<AstNode>>,
+        finally_body: &Option<Vec<AstNode>>,
+        line: usize,
+        col: usize,
+    ) {
+        self.check_default_except_not_last(handlers, line, col);
+        self.visit_body(body);
+
+        for handler in handlers {
+            self.check_empty_except(handler);
+            self.visit_body(&handler.body);
+        }
+
+        self.visit_optional_body(else_body);
+        self.visit_optional_body(finally_body);
+    }
+
+    fn visit_raise(&mut self, exc: Option<&AstNode>, line: usize, col: usize) {
+        if let Some(exception) = exc {
+            self.check_raise_not_implemented(exception, line, col);
+            self.visit_node(exception);
+        }
+    }
+
+    fn visit_compare(
+        &mut self,
+        left: &AstNode,
+        ops: &[CompareOperator],
+        comparators: &[AstNode],
+        line: usize,
+        col: usize,
+    ) {
+        self.check_is_literal(left, ops, comparators, line, col);
+        self.visit_node(left);
+        for comp in comparators {
+            self.visit_node(comp);
+        }
+    }
+
+    fn track_import(&mut self, module: &String, alias: &Option<String>) {
+        let import_name = alias.as_ref().unwrap_or(module).clone();
+        self.ctx.add_import(import_name);
+    }
+
+    fn visit_from_import(&mut self, names: &[String], line: usize, col: usize) {
+        if names.is_empty() {
+            if self.ctx.function_depth > 0 || self.ctx.class_depth > 0 {
+                self.report(
+                    RuleKind::ImportStarNotPermitted,
+                    "from module import * not allowed inside function or class".to_string(),
+                    line,
+                    col,
+                );
+            }
+            self.report(
+                RuleKind::ImportStarUsed,
+                "import * prevents detection of undefined names".to_string(),
+                line,
+                col,
+            );
+        } else {
+            for name in names {
+                self.ctx.add_import(name.clone());
             }
         }
+    }
+
+    fn visit_assignment(&mut self, target: &AstNode, value: &AstNode, line: usize, col: usize) {
+        self.check_two_starred_expressions(target, line, col);
+        self.check_too_many_expressions_in_starred_assignment(target, value, line, col);
+        self.visit_node(value);
+    }
+
+    fn visit_literal(&mut self, value: &LiteralValue, line: usize, col: usize) {
+        if let LiteralValue::String { value: s, prefix } = value {
+            self.check_fstring_missing_placeholders(s, prefix, line, col);
+        }
+    }
+
+    fn visit_with(&mut self, items: &[WithItem], body: &[AstNode]) {
+        for item in items {
+            self.visit_node(&item.context_expr);
+        }
+        self.visit_body(body);
+    }
+
+    fn visit_match(&mut self, subject: &AstNode, cases: &[MatchCase]) {
+        self.visit_node(subject);
+        for case in cases {
+            self.visit_body(&case.body);
+        }
+    }
+
+    fn visit_comprehension(&mut self, element: &AstNode, generators: &[Comprehension]) {
+        self.visit_comprehension_generators(generators);
+        self.visit_node(element);
+    }
+
+    fn visit_comprehension_generators(&mut self, generators: &[Comprehension]) {
+        for generator in generators {
+            self.visit_node(&generator.iter);
+            for if_clause in &generator.ifs {
+                self.visit_node(if_clause);
+            }
+        }
+    }
+
+    fn visit_dict_comprehension(&mut self, key: &AstNode, value: &AstNode, generators: &[Comprehension]) {
+        self.visit_comprehension_generators(generators);
+        self.visit_node(key);
+        self.visit_node(value);
+        // TODO: Check for repeated keys - need to evaluate expressions
     }
 
     /// BEA002: DuplicateArgument
