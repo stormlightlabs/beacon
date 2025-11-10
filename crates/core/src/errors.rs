@@ -78,6 +78,9 @@ pub enum AnalysisError {
 
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
+
+    #[error("Not Implemented")]
+    NotImplemented,
 }
 
 #[derive(thiserror::Error, Debug)]
