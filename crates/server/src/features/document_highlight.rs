@@ -132,11 +132,12 @@ impl DocumentHighlightProvider {
                 }
             }
             AstNode::Call { function, args, line, col, .. } => {
-                if function == symbol_name {
+                let function_name = function.function_to_string();
+                if function_name == symbol_name {
                     let position =
                         Position { line: (*line as u32).saturating_sub(1), character: (*col as u32).saturating_sub(1) };
                     let end_position =
-                        Position { line: position.line, character: position.character + function.len() as u32 };
+                        Position { line: position.line, character: position.character + function_name.len() as u32 };
 
                     highlights.push(DocumentHighlight {
                         range: Range { start: position, end: end_position },
@@ -357,7 +358,13 @@ result = hello()"#;
     #[test]
     fn test_collect_highlights_in_call() {
         let ast = AstNode::Call {
-            function: "print".to_string(),
+            function: Box::new(AstNode::Identifier {
+                name: "print".to_string(),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 6,
+            }),
             args: vec![AstNode::Identifier { name: "x".to_string(), line: 1, col: 7, end_line: 1, end_col: 8 }],
             line: 1,
             col: 1,

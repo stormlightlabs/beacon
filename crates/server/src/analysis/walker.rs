@@ -591,9 +591,10 @@ fn visit_node_with_context(
             Ok(annotated_ty)
         }
         AstNode::Call { function, args, keywords, line, col, end_line, end_col, .. } => {
-            let func_ty = if function.contains('.') {
-                if let Some(last_dot_idx) = function.rfind('.') {
-                    let (object_part, method_part) = function.split_at(last_dot_idx);
+            let function_name = function.function_to_string();
+            let func_ty = if function_name.contains('.') {
+                if let Some(last_dot_idx) = function_name.rfind('.') {
+                    let (object_part, method_part) = function_name.split_at(last_dot_idx);
                     let method_name = &method_part[1..];
                     let obj_ty = env.lookup(object_part).unwrap_or_else(|| Type::Var(env.fresh_var()));
                     let method_ty = Type::Var(env.fresh_var());
@@ -608,10 +609,10 @@ fn visit_node_with_context(
 
                     method_ty
                 } else {
-                    env.lookup(function).unwrap_or_else(|| Type::Var(env.fresh_var()))
+                    env.lookup(&function_name).unwrap_or_else(|| Type::Var(env.fresh_var()))
                 }
             } else {
-                env.lookup(function).unwrap_or_else(|| Type::Var(env.fresh_var()))
+                env.lookup(&function_name).unwrap_or_else(|| Type::Var(env.fresh_var()))
             };
 
             let mut positional_arg_types = Vec::new();
@@ -984,7 +985,9 @@ fn visit_node_with_context(
             ctx.constraints
                 .push(Constraint::Protocol(iter_ty, protocol, element_ty.clone(), span));
 
-            env.bind(target.clone(), TypeScheme::mono(element_ty));
+            for var_name in target.extract_target_names() {
+                env.bind(var_name, TypeScheme::mono(element_ty.clone()));
+            }
 
             for stmt in body {
                 visit_node_with_env(stmt, env, ctx, stub_cache)?;
@@ -1780,7 +1783,7 @@ fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<Strin
     }
 
     if let AstNode::Call { function, args, keywords, .. } = test {
-        if function == "isinstance" && args.len() == 2 && keywords.is_empty() {
+        if function.function_to_string() == "isinstance" && args.len() == 2 && keywords.is_empty() {
             if let AstNode::Identifier { name: var_name, .. } = &args[0] {
                 if let AstNode::Identifier { name: type_name, .. } = &args[1] {
                     let refined_type = type_name_to_type(type_name);
@@ -1851,7 +1854,7 @@ fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Opti
     }
 
     if let AstNode::Call { function, args, keywords, .. } = test {
-        if function == "isinstance" && args.len() == 2 && keywords.is_empty() {
+        if function.function_to_string() == "isinstance" && args.len() == 2 && keywords.is_empty() {
             if let AstNode::Identifier { name: var_name, .. } = &args[0] {
                 if let Some(current_type) = env.lookup(var_name) {
                     if let AstNode::Identifier { name: type_name, .. } = &args[1] {
@@ -1953,7 +1956,7 @@ fn extract_type_predicate(test: &AstNode, env: &TypeEnvironment) -> Option<TypeP
             None
         }
         AstNode::Call { function, args, keywords, .. }
-            if function == "isinstance" && args.len() == 2 && keywords.is_empty() =>
+            if function.function_to_string() == "isinstance" && args.len() == 2 && keywords.is_empty() =>
         {
             let target_type = match &args[1] {
                 AstNode::Identifier { name: type_name, .. } => Some(type_name_to_type(type_name)),
@@ -1983,7 +1986,7 @@ fn extract_type_predicate(test: &AstNode, env: &TypeEnvironment) -> Option<TypeP
             Some(TypePredicate::IsInstance(target_type))
         }
         AstNode::Call { function, args, .. } if !args.is_empty() => {
-            if let Some(guard_info) = env.get_type_guard(function) {
+            if let Some(guard_info) = env.get_type_guard(&function.function_to_string()) {
                 if args.len() > guard_info.param_index {
                     return Some(TypePredicate::UserDefinedGuard(guard_info.guarded_type.clone()));
                 }
@@ -2451,7 +2454,13 @@ mod tests {
 
         let module = AstNode::Module {
             body: vec![AstNode::Call {
-                function: "create_calculator".to_string(),
+                function: Box::new(AstNode::Identifier {
+                    name: "create_calculator".to_string(),
+                    line: 2,
+                    col: 1,
+                    end_line: 2,
+                    end_col: 1,
+                }),
                 args: vec![],
                 keywords: vec![],
                 line: 2,
@@ -2535,7 +2544,13 @@ mod tests {
                 end_col: 4,
             }),
             body: vec![AstNode::Call {
-                function: "main".to_string(),
+                function: Box::new(AstNode::Identifier {
+                    name: "main".to_string(),
+                    line: 4,
+                    col: 5,
+                    end_line: 4,
+                    end_col: 8,
+                }),
                 args: vec![],
                 keywords: vec![],
                 line: 4,
@@ -3233,7 +3248,13 @@ mod tests {
                 end_col: 4,
             }),
             body: vec![AstNode::Call {
-                function: "main".to_string(),
+                function: Box::new(AstNode::Identifier {
+                    name: "main".to_string(),
+                    line: 6,
+                    col: 5,
+                    end_line: 6,
+                    end_col: 5,
+                }),
                 args: vec![],
                 keywords: vec![],
                 line: 6,

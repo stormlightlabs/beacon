@@ -427,7 +427,13 @@ print(x)"#;
     #[test]
     fn test_collect_renames_in_call() {
         let ast = AstNode::Call {
-            function: "print".to_string(),
+            function: Box::new(AstNode::Identifier {
+                name: "print".to_string(),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 6,
+            }),
             args: vec![AstNode::Identifier { name: "x".to_string(), line: 1, col: 7, end_col: 0, end_line: 0 }],
             line: 1,
             col: 1,

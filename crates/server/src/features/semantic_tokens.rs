@@ -293,8 +293,9 @@ impl SemanticTokensProvider {
             }
 
             AstNode::Call { function, args, keywords, line, col, .. } => {
-                if function.contains('.') {
-                    let parts: Vec<&str> = function.split('.').collect();
+                let function_name = function.function_to_string();
+                if function_name.contains('.') {
+                    let parts: Vec<&str> = function_name.split('.').collect();
                     let mut current_col = *col;
 
                     for (i, part) in parts.iter().enumerate() {
@@ -312,10 +313,10 @@ impl SemanticTokensProvider {
                         }
                         current_col += part.len() + 1;
                     }
-                } else if let Some(symbol) = symbol_table.lookup_symbol(function, current_scope) {
+                } else if let Some(symbol) = symbol_table.lookup_symbol(&function_name, current_scope) {
                     let token_type = self.get_token_type_index(&symbol.kind);
                     let modifiers = 0;
-                    Self::add_token(function, *line, *col, token_type, modifiers, text, raw_tokens);
+                    Self::add_token(&function_name, *line, *col, token_type, modifiers, text, raw_tokens);
                 }
 
                 for arg in args {

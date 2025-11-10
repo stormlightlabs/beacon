@@ -86,7 +86,7 @@ pub enum AstNode {
         end_col: usize,
     },
     Call {
-        function: String,
+        function: Box<AstNode>,
         args: Vec<AstNode>,
         keywords: Vec<(String, AstNode)>,
         line: usize,
@@ -156,7 +156,7 @@ pub enum AstNode {
     },
     /// For loop: for target in iter: body
     For {
-        target: String,
+        target: Box<AstNode>,
         iter: Box<AstNode>,
         body: Vec<AstNode>,
         else_body: Option<Vec<AstNode>>,
@@ -535,7 +535,7 @@ struct InfoTry(
     Option<Vec<AstNode>>,
 );
 
-struct InfoFor(String, AstNode, Vec<AstNode>, Option<Vec<AstNode>>, bool);
+struct InfoFor(AstNode, AstNode, Vec<AstNode>, Option<Vec<AstNode>>, bool);
 
 struct InfoArgsKwargs(Vec<AstNode>, Vec<(String, AstNode)>);
 
@@ -580,6 +580,21 @@ impl AstNode {
             }
             AstNode::Subscript { value, slice, .. } => {
                 format!("{}[{}]", value.target_to_string(), slice.target_to_string())
+            }
+            _ => "<unknown>".to_string(),
+        }
+    }
+
+    /// Extract function name as a string from a call function node
+    ///
+    /// This is a compatibility helper for code that expects string function names.
+    /// For simple identifiers, returns the name. For attributes, returns the full
+    /// dotted path (e.g., "obj.method").
+    pub fn function_to_string(&self) -> String {
+        match self {
+            AstNode::Identifier { name, .. } => name.clone(),
+            AstNode::Attribute { object, attribute, .. } => {
+                format!("{}.{}", object.function_to_string(), attribute)
             }
             _ => "<unknown>".to_string(),
         }
@@ -788,7 +803,7 @@ impl PythonParser {
             "call" => {
                 let function = self.extract_call_function(&node, source)?;
                 let InfoArgsKwargs(args, keywords) = self.extract_call_args_and_kwargs(&node, source)?;
-                Ok(AstNode::Call { function, args, keywords, line, col, end_line, end_col })
+                Ok(AstNode::Call { function: Box::new(function), args, keywords, line, col, end_line, end_col })
             }
             "identifier" => {
                 let name = node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
@@ -830,7 +845,7 @@ impl PythonParser {
             "for_statement" => {
                 let InfoFor(target, iter, body, else_body, is_async) = self.extract_for_info(&node, source)?;
                 Ok(AstNode::For {
-                    target,
+                    target: Box::new(target),
                     iter: Box::new(iter),
                     body,
                     else_body,
@@ -937,12 +952,12 @@ impl PythonParser {
                     Err(ParseError::MissingNode("await value".to_string()).into())
                 }
             }
-            "tuple" | "expression_list" | "pattern_list" => {
+            "tuple" | "expression_list" | "pattern_list" | "tuple_pattern" => {
                 let elements = self.extract_tuple_elements(&node, source)?;
-                let is_parenthesized = node.kind() == "tuple";
+                let is_parenthesized = node.kind() == "tuple" || node.kind() == "tuple_pattern";
                 Ok(AstNode::Tuple { elements, is_parenthesized, line, col, end_line, end_col })
             }
-            "list" => {
+            "list" | "list_pattern" => {
                 let elements = self.extract_list_elements(&node, source)?;
                 Ok(AstNode::List { elements, line, col, end_line, end_col })
             }
@@ -1276,19 +1291,12 @@ impl PythonParser {
         self.node_to_ast(right_node, source)
     }
 
-    fn extract_call_function(&self, node: &Node, source: &str) -> Result<String> {
+    fn extract_call_function(&self, node: &Node, source: &str) -> Result<AstNode> {
         let function_node = node
             .child_by_field_name("function")
             .ok_or_else(|| ParseError::TreeSitterError("Missing call function".to_string()))?;
 
-        // TODO: Instead of collapsing chained calls like `compose(lambda..., lambda...)`
-        // into a single string here, emit nested Call + Lambda nodes so the formatter
-        // can reason about spacing inside method chains.
-        let function = function_node
-            .utf8_text(source.as_bytes())
-            .map_err(|_| ParseError::InvalidUtf8)?;
-
-        Ok(function.to_string())
+        self.node_to_ast(function_node, source)
     }
 
     fn _extract_call_args(&self, node: &Node, source: &str) -> Result<Vec<AstNode>> {
@@ -1633,31 +1641,21 @@ impl PythonParser {
         let mut elif_parts = Vec::new();
         let mut else_body = None;
 
-        if let Some(alternative) = node.child_by_field_name("alternative") {
-            match alternative.kind() {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            match child.kind() {
                 "elif_clause" => {
-                    if let Some(elif_cond) = alternative.child_by_field_name("condition") {
+                    if let Some(elif_cond) = child.child_by_field_name("condition") {
                         let elif_test = self.node_to_ast(elif_cond, source)?;
-                        if let Some(elif_cons) = alternative.child_by_field_name("consequence") {
+                        if let Some(elif_cons) = child.child_by_field_name("consequence") {
                             let elif_body = self.extract_body(&elif_cons, source)?;
                             elif_parts.push((elif_test, elif_body));
                         }
                     }
                 }
                 "else_clause" => {
-                    if let Some(else_block) = alternative.child_by_field_name("body") {
+                    if let Some(else_block) = child.child_by_field_name("body") {
                         else_body = Some(self.extract_body(&else_block, source)?);
-                    }
-                }
-                "if_statement" => {
-                    let nested_if = self.node_to_ast(alternative, source)?;
-                    if let AstNode::If {
-                        test, body: if_body, elif_parts: nested_elif, else_body: nested_else, ..
-                    } = nested_if
-                    {
-                        elif_parts.push((*test, if_body));
-                        elif_parts.extend(nested_elif);
-                        else_body = nested_else;
                     }
                 }
                 _ => {}
@@ -1671,10 +1669,7 @@ impl PythonParser {
         let left = node
             .child_by_field_name("left")
             .ok_or_else(|| ParseError::TreeSitterError("Missing for target".to_string()))?;
-        let target = left
-            .utf8_text(source.as_bytes())
-            .map_err(|_| ParseError::InvalidUtf8)?
-            .to_string();
+        let target = self.node_to_ast(left, source)?;
 
         let right = node
             .child_by_field_name("right")
@@ -1688,7 +1683,12 @@ impl PythonParser {
 
         let else_body = node
             .child_by_field_name("alternative")
-            .map(|alt| self.extract_body(&alt, source))
+            .and_then(
+                |alt| {
+                    if alt.kind() == "else_clause" { alt.child_by_field_name("body") } else { Some(alt) }
+                },
+            )
+            .map(|body_node| self.extract_body(&body_node, source))
             .transpose()?;
 
         let is_async = {
@@ -1712,7 +1712,12 @@ impl PythonParser {
 
         let else_body = node
             .child_by_field_name("alternative")
-            .map(|alt| self.extract_body(&alt, source))
+            .and_then(
+                |alt| {
+                    if alt.kind() == "else_clause" { alt.child_by_field_name("body") } else { Some(alt) }
+                },
+            )
+            .map(|body_node| self.extract_body(&body_node, source))
             .transpose()?;
 
         Ok((test, body, else_body))
@@ -2456,7 +2461,7 @@ mod tests {
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     AstNode::Call { function, args, .. } => {
-                        assert_eq!(function, "print");
+                        assert!(matches!(**function, AstNode::Identifier { name: ref n, .. } if n == "print"));
                         assert_eq!(args.len(), 1);
                         match &args[0] {
                             AstNode::Literal { value: LiteralValue::String { value: s, .. }, .. } => {
@@ -2484,7 +2489,7 @@ mod tests {
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     AstNode::Call { function, args, keywords, .. } => {
-                        assert_eq!(function, "Point");
+                        assert!(matches!(**function, AstNode::Identifier { name: ref n, .. } if n == "Point"));
                         assert_eq!(args.len(), 0, "Should have no positional args");
                         assert_eq!(keywords.len(), 2, "Should have 2 keyword args");
                         assert_eq!(keywords[0].0, "x");
@@ -2518,7 +2523,7 @@ mod tests {
                 assert_eq!(body.len(), 1);
                 match &body[0] {
                     AstNode::Call { function, args, keywords, .. } => {
-                        assert_eq!(function, "func");
+                        assert!(matches!(**function, AstNode::Identifier { name: ref n, .. } if n == "func"));
                         assert_eq!(args.len(), 2, "Should have 2 positional args");
                         assert_eq!(keywords.len(), 1, "Should have 1 keyword arg");
                         assert_eq!(keywords[0].0, "key");
@@ -2528,6 +2533,104 @@ mod tests {
                         }
                     }
                     _ => panic!("Expected call expression"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_chained_method_calls() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "result = obj.method1().method2()";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::Assignment { value, .. } => match &**value {
+                        AstNode::Call { function, .. } => match &**function {
+                            AstNode::Attribute { object, attribute, .. } => {
+                                assert_eq!(attribute, "method2");
+                                match &**object {
+                                    AstNode::Call { function: inner_func, .. } => match &**inner_func {
+                                        AstNode::Attribute { object: inner_obj, attribute: inner_attr, .. } => {
+                                            assert_eq!(inner_attr, "method1");
+                                            assert!(
+                                                matches!(**inner_obj, AstNode::Identifier { name: ref n, .. } if n == "obj")
+                                            );
+                                        }
+                                        _ => panic!("Expected Attribute for method1"),
+                                    },
+                                    _ => panic!("Expected Call for method1()"),
+                                }
+                            }
+                            _ => panic!("Expected Attribute for method2"),
+                        },
+                        _ => panic!("Expected Call for method2()"),
+                    },
+                    _ => panic!("Expected Assignment"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_call_with_lambda_arguments() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "compose(lambda x: x + 1, lambda y: y * 2)";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::Call { function, args, .. } => {
+                        assert!(matches!(**function, AstNode::Identifier { name: ref n, .. } if n == "compose"));
+                        assert_eq!(args.len(), 2);
+                        assert!(matches!(args[0], AstNode::Lambda { .. }));
+                        assert!(matches!(args[1], AstNode::Lambda { .. }));
+                    }
+                    _ => panic!("Expected Call"),
+                }
+            }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_nested_function_calls() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "outer(inner(value))";
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                assert_eq!(body.len(), 1);
+                match &body[0] {
+                    AstNode::Call { function, args, .. } => {
+                        assert!(matches!(**function, AstNode::Identifier { name: ref n, .. } if n == "outer"));
+                        assert_eq!(args.len(), 1);
+
+                        match &args[0] {
+                            AstNode::Call { function: inner_func, args: inner_args, .. } => {
+                                assert!(
+                                    matches!(**inner_func, AstNode::Identifier { name: ref n, .. } if n == "inner")
+                                );
+                                assert_eq!(inner_args.len(), 1);
+                                assert!(
+                                    matches!(inner_args[0], AstNode::Identifier { name: ref n, .. } if n == "value")
+                                );
+                            }
+                            _ => panic!("Expected nested Call"),
+                        }
+                    }
+                    _ => panic!("Expected Call"),
                 }
             }
             _ => panic!("Expected module"),
@@ -3507,9 +3610,38 @@ count: int = 0"#;
         let source = "if x > 0:\n    y = 1\nelif x < 0:\n    y = -1\nelse:\n    y = 0";
         let parsed = parser.parse(source).unwrap();
         match parser.to_ast(&parsed).unwrap() {
-            AstNode::Module { body, .. } => {
-                assert!(matches!(body[0], AstNode::If { .. }));
-            }
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::If { elif_parts, else_body, .. } => {
+                    assert_eq!(elif_parts.len(), 1, "Should have one elif");
+                    assert!(else_body.is_some(), "Should have else body");
+                }
+                _ => panic!("Expected If node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_if_multiple_elif_else() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "if x > 10:\n    y = 1\nelif x > 5:\n    y = 2\nelif x > 0:\n    y = 3\nelse:\n    y = 0";
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::If { body: if_body, elif_parts, else_body, .. } => {
+                    assert_eq!(if_body.len(), 1, "If body should have 1 statement");
+                    assert_eq!(elif_parts.len(), 2, "Should have two elif clauses");
+                    assert_eq!(elif_parts[0].1.len(), 1, "First elif should have 1 statement");
+                    assert_eq!(elif_parts[1].1.len(), 1, "Second elif should have 1 statement");
+                    assert!(else_body.is_some(), "Should have else body");
+                    assert_eq!(
+                        else_body.as_ref().unwrap().len(),
+                        1,
+                        "Else body should have 1 statement"
+                    );
+                }
+                _ => panic!("Expected If node"),
+            },
             _ => panic!("Expected module"),
         }
     }
@@ -3523,7 +3655,7 @@ count: int = 0"#;
         match parser.to_ast(&parsed).unwrap() {
             AstNode::Module { body, .. } => match &body[0] {
                 AstNode::For { target, iter, body, .. } => {
-                    assert_eq!(target, "x");
+                    assert!(matches!(target.as_ref(), AstNode::Identifier { name, .. } if name == "x"));
                     assert!(matches!(iter.as_ref(), AstNode::Identifier { .. }));
                     assert_eq!(body.len(), 1);
                 }
@@ -3542,7 +3674,170 @@ count: int = 0"#;
         match parser.to_ast(&parsed).unwrap() {
             AstNode::Module { body, .. } => match &body[0] {
                 AstNode::For { else_body, .. } => {
-                    assert!(else_body.is_some());
+                    assert!(else_body.is_some(), "Should have else body");
+                    let else_stmts = else_body.as_ref().unwrap();
+                    assert_eq!(else_stmts.len(), 1, "Else body should have 1 statement");
+                    assert!(
+                        matches!(else_stmts[0], AstNode::Call { .. }),
+                        "Else body should contain Call node"
+                    );
+                }
+                _ => panic!("Expected For node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_for_loop_tuple_target() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "for x, y in pairs:\n    print(x, y)";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::For { target, iter, body, .. } => {
+                    match target.as_ref() {
+                        AstNode::Tuple { elements, is_parenthesized, .. } => {
+                            assert!(!is_parenthesized, "Tuple should not be parenthesized");
+                            assert_eq!(elements.len(), 2);
+                            assert!(matches!(&elements[0], AstNode::Identifier { name, .. } if name == "x"));
+                            assert!(matches!(&elements[1], AstNode::Identifier { name, .. } if name == "y"));
+                        }
+                        _ => panic!("Expected Tuple target"),
+                    }
+                    assert!(matches!(iter.as_ref(), AstNode::Identifier { name, .. } if name == "pairs"));
+                    assert_eq!(body.len(), 1);
+                }
+                _ => panic!("Expected For node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_for_loop_nested_tuple_target() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "for (a, b), c in nested:\n    print(a, b, c)";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::For { target, .. } => match target.as_ref() {
+                    AstNode::Tuple { elements, .. } => {
+                        assert_eq!(elements.len(), 2);
+                        assert!(matches!(&elements[0], AstNode::Tuple { is_parenthesized, .. } if *is_parenthesized));
+                        assert!(matches!(&elements[1], AstNode::Identifier { name, .. } if name == "c"));
+                    }
+                    _ => panic!("Expected Tuple target"),
+                },
+                _ => panic!("Expected For node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_for_loop_list_target() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "for [x, y, z] in items:\n    print(x, y, z)";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::For { target, .. } => match target.as_ref() {
+                    AstNode::List { elements, .. } => {
+                        assert_eq!(elements.len(), 3);
+                        assert!(matches!(&elements[0], AstNode::Identifier { name, .. } if name == "x"));
+                        assert!(matches!(&elements[1], AstNode::Identifier { name, .. } if name == "y"));
+                        assert!(matches!(&elements[2], AstNode::Identifier { name, .. } if name == "z"));
+                    }
+                    _ => panic!("Expected List target"),
+                },
+                _ => panic!("Expected For node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_for_loop_target_to_string() {
+        let mut parser = PythonParser::new().unwrap();
+
+        let source = "for x in items:\n    pass";
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::For { target, .. } => {
+                    assert_eq!(target.target_to_string(), "x");
+                }
+                _ => panic!("Expected For node"),
+            },
+            _ => panic!("Expected module"),
+        }
+
+        let source = "for x, y in pairs:\n    pass";
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::For { target, .. } => {
+                    assert_eq!(target.target_to_string(), "x, y");
+                }
+                _ => panic!("Expected For node"),
+            },
+            _ => panic!("Expected module"),
+        }
+
+        let source = "for [a, b] in items:\n    pass";
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::For { target, .. } => {
+                    assert_eq!(target.target_to_string(), "[a, b]");
+                }
+                _ => panic!("Expected For node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_for_loop_target_extract_names() {
+        let mut parser = PythonParser::new().unwrap();
+
+        let source = "for x in items:\n    pass";
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::For { target, .. } => {
+                    let names = target.extract_target_names();
+                    assert_eq!(names, vec!["x"]);
+                }
+                _ => panic!("Expected For node"),
+            },
+            _ => panic!("Expected module"),
+        }
+
+        let source = "for x, y, z in items:\n    pass";
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::For { target, .. } => {
+                    let names = target.extract_target_names();
+                    assert_eq!(names, vec!["x", "y", "z"]);
+                }
+                _ => panic!("Expected For node"),
+            },
+            _ => panic!("Expected module"),
+        }
+
+        let source = "for [a, b] in items:\n    pass";
+        let parsed = parser.parse(source).unwrap();
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::For { target, .. } => {
+                    let names = target.extract_target_names();
+                    assert_eq!(names, vec!["a", "b"]);
                 }
                 _ => panic!("Expected For node"),
             },
@@ -3561,6 +3856,29 @@ count: int = 0"#;
                 assert_eq!(body.len(), 1);
                 assert!(matches!(body[0], AstNode::While { .. }));
             }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_while_loop_with_else() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "while x > 0:\n    x -= 1\nelse:\n    print('done')";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::While { else_body, .. } => {
+                    assert!(else_body.is_some(), "Should have else body");
+                    let else_stmts = else_body.as_ref().unwrap();
+                    assert_eq!(else_stmts.len(), 1, "Else body should have 1 statement");
+                    assert!(
+                        matches!(else_stmts[0], AstNode::Call { .. }),
+                        "Else body should contain Call node"
+                    );
+                }
+                _ => panic!("Expected While node"),
+            },
             _ => panic!("Expected module"),
         }
     }
@@ -3968,18 +4286,16 @@ count: int = 0"#;
 
         match parser.to_ast(&parsed).unwrap() {
             AstNode::Module { body, .. } => match &body[0] {
-                AstNode::Assignment { value, .. } => {
-                    match value.as_ref() {
-                        AstNode::Literal { value: LiteralValue::Integer(1), .. } => {}
-                        AstNode::ParenthesizedExpression { expression, .. } => {
-                            assert!(matches!(
-                                expression.as_ref(),
-                                AstNode::Literal { value: LiteralValue::Integer(1), .. }
-                            ));
-                        }
-                        other => panic!("Expected literal or parenthesized literal, got {other:?}"),
+                AstNode::Assignment { value, .. } => match value.as_ref() {
+                    AstNode::Literal { value: LiteralValue::Integer(1), .. } => {}
+                    AstNode::ParenthesizedExpression { expression, .. } => {
+                        assert!(matches!(
+                            expression.as_ref(),
+                            AstNode::Literal { value: LiteralValue::Integer(1), .. }
+                        ));
                     }
-                }
+                    other => panic!("Expected literal or parenthesized literal, got {other:?}"),
+                },
                 _ => panic!("Expected Assignment node"),
             },
             _ => panic!("Expected module"),
@@ -4495,7 +4811,7 @@ async for item in async_iterable:
         match parser.to_ast(&parsed).unwrap() {
             AstNode::Module { body, .. } => match &body[0] {
                 AstNode::For { target, is_async, body, .. } => {
-                    assert_eq!(target, "item");
+                    assert!(matches!(target.as_ref(), AstNode::Identifier { name, .. } if name == "item"));
                     assert!(*is_async, "is_async should be true for async for loop");
                     assert_eq!(body.len(), 1);
                 }
@@ -4517,7 +4833,7 @@ for item in iterable:
         match parser.to_ast(&parsed).unwrap() {
             AstNode::Module { body, .. } => match &body[0] {
                 AstNode::For { target, is_async, .. } => {
-                    assert_eq!(target, "item");
+                    assert!(matches!(target.as_ref(), AstNode::Identifier { name, .. } if name == "item"));
                     assert!(!(*is_async), "is_async should be false for regular for loop");
                 }
                 other => panic!("Expected For node, got: {other:?}"),

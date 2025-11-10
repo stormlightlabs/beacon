@@ -141,16 +141,18 @@ impl<'a> Linter<'a> {
             AstNode::For { target, iter, body, else_body, line, col, .. } => {
                 self.visit_node(iter);
 
-                if self.ctx.is_import(target) {
-                    self.report(
-                        RuleKind::ImportShadowedByLoopVar,
-                        format!("Import '{target}' shadowed by loop variable"),
-                        *line,
-                        *col,
-                    );
-                }
+                for var_name in target.extract_target_names() {
+                    if self.ctx.is_import(&var_name) {
+                        self.report(
+                            RuleKind::ImportShadowedByLoopVar,
+                            format!("Import '{var_name}' shadowed by loop variable"),
+                            *line,
+                            *col,
+                        );
+                    }
 
-                self.ctx.add_loop_var(target.clone());
+                    self.ctx.add_loop_var(var_name);
+                }
                 self.ctx.enter_loop();
                 for stmt in body {
                     self.visit_node(stmt);

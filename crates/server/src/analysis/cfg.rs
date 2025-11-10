@@ -556,7 +556,13 @@ mod tests {
     fn test_cfg_for_loop() {
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::For {
-            target: "i".to_string(),
+            target: Box::new(AstNode::Identifier {
+                name: "i".to_string(),
+                line: 1,
+                col: 5,
+                end_line: 1,
+                end_col: 6,
+            }),
             iter: Box::new(AstNode::Identifier {
                 name: "items".to_string(),
                 line: 1,
@@ -587,7 +593,13 @@ mod tests {
     fn test_cfg_for_loop_with_break() {
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::For {
-            target: "i".to_string(),
+            target: Box::new(AstNode::Identifier {
+                name: "i".to_string(),
+                line: 1,
+                col: 5,
+                end_line: 1,
+                end_col: 6,
+            }),
             iter: Box::new(AstNode::Identifier {
                 name: "items".to_string(),
                 line: 1,
@@ -618,7 +630,13 @@ mod tests {
     fn test_cfg_for_loop_with_continue() {
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::For {
-            target: "i".to_string(),
+            target: Box::new(AstNode::Identifier {
+                name: "i".to_string(),
+                line: 1,
+                col: 5,
+                end_line: 1,
+                end_col: 6,
+            }),
             iter: Box::new(AstNode::Identifier {
                 name: "items".to_string(),
                 line: 1,
@@ -882,7 +900,13 @@ mod tests {
                 end_col: 1,
             },
             AstNode::For {
-                target: "i".to_string(),
+                target: Box::new(AstNode::Identifier {
+                name: "i".to_string(),
+                line: 1,
+                col: 5,
+                end_line: 1,
+                end_col: 6,
+            }),
                 iter: Box::new(AstNode::Identifier {
                     name: "range(10)".to_string(),
                     line: 2,

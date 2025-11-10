@@ -371,7 +371,9 @@ pipeline=lambda data: compose(lambda x: x.strip(),lambda x:x.lower())(data)
     let formatted = format_code(source);
 
     assert!(formatted.contains("compose = lambda *funcs: reduce(lambda f, g: lambda x: f(g(x)), funcs, lambda x: x)"));
-    assert!(formatted.contains("pipeline = lambda data: compose(lambda x: x.strip(),lambda x:x.lower())(data)"));
+    assert!(formatted.contains(
+        "pipeline = lambda data: compose(lambda x: x.strip(), lambda x: x.lower())(data)"
+    ));
     assert_idempotent(source, "Complex lambda and functional pipelines");
 }
 

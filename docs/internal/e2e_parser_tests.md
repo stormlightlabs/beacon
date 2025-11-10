@@ -6,7 +6,7 @@ resulting AST strings/fields. No golden files or CI-only harness is required.
 
 ## Test Files
 
-1. `parser_e2e.rs`
+1. `parser_tests.rs`
    - Calls `PythonParser::parse`/`to_ast` per fixture.
    - Uses inline assertions (`assert!(ast_string.contains(...))`, `assert_eq!(tuple.is_parenthesized, true)`) just like the formatter tests.
 2. Fixture sources (inline or under `samples/e2e/parser/`)
@@ -28,7 +28,74 @@ cargo test --package beacon-parser --test parser_e2e
 
 ## Known Gaps
 
-- Attribute call chains (`compose(lambda…, lambda…)`) are still flattened; emit nested `Call` + `Lambda` nodes in a follow-up.
+None - all identified gaps have been resolved.
+
+## Core Test Cases Checklist
+
+### Basic Expressions
+
+- [x] Simple literals (strings, numbers, booleans, None)
+- [x] Binary operations (arithmetic, comparison, logical)
+- [x] Unary operations (negation, bitwise)
+- [x] Parenthesized expressions
+
+### Tuples and Collections
+
+- [x] Tuple with parentheses (is_parenthesized = true)
+- [x] Tuple without parentheses (is_parenthesized = false)
+- [x] Tuple destructuring in assignments
+- [x] List and dict literals
+
+### Functions and Lambdas
+
+- [x] Lambda with single parameter
+- [x] Lambda with multiple parameters
+- [x] Lambda with default arguments
+- [x] Nested lambdas
+
+### Modern Syntax (3.8+)
+
+- [x] Walrus operator (named expressions)
+- [x] Walrus in comprehensions
+- [x] Walrus in conditionals
+- [x] Nested walrus expressions
+
+### Pattern Matching (3.10+)
+
+- [ ] Basic match statement
+- [ ] Pattern matching with guards
+- [ ] Nested patterns
+- [ ] Multiple match cases
+
+### Type Annotations
+
+- [ ] Function parameter annotations
+- [ ] Return type annotations
+- [ ] Generic types with subscripts
+- [ ] TypeVar declarations
+
+### Comprehensions
+
+- [x] List comprehension
+- [x] Dict comprehension
+- [x] Set comprehension
+- [x] Generator expression
+- [x] Nested comprehensions
+
+### Control Flow
+
+- [x] If-elif-else chains
+- [x] While loops
+- [x] For loops with multiple targets
+- [x] Try-except-finally blocks
+
+### Call Chains and Method Chaining
+
+- [x] Attribute call chains (e.g., `obj.method1().method2()`)
+- [x] Function call chains
+- [x] Calls with lambda arguments
+- [x] Deeply nested calls
+- [x] Mixed attribute and call chains
 
 ## Guidelines / Next Steps
 

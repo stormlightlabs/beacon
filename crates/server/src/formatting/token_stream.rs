@@ -689,8 +689,7 @@ impl TokenGenerator {
                 }
             },
             AstNode::Call { function, args, keywords, line, col, .. } => {
-                self.tokens
-                    .push(Token::Identifier { text: function.clone(), line: *line, col: *col });
+                self.visit_node(function);
                 self.tokens
                     .push(Token::Delimiter { text: "(".to_string(), line: *line, col: *col });
 
@@ -857,7 +856,7 @@ impl TokenGenerator {
                     .push(Token::Keyword { text: "for".to_string(), line: *line, col: *col });
                 self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
                 self.tokens
-                    .push(Token::Identifier { text: target.clone(), line: *line, col: *col });
+                    .push(Token::Identifier { text: target.target_to_string(), line: *line, col: *col });
                 self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
                 self.tokens
                     .push(Token::Keyword { text: "in".to_string(), line: *line, col: *col });
@@ -1787,9 +1786,15 @@ mod tests {
     #[test]
     fn test_for_loop_tokens() {
         let node = AstNode::For {
-            target: "i".to_string(),
+            target: Box::new(AstNode::Identifier { name: "i".to_string(), line: 1, col: 5, end_line: 1, end_col: 6 }),
             iter: Box::new(AstNode::Call {
-                function: "range".to_string(),
+                function: Box::new(AstNode::Identifier {
+                    name: "range".to_string(),
+                    line: 1,
+                    col: 10,
+                    end_line: 1,
+                    end_col: 15,
+                }),
                 args: vec![AstNode::Literal {
                     value: beacon_parser::LiteralValue::Integer(10),
                     line: 1,
@@ -2030,7 +2035,13 @@ mod tests {
     fn test_await_tokens() {
         let node = AstNode::Await {
             value: Box::new(AstNode::Call {
-                function: "async_func".to_string(),
+                function: Box::new(AstNode::Identifier {
+                    name: "async_func".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 11,
+                }),
                 args: vec![],
                 keywords: vec![],
                 line: 1,
@@ -2427,7 +2438,13 @@ mod tests {
     fn test_raise_tokens() {
         let node = AstNode::Raise {
             exc: Some(Box::new(AstNode::Call {
-                function: "ValueError".to_string(),
+                function: Box::new(AstNode::Identifier {
+                    name: "ValueError".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 11,
+                }),
                 args: vec![],
                 keywords: vec![],
                 line: 1,

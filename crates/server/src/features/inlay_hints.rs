@@ -219,7 +219,8 @@ impl InlayHintsProvider {
         match node {
             AstNode::Call { function, args, line, col, .. } => {
                 if Self::is_in_range(*line, *col, range) && !args.is_empty() {
-                    if let Some(param_names) = Self::get_parameter_names(function, ast_root) {
+                    let function_name = function.function_to_string();
+                    if let Some(param_names) = Self::get_parameter_names(&function_name, ast_root) {
                         for (i, arg) in args.iter().enumerate() {
                             if i < param_names.len() {
                                 let param_name = &param_names[i];

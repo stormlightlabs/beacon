@@ -514,11 +514,9 @@ impl NameResolver {
                     self.track_references(val)?;
                 }
             }
-            AstNode::Call { function, args, keywords, line, col, .. } => {
-                let byte_offset = self.line_col_to_byte_offset(*line, *col);
-                let scope = self.symbol_table.find_scope_at_position(byte_offset);
-                self.symbol_table
-                    .add_reference(function, scope, *line, *col, ReferenceKind::Read);
+            AstNode::Call { function, args, keywords, .. } => {
+                // Track references in the function node (handles nested calls/attributes)
+                self.track_references(function)?;
 
                 for arg in args {
                     self.track_references(arg)?;
@@ -1021,16 +1019,18 @@ impl NameResolver {
             AstNode::For { target, iter, body, else_body, line, col, .. } => {
                 self.visit_node(iter)?;
 
-                let symbol = Symbol {
-                    name: target.clone(),
-                    kind: SymbolKind::Variable,
-                    line: *line,
-                    col: *col,
-                    scope_id: self.current_scope,
-                    docstring: None,
-                    references: Vec::new(),
-                };
-                self.symbol_table.add_symbol(self.current_scope, symbol);
+                for var_name in target.extract_target_names() {
+                    let symbol = Symbol {
+                        name: var_name,
+                        kind: SymbolKind::Variable,
+                        line: *line,
+                        col: *col,
+                        scope_id: self.current_scope,
+                        docstring: None,
+                        references: Vec::new(),
+                    };
+                    self.symbol_table.add_symbol(self.current_scope, symbol);
+                }
 
                 for stmt in body {
                     self.visit_node(stmt)?;
@@ -2460,7 +2460,13 @@ mod tests {
                     end_col: 6,
                 },
                 AstNode::Call {
-                    function: "print".to_string(),
+                    function: Box::new(AstNode::Identifier {
+                        name: "print".to_string(),
+                        line: 3,
+                        col: 1,
+                        end_line: 3,
+                        end_col: 6,
+                    }),
                     args: vec![AstNode::Identifier { name: "y".to_string(), line: 3, col: 7, end_line: 3, end_col: 8 }],
                     line: 3,
                     col: 1,

@@ -411,7 +411,7 @@ impl<'a> DataFlowAnalyzer<'a> {
             }
             AstNode::For { target, iter, .. } => {
                 Self::collect_uses(iter, &mut uses);
-                defs.push(target.clone());
+                defs.extend(target.extract_target_names());
             }
             AstNode::NamedExpr { target, value, .. } => {
                 Self::collect_uses(value, &mut uses);
@@ -429,8 +429,8 @@ impl<'a> DataFlowAnalyzer<'a> {
             AstNode::Identifier { name, line, col, .. } => {
                 uses.push((name.clone(), *line, *col));
             }
-            AstNode::Call { function, args, keywords, line, col, .. } => {
-                uses.push((function.clone(), *line, *col));
+            AstNode::Call { function, args, keywords, .. } => {
+                Self::collect_uses(function, uses);
                 for arg in args {
                     Self::collect_uses(arg, uses);
                 }
@@ -588,7 +588,9 @@ impl<'a> DataFlowAnalyzer<'a> {
                 }
             }
             AstNode::For { target, .. } => {
-                constants.insert(target.clone(), ConstantValue::Unknown);
+                for name in target.extract_target_names() {
+                    constants.insert(name, ConstantValue::Unknown);
+                }
             }
             AstNode::NamedExpr { target, value, .. } => {
                 let const_value = self.evaluate_to_constant(value, constants);
@@ -984,7 +986,13 @@ mod tests {
                     end_col: 5,
                 },
                 AstNode::Call {
-                    function: "print".to_string(),
+                    function: Box::new(AstNode::Identifier {
+                        name: "print".to_string(),
+                        line: 4,
+                        col: 5,
+                        end_line: 4,
+                        end_col: 10,
+                    }),
                     args: vec![AstNode::Identifier {
                         name: "x".to_string(),
                         line: 4,
@@ -1098,7 +1106,13 @@ mod tests {
                     end_col: 5,
                 },
                 AstNode::Call {
-                    function: "print".to_string(),
+                    function: Box::new(AstNode::Identifier {
+                        name: "print".to_string(),
+                        line: 4,
+                        col: 5,
+                        end_line: 4,
+                        end_col: 10,
+                    }),
                     args: vec![AstNode::Identifier {
                         name: "x".to_string(),
                         line: 6,
@@ -1149,7 +1163,13 @@ mod tests {
             name: "foo".to_string(),
             args: vec![],
             body: vec![AstNode::For {
-                target: "i".to_string(),
+                target: Box::new(AstNode::Identifier {
+                    name: "i".to_string(),
+                    line: 1,
+                    col: 5,
+                    end_line: 1,
+                    end_col: 6,
+                }),
                 iter: Box::new(AstNode::Identifier {
                     name: "items".to_string(),
                     line: 2,
@@ -1452,9 +1472,21 @@ mod tests {
             name: "foo".to_string(),
             args: vec![],
             body: vec![AstNode::For {
-                target: "i".to_string(),
+                target: Box::new(AstNode::Identifier {
+                    name: "i".to_string(),
+                    line: 1,
+                    col: 5,
+                    end_line: 1,
+                    end_col: 6,
+                }),
                 iter: Box::new(AstNode::Call {
-                    function: "range".to_string(),
+                    function: Box::new(AstNode::Identifier {
+                        name: "range".to_string(),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 6,
+                    }),
                     args: vec![AstNode::Literal {
                         value: beacon_parser::LiteralValue::Integer(10),
                         line: 2,
@@ -1469,7 +1501,13 @@ mod tests {
                     keywords: Vec::new(),
                 }),
                 body: vec![AstNode::Call {
-                    function: "print".to_string(),
+                    function: Box::new(AstNode::Identifier {
+                        name: "print".to_string(),
+                        line: 4,
+                        col: 5,
+                        end_line: 4,
+                        end_col: 10,
+                    }),
                     args: vec![AstNode::Identifier {
                         name: "i".to_string(),
                         line: 3,
@@ -2070,7 +2108,13 @@ mod tests {
                         end_col: 7,
                     }),
                     value: Box::new(AstNode::Call {
-                        function: "inner".to_string(),
+                        function: Box::new(AstNode::Identifier {
+                            name: "inner".to_string(),
+                            line: 1,
+                            col: 1,
+                            end_line: 1,
+                            end_col: 6,
+                        }),
                         args: vec![],
                         line: 2,
                         end_line: 2,
@@ -2171,7 +2215,13 @@ mod tests {
                         end_col: 4,
                     }),
                     value: Box::new(AstNode::Call {
-                        function: "MyClass".to_string(),
+                        function: Box::new(AstNode::Identifier {
+                            name: "MyClass".to_string(),
+                            line: 1,
+                            col: 1,
+                            end_line: 1,
+                            end_col: 8,
+                        }),
                         args: vec![],
                         line: 2,
                         end_line: 2,
@@ -2260,7 +2310,13 @@ mod tests {
                         end_col: 7,
                     }),
                     value: Box::new(AstNode::Call {
-                        function: "helper".to_string(),
+                        function: Box::new(AstNode::Identifier {
+                            name: "helper".to_string(),
+                            line: 1,
+                            col: 1,
+                            end_line: 1,
+                            end_col: 7,
+                        }),
                         args: vec![],
                         line: 2,
                         end_line: 2,
@@ -2473,7 +2529,13 @@ mod tests {
                         end_col: 7,
                     }),
                     value: Box::new(AstNode::Call {
-                        function: "baz".to_string(),
+                        function: Box::new(AstNode::Identifier {
+                            name: "baz".to_string(),
+                            line: 1,
+                            col: 1,
+                            end_line: 1,
+                            end_col: 4,
+                        }),
                         args: vec![],
                         line: 3,
                         end_line: 3,
@@ -2622,7 +2684,20 @@ mod tests {
                         end_col: 8,
                     }),
                     value: Box::new(AstNode::Call {
-                        function: "np.array".to_string(),
+                        function: Box::new(AstNode::Attribute {
+                            object: Box::new(AstNode::Identifier {
+                                name: "np".to_string(),
+                                line: 3,
+                                col: 11,
+                                end_line: 3,
+                                end_col: 13,
+                            }),
+                            attribute: "array".to_string(),
+                            line: 3,
+                            col: 11,
+                            end_line: 3,
+                            end_col: 19,
+                        }),
                         args: vec![AstNode::Literal {
                             value: beacon_parser::LiteralValue::Integer(1),
                             line: 3,
@@ -2702,7 +2777,13 @@ mod tests {
             args: vec![],
             body: vec![AstNode::Return {
                 value: Some(Box::new(AstNode::Call {
-                    function: "MyClass".to_string(),
+                    function: Box::new(AstNode::Identifier {
+                        name: "MyClass".to_string(),
+                        line: 5,
+                        col: 12,
+                        end_line: 5,
+                        end_col: 19,
+                    }),
                     args: vec![],
                     line: 5,
                     end_line: 5,
@@ -2782,7 +2863,13 @@ mod tests {
             name: "main".to_string(),
             args: vec![],
             body: vec![AstNode::Call {
-                function: "helper".to_string(),
+                function: Box::new(AstNode::Identifier {
+                    name: "helper".to_string(),
+                    line: 5,
+                    col: 5,
+                    end_line: 5,
+                    end_col: 11,
+                }),
                 args: vec![],
                 line: 5,
                 col: 5,

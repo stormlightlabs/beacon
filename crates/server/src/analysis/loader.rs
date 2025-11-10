@@ -48,7 +48,8 @@ pub fn collect_stub_type_vars(node: &AstNode, ctx: &mut StubTypeContext) {
         }
         AstNode::Assignment { target, value, .. } => {
             if let AstNode::Call { function, .. } = value.as_ref() {
-                if function == "TypeVar" || function.ends_with(".TypeVar") {
+                let function_name = function.function_to_string();
+                if function_name == "TypeVar" || function_name.ends_with(".TypeVar") {
                     let target_str = target.target_to_string();
                     ctx.register_type_var(&target_str);
                 }
