@@ -58,6 +58,8 @@ pub enum RuleKind {
     PercentFormatInvalidFormat,
     /// BEA026
     IsLiteral,
+    /// BEA027
+    UseBeforeDef,
     /// BEA028
     UnreachableCode,
     /// BEA029
@@ -65,6 +67,45 @@ pub enum RuleKind {
     /// BEA030
     EmptyExcept,
     Unknown,
+}
+
+impl RuleKind {
+    /// Returns the rule code for this rule kind
+    pub fn code(&self) -> &'static str {
+        match self {
+            RuleKind::UndefinedName => "BEA001",
+            RuleKind::DuplicateArgument => "BEA002",
+            RuleKind::ReturnOutsideFunction => "BEA003",
+            RuleKind::YieldOutsideFunction => "BEA004",
+            RuleKind::BreakOutsideLoop => "BEA005",
+            RuleKind::ContinueOutsideLoop => "BEA006",
+            RuleKind::DefaultExceptNotLast => "BEA007",
+            RuleKind::RaiseNotImplemented => "BEA008",
+            RuleKind::TwoStarredExpressions => "BEA009",
+            RuleKind::TooManyExpressionsInStarredAssignment => "BEA010",
+            RuleKind::IfTuple => "BEA011",
+            RuleKind::AssertTuple => "BEA012",
+            RuleKind::FStringMissingPlaceholders => "BEA013",
+            RuleKind::TStringMissingPlaceholders => "BEA014",
+            RuleKind::UnusedImport => "BEA015",
+            RuleKind::UnusedVariable => "BEA016",
+            RuleKind::UnusedAnnotation => "BEA017",
+            RuleKind::RedefinedWhileUnused => "BEA018",
+            RuleKind::ImportShadowedByLoopVar => "BEA019",
+            RuleKind::ImportStarNotPermitted => "BEA020",
+            RuleKind::ImportStarUsed => "BEA021",
+            RuleKind::UnusedIndirectAssignment => "BEA022",
+            RuleKind::ForwardAnnotationSyntaxError => "BEA023",
+            RuleKind::MultiValueRepeatedKeyLiteral => "BEA024",
+            RuleKind::PercentFormatInvalidFormat => "BEA025",
+            RuleKind::IsLiteral => "BEA026",
+            RuleKind::UseBeforeDef => "BEA027",
+            RuleKind::UnreachableCode => "BEA028",
+            RuleKind::RedundantPass => "BEA029",
+            RuleKind::EmptyExcept => "BEA030",
+            RuleKind::Unknown => "BEA000",
+        }
+    }
 }
 
 /// Rule severity
@@ -312,6 +353,13 @@ impl RuleEngine {
                 kind: RuleKind::IsLiteral,
                 name: "IsLiteral",
                 description: "Comparing constants with is or is not instead of ==/!=",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::UseBeforeDef,
+                name: "UseBeforeDef",
+                description: "Variable may be used before being defined",
                 default_severity: RuleSeverity::Warning,
                 enabled: true,
             },

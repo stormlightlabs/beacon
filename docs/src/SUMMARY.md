@@ -23,6 +23,8 @@
     - [VS Code](./extensions/vscode.md)
     - [Zed](./extensions/zed.md)
 - [CLI](./cli/overview.md)
+    - [Static Analysis](./cli/analyze.md)
+    - [Linting](./cli/lint.md)
     - [Type Checking](./cli/typecheck.md)
     - [Language Server](./cli/lsp.md)
     - [Formatter](./cli/format.md)

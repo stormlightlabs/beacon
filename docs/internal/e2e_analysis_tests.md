@@ -6,7 +6,7 @@ golden artifacts or CI-only harnesses.
 
 ## Test Files
 
-1. `analysis_e2e.rs`
+1. `static_analysis_tests.rs`
    - Loads project fixtures via `DocumentManager`.
    - Runs CFG/data-flow/lint analysis, asserting on counts and diagnostic strings.
 2. Fixture directories under `samples/e2e/analysis/`
@@ -23,7 +23,7 @@ golden artifacts or CI-only harnesses.
 ## Running Tests
 
 ```bash
-cargo test --package beacon-lsp --test analysis_e2e
+cargo test --package beacon-lsp --test static_analysis_tests
 ```
 
 ## Known Gaps

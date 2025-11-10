@@ -1,6 +1,7 @@
 mod formatters;
 
 use anyhow::{Context, Result};
+use beacon_analyzer::{DiagnosticMessage, Linter};
 use beacon_constraint::ConstraintResult;
 use beacon_core::logging::default_log_path;
 use beacon_lsp::{
@@ -9,14 +10,14 @@ use beacon_lsp::{
     document::DocumentManager,
     formatting::{Formatter, FormatterConfig},
 };
-use beacon_parser::{PythonHighlighter, PythonParser};
+use beacon_parser::{AstNode, PythonHighlighter, PythonParser};
 use clap::{Parser, Subcommand, ValueEnum};
 use formatters::{format_compact, format_human, format_json, print_parse_errors, print_symbol_table};
 use owo_colors::OwoColorize;
 use serde_json::json;
 use std::fs;
 use std::io::{self, BufRead, Read, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tree_sitter::Node;
 use url::Url;
@@ -115,11 +116,74 @@ enum Commands {
         #[arg(long)]
         log_file: Option<PathBuf>,
     },
+    /// Run static analysis on Python code
+    Analyze {
+        #[command(subcommand)]
+        target: AnalyzeTarget,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "human")]
+        format: OutputFormat,
+        /// Show control flow graph visualization
+        #[arg(long)]
+        show_cfg: bool,
+        /// Show inferred types
+        #[arg(long)]
+        show_types: bool,
+        /// Only run linter
+        #[arg(long, conflicts_with = "dataflow_only")]
+        lint_only: bool,
+        /// Only run data flow analysis
+        #[arg(long, conflicts_with = "lint_only")]
+        dataflow_only: bool,
+    },
+    /// Run linter on Python code
+    Lint {
+        /// Python file to lint
+        #[arg(value_name = "FILE")]
+        file: Option<PathBuf>,
+        /// Output format
+        #[arg(short, long, value_enum, default_value = "human")]
+        format: OutputFormat,
+    },
     /// Debug tools (available only in debug builds)
     #[cfg(debug_assertions)]
     Debug {
         #[command(subcommand)]
         command: DebugCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum AnalyzeTarget {
+    /// Analyze entire package (directory with __init__.py)
+    Package {
+        /// Path to package directory
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+    },
+    /// Analyze entire project (workspace with multiple packages)
+    Project {
+        /// Path to project root
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+    },
+    /// Analyze single file
+    File {
+        /// Python file to analyze
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
+    },
+    /// Analyze specific function in a file
+    Function {
+        /// Path and function name (format: file.py:function_name)
+        #[arg(value_name = "FILE:NAME")]
+        target: String,
+    },
+    /// Analyze specific class in a file
+    Class {
+        /// Path and class name (format: file.py:ClassName)
+        #[arg(value_name = "FILE:NAME")]
+        target: String,
     },
 }
 
@@ -180,6 +244,10 @@ async fn main() -> Result<()> {
         Commands::Typecheck { file, format, workspace } => typecheck_command(file, format, workspace).await,
         Commands::Lsp { tcp, log_file } => lsp_command(tcp, log_file).await,
         Commands::Format { file, write, check, output } => format_command(file, write, check, output),
+        Commands::Analyze { target, format, show_cfg, show_types, lint_only, dataflow_only } => {
+            analyze_command(target, format, show_cfg, show_types, lint_only, dataflow_only)
+        }
+        Commands::Lint { file, format } => lint_command(file, format),
 
         #[cfg(debug_assertions)]
         Commands::Debug { command } => debug_command(command),
@@ -741,6 +809,351 @@ fn print_log_line(line: &str) {
     }
 }
 
+fn lint_command(file: Option<PathBuf>, format: OutputFormat) -> Result<()> {
+    let source = read_input(file.clone())?;
+    let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
+
+    let (ast, symbol_table) = parser
+        .parse_and_resolve(&source)
+        .with_context(|| "Failed to parse and resolve Python source")?;
+
+    let filename = file
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "stdin.py".to_string());
+
+    let mut linter = Linter::new(&symbol_table, filename);
+    let diagnostics = linter.analyze(&ast);
+
+    format_diagnostics(&diagnostics, &source, file.as_deref(), format)?;
+
+    if !diagnostics.is_empty() && !cfg!(test) {
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn analyze_command(
+    target: AnalyzeTarget, format: OutputFormat, show_cfg: bool, show_types: bool, lint_only: bool, dataflow_only: bool,
+) -> Result<()> {
+    match target {
+        AnalyzeTarget::File { file } => analyze_file(&file, format, show_cfg, show_types, lint_only, dataflow_only),
+        AnalyzeTarget::Function { target } => {
+            let (file, name) = parse_target(&target)?;
+            analyze_function(&file, &name, format, show_cfg, show_types, lint_only, dataflow_only)
+        }
+        AnalyzeTarget::Class { target } => {
+            let (file, name) = parse_target(&target)?;
+            analyze_class(&file, &name, format, show_cfg, show_types, lint_only, dataflow_only)
+        }
+        AnalyzeTarget::Package { path } => {
+            analyze_package(&path, format, show_cfg, show_types, lint_only, dataflow_only)
+        }
+        AnalyzeTarget::Project { path } => {
+            analyze_project(&path, format, show_cfg, show_types, lint_only, dataflow_only)
+        }
+    }
+}
+
+fn parse_target(target: &str) -> Result<(PathBuf, String)> {
+    let parts: Vec<&str> = target.rsplitn(2, ':').collect();
+    if parts.len() != 2 {
+        anyhow::bail!("Invalid target format. Expected 'file.py:name', got '{target}'");
+    }
+    let name = parts[0].to_string();
+    let file = PathBuf::from(parts[1]);
+    Ok((file, name))
+}
+
+fn analyze_file(
+    file: &PathBuf, format: OutputFormat, show_cfg: bool, show_types: bool, lint_only: bool, dataflow_only: bool,
+) -> Result<()> {
+    let source = fs::read_to_string(file).with_context(|| format!("Failed to read file: {}", file.display()))?;
+    let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
+
+    let (ast, symbol_table) = parser
+        .parse_and_resolve(&source)
+        .with_context(|| "Failed to parse and resolve Python source")?;
+
+    let filename = file.display().to_string();
+    let mut all_diagnostics = Vec::new();
+
+    if !dataflow_only {
+        let mut linter = Linter::new(&symbol_table, filename.clone());
+        let lint_diagnostics = linter.analyze(&ast);
+        all_diagnostics.extend(lint_diagnostics);
+    }
+
+    if !lint_only && !dataflow_only && show_cfg {
+        println!("{}", "TODO: CFG visualization not yet implemented".yellow());
+    }
+
+    if show_types {
+        println!("{} Type Information:", "▶".bright_green().bold());
+        println!("{}", "TODO: Show type information".yellow());
+        println!();
+    }
+
+    format_diagnostics(&all_diagnostics, &source, Some(file), format)?;
+
+    if !all_diagnostics.is_empty() && !cfg!(test) {
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn analyze_function(
+    file: &PathBuf, name: &str, format: OutputFormat, show_cfg: bool, show_types: bool, lint_only: bool,
+    dataflow_only: bool,
+) -> Result<()> {
+    let source = fs::read_to_string(file).with_context(|| format!("Failed to read file: {}", file.display()))?;
+    let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
+
+    let (ast, symbol_table) = parser
+        .parse_and_resolve(&source)
+        .with_context(|| "Failed to parse and resolve Python source")?;
+
+    let function_node = extract_function(&ast, name)
+        .ok_or_else(|| anyhow::anyhow!("Function '{}' not found in {}", name, file.display()))?;
+
+    let filename = file.display().to_string();
+    let mut all_diagnostics = Vec::new();
+
+    if !dataflow_only {
+        let mut linter = Linter::new(&symbol_table, filename.clone());
+        let lint_diagnostics = linter.analyze(function_node);
+        all_diagnostics.extend(lint_diagnostics);
+    }
+
+    if !lint_only && !dataflow_only && show_cfg {
+        println!("{}", "TODO: CFG visualization not yet implemented".yellow());
+    }
+
+    if show_types {
+        println!(
+            "{} Type Information for '{}':",
+            "▶".bright_green().bold(),
+            name.yellow()
+        );
+        println!("{}", "TODO: Show type information".yellow());
+        println!();
+    }
+
+    format_diagnostics(&all_diagnostics, &source, Some(file), format)?;
+
+    if !all_diagnostics.is_empty() && !cfg!(test) {
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn analyze_class(
+    file: &PathBuf, name: &str, format: OutputFormat, show_cfg: bool, show_types: bool, lint_only: bool,
+    dataflow_only: bool,
+) -> Result<()> {
+    let source = fs::read_to_string(file).with_context(|| format!("Failed to read file: {}", file.display()))?;
+    let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
+
+    let (ast, symbol_table) = parser
+        .parse_and_resolve(&source)
+        .with_context(|| "Failed to parse and resolve Python source")?;
+
+    let class_node =
+        extract_class(&ast, name).ok_or_else(|| anyhow::anyhow!("Class '{}' not found in {}", name, file.display()))?;
+
+    let filename = file.display().to_string();
+    let mut all_diagnostics = Vec::new();
+
+    if !dataflow_only {
+        let mut linter = Linter::new(&symbol_table, filename.clone());
+        let lint_diagnostics = linter.analyze(class_node);
+        all_diagnostics.extend(lint_diagnostics);
+    }
+
+    if !lint_only && !dataflow_only && show_cfg {
+        println!("{}", "TODO: CFG visualization not yet implemented".yellow());
+    }
+
+    if show_types {
+        println!(
+            "{} Type Information for class '{}':",
+            "▶".bright_green().bold(),
+            name.yellow()
+        );
+        println!("{}", "TODO: Show type information".yellow());
+        println!();
+    }
+
+    format_diagnostics(&all_diagnostics, &source, Some(file), format)?;
+
+    if !all_diagnostics.is_empty() && !cfg!(test) {
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
+fn analyze_package(
+    _path: &Path, _format: OutputFormat, _show_cfg: bool, _show_types: bool, _lint_only: bool, _dataflow_only: bool,
+) -> Result<()> {
+    anyhow::bail!("Package analysis not yet implemented")
+}
+
+fn analyze_project(
+    _path: &Path, _format: OutputFormat, _show_cfg: bool, _show_types: bool, _lint_only: bool, _dataflow_only: bool,
+) -> Result<()> {
+    anyhow::bail!("Project analysis not yet implemented")
+}
+
+fn extract_function<'a>(ast: &'a AstNode, name: &str) -> Option<&'a AstNode> {
+    match ast {
+        AstNode::Module { body, .. } => {
+            for node in body {
+                if let AstNode::FunctionDef { name: func_name, .. } = node {
+                    if func_name == name {
+                        return Some(node);
+                    }
+                }
+                if let Some(found) = extract_function(node, name) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        AstNode::FunctionDef { name: func_name, body, .. } => {
+            if func_name == name {
+                return Some(ast);
+            }
+            for node in body {
+                if let Some(found) = extract_function(node, name) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        AstNode::ClassDef { body, .. } => {
+            for node in body {
+                if let Some(found) = extract_function(node, name) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn extract_class<'a>(ast: &'a AstNode, name: &str) -> Option<&'a AstNode> {
+    match ast {
+        AstNode::Module { body, .. } => {
+            for node in body {
+                if let AstNode::ClassDef { name: class_name, .. } = node {
+                    if class_name == name {
+                        return Some(node);
+                    }
+                }
+                if let Some(found) = extract_class(node, name) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        AstNode::ClassDef { name: class_name, body, .. } => {
+            if class_name == name {
+                return Some(ast);
+            }
+            for node in body {
+                if let Some(found) = extract_class(node, name) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn format_diagnostics(
+    diagnostics: &[DiagnosticMessage], source: &str, file: Option<&Path>, format: OutputFormat,
+) -> Result<()> {
+    match format {
+        OutputFormat::Human => format_diagnostics_human(diagnostics, source, file),
+        OutputFormat::Json => format_diagnostics_json(diagnostics),
+        OutputFormat::Compact => format_diagnostics_compact(diagnostics, file),
+    }
+}
+
+fn format_diagnostics_human(diagnostics: &[DiagnosticMessage], source: &str, file: Option<&Path>) -> Result<()> {
+    if diagnostics.is_empty() {
+        println!("{} No issues found", "✓".green().bold());
+        return Ok(());
+    }
+
+    let filename = file
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "stdin".to_string());
+    println!(
+        "{} {} issues found in {}",
+        "✗".red().bold(),
+        diagnostics.len(),
+        filename.cyan()
+    );
+    println!();
+
+    for diagnostic in diagnostics {
+        println!(
+            "{} {}:{}:{} [{}]",
+            "▸".bright_red(),
+            diagnostic.filename.cyan(),
+            diagnostic.line.to_string().yellow(),
+            diagnostic.col.to_string().yellow(),
+            diagnostic.rule.code().dimmed()
+        );
+        println!("  {}", diagnostic.message.bright_white());
+
+        let lines: Vec<&str> = source.lines().collect();
+        if diagnostic.line > 0 && diagnostic.line <= lines.len() {
+            let line = lines[diagnostic.line - 1];
+            println!("  {} {}", diagnostic.line.to_string().dimmed(), line.dimmed());
+            if diagnostic.col > 0 {
+                let spaces = " ".repeat(diagnostic.line.to_string().len() + 2 + diagnostic.col - 1);
+                println!("  {}{}", spaces, "^".bright_red());
+            }
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
+fn format_diagnostics_json(diagnostics: &[DiagnosticMessage]) -> Result<()> {
+    let json_output = serde_json::to_string_pretty(&diagnostics)?;
+    println!("{json_output}");
+    Ok(())
+}
+
+fn format_diagnostics_compact(diagnostics: &[DiagnosticMessage], file: Option<&Path>) -> Result<()> {
+    let filename = file
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "stdin".to_string());
+
+    for diagnostic in diagnostics {
+        println!(
+            "{}:{}:{}: [{}] {}",
+            filename,
+            diagnostic.line,
+            diagnostic.col,
+            diagnostic.rule.code(),
+            diagnostic.message
+        );
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1270,6 +1683,171 @@ result = obj.method(10)
         temp_file.flush().unwrap();
 
         let result = debug_logs_command(false, Some(temp_file.path().to_path_buf()), Some("ERROR".to_string()));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_lint_command_no_errors() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "def greet(name):\n    return f'Hello {{name}}'").unwrap();
+
+        let result = lint_command(Some(temp_file.path().to_path_buf()), OutputFormat::Human);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_lint_command_with_errors() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "import os\nx = 42").unwrap();
+
+        let result = lint_command(Some(temp_file.path().to_path_buf()), OutputFormat::Human);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_target_valid() {
+        let result = parse_target("path/to/file.py:MyClass");
+        assert!(result.is_ok());
+        let (file, name) = result.unwrap();
+        assert_eq!(file, PathBuf::from("path/to/file.py"));
+        assert_eq!(name, "MyClass");
+    }
+
+    #[test]
+    fn test_parse_target_invalid() {
+        let result = parse_target("invalid_format");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_analyze_file() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "def add(x, y):\n    return x + y").unwrap();
+
+        let result = analyze_file(
+            &temp_file.path().to_path_buf(),
+            OutputFormat::Human,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_analyze_function_found() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "def foo():\n    pass\n\ndef bar():\n    pass").unwrap();
+
+        let result = analyze_function(
+            &temp_file.path().to_path_buf(),
+            "foo",
+            OutputFormat::Human,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_analyze_function_not_found() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "def foo():\n    pass").unwrap();
+
+        let result = analyze_function(
+            &temp_file.path().to_path_buf(),
+            "nonexistent",
+            OutputFormat::Human,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_analyze_class_found() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "class Foo:\n    pass\n\nclass Bar:\n    pass").unwrap();
+
+        let result = analyze_class(
+            &temp_file.path().to_path_buf(),
+            "Foo",
+            OutputFormat::Human,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_analyze_class_not_found() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        writeln!(temp_file, "class Foo:\n    pass").unwrap();
+
+        let result = analyze_class(
+            &temp_file.path().to_path_buf(),
+            "NonExistent",
+            OutputFormat::Human,
+            false,
+            false,
+            false,
+            false,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_extract_function() {
+        let source = "def foo():\n    pass\n\ndef bar():\n    pass";
+        let mut parser = PythonParser::new().unwrap();
+        let (ast, _) = parser.parse_and_resolve(source).unwrap();
+
+        let found = extract_function(&ast, "foo");
+        assert!(found.is_some());
+
+        let not_found = extract_function(&ast, "baz");
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_extract_class() {
+        let source = "class Foo:\n    pass\n\nclass Bar:\n    pass";
+        let mut parser = PythonParser::new().unwrap();
+        let (ast, _) = parser.parse_and_resolve(source).unwrap();
+
+        let found = extract_class(&ast, "Foo");
+        assert!(found.is_some());
+
+        let not_found = extract_class(&ast, "Baz");
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_format_diagnostics_json() {
+        let diagnostics = vec![];
+        let result = format_diagnostics_json(&diagnostics);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_format_diagnostics_compact() {
+        let diagnostics = vec![];
+        let result = format_diagnostics_compact(&diagnostics, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_format_diagnostics_human_no_errors() {
+        let diagnostics = vec![];
+        let source = "x = 42";
+        let result = format_diagnostics_human(&diagnostics, source, None);
         assert!(result.is_ok());
     }
 

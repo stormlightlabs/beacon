@@ -129,7 +129,8 @@ following order so each layer builds on the previous one.
    - Use the parser harness to exercise config load + hot-reload scenarios formerly tracked in TODO.
    - Ensure `beacon.toml` / workspace settings round-trips are covered.
 3. **Static Analysis E2E**
-   - Add `analysis_e2e.rs` as described in `docs/internal/e2e_analysis_tests.md`.
+   - Add `crates/analyzer/tests/analyzer_tests.rs` & `crates/server/tests/static_analysis_tests.rs`
+     as described in `docs/internal/e2e_analysis_tests.md`.
    - Focus on CFG/data-flow diagnostics over multi-file fixtures.
 4. **Hindley–Milner Solver E2E**
    - Follow `docs/internal/e2e_hm_tests.md` to assert on inferred types and solver diagnostics.

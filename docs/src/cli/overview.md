@@ -12,6 +12,11 @@ The Beacon CLI provides command-line tools for parsing, type checking, and analy
 - `resolve` - Analyze name resolution and display symbol tables
 - `format` - Run the Beacon formatter without starting the language server
 
+### Static Analysis
+
+- `analyze` - Run static analysis on Python code (linting and data flow)
+- `lint` - Run linter on Python code
+
 ### Type Checking
 
 - `typecheck` - Perform Hindley-Milner type inference and report type errors
