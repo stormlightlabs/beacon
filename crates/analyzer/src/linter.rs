@@ -5,8 +5,8 @@
 use super::rules::{DiagnosticMessage, RuleKind};
 
 use beacon_parser::{
-    AstNode, CompareOperator, Comprehension, ExceptHandler, LiteralValue, MatchCase, ReferenceKind, SymbolKind,
-    SymbolTable, WithItem,
+    AstNode, BinaryOperator, CompareOperator, Comprehension, ExceptHandler, LiteralValue, MatchCase, ReferenceKind,
+    SymbolKind, SymbolTable, WithItem,
 };
 use rustc_hash::FxHashSet;
 
@@ -150,7 +150,8 @@ impl<'a> Linter<'a> {
                 }
             }
             AstNode::Call { args, .. } => self.visit_body(args),
-            AstNode::BinaryOp { left, right, .. } => {
+            AstNode::BinaryOp { left, right, op, line, col, .. } => {
+                self.check_percent_format(left, op, *line, *col);
                 self.visit_node(left);
                 self.visit_node(right);
             }
@@ -187,11 +188,17 @@ impl<'a> Linter<'a> {
                     self.visit_node(value);
                 }
             }
-            AstNode::Yield { .. }
-            | AstNode::YieldFrom { .. }
-            | AstNode::Await { .. }
-            | AstNode::Identifier { .. }
-            | AstNode::Starred { .. } => {}
+            AstNode::Yield { value, line, col, .. } => {
+                self.check_yield_outside_function(*line, *col);
+                if let Some(val) = value {
+                    self.visit_node(val);
+                }
+            }
+            AstNode::YieldFrom { value, line, col, .. } => {
+                self.check_yield_outside_function(*line, *col);
+                self.visit_node(value);
+            }
+            AstNode::Await { .. } | AstNode::Identifier { .. } | AstNode::Starred { .. } => {}
             AstNode::ParenthesizedExpression { expression, .. } => self.visit_node(expression),
         }
     }
@@ -347,6 +354,7 @@ impl<'a> Linter<'a> {
     fn visit_literal(&mut self, value: &LiteralValue, line: usize, col: usize) {
         if let LiteralValue::String { value: s, prefix } = value {
             self.check_fstring_missing_placeholders(s, prefix, line, col);
+            self.check_tstring_missing_placeholders(s, prefix, line, col);
         }
     }
 
@@ -406,6 +414,18 @@ impl<'a> Linter<'a> {
             self.report(
                 RuleKind::ReturnOutsideFunction,
                 "'return' outside function".to_string(),
+                line,
+                col,
+            );
+        }
+    }
+
+    /// BEA004: YieldOutsideFunction
+    fn check_yield_outside_function(&mut self, line: usize, col: usize) {
+        if self.ctx.function_depth == 0 {
+            self.report(
+                RuleKind::YieldOutsideFunction,
+                "'yield' outside function".to_string(),
                 line,
                 col,
             );
@@ -500,6 +520,74 @@ impl<'a> Linter<'a> {
                 col,
             );
         }
+    }
+
+    /// BEA014: [RuleKind::TStringMissingPlaceholders]
+    fn check_tstring_missing_placeholders(&mut self, s: &str, prefix: &str, line: usize, col: usize) {
+        let is_tstring = prefix.to_lowercase().contains('t');
+        if is_tstring && !s.contains('{') {
+            self.report(
+                RuleKind::TStringMissingPlaceholders,
+                "t-string without any placeholders".to_string(),
+                line,
+                col,
+            );
+        }
+    }
+
+    /// BEA025: [RuleKind::PercentFormatInvalidFormat]
+    ///
+    /// Validate percent format strings (e.g., "%s" % value)
+    fn check_percent_format(&mut self, left: &AstNode, op: &BinaryOperator, line: usize, col: usize) {
+        if !matches!(op, BinaryOperator::Mod) {
+            return;
+        }
+
+        if let AstNode::Literal { value: LiteralValue::String { value: s, .. }, .. } = left {
+            if let Err(error) = Self::validate_percent_format(s) {
+                self.report(
+                    RuleKind::PercentFormatInvalidFormat,
+                    format!("Invalid % format string: {error}"),
+                    line,
+                    col,
+                );
+            }
+        }
+    }
+
+    /// Validate a percent format string
+    fn validate_percent_format(s: &str) -> Result<(), String> {
+        let mut chars = s.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '%' {
+                match chars.peek() {
+                    Some('%') => {
+                        chars.next();
+                    }
+                    Some(&c) => {
+                        let spec = c;
+                        if !Self::is_valid_format_specifier(spec) {
+                            return Err(format!("invalid format character '{spec}'"));
+                        }
+                        chars.next();
+                    }
+                    None => {
+                        return Err("incomplete format string".to_string());
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check if a character is a valid Python % format specifier
+    fn is_valid_format_specifier(c: char) -> bool {
+        matches!(
+            c,
+            's' | 'd' | 'i' | 'f' | 'e' | 'E' | 'g' | 'G' | 'c' | 'r' | 'x' | 'X' | 'o' | 'b' | 'a'
+        )
     }
 
     /// BEA023: ForwardAnnotationSyntaxError
@@ -994,6 +1082,50 @@ except:
     }
 
     #[test]
+    fn test_tstring_missing_placeholders() {
+        let source = "x = t'hello'";
+        let diagnostics = lint_source(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::TStringMissingPlaceholders)
+        );
+    }
+
+    #[test]
+    fn test_tstring_with_placeholders() {
+        let source = "x = t'hello {name}'";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::TStringMissingPlaceholders)
+        );
+    }
+
+    #[test]
+    fn test_uppercase_tstring_missing_placeholders() {
+        let source = "x = T'hello'";
+        let diagnostics = lint_source(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::TStringMissingPlaceholders)
+        );
+    }
+
+    #[test]
+    fn test_regular_string_no_tstring_warning() {
+        let source = "x = 'hello'";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::TStringMissingPlaceholders)
+        );
+    }
+
+    #[test]
     fn test_unused_import() {
         let source = "import os\nx = 5";
         let diagnostics = lint_source(source);
@@ -1068,20 +1200,29 @@ except:
     }
 
     #[test]
-    #[ignore]
     fn test_yield_outside_function() {
-        // TODO: YieldOutsideFunction rule is not yet implemented
-        // Yield nodes are currently not checked for context
         let source = "yield 42";
         let diagnostics = lint_source(source);
         assert!(diagnostics.iter().any(|d| d.rule == RuleKind::YieldOutsideFunction));
     }
 
     #[test]
-    #[ignore]
     fn test_yield_inside_function() {
-        // TODO: YieldOutsideFunction rule is not yet implemented
         let source = "def foo():\n    yield 42";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::YieldOutsideFunction));
+    }
+
+    #[test]
+    fn test_yield_from_outside_function() {
+        let source = "yield from [1, 2, 3]";
+        let diagnostics = lint_source(source);
+        assert!(diagnostics.iter().any(|d| d.rule == RuleKind::YieldOutsideFunction));
+    }
+
+    #[test]
+    fn test_yield_from_inside_function() {
+        let source = "def foo():\n    yield from [1, 2, 3]";
         let diagnostics = lint_source(source);
         assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::YieldOutsideFunction));
     }
@@ -1163,5 +1304,71 @@ except:
         let source = "x is True";
         let diagnostics = lint_source(source);
         assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::IsLiteral));
+    }
+
+    #[test]
+    fn test_percent_format_valid() {
+        let source = r#"x = "%s %d" % ("hello", 5)"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::PercentFormatInvalidFormat)
+        );
+    }
+
+    #[test]
+    fn test_percent_format_invalid() {
+        let source = r#"x = "%q" % 3"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::PercentFormatInvalidFormat)
+        );
+    }
+
+    #[test]
+    fn test_percent_format_valid_all_specifiers() {
+        let source = r#"x = "%s %d %i %f %e %E %g %G %c %r %x %X %o" % data"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::PercentFormatInvalidFormat)
+        );
+    }
+
+    #[test]
+    fn test_percent_format_double_percent() {
+        let source = r#"x = "100%% complete" % ()"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::PercentFormatInvalidFormat)
+        );
+    }
+
+    #[test]
+    fn test_percent_format_incomplete() {
+        let source = r#"x = "incomplete %" % ()"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::PercentFormatInvalidFormat)
+        );
+    }
+
+    #[test]
+    fn test_percent_operator_not_format() {
+        let source = "x = 10 % 3";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::PercentFormatInvalidFormat)
+        );
     }
 }

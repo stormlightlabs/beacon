@@ -94,10 +94,8 @@ cargo test --package beacon-lsp --test linter_tests
 
 The following tests are skipped with TODO comments indicating missing functionality:
 
-1. `test_yield_outside_function` - YieldOutsideFunction rule not yet implemented
-2. `test_yield_inside_function` - YieldOutsideFunction rule not yet implemented
-3. `test_nested_functions_break_continue` - Linter correctly resets scope for nested functions
-4. `test_is_not_literal` - Parser may not generate IsNot as single CompareOperator
+1. `test_nested_functions_break_continue` - Linter correctly resets scope for nested functions
+2. `test_is_not_literal` - Parser may not generate IsNot as single CompareOperator
 
 ## Known Gaps
 
@@ -116,7 +114,6 @@ The following tests are skipped with TODO comments indicating missing functional
 
 ## Next Steps
 
-- [ ] Implement YieldOutsideFunction rule in linter
 - [ ] Create helper `assert_diagnostics` util to compare `(rule_id, message, span)` tuples
 - [ ] Populate missing fixture directories for integration tests
 - [ ] Add CFG visualization comparison when needed

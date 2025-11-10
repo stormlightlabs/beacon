@@ -297,12 +297,6 @@ Implementation status for BEA diagnostic codes. See `docs/src/lsp/lint_rules.md`
 - [ ] BEA024: MultiValueRepeatedKeyLiteral - Requires dict key evaluation
 - [ ] BEA029: RedundantPass - Requires separate pass
 
-### Other
-
-- [ ] BEA004: YieldOutsideFunction - Track yield/yield-from in visit_node
-- [ ] BEA014: TStringMissingPlaceholders - Template string support
-- [ ] BEA025: PercentFormatInvalidFormat - Validate % format syntax
-
 ### Improve Caching Granularity
 
 Current limitations from `analysis/mod.rs`:
