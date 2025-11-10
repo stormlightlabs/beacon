@@ -1,4 +1,4 @@
-use super::loader;
+use super::loader::{self, StubCache};
 use super::pattern::extract_pattern_bindings;
 use super::type_env::TypeEnvironment;
 
@@ -11,7 +11,7 @@ use beacon_core::{TypeCtor, TypeVarGen};
 use beacon_parser::{AstNode, LiteralValue, SymbolTable};
 use std::sync::Arc;
 
-type TStubCache = Arc<std::sync::RwLock<crate::workspace::StubCache>>;
+type TStubCache = Arc<std::sync::RwLock<StubCache>>;
 
 /// Expression context for constraint generation
 ///
@@ -480,7 +480,7 @@ fn visit_node_with_context(
                 body_env.set_generator_params(y, s, r);
             }
 
-            body_env.set_expected_return_type(ret_type.clone());
+            body_env.set_expected_return_type(ret_type);
 
             for (i, stmt) in body.iter().enumerate() {
                 if i == 0 && is_docstring(stmt) {
@@ -489,7 +489,7 @@ fn visit_node_with_context(
                 visit_node_with_context(stmt, &mut body_env, ctx, stub_cache, ExprContext::Void)?;
             }
 
-            let mut decorated_type = fn_type.clone();
+            let mut decorated_type = fn_type;
             for decorator in decorators.iter().rev() {
                 let decorator_ty = env.lookup(decorator).unwrap_or_else(|| Type::Var(env.fresh_var()));
                 let result_ty = Type::Var(env.fresh_var());
@@ -545,7 +545,7 @@ fn visit_node_with_context(
             let type_transforming_decorators: Vec<&String> =
                 decorators.iter().filter(|d| !is_special_class_decorator(d)).collect();
 
-            let mut decorated_type = class_type.clone();
+            let mut decorated_type = class_type;
             for decorator in type_transforming_decorators.iter().rev() {
                 let decorator_ty = env.lookup(decorator).unwrap_or_else(|| Type::Var(env.fresh_var()));
                 let result_ty = Type::Var(env.fresh_var());
@@ -683,11 +683,11 @@ fn visit_node_with_context(
             let result_ty = if let Some((yield_var, send_var, _return_var)) = env.get_generator_params() {
                 let span = Span::with_end(*line, *col, *end_line, *end_col);
                 ctx.constraints
-                    .push(Constraint::Equal(yielded_ty.clone(), yield_var.clone(), span));
+                    .push(Constraint::Equal(yielded_ty, yield_var.clone(), span));
 
                 send_var.clone()
             } else {
-                yielded_ty.clone()
+                yielded_ty
             };
 
             ctx.record_type(*line, *col, result_ty.clone());
@@ -732,12 +732,12 @@ fn visit_node_with_context(
                 let s_var = Type::Var(env.fresh_var());
                 let expected_coro_ty = Type::coroutine(y_var, s_var, result_var.clone());
                 ctx.constraints
-                    .push(Constraint::Equal(awaitable_ty.clone(), expected_coro_ty, span));
+                    .push(Constraint::Equal(awaitable_ty, expected_coro_ty, span));
                 result_var
             } else {
                 let result_var = Type::Var(env.fresh_var());
                 ctx.constraints.push(Constraint::Protocol(
-                    awaitable_ty.clone(),
+                    awaitable_ty,
                     beacon_core::ProtocolName::Awaitable,
                     result_var.clone(),
                     span,
@@ -843,7 +843,7 @@ fn visit_node_with_context(
 
             if let Some(var_name) = inverse_var {
                 let fallback = ctx.control_flow.get_remaining_types(&var_name);
-                if let Some(refined_ty) = inverse_type.clone().or(fallback) {
+                if let Some(refined_ty) = inverse_type.or(fallback) {
                     elif_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
 
                     if let Some(pred) = &predicate {
@@ -853,7 +853,7 @@ fn visit_node_with_context(
                                 ctx.constraints.push(Constraint::Narrowing(
                                     var_name.clone(),
                                     inv_pred.clone(),
-                                    refined_ty.clone(),
+                                    refined_ty,
                                     span,
                                 ));
 
@@ -1111,11 +1111,8 @@ fn visit_node_with_context(
             let all_patterns: Vec<beacon_parser::Pattern> = cases.iter().map(|c| c.pattern.clone()).collect();
             let span = Span::with_end(*line, *col, *end_line, *end_col);
 
-            ctx.constraints.push(Constraint::PatternExhaustive(
-                subject_ty.clone(),
-                all_patterns.clone(),
-                span,
-            ));
+            ctx.constraints
+                .push(Constraint::PatternExhaustive(subject_ty.clone(), all_patterns, span));
 
             let subject_var =
                 if let AstNode::Identifier { name, .. } = subject.as_ref() { Some(name.clone()) } else { None };
@@ -1864,7 +1861,7 @@ fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Opti
                     }
 
                     if let AstNode::Tuple { elements, .. } = &args[1] {
-                        let mut result_type = current_type.clone();
+                        let mut result_type = current_type;
                         for elem in elements {
                             if let AstNode::Identifier { name: type_name, .. } = elem {
                                 let checked_type = type_name_to_type(type_name);

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [
+members = [ "crates/analyzer",
     "crates/cli",
     "crates/constraints",
     "crates/core",

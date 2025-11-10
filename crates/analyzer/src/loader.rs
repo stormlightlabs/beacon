@@ -1,12 +1,76 @@
-use crate::analysis::MethodInfo;
 use beacon_core::{AnnotationParser, TypeCtor, TypeVar, TypeVarGen};
 use beacon_core::{
     ClassMetadata, ClassRegistry, MethodType, Type,
     errors::{AnalysisError, Result},
 };
 use beacon_parser::AstNode;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::HashMap;
+use std::path::PathBuf;
+
+/// Cache for parsed stub files
+#[derive(Default)]
+pub struct StubCache {
+    cache: FxHashMap<String, StubFile>,
+}
+
+impl StubCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Get a stub from the cache
+    pub fn get(&self, module_name: &str) -> Option<&StubFile> {
+        self.cache.get(module_name)
+    }
+
+    /// Insert a stub into the cache
+    pub fn insert(&mut self, module_name: String, stub: StubFile) {
+        self.cache.insert(module_name, stub);
+    }
+
+    /// Check if a stub exists in the cache
+    pub fn contains(&self, module_name: &str) -> bool {
+        self.cache.contains_key(module_name)
+    }
+
+    /// Get the number of stubs in the cache
+    pub fn len(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// Check if the cache is empty
+    pub fn is_empty(&self) -> bool {
+        self.cache.is_empty()
+    }
+}
+
+/// Parsed stub file (.pyi)
+#[derive(Debug, Clone)]
+pub struct StubFile {
+    /// Module name
+    pub module: String,
+    /// File path to the stub
+    pub path: PathBuf,
+    /// Exported symbols and their types
+    pub exports: FxHashMap<String, Type>,
+    /// Whether this is a partial stub
+    pub is_partial: bool,
+    /// Re-exported modules (from X import Y as Y)
+    pub reexports: Vec<String>,
+    /// __all__ declaration if present
+    pub all_exports: Option<Vec<String>>,
+    /// Embedded content for built-in stubs (avoids filesystem access)
+    pub content: Option<String>,
+}
+
+#[derive(Debug)]
+pub(crate) struct MethodInfo {
+    pub params: Vec<(String, Type)>,
+    pub return_type: Type,
+    pub decorators: Vec<String>,
+    pub is_overload: bool,
+}
 
 #[derive(Debug)]
 pub struct StubTypeContext {
@@ -17,7 +81,7 @@ pub struct StubTypeContext {
 
 impl StubTypeContext {
     pub fn new() -> Self {
-        Self { type_vars: FxHashSet::default(), var_map: HashMap::default(), var_gen: TypeVarGen::new() }
+        Self::default()
     }
 
     pub fn register_type_var(&mut self, name: &str) {
@@ -36,6 +100,12 @@ impl StubTypeContext {
             self.var_map.insert(name.to_string(), tv.clone());
             tv
         }
+    }
+}
+
+impl Default for StubTypeContext {
+    fn default() -> Self {
+        Self { type_vars: FxHashSet::default(), var_map: HashMap::default(), var_gen: TypeVarGen::new() }
     }
 }
 
@@ -425,9 +495,9 @@ pub fn parse_type_annotation(annotation: &str, ctx: &mut StubTypeContext) -> Opt
     }
 
     if annotation.contains('|') {
-        let parts = annotation.split('|').map(|s| s.trim()).collect::<Vec<_>>();
-        let types = parts
-            .into_iter()
+        let types = annotation
+            .split('|')
+            .map(|s| s.trim())
             .filter_map(|p| parse_type_annotation(p, ctx))
             .collect();
         return Some(Type::Union(types));
@@ -541,18 +611,18 @@ fn convert_type_vars(ty: beacon_core::Type, ctx: &mut StubTypeContext) -> beacon
     }
 }
 
-pub fn load_stub_into_registry(stub: &crate::workspace::StubFile, class_registry: &mut ClassRegistry) -> Result<()> {
+pub fn load_stub_into_registry(stub: &StubFile, class_registry: &mut ClassRegistry) -> Result<()> {
     let content = match &stub.content {
         Some(embedded_content) => embedded_content.clone(),
         None => std::fs::read_to_string(&stub.path).map_err(AnalysisError::from)?,
     };
 
-    let mut parser = crate::parser::LspParser::new()?;
-    let parse_result = parser.parse(&content)?;
+    let mut parser = beacon_parser::PythonParser::new()?;
+    let (ast, _symbol_table) = parser.parse_and_resolve(&content)?;
     let mut ctx = StubTypeContext::new();
-    collect_stub_type_vars(&parse_result.ast, &mut ctx);
+    collect_stub_type_vars(&ast, &mut ctx);
     let base_map = parse_class_bases(&content);
-    extract_stub_classes_into_registry(&parse_result.ast, class_registry, &mut ctx, &base_map);
+    extract_stub_classes_into_registry(&ast, class_registry, &mut ctx, &base_map);
     Ok(())
 }
 
@@ -587,8 +657,8 @@ fn parse_class_bases(source: &str) -> std::collections::HashMap<String, Vec<Stri
 
 #[cfg(test)]
 mod tests {
+    use super::StubFile;
     use super::*;
-    use crate::workspace::StubFile;
 
     use beacon_core::{ClassRegistry, MethodType, Type, TypeCtor};
     use rustc_hash::FxHashMap;
@@ -772,7 +842,7 @@ mod tests {
 
     #[test]
     fn test_stub_loading_list_methods() {
-        use crate::workspace::StubFile;
+        use super::StubFile;
         use beacon_core::{ClassRegistry, MethodType};
         use rustc_hash::FxHashMap;
         use std::path::PathBuf;
@@ -829,7 +899,7 @@ class list(Generic[_T]):
 
     #[test]
     fn test_stub_loading_real_builtins() {
-        use crate::workspace::StubFile;
+        use super::StubFile;
         use beacon_core::ClassRegistry;
         use rustc_hash::FxHashMap;
         use std::path::PathBuf;

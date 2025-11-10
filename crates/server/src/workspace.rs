@@ -885,7 +885,7 @@ impl Workspace {
             tracing::debug!("discover_stubs: No root_uri, skipping stub package discovery");
         }
 
-        let stub_count = self.stubs.read().ok().map(|s| s.cache.len()).unwrap_or(0);
+        let stub_count = self.stubs.read().ok().map(|s| s.len()).unwrap_or(0);
         tracing::info!("discover_stubs: Completed. Loaded {} stub modules", stub_count);
     }
 
@@ -1565,52 +1565,8 @@ impl TarjanState {
 
 /// Cache for loaded stub files
 ///
-/// Thread-safe cache for storing parsed stub files.
-/// Uses interior mutability via RwLock to allow concurrent reads and exclusive writes.
-#[derive(Default)]
-pub struct StubCache {
-    cache: FxHashMap<String, StubFile>,
-}
-
-impl StubCache {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Get a stub from the cache
-    pub fn get(&self, module_name: &str) -> Option<&StubFile> {
-        self.cache.get(module_name)
-    }
-
-    /// Insert a stub into the cache
-    pub fn insert(&mut self, module_name: String, stub: StubFile) {
-        self.cache.insert(module_name, stub);
-    }
-
-    /// Check if a stub exists in the cache
-    pub fn contains(&self, module_name: &str) -> bool {
-        self.cache.contains_key(module_name)
-    }
-}
-
-/// Parsed stub file (.pyi)
-#[derive(Debug, Clone)]
-pub struct StubFile {
-    /// Module name
-    pub module: String,
-    /// File path to the stub
-    pub path: PathBuf,
-    /// Exported symbols and their types
-    pub exports: FxHashMap<String, Type>,
-    /// Whether this is a partial stub
-    pub is_partial: bool,
-    /// Re-exported modules (from X import Y as Y)
-    pub reexports: Vec<String>,
-    /// __all__ declaration if present
-    pub all_exports: Option<Vec<String>>,
-    /// Embedded content for built-in stubs (avoids filesystem access)
-    pub content: Option<String>,
-}
+// Re-export types from beacon-analyzer
+pub use beacon_analyzer::{StubCache, StubFile};
 
 /// Workspace errors
 #[derive(Debug, thiserror::Error)]

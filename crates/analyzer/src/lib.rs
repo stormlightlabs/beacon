@@ -1,0 +1,26 @@
+//! Static analysis library for Python code
+//!
+//! This crate provides standalone static analysis capabilities including:
+//! - Control Flow Graph (CFG) construction
+//! - Data flow analysis (use-before-def, unreachable code)
+//! - Static linting (PyFlakes-style rules)
+//! - Pattern matching exhaustiveness
+//! - Type inference via constraint generation
+
+pub mod cfg;
+pub mod data_flow;
+pub mod linter;
+pub mod loader;
+pub mod pattern;
+pub mod rules;
+pub mod type_env;
+pub mod walker;
+
+// Re-export commonly used types
+pub use cfg::{BasicBlock, BlockId, CfgBuilder, ControlFlowGraph, EdgeKind};
+pub use data_flow::{DataFlowAnalyzer, DataFlowResult, UnreachableCode, UnusedVariable, UseBeforeDef};
+pub use linter::Linter;
+pub use loader::{StubCache, StubFile, StubTypeContext};
+pub use rules::{DiagnosticMessage, Rule, RuleKind, RuleSeverity};
+pub use type_env::TypeEnvironment;
+pub use walker::generate_constraints;

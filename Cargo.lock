@@ -144,6 +144,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
+name = "beacon-analyzer"
+version = "0.1.0"
+dependencies = [
+ "beacon-constraint",
+ "beacon-core",
+ "beacon-parser",
+ "lsp-types",
+ "rustc-hash",
+ "serde",
+ "url",
+]
+
+[[package]]
 name = "beacon-cli"
 version = "0.1.0"
 dependencies = [
@@ -196,6 +209,7 @@ dependencies = [
 name = "beacon-lsp"
 version = "0.1.0"
 dependencies = [
+ "beacon-analyzer",
  "beacon-constraint",
  "beacon-core",
  "beacon-parser",

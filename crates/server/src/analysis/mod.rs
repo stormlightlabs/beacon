@@ -10,15 +10,8 @@
 //!  4. Unification/solving -> Type substitution
 //!  5. Caching -> Type cache
 
-pub mod cfg;
-pub mod data_flow;
-pub mod linter;
-pub mod pattern;
-pub mod rules;
-pub mod type_env;
-pub mod walker;
-
-mod loader;
+// Re-export analysis modules from beacon-analyzer
+pub use beacon_analyzer::{cfg, data_flow, linter, loader, pattern, rules, type_env, walker};
 
 use crate::cache::{CacheManager, CachedScopeResult, ScopeCacheKey};
 use crate::config::Config;
@@ -37,14 +30,6 @@ use rustc_hash::FxHashMap;
 use std::{collections::HashSet, sync::Arc};
 use tokio::sync::RwLock;
 use url::Url;
-
-#[derive(Debug)]
-struct MethodInfo {
-    params: Vec<(String, Type)>,
-    return_type: Type,
-    decorators: Vec<String>,
-    is_overload: bool,
-}
 
 /// Result of analyzing a document
 pub struct AnalysisResult {
@@ -71,7 +56,7 @@ pub struct Analyzer {
     /// Map from document URI to position maps for type-at-position queries
     position_maps: FxHashMap<Url, FxHashMap<(usize, usize), usize>>,
     /// Stub cache for type resolution (shared with workspace)
-    stub_cache: Option<Arc<std::sync::RwLock<crate::workspace::StubCache>>>,
+    stub_cache: Option<Arc<std::sync::RwLock<beacon_analyzer::StubCache>>>,
 }
 
 impl Analyzer {

@@ -556,13 +556,7 @@ mod tests {
     fn test_cfg_for_loop() {
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::For {
-            target: Box::new(AstNode::Identifier {
-                name: "i".to_string(),
-                line: 1,
-                col: 5,
-                end_line: 1,
-                end_col: 6,
-            }),
+            target: Box::new(AstNode::Identifier { name: "i".to_string(), line: 1, col: 5, end_line: 1, end_col: 6 }),
             iter: Box::new(AstNode::Identifier {
                 name: "items".to_string(),
                 line: 1,
@@ -593,13 +587,7 @@ mod tests {
     fn test_cfg_for_loop_with_break() {
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::For {
-            target: Box::new(AstNode::Identifier {
-                name: "i".to_string(),
-                line: 1,
-                col: 5,
-                end_line: 1,
-                end_col: 6,
-            }),
+            target: Box::new(AstNode::Identifier { name: "i".to_string(), line: 1, col: 5, end_line: 1, end_col: 6 }),
             iter: Box::new(AstNode::Identifier {
                 name: "items".to_string(),
                 line: 1,
@@ -630,13 +618,7 @@ mod tests {
     fn test_cfg_for_loop_with_continue() {
         let mut builder = CfgBuilder::new();
         let body = vec![AstNode::For {
-            target: Box::new(AstNode::Identifier {
-                name: "i".to_string(),
-                line: 1,
-                col: 5,
-                end_line: 1,
-                end_col: 6,
-            }),
+            target: Box::new(AstNode::Identifier { name: "i".to_string(), line: 1, col: 5, end_line: 1, end_col: 6 }),
             iter: Box::new(AstNode::Identifier {
                 name: "items".to_string(),
                 line: 1,
@@ -805,13 +787,14 @@ mod tests {
         builder.build_function(&body);
         let cfg = builder.build();
 
-        let true_edges: Vec<_> = cfg
-            .blocks
-            .values()
-            .flat_map(|block| block.successors.iter())
-            .filter(|(_, kind)| *kind == EdgeKind::True)
-            .collect();
-        assert!(true_edges.len() >= 2);
+        assert!(
+            cfg.blocks
+                .values()
+                .flat_map(|block| block.successors.iter())
+                .filter(|(_, kind)| *kind == EdgeKind::True)
+                .count()
+                >= 2
+        );
     }
 
     #[test]
@@ -901,12 +884,12 @@ mod tests {
             },
             AstNode::For {
                 target: Box::new(AstNode::Identifier {
-                name: "i".to_string(),
-                line: 1,
-                col: 5,
-                end_line: 1,
-                end_col: 6,
-            }),
+                    name: "i".to_string(),
+                    line: 1,
+                    col: 5,
+                    end_line: 1,
+                    end_col: 6,
+                }),
                 iter: Box::new(AstNode::Identifier {
                     name: "range(10)".to_string(),
                     line: 2,

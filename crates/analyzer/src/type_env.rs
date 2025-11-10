@@ -250,7 +250,7 @@ impl TypeEnvironment {
                     .type_annotation
                     .as_ref()
                     .map(|ann| self.parse_annotation_or_any(ann))
-                    .unwrap_or(Type::any());
+                    .unwrap_or_else(Type::any);
                 (param.name.clone(), ty)
             })
             .collect()
@@ -260,7 +260,7 @@ impl TypeEnvironment {
     pub fn function_return_type(&self, return_annotation: Option<&String>) -> Type {
         return_annotation
             .map(|ann| self.parse_annotation_or_any(ann))
-            .unwrap_or(Type::any())
+            .unwrap_or_else(Type::any)
     }
 
     /// Build type environment from symbol table using type annotations where available.
@@ -470,7 +470,7 @@ mod tests {
         let mut env = TypeEnvironment::new();
         let tv = env.fresh_var();
         let ty = Type::fun(vec![(String::new(), Type::Var(tv.clone()))], Type::Var(tv.clone()));
-        let scheme = env.generalize(ty.clone());
+        let scheme = env.generalize(ty);
         assert_eq!(scheme.quantified_vars.len(), 1);
         assert_eq!(scheme.quantified_vars[0], tv);
     }

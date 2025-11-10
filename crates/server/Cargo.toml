@@ -12,6 +12,7 @@ name = "beacon_lsp"
 path = "src/lib.rs"
 
 [dependencies]
+beacon-analyzer = { path = "../analyzer" }
 beacon-core = { path = "../core" }
 beacon-parser = { path = "../parser" }
 beacon-constraint = { path = "../constraints" }

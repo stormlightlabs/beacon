@@ -1,0 +1,16 @@
+[package]
+name = "beacon-analyzer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+beacon-core = { path = "../core" }
+beacon-parser = { path = "../parser" }
+beacon-constraint = { path = "../constraints" }
+rustc-hash.workspace = true
+lsp-types.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+url = "2.5"
+
+[lints]
+workspace = true

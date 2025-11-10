@@ -340,8 +340,8 @@ impl RuleEngine {
         Self { rules }
     }
 
-    pub fn report(&self, msg: DiagnosticMessage) -> Diagnostic {
-        (&msg).into()
+    pub fn report(&self, msg: &DiagnosticMessage) -> Diagnostic {
+        msg.into()
     }
 
     pub fn get_rule(&self, kind: &RuleKind) -> Option<&Rule> {
@@ -390,7 +390,7 @@ mod tests {
     fn test_rule_engine_report() {
         let engine = RuleEngine::new();
         let msg = sample_message();
-        let diag = engine.report(msg.clone());
+        let diag = engine.report(&msg);
 
         assert_eq!(diag.message, msg.message);
         assert_eq!(diag.source.as_deref(), Some("beacon-linter"));

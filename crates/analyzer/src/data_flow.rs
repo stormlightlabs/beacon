@@ -71,6 +71,172 @@ pub enum ConditionResult {
     Unknown,
 }
 
+/// Check if a name is a Python builtin
+pub fn is_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "print"
+            | "len"
+            | "range"
+            | "str"
+            | "int"
+            | "float"
+            | "bool"
+            | "list"
+            | "dict"
+            | "set"
+            | "tuple"
+            | "abs"
+            | "all"
+            | "any"
+            | "ascii"
+            | "bin"
+            | "callable"
+            | "chr"
+            | "compile"
+            | "complex"
+            | "delattr"
+            | "dir"
+            | "divmod"
+            | "enumerate"
+            | "eval"
+            | "exec"
+            | "filter"
+            | "format"
+            | "frozenset"
+            | "getattr"
+            | "globals"
+            | "hasattr"
+            | "hash"
+            | "help"
+            | "hex"
+            | "id"
+            | "input"
+            | "isinstance"
+            | "issubclass"
+            | "iter"
+            | "locals"
+            | "map"
+            | "max"
+            | "min"
+            | "next"
+            | "object"
+            | "oct"
+            | "open"
+            | "ord"
+            | "pow"
+            | "property"
+            | "repr"
+            | "reversed"
+            | "round"
+            | "setattr"
+            | "slice"
+            | "sorted"
+            | "staticmethod"
+            | "sum"
+            | "super"
+            | "type"
+            | "vars"
+            | "zip"
+            | "__import__"
+            | "True"
+            | "False"
+            | "None"
+            | "NotImplemented"
+            | "Ellipsis"
+            | "__debug__"
+            | "quit"
+            | "exit"
+            | "copyright"
+            | "credits"
+            | "license"
+    )
+}
+
+/// Get all Python builtins as a set
+pub fn get_builtins() -> FxHashSet<String> {
+    [
+        "print",
+        "len",
+        "range",
+        "str",
+        "int",
+        "float",
+        "bool",
+        "list",
+        "dict",
+        "set",
+        "tuple",
+        "abs",
+        "all",
+        "any",
+        "ascii",
+        "bin",
+        "callable",
+        "chr",
+        "compile",
+        "complex",
+        "delattr",
+        "dir",
+        "divmod",
+        "enumerate",
+        "eval",
+        "exec",
+        "filter",
+        "format",
+        "frozenset",
+        "getattr",
+        "globals",
+        "hasattr",
+        "hash",
+        "help",
+        "hex",
+        "id",
+        "input",
+        "isinstance",
+        "issubclass",
+        "iter",
+        "locals",
+        "map",
+        "max",
+        "min",
+        "next",
+        "object",
+        "oct",
+        "open",
+        "ord",
+        "pow",
+        "property",
+        "repr",
+        "reversed",
+        "round",
+        "setattr",
+        "slice",
+        "sorted",
+        "staticmethod",
+        "sum",
+        "super",
+        "type",
+        "vars",
+        "zip",
+        "__import__",
+        "True",
+        "False",
+        "None",
+        "NotImplemented",
+        "Ellipsis",
+        "__debug__",
+        "quit",
+        "exit",
+        "copyright",
+        "credits",
+        "license",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect()
+}
+
 /// Performs data flow analysis on a CFG
 /// TODO: Store condition expressions in CFG blocks to automatically detect unreachable branches based on constant conditions.
 pub struct DataFlowAnalyzer<'a> {
@@ -289,7 +455,7 @@ impl<'a> DataFlowAnalyzer<'a> {
             def_out.insert(*block_id, FxHashSet::default());
         }
 
-        let builtins = super::Analyzer::get_builtins();
+        let builtins = get_builtins();
         let parameters = self.get_parameters();
         let mut worklist: Vec<BlockId> = self.cfg.blocks.keys().copied().collect();
 
@@ -748,7 +914,7 @@ impl<'a> DataFlowAnalyzer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::cfg::CfgBuilder;
+    use crate::cfg::CfgBuilder;
     use beacon_parser::{NameResolver, Parameter, ScopeId, ScopeKind, SymbolTable};
 
     /// Helper to find the first function scope in the symbol table (for tests)
@@ -1147,8 +1313,8 @@ mod tests {
             let scope_id = find_function_scope(&resolver.symbol_table);
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
-            let x_errors: Vec<_> = result.iter().filter(|e| e.var_name == "x" && e.line == 6).collect();
-            assert!(x_errors.is_empty());
+
+            assert!(!result.iter().any(|e| e.var_name == "x" && e.line == 6));
         } else {
             panic!("Expected FunctionDef");
         }
@@ -1699,8 +1865,8 @@ mod tests {
             let scope_id = find_function_scope(&resolver.symbol_table);
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
-            let x_errors: Vec<_> = result.iter().filter(|e| e.var_name == "x" && e.line == 3).collect();
-            assert!(x_errors.is_empty());
+
+            assert!(!result.iter().any(|e| e.var_name == "x" && e.line == 3));
         } else {
             panic!("Expected FunctionDef");
         }
