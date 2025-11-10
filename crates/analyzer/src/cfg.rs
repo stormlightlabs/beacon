@@ -938,4 +938,163 @@ mod tests {
         assert!(has_break);
         assert!(has_continue);
     }
+
+    #[test]
+    fn test_cfg_if_elif_chain() {
+        let mut builder = CfgBuilder::new();
+        let body = vec![AstNode::If {
+            test: Box::new(AstNode::Identifier { name: "cond1".to_string(), line: 1, col: 4, end_line: 1, end_col: 9 }),
+            body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
+            elif_parts: vec![
+                (
+                    AstNode::Identifier { name: "cond2".to_string(), line: 3, col: 6, end_line: 3, end_col: 11 },
+                    vec![AstNode::Pass { line: 4, col: 5, end_line: 4, end_col: 9 }],
+                ),
+                (
+                    AstNode::Identifier { name: "cond3".to_string(), line: 5, col: 6, end_line: 5, end_col: 11 },
+                    vec![AstNode::Pass { line: 6, col: 5, end_line: 6, end_col: 9 }],
+                ),
+            ],
+            else_body: Some(vec![AstNode::Pass { line: 8, col: 5, end_line: 8, end_col: 9 }]),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 1,
+        }];
+
+        builder.build_function(&body);
+        let cfg = builder.build();
+
+        let true_edge_count = cfg
+            .blocks
+            .values()
+            .flat_map(|b| &b.successors)
+            .filter(|(_, k)| *k == EdgeKind::True)
+            .count();
+
+        assert!(
+            true_edge_count >= 3,
+            "Expected at least 3 True edges for if-elif-elif chain, got {true_edge_count}"
+        );
+    }
+
+    #[test]
+    fn test_cfg_nested_loops() {
+        let mut builder = CfgBuilder::new();
+        let body = vec![AstNode::For {
+            target: Box::new(AstNode::Identifier { name: "i".to_string(), line: 1, col: 5, end_line: 1, end_col: 6 }),
+            iter: Box::new(AstNode::Identifier {
+                name: "outer".to_string(),
+                line: 1,
+                col: 10,
+                end_line: 1,
+                end_col: 15,
+            }),
+            body: vec![AstNode::For {
+                target: Box::new(AstNode::Identifier {
+                    name: "j".to_string(),
+                    line: 2,
+                    col: 9,
+                    end_line: 2,
+                    end_col: 10,
+                }),
+                iter: Box::new(AstNode::Identifier {
+                    name: "inner".to_string(),
+                    line: 2,
+                    col: 14,
+                    end_line: 2,
+                    end_col: 19,
+                }),
+                body: vec![AstNode::Pass { line: 3, col: 9, end_line: 3, end_col: 13 }],
+                else_body: None,
+                is_async: false,
+                line: 2,
+                col: 5,
+                end_line: 2,
+                end_col: 5,
+            }],
+            else_body: None,
+            is_async: false,
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 1,
+        }];
+
+        builder.build_function(&body);
+        let cfg = builder.build();
+
+        assert!(cfg.blocks.len() >= 7);
+        let reachable = cfg.reachable_blocks();
+        assert!(reachable.contains(&cfg.entry));
+        assert!(reachable.contains(&cfg.exit));
+    }
+
+    #[test]
+    fn test_cfg_try_except_else_finally() {
+        let mut builder = CfgBuilder::new();
+        let body = vec![AstNode::Try {
+            body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
+            handlers: vec![ExceptHandler {
+                exception_type: None,
+                name: None,
+                body: vec![AstNode::Pass { line: 4, col: 5, end_col: 9, end_line: 4 }],
+                line: 3,
+                col: 1,
+                end_line: 3,
+                end_col: 1,
+            }],
+            else_body: Some(vec![AstNode::Pass { line: 6, col: 5, end_line: 6, end_col: 9 }]),
+            finally_body: Some(vec![AstNode::Pass { line: 8, col: 5, end_line: 8, end_col: 9 }]),
+            line: 1,
+            col: 1,
+            end_col: 1,
+            end_line: 1,
+        }];
+
+        builder.build_function(&body);
+        let cfg = builder.build();
+
+        let has_exception = cfg
+            .blocks
+            .values()
+            .any(|block| block.successors.iter().any(|(_, kind)| *kind == EdgeKind::Exception));
+        let has_finally = cfg
+            .blocks
+            .values()
+            .any(|block| block.successors.iter().any(|(_, kind)| *kind == EdgeKind::Finally));
+
+        assert!(has_exception);
+        assert!(has_finally);
+    }
+
+    #[test]
+    fn test_cfg_for_loop_with_else() {
+        let mut builder = CfgBuilder::new();
+        let body = vec![AstNode::For {
+            target: Box::new(AstNode::Identifier { name: "i".to_string(), line: 1, col: 5, end_line: 1, end_col: 6 }),
+            iter: Box::new(AstNode::Identifier {
+                name: "items".to_string(),
+                line: 1,
+                col: 10,
+                end_line: 1,
+                end_col: 15,
+            }),
+            body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
+            else_body: Some(vec![AstNode::Pass { line: 4, col: 5, end_line: 4, end_col: 9 }]),
+            is_async: false,
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 1,
+        }];
+
+        builder.build_function(&body);
+        let cfg = builder.build();
+
+        assert!(cfg.blocks.len() >= 5);
+        let reachable = cfg.reachable_blocks();
+        assert!(reachable.contains(&cfg.entry));
+        assert!(reachable.contains(&cfg.exit));
+    }
 }

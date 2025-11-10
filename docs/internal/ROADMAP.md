@@ -135,7 +135,7 @@ following order so each layer builds on the previous one.
 4. **Hindley–Milner Solver E2E**
    - Follow `docs/internal/e2e_hm_tests.md` to assert on inferred types and solver diagnostics.
 5. **Linter E2E**
-   - Build `linter_e2e.rs` according to `docs/internal/e2e_linter_tests.md`, verifying lint messages and autofixes.
+   - Build `linter_tests.rs` according to `docs/internal/e2e_linter_tests.md`, verifying lint messages and autofixes.
 6. **Completion Flow Validation**
    - After linter coverage, add integration tests for snippet/ completion pipelines (configuration + completion tasks moved from TODO).
 
