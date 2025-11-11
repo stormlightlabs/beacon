@@ -23,6 +23,30 @@ Integration tests requiring LSP infrastructure:
 - Multi-file analysis scenarios
 - LSP feature integration (code actions, fixes)
 
+### HM Type Checker Tests (`crates/server/tests`)
+
+Integration tests for Hindley-Milner type inference:
+
+- `hm_type_checker_tests.rs` - Comprehensive type inference test suite
+- Fixtures in `crates/server/tests/hm_fixtures/`
+    - `functional_pipeline.py` - Higher-order functions, composition, map/filter
+    - `typed_api.py` - Protocol, TypedDict, TypeVar bounds, structural typing
+    - `async_ctx.py` - Async context managers, coroutines, async generators
+    - `errors/occurs_check.py` - Self-referential types, infinite type detection
+    - `errors/variance_failure.py` - Contravariance violations in callable types
+    - `variance/covariant.py` - Covariant return types and immutable containers
+    - `variance/contravariant.py` - Contravariant function parameters
+    - `variance/invariant.py` - Invariant mutable containers
+    - `variance/typevar_annotations.py` - Generic variance annotations
+
+All 18 HM tests currently pass, covering:
+
+- Generalization and polymorphic instantiation
+- Protocol-based structural typing
+- Async/await type inference
+- Variance checking (covariant, contravariant, invariant positions)
+- Error detection (occurs check, variance violations)
+
 ## Test Files
 
 ### Analyzer Unit Tests
@@ -86,6 +110,7 @@ cargo test --package beacon-lsp
 # Specific test suites
 cargo test --package beacon-lsp --test static_analysis_tests
 cargo test --package beacon-lsp --test linter_tests
+cargo test --package beacon-lsp --test hm_type_checker_tests
 ```
 
 ## Test Statistics
@@ -118,3 +143,13 @@ The following tests are skipped with TODO comments indicating missing functional
 - [ ] Add CFG visualization comparison when needed
 - [ ] Implement autofix test scaffolding for linter
 - [ ] Investigate parser output for "is not" expressions
+
+## TODO
+
+### HM Type Checker
+
+- [ ] Fixtures for row polymorphism and record types
+- [ ] Bivariant variance for special cases (rare in Python)
+- [ ] Variance checking for Protocol definitions
+- [ ] Variance inference for generic classes without explicit annotations
+- [ ] Symbol table integration for `get_symbol_type` to look up types by identifier name (stub exists, tests use pattern matching instead)

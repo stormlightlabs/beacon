@@ -125,20 +125,54 @@ impl Kind {
     }
 }
 
+/// Variance describes how subtyping relationships are preserved or reversed through type constructors.
+///
+/// - **Covariant**: If `Dog <: Animal`, then `Container[Dog] <: Container[Animal]`
+///   Used for immutable containers, function return types, producer contexts
+/// - **Contravariant**: If `Dog <: Animal`, then `Container[Animal] <: Container[Dog]`
+///   Used for function parameters, consumer contexts
+/// - **Invariant**: No subtyping relationship preserved
+///   Used for mutable containers, read-write contexts
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub enum Variance {
+    /// Covariant position (e.g., return types, immutable containers)
+    Covariant,
+    /// Contravariant position (e.g., function parameters)
+    Contravariant,
+    /// Invariant position (e.g., mutable containers)
+    #[default]
+    Invariant,
+}
+
+impl fmt::Display for Variance {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Variance::Covariant => write!(f, "covariant"),
+            Variance::Contravariant => write!(f, "contravariant"),
+            Variance::Invariant => write!(f, "invariant"),
+        }
+    }
+}
+
 /// Type variable with optional hint name for better error messages
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TypeVar {
     pub id: u32,
     pub hint: Option<String>,
+    pub variance: Variance,
 }
 
 impl TypeVar {
     pub fn new(id: u32) -> Self {
-        Self { id, hint: None }
+        Self { id, hint: None, variance: Variance::Invariant }
     }
 
     pub fn named(id: u32, hint: &str) -> Self {
-        Self { id, hint: Some(hint.to_string()) }
+        Self { id, hint: Some(hint.to_string()), variance: Variance::Invariant }
+    }
+
+    pub fn with_variance(id: u32, hint: Option<String>, variance: Variance) -> Self {
+        Self { id, hint, variance }
     }
 }
 
@@ -294,6 +328,49 @@ impl TypeCtor {
             TypeCtor::Coroutine => Kind::arity(3),
             TypeCtor::Generic | TypeCtor::Protocol(_) => Kind::Star,
             TypeCtor::Class(_) | TypeCtor::Module(_) => Kind::Star,
+        }
+    }
+
+    /// Get the variance of a type constructor's type parameter(s).
+    ///
+    /// For type constructors with multiple parameters (e.g., Dict, Callable),
+    /// this returns the variance of the first parameter. Use specific methods
+    /// for multi-parameter variance checking.
+    ///
+    /// - Immutable containers (tuple, frozenset) are covariant
+    /// - Mutable containers (list, dict, set) are invariant
+    /// - Callable parameters are contravariant, returns are covariant
+    /// - Iterators/Iterables are covariant (read-only)
+    pub fn variance(&self, param_index: usize) -> Variance {
+        match self {
+            TypeCtor::Tuple | TypeCtor::Iterator | TypeCtor::Iterable => Variance::Covariant,
+            TypeCtor::List | TypeCtor::Set => Variance::Invariant,
+            TypeCtor::Dict => Variance::Invariant,
+            TypeCtor::Function => {
+                if param_index == 0 {
+                    Variance::Contravariant
+                } else {
+                    Variance::Covariant
+                }
+            }
+            TypeCtor::Generator => match param_index {
+                0 => Variance::Covariant,
+                1 => Variance::Contravariant,
+                2 => Variance::Covariant,
+                _ => Variance::Invariant,
+            },
+            TypeCtor::AsyncGenerator => match param_index {
+                0 => Variance::Covariant,
+                1 => Variance::Contravariant,
+                _ => Variance::Invariant,
+            },
+            TypeCtor::Coroutine => match param_index {
+                0 => Variance::Covariant,
+                1 => Variance::Contravariant,
+                2 => Variance::Covariant,
+                _ => Variance::Invariant,
+            },
+            _ => Variance::Invariant,
         }
     }
 
@@ -1027,7 +1104,20 @@ impl Type {
         }
 
         if let (Type::App(self_ctor, self_arg), Type::App(other_ctor, other_arg)) = (self, other) {
-            return self_ctor.is_subtype_of(other_ctor) && self_arg.is_subtype_of(other_arg);
+            if !self_ctor.is_subtype_of(other_ctor) {
+                return false;
+            }
+
+            let variance = match self_ctor.as_ref() {
+                Type::Con(tc) => tc.variance(0),
+                _ => Variance::Invariant,
+            };
+
+            return match variance {
+                Variance::Covariant => self_arg.is_subtype_of(other_arg),
+                Variance::Contravariant => other_arg.is_subtype_of(self_arg),
+                Variance::Invariant => self_arg == other_arg,
+            };
         }
 
         if let (Type::Record(self_fields, _), Type::Record(other_fields, _)) = (self, other) {

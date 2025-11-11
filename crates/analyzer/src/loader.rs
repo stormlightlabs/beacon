@@ -1,4 +1,4 @@
-use beacon_core::{AnnotationParser, TypeCtor, TypeVar, TypeVarGen};
+use beacon_core::{AnnotationParser, TypeCtor, TypeVar, TypeVarGen, Variance};
 use beacon_core::{
     ClassMetadata, ClassRegistry, MethodType, Type,
     errors::{AnalysisError, Result},
@@ -77,6 +77,8 @@ pub struct StubTypeContext {
     type_vars: FxHashSet<String>,
     var_map: HashMap<String, TypeVar>,
     var_gen: TypeVarGen,
+    /// Maps TypeVar names to their variance (covariant, contravariant, invariant)
+    var_variance: HashMap<String, Variance>,
 }
 
 impl StubTypeContext {
@@ -84,8 +86,9 @@ impl StubTypeContext {
         Self::default()
     }
 
-    pub fn register_type_var(&mut self, name: &str) {
+    pub fn register_type_var(&mut self, name: &str, variance: Variance) {
         self.type_vars.insert(name.to_string());
+        self.var_variance.insert(name.to_string(), variance);
     }
 
     pub fn is_type_var(&self, name: &str) -> bool {
@@ -96,7 +99,8 @@ impl StubTypeContext {
         if let Some(tv) = self.var_map.get(name) {
             tv.clone()
         } else {
-            let tv = self.var_gen.fresh_named(name);
+            let variance = self.var_variance.get(name).copied().unwrap_or(Variance::Invariant);
+            let tv = TypeVar::with_variance(self.var_gen.fresh().id, Some(name.to_string()), variance);
             self.var_map.insert(name.to_string(), tv.clone());
             tv
         }
@@ -105,7 +109,12 @@ impl StubTypeContext {
 
 impl Default for StubTypeContext {
     fn default() -> Self {
-        Self { type_vars: FxHashSet::default(), var_map: HashMap::default(), var_gen: TypeVarGen::new() }
+        Self {
+            type_vars: FxHashSet::default(),
+            var_map: HashMap::default(),
+            var_gen: TypeVarGen::new(),
+            var_variance: HashMap::default(),
+        }
     }
 }
 
@@ -117,11 +126,12 @@ pub fn collect_stub_type_vars(node: &AstNode, ctx: &mut StubTypeContext) {
             }
         }
         AstNode::Assignment { target, value, .. } => {
-            if let AstNode::Call { function, .. } = value.as_ref() {
+            if let AstNode::Call { function, keywords, .. } = value.as_ref() {
                 let function_name = function.function_to_string();
                 if function_name == "TypeVar" || function_name.ends_with(".TypeVar") {
                     let target_str = target.target_to_string();
-                    ctx.register_type_var(&target_str);
+                    let variance = extract_variance_from_typevar_call(keywords);
+                    ctx.register_type_var(&target_str, variance);
                 }
             }
         }
@@ -132,6 +142,43 @@ pub fn collect_stub_type_vars(node: &AstNode, ctx: &mut StubTypeContext) {
         }
         _ => {}
     }
+}
+
+/// Extract variance from TypeVar keyword arguments.
+///
+/// Parses `covariant=True` and `contravariant=True` from TypeVar calls:
+/// - `TypeVar('T_Co', covariant=True)` → Variance::Covariant
+/// - `TypeVar('T_Contra', contravariant=True)` → Variance::Contravariant
+/// - `TypeVar('T')` → Variance::Invariant (default)
+fn extract_variance_from_typevar_call(keywords: &[(String, AstNode)]) -> Variance {
+    let mut covariant = false;
+    let mut contravariant = false;
+
+    for (key, value) in keywords {
+        match key.as_str() {
+            "covariant" => {
+                covariant = is_true_literal(value);
+            }
+            "contravariant" => {
+                contravariant = is_true_literal(value);
+            }
+            _ => {}
+        }
+    }
+
+    match (covariant, contravariant) {
+        (true, false) => Variance::Covariant,
+        (false, true) => Variance::Contravariant,
+        _ => Variance::Invariant,
+    }
+}
+
+/// Check if an AST node is a True literal
+fn is_true_literal(node: &AstNode) -> bool {
+    matches!(
+        node,
+        AstNode::Literal { value: beacon_parser::LiteralValue::Boolean(true), .. }
+    )
 }
 
 fn collect_type_vars_from_type(ty: &Type, acc: &mut FxHashSet<String>) {
@@ -248,7 +295,7 @@ pub fn extract_stub_classes_into_registry(
                 if let Some(params_str) = extract_generic_params(base) {
                     let type_params: Vec<String> = params_str.split(',').map(|s| s.trim().to_string()).collect();
                     for param in &type_params {
-                        ctx.register_type_var(param);
+                        ctx.register_type_var(param, Variance::Invariant);
                     }
 
                     let is_generic_base = base.starts_with("Generic[") && base.ends_with(']');
@@ -271,7 +318,7 @@ pub fn extract_stub_classes_into_registry(
                     params.sort();
                     metadata.set_type_params(params.clone());
                     for param in params {
-                        ctx.register_type_var(&param);
+                        ctx.register_type_var(&param, Variance::Invariant);
                     }
                 }
             }
@@ -305,9 +352,7 @@ pub fn process_class_methods(body: &[AstNode], metadata: &mut ClassMetadata, ctx
 }
 
 fn collect_methods(
-    body: &[AstNode],
-    metadata: &mut ClassMetadata,
-    ctx: &mut StubTypeContext,
+    body: &[AstNode], metadata: &mut ClassMetadata, ctx: &mut StubTypeContext,
 ) -> HashMap<String, Vec<MethodInfo>> {
     let mut methods_by_name: HashMap<String, Vec<MethodInfo>> = HashMap::new();
 
@@ -328,10 +373,7 @@ fn collect_methods(
 }
 
 fn add_field_from_annotation(
-    metadata: &mut ClassMetadata,
-    ctx: &mut StubTypeContext,
-    target: &AstNode,
-    type_annotation: &str,
+    metadata: &mut ClassMetadata, ctx: &mut StubTypeContext, target: &AstNode, type_annotation: &str,
 ) {
     if let Some(attr_type) = parse_type_annotation(type_annotation, ctx) {
         metadata.add_field(target.target_to_string(), attr_type);
@@ -339,10 +381,7 @@ fn add_field_from_annotation(
 }
 
 fn build_method_info(
-    params: &[beacon_parser::Parameter],
-    return_type: &Option<String>,
-    decorators: &[String],
-    ctx: &mut StubTypeContext,
+    params: &[beacon_parser::Parameter], return_type: &Option<String>, decorators: &[String], ctx: &mut StubTypeContext,
 ) -> MethodInfo {
     let mut param_list: Vec<(String, Type)> = Vec::new();
     let has_self = params.first().map(|p| p.name == "self").unwrap_or(false);
@@ -363,7 +402,10 @@ fn build_method_info(
         }
     }
 
-    let ret_type = return_type.as_ref().and_then(|ann| parse_type_annotation(ann, ctx)).unwrap_or_else(Type::any);
+    let ret_type = return_type
+        .as_ref()
+        .and_then(|ann| parse_type_annotation(ann, ctx))
+        .unwrap_or_else(Type::any);
     let is_overload = decorators.iter().any(|d| d == "overload");
 
     MethodInfo { params: param_list, return_type: ret_type, decorators: decorators.to_vec(), is_overload }
@@ -394,11 +436,7 @@ fn handle_method_group(method_name: String, method_infos: Vec<MethodInfo>, metad
     }
 }
 
-fn handle_special_method(
-    method_name: &str,
-    method_infos: &[MethodInfo],
-    metadata: &mut ClassMetadata,
-) -> bool {
+fn handle_special_method(method_name: &str, method_infos: &[MethodInfo], metadata: &mut ClassMetadata) -> bool {
     if method_name == "__init__" {
         if let Some(info) = method_infos.first() {
             let func_type = Type::fun(info.params.clone(), info.return_type.clone());
@@ -419,9 +457,7 @@ fn handle_special_method(
 }
 
 fn handle_overloaded_method(
-    method_name: String,
-    method_infos: Vec<MethodInfo>,
-    decorator_flags: MethodDecoratorFlags,
+    method_name: String, method_infos: Vec<MethodInfo>, decorator_flags: MethodDecoratorFlags,
     metadata: &mut ClassMetadata,
 ) {
     let overload_set = build_overload_set(method_infos, decorator_flags.staticmethod);
@@ -462,10 +498,7 @@ fn build_overload_set(method_infos: Vec<MethodInfo>, treat_as_static: bool) -> b
 }
 
 fn register_non_overloaded_method(
-    method_name: String,
-    method_info: &MethodInfo,
-    decorator_flags: MethodDecoratorFlags,
-    metadata: &mut ClassMetadata,
+    method_name: String, method_info: &MethodInfo, decorator_flags: MethodDecoratorFlags, metadata: &mut ClassMetadata,
 ) {
     let params = adjust_params_for_static(&method_info.params, decorator_flags.staticmethod);
     let func_type = Type::fun(params, method_info.return_type.clone());

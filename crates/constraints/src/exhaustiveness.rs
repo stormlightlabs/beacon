@@ -478,7 +478,7 @@ mod tests {
             &Type::int(),
             &Type::union(vec![Type::int(), Type::string()])
         ));
-        assert!(types_overlap(&Type::Var(TypeVar { id: 0, hint: None }), &Type::int()));
+        assert!(types_overlap(&Type::Var(TypeVar::new(0)), &Type::int()));
     }
 
     #[test]

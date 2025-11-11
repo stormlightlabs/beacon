@@ -1033,7 +1033,7 @@ mod tests {
 
     /// Helper to create a type variable
     fn tvar(id: u32) -> Type {
-        Type::Var(TypeVar { id, hint: None })
+        Type::Var(TypeVar::new(id))
     }
 
     #[test]
@@ -2922,7 +2922,7 @@ mod tests {
         let elem_outer = tvar(1);
 
         let mut subst = beacon_core::Subst::empty();
-        subst.insert(TypeVar { id: 0, hint: None }, Type::string());
+        subst.insert(TypeVar::new(0), Type::string());
 
         let constraints = ConstraintSet {
             constraints: vec![Constraint::Protocol(

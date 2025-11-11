@@ -51,6 +51,16 @@ pub enum TypeError {
     #[error("Keyword argument error: {0}")]
     KeywordArgumentError(String),
 
+    #[error(
+        "Variance error in {position}: expected {expected_variance} variance, cannot assign '{got_type}' to '{expected_type}'"
+    )]
+    VarianceError {
+        position: String,
+        expected_variance: String,
+        got_type: String,
+        expected_type: String,
+    },
+
     #[error("Error: {0}")]
     Other(String),
 }

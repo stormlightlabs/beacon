@@ -30,7 +30,7 @@
 //!
 //! The occurs check prevents infinite types by rejecting unifications like `'a ~ list['a]`.
 
-use crate::{Result, Subst, Type, TypeError, TypeVar};
+use crate::{Result, Subst, Type, TypeCtor, TypeError, TypeVar, Variance};
 
 use rustc_hash::FxHashSet;
 
@@ -43,9 +43,25 @@ impl Unifier {
         Self::unify_impl(t1, t2)
     }
 
-    fn unify_impl(t1: &Type, t2: &Type) -> Result<Subst> {
-        use crate::TypeCtor;
+    /// Extract a human-readable name from a type constructor for error messages
+    fn get_type_constructor_name(ty: &Type) -> String {
+        match ty {
+            Type::Con(TypeCtor::List) => "list element".to_string(),
+            Type::Con(TypeCtor::Dict) => "dict key/value".to_string(),
+            Type::Con(TypeCtor::Set) => "set element".to_string(),
+            Type::Con(TypeCtor::Tuple) => "tuple element".to_string(),
+            Type::Con(TypeCtor::Iterator) => "iterator element".to_string(),
+            Type::Con(TypeCtor::Iterable) => "iterable element".to_string(),
+            Type::Con(TypeCtor::Generator) => "generator type argument".to_string(),
+            Type::Con(TypeCtor::AsyncGenerator) => "async generator type argument".to_string(),
+            Type::Con(TypeCtor::Coroutine) => "coroutine type argument".to_string(),
+            Type::Con(TypeCtor::Class(name)) => format!("{name} type argument"),
+            Type::App(ctor, _) => Self::get_type_constructor_name(ctor),
+            _ => "type argument".to_string(),
+        }
+    }
 
+    fn unify_impl(t1: &Type, t2: &Type) -> Result<Subst> {
         match (t1, t2) {
             (Type::Con(TypeCtor::Any), _) | (_, Type::Con(TypeCtor::Any)) => Ok(Subst::empty()),
             (Type::Var(tv1), Type::Var(tv2)) if tv1 == tv2 => Ok(Subst::empty()),
@@ -53,8 +69,46 @@ impl Unifier {
             (Type::Con(tc1), Type::Con(tc2)) if tc1 == tc2 => Ok(Subst::empty()),
             (Type::App(f1, a1), Type::App(f2, a2)) => {
                 let s1 = Self::unify_impl(f1, f2)?;
-                let s2 = Self::unify_impl(&s1.apply(a1), &s1.apply(a2))?;
-                Ok(s2.compose(s1))
+
+                let applied_a1 = s1.apply(a1);
+                let applied_a2 = s1.apply(a2);
+
+                let variance = match f1.as_ref() {
+                    Type::Con(tc) => tc.variance(0),
+                    _ => Variance::Invariant,
+                };
+
+                match variance {
+                    Variance::Invariant => {
+                        if applied_a1 != applied_a2 {
+                            match Self::unify_impl(&applied_a1, &applied_a2) {
+                                Ok(s2) => Ok(s2.compose(s1)),
+                                Err(_)
+                                    if !matches!(applied_a1, Type::Var(_)) && !matches!(applied_a2, Type::Var(_)) =>
+                                {
+                                    Err(TypeError::VarianceError {
+                                        position: Self::get_type_constructor_name(f1),
+                                        expected_variance: "invariant".to_string(),
+                                        got_type: applied_a1.to_string(),
+                                        expected_type: applied_a2.to_string(),
+                                    }
+                                    .into())
+                                }
+                                Err(e) => Err(e),
+                            }
+                        } else {
+                            Ok(s1)
+                        }
+                    }
+                    Variance::Covariant => {
+                        let s2 = Self::unify_impl(&applied_a1, &applied_a2)?;
+                        Ok(s2.compose(s1))
+                    }
+                    Variance::Contravariant => {
+                        let s2 = Self::unify_impl(&applied_a1, &applied_a2)?;
+                        Ok(s2.compose(s1))
+                    }
+                }
             }
             (Type::Fun(args1, ret1), Type::Fun(args2, ret2)) => {
                 if args1.len() != args2.len() {
@@ -828,5 +882,56 @@ mod tests {
         let subst = Unifier::unify(&outer_tuple1, &outer_tuple2).unwrap();
         assert_eq!(subst.get(&tv1), Some(&Type::string()));
         assert_eq!(subst.get(&tv2), Some(&Type::bool()));
+    }
+
+    #[test]
+    fn test_variance_error_invariant_list() {
+        let list_dog = Type::list(Type::Con(TypeCtor::Class("Dog".to_string())));
+        let list_animal = Type::list(Type::Con(TypeCtor::Class("Animal".to_string())));
+
+        let result = Unifier::unify(&list_dog, &list_animal);
+        assert!(result.is_err(), "Invariant lists with different types should not unify");
+
+        if let Err(e) = result {
+            let err_msg = format!("{e}");
+            assert!(
+                err_msg.contains("Variance") || err_msg.contains("invariant") || err_msg.contains("Cannot unify"),
+                "Error should mention variance or unification failure: {err_msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_variance_covariant_tuple_with_vars() {
+        let tv = TypeVar::new(0);
+        let tuple_var = Type::App(Box::new(Type::Con(TypeCtor::Tuple)), Box::new(Type::Var(tv.clone())));
+        let tuple_int = Type::App(Box::new(Type::Con(TypeCtor::Tuple)), Box::new(Type::int()));
+
+        let subst = Unifier::unify(&tuple_var, &tuple_int).unwrap();
+        assert_eq!(subst.get(&tv), Some(&Type::int()));
+    }
+
+    #[test]
+    fn test_variance_invariant_dict() {
+        let dict_str_int = Type::App(
+            Box::new(Type::App(Box::new(Type::Con(TypeCtor::Dict)), Box::new(Type::string()))),
+            Box::new(Type::int()),
+        );
+        let dict_str_float = Type::App(
+            Box::new(Type::App(Box::new(Type::Con(TypeCtor::Dict)), Box::new(Type::string()))),
+            Box::new(Type::float()),
+        );
+
+        let result = Unifier::unify(&dict_str_int, &dict_str_float);
+        assert!(result.is_err(), "Invariant dict types should not unify");
+    }
+
+    #[test]
+    fn test_variance_with_type_variables_unifies() {
+        let tv = TypeVar::new(0);
+        let list_var = Type::list(Type::Var(tv.clone()));
+        let list_int = Type::list(Type::int());
+        let subst = Unifier::unify(&list_var, &list_int).unwrap();
+        assert_eq!(subst.get(&tv), Some(&Type::int()));
     }
 }

@@ -937,6 +937,10 @@ fn type_error_to_diagnostic(error_info: &beacon_constraint::TypeErrorInfo) -> Di
             format!("Invalid pattern structure: expected {expected}, found {found}"),
         ),
         TypeError::KeywordArgumentError(msg) => ("HM011", format!("Keyword argument error: {msg}")),
+        TypeError::VarianceError { position, expected_variance, got_type, expected_type } => (
+            "HM014",
+            enhance_variance_error_message(position, expected_variance, got_type, expected_type),
+        ),
         TypeError::Other(msg) => ("HM012", format!("Type error: {msg}")),
     };
 
@@ -1006,6 +1010,62 @@ fn enhance_attribute_error_message(ty: &str, attr: &str) -> String {
         format!("{base}. Ensure the object has been properly initialized with the expected type.")
     } else {
         format!("{base}. Check that the type is correct or that you've imported the necessary modules.")
+    }
+}
+
+/// Enhance variance error messages with specific suggestions based on common patterns
+fn enhance_variance_error_message(
+    position: &str, expected_variance: &str, got_type: &str, expected_type: &str,
+) -> String {
+    let base = format!(
+        "Variance error in {position}: expected {expected_variance} variance, cannot assign '{got_type}' to '{expected_type}'"
+    );
+
+    match expected_variance {
+        "invariant" => {
+            if position.contains("list") || position.contains("dict") || position.contains("set") {
+                format!(
+                    "{base}\n\nMutable containers like list, dict, and set are invariant. \
+                    You cannot assign a container of subtype to a container of supertype. \
+                    Consider using immutable containers (tuple, frozenset) if you need covariance, \
+                    or use protocols for structural typing."
+                )
+            } else {
+                format!(
+                    "{base}\n\nInvariant positions require exact type matches. \
+                    Consider using a more general type or restructuring your code."
+                )
+            }
+        }
+        "covariant" => {
+            if position.contains("return") || position.contains("tuple") {
+                format!(
+                    "{base}\n\nReturn types and immutable containers are covariant. \
+                    The type '{got_type}' must be a subtype of '{expected_type}'."
+                )
+            } else {
+                format!(
+                    "{base}\n\nCovariant positions allow subtypes. \
+                    Ensure '{got_type}' is a subtype of '{expected_type}'."
+                )
+            }
+        }
+        "contravariant" => {
+            if position.contains("parameter") || position.contains("argument") {
+                format!(
+                    "{base}\n\nFunction parameters are contravariant. \
+                    A function that accepts '{expected_type}' can only be substituted by a function \
+                    that accepts a supertype of '{expected_type}', not a subtype like '{got_type}'. \
+                    Consider making the parameter type more general."
+                )
+            } else {
+                format!(
+                    "{base}\n\nContravariant positions require supertypes. \
+                    The type '{got_type}' should be a supertype of '{expected_type}', not a subtype."
+                )
+            }
+        }
+        _ => base,
     }
 }
 
