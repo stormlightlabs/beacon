@@ -2,6 +2,46 @@
 //!
 //! End-to-end tests for the HM type inference system.
 //! Loads real Python code fixtures, builds constraint graphs, runs the solver, and asserts on inferred types and diagnostics.
+//!
+//! ## Variance Coverage
+//!
+//! The test suite comprehensively covers variance checking for:
+//! - Covariant built-in types (Tuple, Iterator, Iterable)
+//! - Invariant built-in types (List, Dict, Set)
+//! - Contravariant function parameters
+//! - Covariant function returns
+//! - User-defined TypeVar with `covariant=True`
+//! - User-defined TypeVar with `contravariant=True`
+//! - User-defined TypeVar invariant (default)
+//! - Nested variance (e.g., `Producer[Producer[T]]`)
+//!
+//! **Not Tested**: Generator/AsyncGenerator/Coroutine with mixed variance (covariant yield, contravariant send, covariant return).
+//!
+//! Example
+//! ```python
+//! from typing import Generator, AsyncGenerator, Coroutine
+//!
+//! # Generator[YieldType, SendType, ReturnType]
+//! # YieldType: covariant, SendType: contravariant, ReturnType: covariant
+//! def animal_generator() -> Generator[Animal, Dog, str]:
+//!     received = yield Animal()  # yields Animal (covariant)
+//!     # received: Dog (contravariant - can send Dog to it)
+//!     return "done"  # returns str (covariant)
+//!
+//! # AsyncGenerator[YieldType, SendType]
+//! # YieldType: covariant, SendType: contravariant
+//! async def async_animal_gen() -> AsyncGenerator[Animal, Dog]:
+//!     received = yield Animal()  # yields Animal (covariant)
+//!     # received: Dog (contravariant)
+//!
+//! # Coroutine[YieldType, SendType, ReturnType]
+//! async def animal_coroutine() -> Coroutine[Animal, Dog, str]:
+//!     # Similar mixed variance as Generator
+//!     pass
+//! ```
+//!
+//! The underlying unification logic for these types is tested via
+//! `crates/core/src/unify.rs::test_variance_contravariant_generator_send`.
 
 use beacon_core::{Type, TypeCtor};
 use beacon_lsp::analysis::Analyzer;
@@ -314,15 +354,30 @@ fn test_contravariant_parameters() {
     );
 
     let errors = harness.get_errors(&result);
-
-    let has_function_error = errors
+    let has_process_animal_error = errors
         .iter()
-        .any(|e| e.contains("Unification") || e.contains("Variance") || e.contains("type"));
+        .any(|e| e.contains("parameter 'f'") && e.contains("Animal -> None") && e.contains("Dog"));
 
-    // With variance checking implemented, we expect type errors for contravariance violations
-    if !has_function_error && !errors.is_empty() {
-        eprintln!("Expected contravariance-related errors, got: {errors:?}");
-    }
+    let has_process_with_return_error = errors.iter().any(|e| {
+        e.contains("parameter 'f'") && e.contains("Animal -> Dog") && e.contains("Dog") && e.contains("Animal")
+    });
+
+    let has_contravariance_error = has_process_animal_error || has_process_with_return_error;
+
+    assert!(
+        has_contravariance_error,
+        "Expected contravariance violations to be caught. Errors: {errors:?}"
+    );
+
+    assert!(
+        has_process_animal_error,
+        "Expected error for process_animal(handle_dog): Dog-specific function in Animal position. Errors: {errors:?}"
+    );
+
+    assert!(
+        has_process_with_return_error,
+        "Expected error for process_with_return(dog_to_animal): incorrect parameter contravariance. Errors: {errors:?}"
+    );
 }
 
 #[test]

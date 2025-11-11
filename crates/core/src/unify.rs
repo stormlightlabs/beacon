@@ -105,7 +105,7 @@ impl Unifier {
                         Ok(s2.compose(s1))
                     }
                     Variance::Contravariant => {
-                        let s2 = Self::unify_impl(&applied_a1, &applied_a2)?;
+                        let s2 = Self::unify_impl(&applied_a2, &applied_a1)?;
                         Ok(s2.compose(s1))
                     }
                 }
@@ -933,5 +933,35 @@ mod tests {
         let list_int = Type::list(Type::int());
         let subst = Unifier::unify(&list_var, &list_int).unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::int()));
+    }
+
+    #[test]
+    fn test_variance_contravariant_generator_send() {
+        let tv = TypeVar::new(0);
+
+        let gen_var = Type::App(
+            Box::new(Type::App(
+                Box::new(Type::App(
+                    Box::new(Type::Con(TypeCtor::Generator)),
+                    Box::new(Type::int()),
+                )),
+                Box::new(Type::Var(tv.clone())),
+            )),
+            Box::new(Type::string()),
+        );
+
+        let gen_str = Type::App(
+            Box::new(Type::App(
+                Box::new(Type::App(
+                    Box::new(Type::Con(TypeCtor::Generator)),
+                    Box::new(Type::int()),
+                )),
+                Box::new(Type::string()),
+            )),
+            Box::new(Type::string()),
+        );
+
+        let subst = Unifier::unify(&gen_var, &gen_str).unwrap();
+        assert_eq!(subst.get(&tv), Some(&Type::string()));
     }
 }
