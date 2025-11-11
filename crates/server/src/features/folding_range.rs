@@ -379,6 +379,8 @@ impl FoldingRangeProvider {
             | AstNode::Pass { line, .. }
             | AstNode::Break { line, .. }
             | AstNode::Continue { line, .. }
+            | AstNode::Global { line, .. }
+            | AstNode::Nonlocal { line, .. }
             | AstNode::Raise { line, .. }
             | AstNode::Call { line, .. }
             | AstNode::Identifier { line, .. }

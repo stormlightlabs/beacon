@@ -18,7 +18,6 @@ following order so each layer builds on the previous one.
 ## Static Analysis E2E
 
 - Add `crates/analyzer/tests/analyzer_tests.rs` & `crates/server/tests/static_analysis_tests.rs`
-  as described in this document
 - Focus on CFG/data-flow diagnostics over multi-file fixtures
 
 ## Hindley-Milner Solver
@@ -28,7 +27,7 @@ following order so each layer builds on the previous one.
 
 ## Linter
 
-- Build `linter_tests.rs` according to this document, verifying lint messages and autofixes
+- Build `linter_tests.rs` verifying lint messages and autofixes
 - Test suppression support and rule configuration
 
 ## Completion Flow Validation
@@ -44,12 +43,12 @@ following order so each layer builds on the previous one.
 
 ## Tasks
 
-### Parser E2E
+### Parser E2E (`parser_e2e.rs`)
 
-- [ ] Implement parser e2e harness (`parser_e2e.rs`)
-- [ ] Add fixtures for advanced syntax (walrus operator, match statements, async comprehensions)
+- [x] Implement parser e2e harness
+- [x] Add fixtures for advanced syntax (walrus operator, match statements) - async comprehensions still needed
 - [ ] Add fixtures for typing-heavy code (Protocols, TypedDict, Generic variance)
-- [ ] Add fixtures for pattern matching (structural patterns, guards, bindings)
+- [x] Add fixtures for pattern matching (structural patterns, guards, bindings)
 - [ ] Investigate parser output for "is not" expressions (`test_is_not_literal` currently skipped)
 - [ ] Populate missing fixture directories
 
@@ -63,7 +62,7 @@ following order so each layer builds on the previous one.
 - [ ] Test inlay hints configuration
 - [ ] Test formatter configuration integration
 
-### Static Analysis E2E
+### Static Analysis
 
 - [ ] Create helper `assert_diagnostics` util to compare `(rule_id, message, span)` tuples
 - [ ] Populate missing fixture directories for integration tests
@@ -72,14 +71,14 @@ following order so each layer builds on the previous one.
 
 ### HM Type Checker
 
-- [ ] Fixtures for row polymorphism and record types
+- [x] Fixtures for row polymorphism and record types
 - [ ] Bivariant variance for special cases
-- [ ] Variance checking for Protocol definitions
+- [x] Variance checking for Protocol definitions
 - [ ] Variance inference for generic classes without explicit annotations
 - [ ] Generator/AsyncGenerator/Coroutine integration test fixtures (see module notes for more context)
-- [ ] Symbol table integration for `get_symbol_type` to look up types by identifier name (stub exists, tests use pattern matching instead)
+- [x] Symbol table integration for `get_symbol_type` to look up types by identifier name
 
-### Linter Integration
+### Linter (`linter_tests.rs`)
 
 - [ ] Test suppression support (`# type: ignore`, `# noqa:`)
 - [ ] Test per-rule configuration (enable/disable, severity)
@@ -102,14 +101,14 @@ following order so each layer builds on the previous one.
 
 ### Formatting Integration
 
-- [ ] Test `textDocument/formatting` handler
-- [ ] Test `textDocument/rangeFormatting` handler
-- [ ] Test `textDocument/willSaveWaitUntil` for format-on-save
-- [ ] Test `textDocument/onTypeFormatting` for automatic formatting
+- [x] Test `textDocument/formatting` handler
+- [x] Test `textDocument/rangeFormatting` handler
+- [x] Test `textDocument/willSaveWaitUntil` for format-on-save
+- [x] Test `textDocument/onTypeFormatting` for automatic formatting
 - [ ] Test formatter config hot-reload
 - [ ] Test `# beacon: disable` comments to skip formatting for specific regions
 - [ ] Test compatibility with Black/autopep8 outputs
-- [ ] Test error handling (malformed code, incomplete parsing)
+- [x] Test error handling (malformed code, incomplete parsing)
 - [ ] Test incremental formatting (cache unchanged regions)
 
 ### LSP Features Integration

@@ -209,6 +209,7 @@ fn visit_node_with_context(
             visitors::visit_collections(node, env, ctx, stub_cache)
         }
         AstNode::Pass { .. } | AstNode::Break { .. } | AstNode::Continue { .. } => Ok(Type::none()),
+        AstNode::Global { .. } | AstNode::Nonlocal { .. } => Ok(Type::none()),
         AstNode::Assert { .. } | AstNode::Starred { .. } => Ok(Type::none()),
         AstNode::ParenthesizedExpression { expression, .. } => {
             visit_node_with_context(expression, env, ctx, stub_cache, expr_ctx)

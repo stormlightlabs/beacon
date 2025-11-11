@@ -693,7 +693,9 @@ impl NameResolver {
             | AstNode::Import { .. }
             | AstNode::ImportFrom { .. }
             | AstNode::Assert { .. }
-            | AstNode::Starred { .. } => {}
+            | AstNode::Starred { .. }
+            | AstNode::Global { .. }
+            | AstNode::Nonlocal { .. } => {}
             AstNode::ParenthesizedExpression { expression, .. } => {
                 self.track_references(expression)?;
             }
@@ -793,6 +795,8 @@ impl NameResolver {
             | AstNode::Break { line, col, .. }
             | AstNode::Continue { line, col, .. }
             | AstNode::Raise { line, col, .. }
+            | AstNode::Global { line, col, .. }
+            | AstNode::Nonlocal { line, col, .. }
             | AstNode::Assert { line, col, .. }
             | AstNode::Starred { line, col, .. }
             | AstNode::ParenthesizedExpression { line, col, .. } => {
@@ -1248,6 +1252,8 @@ impl NameResolver {
             | AstNode::Pass { .. }
             | AstNode::Break { .. }
             | AstNode::Continue { .. }
+            | AstNode::Global { .. }
+            | AstNode::Nonlocal { .. }
             | AstNode::Assert { .. }
             | AstNode::Starred { .. } => {}
             AstNode::ParenthesizedExpression { expression, .. } => {

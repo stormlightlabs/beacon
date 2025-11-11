@@ -577,6 +577,8 @@ impl Analyzer {
             | AstNode::Await { .. }
             | AstNode::Tuple { .. }
             | AstNode::Pass { .. }
+            | AstNode::Global { .. }
+            | AstNode::Nonlocal { .. }
             | AstNode::Break { .. }
             | AstNode::Continue { .. } => {}
             AstNode::Assert { .. } | AstNode::Starred { .. } => {}

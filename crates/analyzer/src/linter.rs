@@ -11,6 +11,15 @@ use beacon_parser::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
+/// Tracks a global or nonlocal declaration
+#[derive(Debug, Clone)]
+struct GlobalOrNonlocalDecl {
+    name: String,
+    line: usize,
+    col: usize,
+    is_global: bool,
+}
+
 /// Context for tracking state during AST traversal
 #[derive(Debug, Clone)]
 struct LinterContext {
@@ -24,6 +33,10 @@ struct LinterContext {
     import_names: Vec<FxHashSet<String>>,
     /// Stack of loop variable names
     loop_vars: Vec<String>,
+    /// Global and nonlocal declarations in current function scope
+    global_nonlocal_decls: Vec<GlobalOrNonlocalDecl>,
+    /// Variables assigned in the current function scope
+    assigned_vars: FxHashSet<String>,
 }
 
 impl LinterContext {
@@ -34,15 +47,35 @@ impl LinterContext {
             class_depth: 0,
             import_names: vec![FxHashSet::default()],
             loop_vars: Vec::new(),
+            global_nonlocal_decls: Vec::new(),
+            assigned_vars: FxHashSet::default(),
         }
     }
 
     fn enter_function(&mut self) {
         self.function_depth += 1;
+        self.global_nonlocal_decls.clear();
+        self.assigned_vars.clear();
     }
 
     fn exit_function(&mut self) {
         self.function_depth = self.function_depth.saturating_sub(1);
+        self.global_nonlocal_decls.clear();
+        self.assigned_vars.clear();
+    }
+
+    fn track_assignment(&mut self, var_name: String) {
+        self.assigned_vars.insert(var_name);
+    }
+
+    fn add_global_decl(&mut self, name: String, line: usize, col: usize) {
+        self.global_nonlocal_decls
+            .push(GlobalOrNonlocalDecl { name, line, col, is_global: true });
+    }
+
+    fn add_nonlocal_decl(&mut self, name: String, line: usize, col: usize) {
+        self.global_nonlocal_decls
+            .push(GlobalOrNonlocalDecl { name, line, col, is_global: false });
     }
 
     fn enter_loop(&mut self) {
@@ -137,6 +170,12 @@ impl<'a> Linter<'a> {
                 self.visit_from_import(names, *line, *col);
             }
             AstNode::Pass { .. } => {}
+            AstNode::Global { names, line, col, .. } => {
+                self.visit_global(names, *line, *col);
+            }
+            AstNode::Nonlocal { names, line, col, .. } => {
+                self.visit_nonlocal(names, *line, *col);
+            }
             AstNode::Assignment { target, value, line, col, .. } => {
                 self.visit_assignment(target, value, *line, *col);
             }
@@ -144,8 +183,15 @@ impl<'a> Linter<'a> {
                 self.check_assert_tuple(test, *line, *col);
                 self.visit_node(test);
             }
-            AstNode::AnnotatedAssignment { target: _, type_annotation, value, line, col, .. } => {
+            AstNode::AnnotatedAssignment { target, type_annotation, value, line, col, .. } => {
                 self.check_forward_annotation_syntax(type_annotation, *line, *col);
+
+                if self.ctx.function_depth > 0 {
+                    for name in target.extract_target_names() {
+                        self.ctx.track_assignment(name);
+                    }
+                }
+
                 if let Some(val) = value {
                     self.visit_node(val);
                 }
@@ -222,6 +268,7 @@ impl<'a> Linter<'a> {
         self.check_redundant_pass(body);
         self.ctx.enter_function();
         self.visit_body(body);
+        self.check_unused_global_nonlocal();
         self.ctx.exit_function();
     }
 
@@ -370,9 +417,31 @@ impl<'a> Linter<'a> {
         }
     }
 
+    /// Visit global statement and track declarations
+    fn visit_global(&mut self, names: &[String], line: usize, col: usize) {
+        for name in names {
+            self.ctx.add_global_decl(name.clone(), line, col);
+        }
+    }
+
+    /// Visit nonlocal statement and track declarations
+    fn visit_nonlocal(&mut self, names: &[String], line: usize, col: usize) {
+        for name in names {
+            self.ctx.add_nonlocal_decl(name.clone(), line, col);
+        }
+    }
+
     fn visit_assignment(&mut self, target: &AstNode, value: &AstNode, line: usize, col: usize) {
         self.check_two_starred_expressions(target, line, col);
         self.check_too_many_expressions_in_starred_assignment(target, value, line, col);
+
+        // Track assignments for global/nonlocal checking
+        if self.ctx.function_depth > 0 {
+            for name in target.extract_target_names() {
+                self.ctx.track_assignment(name);
+            }
+        }
+
         self.visit_node(value);
     }
 
@@ -446,7 +515,6 @@ impl<'a> Linter<'a> {
                         col,
                     });
                 } else {
-                    // Extract position from the key node
                     let (key_line, key_col) = match key {
                         AstNode::Literal { line, col, .. } => (*line, *col),
                         _ => (line, col),
@@ -468,7 +536,6 @@ impl<'a> Linter<'a> {
             return;
         }
 
-        // Check if there are non-pass statements
         let has_non_pass = body.iter().any(|node| !matches!(node, AstNode::Pass { .. }));
 
         if has_non_pass {
@@ -685,16 +752,72 @@ impl<'a> Linter<'a> {
 
     /// BEA023: ForwardAnnotationSyntaxError
     ///
-    /// TODO: Try to parse the annotation as a Python expression
+    /// Validates forward type annotation syntax
     fn check_forward_annotation_syntax(&mut self, annotation: &str, line: usize, col: usize) {
-        if annotation.contains('[') && !annotation.contains(']') {
+        if let Some(error_msg) = Self::validate_annotation_syntax(annotation) {
             self.report(
                 RuleKind::ForwardAnnotationSyntaxError,
-                format!("Syntax error in annotation: '{annotation}'"),
+                format!("Syntax error in annotation '{annotation}': {error_msg}"),
                 line,
                 col,
             );
         }
+    }
+
+    fn validate_annotation_syntax(annotation: &str) -> Option<String> {
+        let annotation = annotation.trim();
+
+        if annotation.is_empty() {
+            return None;
+        }
+
+        let mut bracket_stack = Vec::new();
+        let mut in_string = false;
+        let mut escape_next = false;
+
+        for ch in annotation.chars() {
+            if escape_next {
+                escape_next = false;
+                continue;
+            }
+
+            match ch {
+                '\\' => escape_next = true,
+                '"' | '\'' => in_string = !in_string,
+                '[' | '(' if !in_string => bracket_stack.push(ch),
+                ']' if !in_string => {
+                    if bracket_stack.pop() != Some('[') {
+                        return Some("unmatched ']'".to_string());
+                    }
+                }
+                ')' if !in_string => {
+                    if bracket_stack.pop() != Some('(') {
+                        return Some("unmatched ')'".to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if !bracket_stack.is_empty() {
+            let unclosed = bracket_stack.last().unwrap();
+            return Some(format!("unclosed '{unclosed}'"));
+        }
+
+        if annotation.contains(",,") {
+            return Some("consecutive commas".to_string());
+        }
+
+        if annotation.contains("[]") || annotation.contains("()") {
+            return Some("empty brackets".to_string());
+        }
+
+        let first_char = annotation.chars().next()?;
+        if first_char.is_numeric() {
+            return Some("annotation cannot start with a number".to_string());
+        }
+
+        None
     }
 
     /// BEA026: [RuleKind::IsLiteral]
@@ -826,6 +949,32 @@ impl<'a> Linter<'a> {
             }
             _ => 0,
         }
+    }
+
+    /// BEA022: UnusedIndirectAssignment
+    ///
+    /// Check for global/nonlocal declarations that are never reassigned in the function.
+    fn check_unused_global_nonlocal(&mut self) {
+        let decls = self.ctx.global_nonlocal_decls.clone();
+
+        for decl in &decls {
+            let has_write = self.has_assignment_in_function(&decl.name);
+
+            if !has_write {
+                let keyword = if decl.is_global { "global" } else { "nonlocal" };
+                self.report(
+                    RuleKind::UnusedIndirectAssignment,
+                    format!("'{keyword} {}' declared but never assigned in function", decl.name),
+                    decl.line,
+                    decl.col,
+                );
+            }
+        }
+    }
+
+    /// Check if a variable has any assignment in the function body
+    fn has_assignment_in_function(&self, var_name: &str) -> bool {
+        self.ctx.assigned_vars.contains(var_name)
     }
 
     /// Check rules that require symbol table analysis

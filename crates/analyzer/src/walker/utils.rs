@@ -59,6 +59,8 @@ pub fn get_node_position(node: &AstNode) -> (usize, usize, usize, usize) {
         | AstNode::Pass { line, col, end_line, end_col, .. }
         | AstNode::Break { line, col, end_line, end_col, .. }
         | AstNode::Continue { line, col, end_line, end_col, .. }
+        | AstNode::Global { line, col, end_line, end_col, .. }
+        | AstNode::Nonlocal { line, col, end_line, end_col, .. }
         | AstNode::Assert { line, col, end_line, end_col, .. }
         | AstNode::Starred { line, col, end_line, end_col, .. }
         | AstNode::ParenthesizedExpression { line, col, end_line, end_col, .. } => (*line, *col, *end_line, *end_col),
@@ -127,10 +129,7 @@ mod tests {
     #[test]
     fn test_is_docstring() {
         let docstring = AstNode::Literal {
-            value: LiteralValue::String {
-                value: "This is a docstring".to_string(),
-                prefix: String::new(),
-            },
+            value: LiteralValue::String { value: "This is a docstring".to_string(), prefix: String::new() },
             line: 1,
             col: 1,
             end_line: 1,
@@ -138,13 +137,7 @@ mod tests {
         };
         assert!(is_docstring(&docstring));
 
-        let number = AstNode::Literal {
-            value: LiteralValue::Integer(42),
-            line: 1,
-            col: 1,
-            end_line: 1,
-            end_col: 2,
-        };
+        let number = AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 1, end_line: 1, end_col: 2 };
         assert!(!is_docstring(&number));
     }
 
@@ -173,10 +166,7 @@ mod tests {
             }),
             ops: vec![beacon_parser::CompareOperator::Eq],
             comparators: vec![AstNode::Literal {
-                value: LiteralValue::String {
-                    value: "__main__".to_string(),
-                    prefix: String::new(),
-                },
+                value: LiteralValue::String { value: "__main__".to_string(), prefix: String::new() },
                 line: 1,
                 end_line: 1,
                 col: 15,
@@ -191,10 +181,7 @@ mod tests {
 
         let test2 = AstNode::Compare {
             left: Box::new(AstNode::Literal {
-                value: LiteralValue::String {
-                    value: "__main__".to_string(),
-                    prefix: String::new(),
-                },
+                value: LiteralValue::String { value: "__main__".to_string(), prefix: String::new() },
                 line: 1,
                 end_line: 1,
                 col: 4,

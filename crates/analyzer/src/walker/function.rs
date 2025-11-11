@@ -56,7 +56,9 @@ fn check_node_for_yield(node: &AstNode) -> bool {
         AstNode::If { test, body, elif_parts, else_body, .. } => {
             check_node_for_yield(test)
                 || contains_yield(body)
-                || elif_parts.iter().any(|(test, body)| check_node_for_yield(test) || contains_yield(body))
+                || elif_parts
+                    .iter()
+                    .any(|(test, body)| check_node_for_yield(test) || contains_yield(body))
                 || else_body.as_ref().is_some_and(|b| contains_yield(b))
         }
         AstNode::For { iter, body, else_body, .. } => {
@@ -111,6 +113,8 @@ fn check_node_for_yield(node: &AstNode) -> bool {
         | AstNode::Module { .. }
         | AstNode::Assert { .. }
         | AstNode::Starred { .. }
+        | AstNode::Global { .. }
+        | AstNode::Nonlocal { .. }
         | AstNode::ParenthesizedExpression { .. } => false,
     }
 }
@@ -151,11 +155,8 @@ impl ReturnPathAnalysis {
 /// Examines all paths through the function to determine what types of returns exist.
 /// This is used to infer Optional[T] for mixed returns and None for implicit returns.
 pub fn analyze_return_paths(body: &[AstNode]) -> ReturnPathAnalysis {
-    let mut analysis = ReturnPathAnalysis {
-        has_value_returns: false,
-        has_none_returns: false,
-        has_implicit_return: true,
-    };
+    let mut analysis =
+        ReturnPathAnalysis { has_value_returns: false, has_none_returns: false, has_implicit_return: true };
 
     for stmt in body {
         collect_returns(stmt, &mut analysis);
@@ -299,19 +300,16 @@ mod tests {
             col: 1,
             end_col: 1,
         }];
-        assert!(!contains_yield(&nodes), "Yields in nested functions should not be detected");
+        assert!(
+            !contains_yield(&nodes),
+            "Yields in nested functions should not be detected"
+        );
     }
 
     #[test]
     fn test_contains_yield_in_lambda() {
         let nodes = vec![AstNode::Assignment {
-            target: Box::new(AstNode::Identifier {
-                name: "x".to_string(),
-                line: 1,
-                col: 1,
-                end_line: 1,
-                end_col: 2,
-            }),
+            target: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 1, end_line: 1, end_col: 2 }),
             value: Box::new(AstNode::Lambda {
                 args: vec![],
                 body: Box::new(make_yield(1, 20)),
@@ -325,7 +323,10 @@ mod tests {
             col: 1,
             end_col: 1,
         }];
-        assert!(!contains_yield(&nodes), "Yields in lambda functions should not be detected");
+        assert!(
+            !contains_yield(&nodes),
+            "Yields in lambda functions should not be detected"
+        );
     }
 
     #[test]
@@ -338,7 +339,10 @@ mod tests {
             end_line: 1,
             end_col: 1,
         }];
-        assert!(!contains_yield(&nodes), "Yields in list comprehensions should not be detected");
+        assert!(
+            !contains_yield(&nodes),
+            "Yields in list comprehensions should not be detected"
+        );
     }
 
     #[test]
@@ -351,27 +355,27 @@ mod tests {
             end_line: 1,
             end_col: 1,
         }];
-        assert!(!contains_yield(&nodes), "Yields in generator expressions should not be detected");
+        assert!(
+            !contains_yield(&nodes),
+            "Yields in generator expressions should not be detected"
+        );
     }
 
     #[test]
     fn test_contains_yield_in_dict_comp() {
         let nodes = vec![AstNode::DictComp {
             key: Box::new(make_yield(1, 10)),
-            value: Box::new(AstNode::Identifier {
-                name: "v".to_string(),
-                line: 1,
-                col: 15,
-                end_line: 1,
-                end_col: 16,
-            }),
+            value: Box::new(AstNode::Identifier { name: "v".to_string(), line: 1, col: 15, end_line: 1, end_col: 16 }),
             generators: vec![],
             line: 1,
             end_line: 1,
             col: 1,
             end_col: 1,
         }];
-        assert!(!contains_yield(&nodes), "Yields in dict comprehensions should not be detected");
+        assert!(
+            !contains_yield(&nodes),
+            "Yields in dict comprehensions should not be detected"
+        );
     }
 
     #[test]
@@ -384,7 +388,10 @@ mod tests {
             end_line: 1,
             end_col: 1,
         }];
-        assert!(!contains_yield(&nodes), "Yields in set comprehensions should not be detected");
+        assert!(
+            !contains_yield(&nodes),
+            "Yields in set comprehensions should not be detected"
+        );
     }
 
     #[test]
@@ -405,7 +412,10 @@ mod tests {
             col: 1,
             end_col: 1,
         }];
-        assert!(contains_yield(&nodes), "Yields in if statement bodies should be detected");
+        assert!(
+            contains_yield(&nodes),
+            "Yields in if statement bodies should be detected"
+        );
     }
 
     #[test]
@@ -523,7 +533,10 @@ mod tests {
         let analysis = analyze_return_paths(&body);
         assert!(analysis.has_value_returns, "Should have value returns");
         assert!(!analysis.has_none_returns, "Should have no explicit None returns");
-        assert!(!analysis.has_implicit_return, "Should not have implicit return (always exits)");
+        assert!(
+            !analysis.has_implicit_return,
+            "Should not have implicit return (always exits)"
+        );
         assert!(!analysis.should_infer_none(), "Should not infer None");
     }
 
@@ -561,8 +574,14 @@ mod tests {
         let analysis = analyze_return_paths(&body);
         assert!(analysis.has_value_returns, "Should have value returns");
         assert!(!analysis.has_none_returns, "Should have no explicit None returns");
-        assert!(analysis.has_implicit_return, "Should have implicit return (if might not execute)");
-        assert!(analysis.should_infer_optional(), "Should infer Optional[T] for mixed returns");
+        assert!(
+            analysis.has_implicit_return,
+            "Should have implicit return (if might not execute)"
+        );
+        assert!(
+            analysis.should_infer_optional(),
+            "Should infer Optional[T] for mixed returns"
+        );
     }
 
     #[test]
@@ -611,7 +630,13 @@ mod tests {
         let analysis = analyze_return_paths(&body);
         assert!(analysis.has_value_returns, "Should have value returns");
         assert!(!analysis.has_none_returns, "Should have no explicit None returns");
-        assert!(!analysis.has_implicit_return, "Should not have implicit return (all paths exit)");
-        assert!(!analysis.should_infer_optional(), "Should not infer Optional when all paths return values");
+        assert!(
+            !analysis.has_implicit_return,
+            "Should not have implicit return (all paths exit)"
+        );
+        assert!(
+            !analysis.should_infer_optional(),
+            "Should not infer Optional when all paths return values"
+        );
     }
 }

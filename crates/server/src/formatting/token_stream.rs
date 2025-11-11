@@ -995,6 +995,34 @@ impl TokenGenerator {
                     .push(Token::Keyword { text: "continue".to_string(), line: *line, col: *col });
                 self.tokens.push(Token::Newline { line: *line });
             }
+            AstNode::Global { names, line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "global".to_string(), line: *line, col: *col });
+                for (i, name) in names.iter().enumerate() {
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Identifier { text: name.clone(), line: *line, col: *col });
+                    if i < names.len() - 1 {
+                        self.tokens
+                            .push(Token::Delimiter { text: ",".to_string(), line: *line, col: *col });
+                    }
+                }
+                self.tokens.push(Token::Newline { line: *line });
+            }
+            AstNode::Nonlocal { names, line, col, .. } => {
+                self.tokens
+                    .push(Token::Keyword { text: "nonlocal".to_string(), line: *line, col: *col });
+                for (i, name) in names.iter().enumerate() {
+                    self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
+                    self.tokens
+                        .push(Token::Identifier { text: name.clone(), line: *line, col: *col });
+                    if i < names.len() - 1 {
+                        self.tokens
+                            .push(Token::Delimiter { text: ",".to_string(), line: *line, col: *col });
+                    }
+                }
+                self.tokens.push(Token::Newline { line: *line });
+            }
             AstNode::Raise { exc, line, col, .. } => {
                 self.tokens
                     .push(Token::Keyword { text: "raise".to_string(), line: *line, col: *col });

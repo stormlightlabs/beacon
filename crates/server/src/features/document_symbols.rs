@@ -224,6 +224,8 @@ impl DocumentSymbolsProvider {
             | AstNode::Pass { line, col, .. }
             | AstNode::Break { line, col, .. }
             | AstNode::Continue { line, col, .. }
+            | AstNode::Global { line, col, .. }
+            | AstNode::Nonlocal { line, col, .. }
             | AstNode::Raise { line, col, .. }
             | AstNode::Assert { line, col, .. }
             | AstNode::Starred { line, col, .. }

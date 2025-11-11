@@ -250,21 +250,20 @@ See [Linter Rules](#linter-rules) section below for BEA code implementation stat
 
 ## Linter Rules
 
-Implementation status for BEA diagnostic codes. See `docs/src/lsp/lint_rules.md` for full rule documentation.
+- [ ] BEA022: UnusedIndirectAssignment - Detects global/nonlocal declarations without assignments
+    - Fix Augmented assignments (`x += 1`) not tracked as assignments
+    - Fix Nested function scope tracking needs refinement for complex cases
+    - See ignored tests: `test_global_with_augmented_assignment`, `test_global_and_nonlocal_in_same_function`
 
-### Needs Symbol Table Integration
-
-- [ ] BEA022: UnusedIndirectAssignment (blocked: requires Global/Nonlocal AST nodes)
-
-### Needs Expression Evaluation
-
-- [ ] BEA023: ForwardAnnotationSyntaxError - Needs Python expression parser for annotation validation
-    - [ ] Create `annotation_parser.rs` module or extend const_eval
-    - [ ] Parse string annotations as Python expressions using tree-sitter
-    - [ ] Validate bracket matching, identifier syntax, and type expression structure
-    - [ ] Handle generic types: `List[int]`, `Dict[str, Any]`, `Optional[T]`
-    - [ ] Test malformed annotations: `"List[int"`, `"Dict[str,,"`, `"123InvalidName"`
-    - [ ] Implement BEA023 diagnostic emission with syntax error details
+- [ ] BEA023: ForwardAnnotationSyntaxError - Validates type annotation syntax
+    - See ignored tests: `test_annotation_nested_generics`, `test_annotation_complex_nested_types`, etc.
+        - [ ] Complex nested generic types may produce false positives
+        - [ ] String quote handling in annotations needs refinement
+        - [ ] Callable syntax validation incomplete
+        - [ ] Identifier validation is basic (only checks numeric start)
+    - [ ] Use tree-sitter to parse annotation strings as Python expressions
+    - [ ] Implement full Python type annotation grammar validation
+    - [ ] Support PEP 604 union syntax (`int | str`)
 
 ### Improve Caching Granularity
 

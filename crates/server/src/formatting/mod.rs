@@ -346,6 +346,8 @@ impl Formatter {
             AstNode::Pass { line, end_line: node_end, .. } => (*line, *node_end),
             AstNode::Break { line, end_line: node_end, .. } => (*line, *node_end),
             AstNode::Continue { line, end_line: node_end, .. } => (*line, *node_end),
+            AstNode::Global { line, end_line: node_end, .. } => (*line, *node_end),
+            AstNode::Nonlocal { line, end_line: node_end, .. } => (*line, *node_end),
             AstNode::Raise { line, end_line: node_end, .. } => (*line, *node_end),
             AstNode::Tuple { line, end_line: node_end, .. } => (*line, *node_end),
             AstNode::List { line, end_line: node_end, .. } => (*line, *node_end),

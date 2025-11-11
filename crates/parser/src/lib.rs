@@ -328,6 +328,22 @@ pub enum AstNode {
         end_line: usize,
         end_col: usize,
     },
+    /// Global statement: global x, y, z
+    Global {
+        names: Vec<String>,
+        line: usize,
+        col: usize,
+        end_line: usize,
+        end_col: usize,
+    },
+    /// Nonlocal statement: nonlocal x, y, z
+    Nonlocal {
+        names: Vec<String>,
+        line: usize,
+        col: usize,
+        end_line: usize,
+        end_col: usize,
+    },
     /// Tuple literal: (1, 2, 3) or (x,)
     Tuple {
         elements: Vec<AstNode>,
@@ -937,6 +953,14 @@ impl PythonParser {
                 let exc = self.extract_raise_value(&node, source)?;
                 Ok(AstNode::Raise { exc: exc.map(Box::new), line, col, end_line, end_col })
             }
+            "global_statement" => {
+                let names = self.extract_global_or_nonlocal_names(&node, source)?;
+                Ok(AstNode::Global { names, line, col, end_line, end_col })
+            }
+            "nonlocal_statement" => {
+                let names = self.extract_global_or_nonlocal_names(&node, source)?;
+                Ok(AstNode::Nonlocal { names, line, col, end_line, end_col })
+            }
             "yield" => {
                 let value = node
                     .named_child(0)
@@ -1403,6 +1427,25 @@ impl PythonParser {
             Some(value_node) => Ok(Some(self.node_to_ast(value_node, source)?)),
             None => Ok(None),
         }
+    }
+
+    /// Extract variable names from global or nonlocal statement
+    ///
+    /// Tree-sitter parses `global x, y, z` as:
+    /// - global_statement or nonlocal_statement containing identifier nodes
+    fn extract_global_or_nonlocal_names(&self, node: &Node, source: &str) -> Result<Vec<String>> {
+        let mut names = Vec::new();
+        let mut cursor = node.walk();
+
+        for child in node.children(&mut cursor) {
+            if child.kind() == "identifier" {
+                if let Ok(name) = child.utf8_text(source.as_bytes()) {
+                    names.push(name.to_string());
+                }
+            }
+        }
+
+        Ok(names)
     }
 
     fn extract_tuple_elements(&self, node: &Node, source: &str) -> Result<Vec<AstNode>> {
