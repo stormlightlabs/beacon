@@ -145,6 +145,8 @@ enum Commands {
         #[arg(short, long, value_enum, default_value = "human")]
         format: OutputFormat,
     },
+    /// Show version and build information
+    Version,
     /// Debug tools (available only in debug builds)
     #[cfg(debug_assertions)]
     Debug {
@@ -248,6 +250,7 @@ async fn main() -> Result<()> {
             analyze_command(target, format, show_cfg, show_types, lint_only, dataflow_only)
         }
         Commands::Lint { file, format } => lint_command(file, format),
+        Commands::Version => version_command(),
 
         #[cfg(debug_assertions)]
         Commands::Debug { command } => debug_command(command),
@@ -831,6 +834,20 @@ fn lint_command(file: Option<PathBuf>, format: OutputFormat) -> Result<()> {
         std::process::exit(1);
     }
 
+    Ok(())
+}
+
+fn version_command() -> Result<()> {
+    const VERSION: &str = env!("CARGO_PKG_VERSION");
+    const GIT_HASH: &str = env!("GIT_HASH");
+    const BUILD_TIMESTAMP: &str = env!("BUILD_TIMESTAMP");
+    const BUILD_TARGET: &str = env!("BUILD_TARGET");
+
+    println!("{}\n", "Beacon Language Server".bold());
+    println!("{}:    {}", "Version".bright_blue().bold(), VERSION.green());
+    println!("{}:     {}", "Commit".bright_blue().bold(), GIT_HASH.yellow());
+    println!("{}:      {}", "Built".bright_blue().bold(), BUILD_TIMESTAMP.cyan());
+    println!("{}:   {}", "Platform".bright_blue().bold(), BUILD_TARGET.magenta());
     Ok(())
 }
 

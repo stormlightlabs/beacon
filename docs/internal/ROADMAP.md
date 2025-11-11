@@ -75,8 +75,7 @@ with context-aware suggestions and LSP completion integration.
 
 ### PEP8 Formatting
 
-Implement a PEP8-compliant code formatter with LSP integration, offering both document-wide
-and range-based formatting with configurable style options.
+Implement a PEP8-compliant code formatter with LSP integration, offering both document-wide and range-based formatting with configurable style options.
 
 #### Core Formatting Engine
 
@@ -108,37 +107,6 @@ and range-based formatting with configurable style options.
 - [ ] Line continuation style (backslash vs implicit)
 - [ ] Compatibility mode (Black, autopep8, strict PEP8)
 
-#### Performance & Quality
-
-- [ ] Incremental formatting (only changed regions)
-- [ ] Idempotency testing (format(format(code)) == format(code))
-- [ ] Benchmark formatting speed on large files (target: <500ms for 5000 lines)
-- [ ] AST preservation verification (no semantic changes)
-- [ ] Regression test suite with real-world Python codebases
-
-## Integration Test Milestone
-
-The integration plan mirrors the formatter regression style: inline fixtures, direct
-assertions, and cargo tests committed to the repo. We’ll tackle suites in the
-following order so each layer builds on the previous one.
-
-1. **Parser E2E Harness**
-   - Implement `parser_e2e.rs` per `docs/internal/e2e_parser_tests.md`.
-   - Seed fixtures for advanced syntax, typing-heavy code, and pattern matching.
-2. **Configuration Flow Coverage**
-   - Use the parser harness to exercise config load + hot-reload scenarios formerly tracked in TODO.
-   - Ensure `beacon.toml` / workspace settings round-trips are covered.
-3. **Static Analysis E2E**
-   - Add `crates/analyzer/tests/analyzer_tests.rs` & `crates/server/tests/static_analysis_tests.rs`
-     as described in `docs/internal/e2e_analysis_tests.md`.
-   - Focus on CFG/data-flow diagnostics over multi-file fixtures.
-4. **Hindley–Milner Solver E2E**
-   - Follow `docs/internal/e2e_hm_tests.md` to assert on inferred types and solver diagnostics.
-5. **Linter E2E**
-   - Build `linter_tests.rs` according to `docs/internal/e2e_linter_tests.md`, verifying lint messages and autofixes.
-6. **Completion Flow Validation**
-   - After linter coverage, add integration tests for snippet/ completion pipelines (configuration + completion tasks moved from TODO).
-
 ## Infrastructure
 
 ### Static Analysis & Linting
@@ -163,15 +131,6 @@ following order so each layer builds on the previous one.
 - [ ] Formatting configuration (see PEP8 Formatting section)
 - [x] Contributor documentation
 - [ ] Configurable verbosity for inlay hints
-
-### Performance & Testing
-
-- [ ] Benchmarks for cold/warm runs and large projects
-- [ ] Memory and CPU profiling
-- [ ] Golden tests for inference outputs
-- [ ] Property tests for unifier correctness
-- [ ] Corpus harness (compare against MyPy/Pyright)
-- [ ] Fuzzing for parser and solver
 
 ## Parking Lot
 

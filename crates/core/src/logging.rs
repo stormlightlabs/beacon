@@ -3,6 +3,7 @@
 //! This module provides centralized logging configuration for both the LSP server and CLI.
 //! It supports:
 //! - Daily rotating file appenders writing to `logs/lsp.log`
+//! - Configurable log file retention count
 //! - Dual output to stderr and file for immediate visibility
 //! - JSON and text output formats
 //! - Environment-based log level control via `RUST_LOG`
@@ -36,6 +37,8 @@ pub struct LogConfig {
     pub stderr: bool,
     /// Environment filter for log levels (defaults to INFO if RUST_LOG not set)
     pub env_filter: Option<String>,
+    /// Maximum number of rotated log files to keep (None = unlimited)
+    pub max_file_count: Option<usize>,
 }
 
 impl Default for LogConfig {
@@ -46,6 +49,7 @@ impl Default for LogConfig {
             format: LogFormat::Text,
             stderr: true,
             env_filter: None,
+            max_file_count: Some(10), // Keep 10 rotated files by default
         }
     }
 }
@@ -86,6 +90,12 @@ impl LogConfig {
         self
     }
 
+    /// Set the maximum number of rotated files to keep
+    pub fn with_max_file_count(mut self, count: usize) -> Self {
+        self.max_file_count = Some(count);
+        self
+    }
+
     /// Get the full path to the log file
     pub fn log_path(&self) -> PathBuf {
         self.log_dir.join(&self.log_filename)
@@ -95,7 +105,7 @@ impl LogConfig {
 /// Initialize the logging system with the given configuration
 ///
 /// This sets up:
-/// - Daily rotating file appender in the configured directory
+/// - Daily rotating file appender with configurable retention in the configured directory
 /// - Optional stderr output for immediate visibility
 /// - Environment-based filtering (RUST_LOG or configured filter)
 /// - Timestamps, log levels, and targets in output
@@ -115,7 +125,17 @@ pub fn init(config: &LogConfig) -> Result<(), Box<dyn std::error::Error>> {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
     };
 
-    let file_appender = tracing_appender::rolling::daily(&config.log_dir, &config.log_filename);
+    let file_appender = if let Some(max_files) = config.max_file_count {
+        tracing_appender::rolling::Builder::new()
+            .rotation(tracing_appender::rolling::Rotation::DAILY)
+            .filename_prefix(&config.log_filename)
+            .filename_suffix("")
+            .max_log_files(max_files)
+            .build(&config.log_dir)?
+    } else {
+        tracing_appender::rolling::daily(&config.log_dir, &config.log_filename)
+    };
+
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     let file_layer = match config.format {
@@ -219,6 +239,7 @@ mod tests {
         assert_eq!(config.format, LogFormat::Text);
         assert!(config.stderr);
         assert!(config.env_filter.is_none());
+        assert_eq!(config.max_file_count, Some(10));
     }
 
     #[test]
@@ -260,5 +281,11 @@ mod tests {
         unsafe {
             std::env::remove_var("LSP_LOG_PATH");
         }
+    }
+
+    #[test]
+    fn test_log_config_with_file_count() {
+        let config = LogConfig::new().with_max_file_count(5);
+        assert_eq!(config.max_file_count, Some(5));
     }
 }

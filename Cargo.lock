@@ -167,6 +167,7 @@ dependencies = [
  "beacon-core",
  "beacon-lsp",
  "beacon-parser",
+ "chrono",
  "clap",
  "owo-colors",
  "predicates",

@@ -2,8 +2,7 @@
 
 Implementation details and mod-specific tasks.
 
-> NOTE: Parser/config/analyzer/HM/linter/completion integration tests are tracked in
-> `docs/internal/ROADMAP.md` under the Integration Test milestone.
+All integration tests (parser, config, analyzer, HM, linter, completion, formatting, LSP) are tracked in [e2e_test](./e2e_tests.md)
 
 ## LSP Features
 
@@ -15,12 +14,7 @@ Implementation details and mod-specific tasks.
 
 ### Configuration
 
-- [x] Make interpreter path configurable (via `beacon.python.interpreterPath`)
-- [x] Configuration file support (beacon.toml, pyproject.toml)
-- [x] LSP configuration via workspace settings
-- [x] Config hot-reload support
-- [x] Diagnostic severity configuration
-- [x] Inlay hints configuration implementation
+- Implements full LSP configuration support, including interpreter path, config file parsing, workspace settings, hot-reload, and diagnostic and inlay-hint customization—with one remaining quick-fix rule pending.
 
 ## Snippet Engine
 
@@ -176,14 +170,7 @@ Implementation details and mod-specific tasks.
 
 ### Testing & Validation
 
-- [ ] Unit tests for snippet parsing and placeholder extraction
-- [ ] Unit tests for snippet filtering by scope
-- [ ] Validate all built-in snippets are syntactically correct
-- [ ] Test snippet expansion with various placeholder types
-- [ ] Test context-aware snippet filtering
-- [ ] Test user-defined snippet loading and priority
-- [ ] Test snippet formatting integration
-- [ ] Performance tests (snippet lookup should be <5ms)
+See `docs/internal/e2e_tests.md` for comprehensive snippet integration test tasks.
 
 ### Documentation & Discovery
 
@@ -200,19 +187,11 @@ Implementation details and mod-specific tasks.
 
 ### Core Formatter Infrastructure
 
-- [x] Core formatter infrastructure implemented (module structure, config, token stream, context tracking, and state machine)
+- Core formatter infrastructure implemented (module structure, config, token stream, context tracking, and state machine)
 
-### Whitespace & Indentation Rules
+### Whitespace, Indentation & Line-Length
 
-- [x] Implemented whitespace and indentation rules (indentation normalization, trailing whitespace removal, blank line management, operator spacing, delimiter spacing)
-- [x] Created `docs/src/format/overview.md` and `docs/src/format/whitespace.md`
-
-### Line Length & Wrapping
-
-- [x] Implemented line length calculation with Unicode width support
-- [x] Smart line breaking algorithm with prioritized break points (commas, operators, brackets)
-- [x] Wrapping strategies for function calls, parameters, collections, and binary expressions
-- [x] Created `docs/src/format/print-width.md`
+- Implements comprehensive formatting rules for whitespace, indentation, and line wrapping with Unicode-aware width calculations, smart breakpoints, and detailed documentation for all formatting behaviors.
 
 ### Import Formatting
 
@@ -240,17 +219,7 @@ Added `FormatterConfig` to main LSP `Config` with full LSP/TOML support for all 
 
 ### Testing & Validation
 
-- [x] Unit tests for each formatting rule (whitespace, indentation, imports, etc.)
-- [x] Idempotency tests (format(format(x)) == format(x))
-- [x] AST preservation tests (parse(format(code)) == parse(code) modulo whitespace)
-- [x] Range formatting tests (partial document formatting)
-- [x] Regression test suite with real-world Python files
-- [ ] Performance benchmarks:
-    - [ ] Small files (<100 lines): <10ms
-    - [ ] Medium files (100-1000 lines): <100ms
-    - [ ] Large files (1000-5000 lines): <500ms
-- [ ] Test compatibility with Black/autopep8 outputs
-- [ ] Error handling tests (malformed code, incomplete parsing)
+See `docs/internal/e2e_tests.md` for formatter integration test tasks including performance benchmarks, compatibility testing, and error handling.
 
 ### Optimization
 
@@ -271,10 +240,6 @@ See [Linter Rules](#linter-rules) section below for BEA code implementation stat
 - [ ] Suppression support (`# type: ignore`, `# noqa:`)
 - [ ] Rule configuration (per-rule enable/disable, severity)
 - [ ] Symbol table integration for unused detection
-
-### Incremental Re-analysis
-
-- [ ] Benchmark incremental performance (target: <100ms)
 
 ### Cross-File Diagnostics
 
@@ -315,7 +280,6 @@ Tasks:
 - [ ] Implement proper node-to-scope mapping during constraint generation
 - [ ] Track inter-scope dependencies (e.g., function calls, imports)
 - [ ] Selective invalidation: only reanalyze changed scopes and dependents
-- [ ] Benchmark incremental analysis with large files (target: <50ms for single-scope change)
 
 ## Logging
 
@@ -323,27 +287,11 @@ Tasks:
 
 #### Core
 
-- [x] Use `tracing`, `tracing-subscriber`, and `tracing-appender` for structured, rotating logs.
-    - Configure daily rotation (`rolling::daily("logs", "lsp.log")`) and JSON or text output (`fmt::layer().json()`).
-    - Include timestamps, log levels, and targets for clarity.
-- [x] Initialize the logger with `RUST_LOG=trace` for full verbosity.
-- [x] Write logs to both `stderr` (for immediate visibility) and to a rotating file (`logs/lsp.log`).
-- [x] Enable JSON-RPC tracing via client setting (`"trace.server": "verbose"` in VS Code).
-- [x] Implement `panic::set_hook` to capture unhandled panics and write them to the log file.
-- [x] Document developer usage (`RUST_LOG=trace cargo run`, or `lsp logs --follow` for live view) in `CONTRIBUTING.md`.
+Sets up a structured, rotating logging system using `tracing` with full verbosity, panic capture, JSON-RPC tracing, and developer tooling for live log viewing and documentation in `CONTRIBUTING.md`.
 
 #### CLI Command
 
-- [x] Watches the active log file (`logs/lsp.log` or a path from `$LSP_LOG_PATH`).
-- [x] Continuously prints appended lines to stdout with optional filtering by level or module.
-- [x] Supports colorized log levels (`INFO`, `WARN`, `ERROR`) and timestamps.
-
-```bash
-$ beacon debug logs --[f]ollow
-2025-11-08T12:15:42Z [INFO] Server initialized (v0.1.0)
-2025-11-08T12:15:43Z [DEBUG] Analyzing file: /workspace/main.py
-2025-11-08T12:15:44Z [TRACE] Inferred type: int -> str
-```
+Implements a live log-watching CLI that streams and colorizes log output from the active file with optional filtering by level or module.
 
 #### Observability
 
@@ -370,7 +318,5 @@ $ beacon debug logs --[f]ollow
     - Initialization success/failure
     - Version and build hash
     - Fatal errors and crash reports
-- [ ] Continue using `window/logMessage` for high-level, safe summaries (“Server initialized”, “Analysis failed”).
-- [ ] Optionally maintain sanitized rotating logs (`tracing-appender`), capped by size.
-- [ ] Add `--version` or `status` CLI command to print build metadata (version, commit hash, platform).
+- [ ] Continue using `window/logMessage` for high-level, safe summaries ("Server initialized", "Analysis failed")
 - [ ] Provide a runtime flag or env var (`LSP_LOG_LEVEL`) for fine-grained control in deployments.
