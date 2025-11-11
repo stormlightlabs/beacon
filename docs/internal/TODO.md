@@ -294,8 +294,12 @@ Implementation status for BEA diagnostic codes. See `docs/src/lsp/lint_rules.md`
 ### Needs Expression Evaluation
 
 - [ ] BEA023: ForwardAnnotationSyntaxError - Needs Python expression parser for annotation validation
-- [ ] BEA024: MultiValueRepeatedKeyLiteral - Requires dict key evaluation
-- [ ] BEA029: RedundantPass - Requires separate pass
+    - [ ] Create `annotation_parser.rs` module or extend const_eval
+    - [ ] Parse string annotations as Python expressions using tree-sitter
+    - [ ] Validate bracket matching, identifier syntax, and type expression structure
+    - [ ] Handle generic types: `List[int]`, `Dict[str, Any]`, `Optional[T]`
+    - [ ] Test malformed annotations: `"List[int"`, `"Dict[str,,"`, `"123InvalidName"`
+    - [ ] Implement BEA023 diagnostic emission with syntax error details
 
 ### Improve Caching Granularity
 

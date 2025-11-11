@@ -2,13 +2,14 @@
 //!
 //! Implements PyFlakes-style linting rules (BEA001-BEA030) for detecting common coding issues, style violations, and potential bugs.
 
+use super::const_eval::{ConstValue, evaluate_const_expr};
 use super::rules::{DiagnosticMessage, RuleKind};
 
 use beacon_parser::{
     AstNode, BinaryOperator, CompareOperator, Comprehension, ExceptHandler, LiteralValue, MatchCase, ReferenceKind,
     SymbolKind, SymbolTable, WithItem,
 };
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Context for tracking state during AST traversal
 #[derive(Debug, Clone)]
@@ -180,7 +181,8 @@ impl<'a> Linter<'a> {
             AstNode::NamedExpr { value, .. } => self.visit_node(value),
             AstNode::Tuple { elements, .. } => self.visit_body(elements),
             AstNode::List { elements, .. } | AstNode::Set { elements, .. } => self.visit_body(elements),
-            AstNode::Dict { keys, values, .. } => {
+            AstNode::Dict { keys, values, line, col, .. } => {
+                self.check_duplicate_dict_keys(keys, *line, *col);
                 for key in keys {
                     self.visit_node(key);
                 }
@@ -217,12 +219,14 @@ impl<'a> Linter<'a> {
 
     fn visit_function_def(&mut self, name: &str, args: &[beacon_parser::Parameter], body: &[AstNode]) {
         self.check_duplicate_arguments(args, name);
+        self.check_redundant_pass(body);
         self.ctx.enter_function();
         self.visit_body(body);
         self.ctx.exit_function();
     }
 
     fn visit_class_def(&mut self, body: &[AstNode]) {
+        self.check_redundant_pass(body);
         self.ctx.enter_class();
         self.visit_body(body);
         self.ctx.exit_class();
@@ -254,17 +258,25 @@ impl<'a> Linter<'a> {
             self.ctx.add_loop_var(var_name);
         }
 
+        self.check_redundant_pass(body);
         self.ctx.enter_loop();
         self.visit_body(body);
         self.ctx.exit_loop();
+        if let Some(else_stmts) = else_body {
+            self.check_redundant_pass(else_stmts);
+        }
         self.visit_optional_body(else_body);
     }
 
     fn visit_while_loop(&mut self, test: &AstNode, body: &[AstNode], else_body: &Option<Vec<AstNode>>) {
         self.visit_node(test);
+        self.check_redundant_pass(body);
         self.ctx.enter_loop();
         self.visit_body(body);
         self.ctx.exit_loop();
+        if let Some(else_stmts) = else_body {
+            self.check_redundant_pass(else_stmts);
+        }
         self.visit_optional_body(else_body);
     }
 
@@ -274,13 +286,18 @@ impl<'a> Linter<'a> {
     ) {
         self.check_if_tuple(test, line, col);
         self.visit_node(test);
+        self.check_redundant_pass(body);
         self.visit_body(body);
 
         for (elif_test, elif_body) in elif_parts {
             self.visit_node(elif_test);
+            self.check_redundant_pass(elif_body);
             self.visit_body(elif_body);
         }
 
+        if let Some(else_stmts) = else_body {
+            self.check_redundant_pass(else_stmts);
+        }
         self.visit_optional_body(else_body);
     }
 
@@ -289,14 +306,22 @@ impl<'a> Linter<'a> {
         finally_body: &Option<Vec<AstNode>>, line: usize, col: usize,
     ) {
         self.check_default_except_not_last(handlers, line, col);
+        self.check_redundant_pass(body);
         self.visit_body(body);
 
         for handler in handlers {
             self.check_empty_except(handler);
+            self.check_redundant_pass(&handler.body);
             self.visit_body(&handler.body);
         }
 
+        if let Some(else_stmts) = else_body {
+            self.check_redundant_pass(else_stmts);
+        }
         self.visit_optional_body(else_body);
+        if let Some(finally_stmts) = finally_body {
+            self.check_redundant_pass(finally_stmts);
+        }
         self.visit_optional_body(finally_body);
     }
 
@@ -390,7 +415,75 @@ impl<'a> Linter<'a> {
         self.visit_comprehension_generators(generators);
         self.visit_node(key);
         self.visit_node(value);
-        // TODO: Check for repeated keys - need to evaluate expressions
+        // NOTE: Cannot statically check for repeated keys in comprehensions as keys are generated at runtime
+    }
+
+    /// BEA024: MultiValueRepeatedKeyLiteral
+    ///
+    /// Detects dictionary literals with duplicate keys.
+    /// Example: {'a': 1, 'a': 2} - the key 'a' appears twice
+    fn check_duplicate_dict_keys(&mut self, keys: &[AstNode], line: usize, col: usize) {
+        let mut seen_keys: FxHashMap<ConstValue, (usize, usize)> = FxHashMap::default();
+
+        for key in keys {
+            if let Some(const_key) = evaluate_const_expr(key) {
+                if let Some((first_line, first_col)) = seen_keys.get(&const_key) {
+                    let key_repr = match &const_key {
+                        ConstValue::String(s) => format!("'{s}'"),
+                        ConstValue::Integer(i) => i.to_string(),
+                        ConstValue::Float(f) => f.to_string(),
+                        ConstValue::Boolean(b) => b.to_string(),
+                        ConstValue::None => "None".to_string(),
+                    };
+
+                    self.diagnostics.push(DiagnosticMessage {
+                        rule: RuleKind::MultiValueRepeatedKeyLiteral,
+                        message: format!(
+                            "Dictionary key {key_repr} repeated (first occurrence at line {first_line}, col {first_col})"
+                        ),
+                        filename: self.filename.clone(),
+                        line,
+                        col,
+                    });
+                } else {
+                    // Extract position from the key node
+                    let (key_line, key_col) = match key {
+                        AstNode::Literal { line, col, .. } => (*line, *col),
+                        _ => (line, col),
+                    };
+                    seen_keys.insert(const_key, (key_line, key_col));
+                }
+            }
+        }
+    }
+
+    /// BEA029: RedundantPass
+    ///
+    /// Detects pass statements that are redundant because other statements exist in the same block.
+    /// Valid: `def f(): pass` (single pass in block)
+    /// Invalid: `def f(): pass; return 1` (pass is redundant)
+    fn check_redundant_pass(&mut self, body: &[AstNode]) {
+        // A block with only a pass statement is valid
+        if body.len() <= 1 {
+            return;
+        }
+
+        // Check if there are non-pass statements
+        let has_non_pass = body.iter().any(|node| !matches!(node, AstNode::Pass { .. }));
+
+        if has_non_pass {
+            for node in body {
+                if let AstNode::Pass { line, col, .. } = node {
+                    self.diagnostics.push(DiagnosticMessage {
+                        rule: RuleKind::RedundantPass,
+                        message: "Pass statement is redundant when other statements are present".to_string(),
+                        filename: self.filename.clone(),
+                        line: *line,
+                        col: *col,
+                    });
+                }
+            }
+        }
     }
 
     /// BEA002: DuplicateArgument
@@ -1370,5 +1463,158 @@ except:
                 .iter()
                 .any(|d| d.rule == RuleKind::PercentFormatInvalidFormat)
         );
+    }
+
+    #[test]
+    fn test_duplicate_dict_key_string() {
+        let source = r#"x = {'a': 1, 'a': 2}"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::MultiValueRepeatedKeyLiteral)
+        );
+    }
+
+    #[test]
+    fn test_duplicate_dict_key_integer() {
+        let source = r#"x = {1: 'x', 1: 'y'}"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::MultiValueRepeatedKeyLiteral)
+        );
+    }
+
+    #[test]
+    fn test_duplicate_dict_key_boolean() {
+        let source = r#"x = {True: 1, True: 2}"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::MultiValueRepeatedKeyLiteral)
+        );
+    }
+
+    #[test]
+    fn test_duplicate_dict_key_none() {
+        let source = r#"x = {None: 1, None: 2}"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::MultiValueRepeatedKeyLiteral)
+        );
+    }
+
+    #[test]
+    fn test_no_duplicate_dict_keys() {
+        let source = r#"x = {'a': 1, 'b': 2, 'c': 3}"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::MultiValueRepeatedKeyLiteral)
+        );
+    }
+
+    #[test]
+    fn test_dict_with_variable_keys_no_warning() {
+        let source = r#"x = {a: 1, b: 2}"#;
+        let diagnostics = lint_source(source);
+        // Should not warn because 'a' and 'b' are variables, not literals
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::MultiValueRepeatedKeyLiteral)
+        );
+    }
+
+    #[test]
+    fn test_dict_mixed_literal_and_variable_keys() {
+        let source = r#"x = {'a': 1, b: 2, 'a': 3}"#;
+        let diagnostics = lint_source(source);
+        // Should warn because 'a' literal appears twice
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::MultiValueRepeatedKeyLiteral)
+        );
+    }
+
+    #[test]
+    fn test_redundant_pass_in_function() {
+        let source = "def f():\n    pass\n    return 1";
+        let diagnostics = lint_source(source);
+        assert!(diagnostics.iter().any(|d| d.rule == RuleKind::RedundantPass));
+    }
+
+    #[test]
+    fn test_redundant_pass_in_if_statement() {
+        let source = "if x:\n    pass\n    print()";
+        let diagnostics = lint_source(source);
+        assert!(diagnostics.iter().any(|d| d.rule == RuleKind::RedundantPass));
+    }
+
+    #[test]
+    fn test_redundant_pass_in_for_loop() {
+        let source = "for i in range(10):\n    pass\n    break";
+        let diagnostics = lint_source(source);
+        assert!(diagnostics.iter().any(|d| d.rule == RuleKind::RedundantPass));
+    }
+
+    #[test]
+    fn test_redundant_pass_in_while_loop() {
+        let source = "while True:\n    pass\n    break";
+        let diagnostics = lint_source(source);
+        assert!(diagnostics.iter().any(|d| d.rule == RuleKind::RedundantPass));
+    }
+
+    #[test]
+    fn test_redundant_pass_in_try_block() {
+        let source = "try:\n    pass\n    x = 1\nexcept:\n    pass";
+        let diagnostics = lint_source(source);
+        // Only the try block should have redundant pass, not the except
+        let redundant_count = diagnostics.iter().filter(|d| d.rule == RuleKind::RedundantPass).count();
+        assert_eq!(redundant_count, 1);
+    }
+
+    #[test]
+    fn test_single_pass_in_function_valid() {
+        let source = "def f():\n    pass";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::RedundantPass));
+    }
+
+    #[test]
+    fn test_single_pass_in_class_valid() {
+        let source = "class C:\n    pass";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::RedundantPass));
+    }
+
+    #[test]
+    fn test_single_pass_in_if_valid() {
+        let source = "if x:\n    pass";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::RedundantPass));
+    }
+
+    #[test]
+    fn test_single_pass_in_except_valid() {
+        let source = "try:\n    x = 1\nexcept:\n    pass";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::RedundantPass));
+    }
+
+    #[test]
+    fn test_multiple_pass_in_block() {
+        let source = "def f():\n    pass\n    pass\n    return 1";
+        let diagnostics = lint_source(source);
+        // All pass statements should be flagged as redundant
+        let redundant_count = diagnostics.iter().filter(|d| d.rule == RuleKind::RedundantPass).count();
+        assert_eq!(redundant_count, 2);
     }
 }

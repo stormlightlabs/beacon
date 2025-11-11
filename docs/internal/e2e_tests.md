@@ -102,7 +102,6 @@ The following tests are skipped with TODO comments indicating missing functional
 - No automated dot-graph comparison for CFG visualization
 - Autofix verification currently optional in linter tests
 - Fixture directories need population (marked in TODOs)
-- YieldOutsideFunction linter rule not implemented
 
 ## Guidelines
 

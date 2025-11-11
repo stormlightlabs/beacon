@@ -8,6 +8,7 @@
 //! - Type inference via constraint generation
 
 pub mod cfg;
+pub mod const_eval;
 pub mod data_flow;
 pub mod linter;
 pub mod loader;
@@ -16,8 +17,8 @@ pub mod rules;
 pub mod type_env;
 pub mod walker;
 
-// Re-export commonly used types
 pub use cfg::{BasicBlock, BlockId, CfgBuilder, ControlFlowGraph, EdgeKind};
+pub use const_eval::{ConstValue, evaluate_const_expr};
 pub use data_flow::{DataFlowAnalyzer, DataFlowResult, UnreachableCode, UnusedVariable, UseBeforeDef};
 pub use linter::Linter;
 pub use loader::{StubCache, StubFile, StubTypeContext};
