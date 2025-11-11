@@ -277,8 +277,32 @@ fn classes_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegi
         if let Some((actual_name, actual_args)) = class_info(actual) {
             if class_registry.is_subclass_of(&actual_name, &expected_name) {
                 if !expected_args.is_empty() && actual_args.len() == expected_args.len() {
-                    for (actual_arg, expected_arg) in actual_args.iter().zip(expected_args.iter()) {
-                        if Unifier::unify(actual_arg, expected_arg).is_err() {
+                    let variance_info = class_registry
+                        .get_class(&actual_name)
+                        .or_else(|| class_registry.get_class(&expected_name))
+                        .and_then(|metadata| {
+                            if metadata.type_param_vars.is_empty() { None } else { Some(&metadata.type_param_vars) }
+                        });
+
+                    for (i, (actual_arg, expected_arg)) in actual_args.iter().zip(expected_args.iter()).enumerate() {
+                        let variance = variance_info
+                            .and_then(|vars| vars.get(i))
+                            .map(|tv| tv.variance)
+                            .unwrap_or(beacon_core::Variance::Invariant);
+
+                        let compatible = match variance {
+                            beacon_core::Variance::Covariant => {
+                                types_compatible(actual_arg, expected_arg, class_registry)
+                            }
+                            beacon_core::Variance::Contravariant => {
+                                types_compatible(expected_arg, actual_arg, class_registry)
+                            }
+                            beacon_core::Variance::Invariant => {
+                                actual_arg == expected_arg || Unifier::unify(actual_arg, expected_arg).is_ok()
+                            }
+                        };
+
+                        if !compatible {
                             return false;
                         }
                     }
@@ -346,21 +370,36 @@ fn iterable_compatible(actual: &Type, expected: &Type, class_registry: &ClassReg
     }
 }
 
+/// Check if a function type is compatible with another, respecting variance.
+///
+/// For function subtyping: Callable[P1, R1] <: Callable[P2, R2] requires:
+/// - Parameters are contravariant: P2 <: P1 (note the flip!)
+/// - Return type is covariant: R1 <: R2
 fn function_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegistry) -> bool {
     match (actual, expected) {
         (Type::Fun(params_a, ret_a), Type::Fun(params_e, ret_e)) => {
-            params_a.len() == params_e.len()
-                && params_a
-                    .iter()
-                    .zip(params_e.iter())
-                    .all(|((_, a), (_, e))| types_compatible(a, e, class_registry))
-                && types_compatible(ret_a, ret_e, class_registry)
+            if params_a.len() != params_e.len() {
+                return false;
+            }
+
+            let params_ok = params_a
+                .iter()
+                .zip(params_e.iter())
+                .all(|((_, a), (_, e))| types_compatible(e, a, class_registry));
+
+            let ret_ok = types_compatible(ret_a, ret_e, class_registry);
+
+            params_ok && ret_ok
         }
         _ => false,
     }
 }
 
 fn types_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegistry) -> bool {
+    if actual == expected {
+        return true;
+    }
+
     if matches!(expected, Type::Con(TypeCtor::Any)) || matches!(actual, Type::Con(TypeCtor::Any)) {
         return true;
     }
@@ -539,6 +578,10 @@ fn handle_call_args(
                     let provided_ty = ctx.subst.apply(provided_ty);
                     let expected_ty = ctx.subst.apply(expected_param_ty);
 
+                    if function_compatible(&provided_ty, &expected_ty, ctx.class_registry) {
+                        continue;
+                    }
+
                     match Unifier::unify(&provided_ty, &expected_ty) {
                         Ok(s) => {
                             *ctx.subst = s.compose(ctx.subst.clone());
@@ -637,22 +680,51 @@ pub fn solve_constraints(
                 let applied_t1 = subst.apply(&t1);
                 let applied_t2 = subst.apply(&t2);
 
-                let involves_union = matches!(applied_t1, Type::Union(_)) || matches!(applied_t2, Type::Union(_));
-
-                if !(involves_union && (applied_t1.is_subtype_of(&applied_t2) || applied_t2.is_subtype_of(&applied_t1)))
+                let needs_variance_check = if let (Some((name1, args1)), Some((name2, args2))) =
+                    (class_info(&applied_t1), class_info(&applied_t2))
                 {
-                    match Unifier::unify(&applied_t1, &applied_t2) {
-                        Ok(s) => {
-                            subst = s.compose(subst);
-                        }
-                        Err(BeaconError::TypeError(type_err)) => {
-                            if !types_compatible(&applied_t1, &applied_t2, class_registry)
-                                && !types_compatible(&applied_t2, &applied_t1, class_registry)
-                            {
-                                type_errors.push(TypeErrorInfo::new(type_err, span));
+                    name1 == name2
+                        && !args1.is_empty()
+                        && !args2.is_empty()
+                        && class_registry
+                            .get_class(&name1)
+                            .is_some_and(|m| !m.type_param_vars.is_empty())
+                } else {
+                    false
+                };
+
+                if needs_variance_check {
+                    if !types_compatible(&applied_t1, &applied_t2, class_registry) {
+                        let (class_name, _) = class_info(&applied_t1).unwrap();
+                        type_errors.push(TypeErrorInfo::new(
+                            TypeError::VarianceError {
+                                position: format!("{class_name} type argument"),
+                                expected_variance: "user-defined".to_string(),
+                                got_type: applied_t1.to_string(),
+                                expected_type: applied_t2.to_string(),
+                            },
+                            span,
+                        ));
+                    }
+                } else {
+                    let involves_union = matches!(applied_t1, Type::Union(_)) || matches!(applied_t2, Type::Union(_));
+
+                    if !(involves_union
+                        && (applied_t1.is_subtype_of(&applied_t2) || applied_t2.is_subtype_of(&applied_t1)))
+                    {
+                        match Unifier::unify(&applied_t1, &applied_t2) {
+                            Ok(s) => {
+                                subst = s.compose(subst);
                             }
+                            Err(BeaconError::TypeError(type_err)) => {
+                                if !types_compatible(&applied_t1, &applied_t2, class_registry)
+                                    && !types_compatible(&applied_t2, &applied_t1, class_registry)
+                                {
+                                    type_errors.push(TypeErrorInfo::new(type_err, span));
+                                }
+                            }
+                            Err(_) => {}
                         }
-                        Err(_) => {}
                     }
                 }
             }
@@ -1820,6 +1892,163 @@ mod tests {
 
         let resolved_ret = subst.apply(&ret_ty);
         assert_eq!(resolved_ret, class_ty);
+    }
+
+    #[test]
+    fn test_function_contravariance_valid() {
+        let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
+        let func_animal = Type::fun_unnamed(vec![animal.clone()], Type::none());
+
+        let arg_types = vec![(func_animal.clone(), test_span())];
+        let ret_ty = tvar(0);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Call(
+                Type::fun_unnamed(vec![func_animal], Type::none()),
+                arg_types,
+                vec![],
+                ret_ty,
+                test_span(),
+            )],
+        };
+
+        let registry = ClassRegistry::new();
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(errors.is_empty(), "Same function type should be accepted");
+    }
+
+    #[test]
+    fn test_function_contravariance_subtype() {
+        let mut registry = ClassRegistry::new();
+        let animal_meta = ClassMetadata::new("Animal".to_string());
+        let mut dog_meta = ClassMetadata::new("Dog".to_string());
+        dog_meta.base_classes.push("Animal".to_string());
+        registry.register_class("Animal".to_string(), animal_meta);
+        registry.register_class("Dog".to_string(), dog_meta);
+
+        let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
+        let dog = Type::Con(TypeCtor::Class("Dog".to_string()));
+        let func_dog = Type::fun_unnamed(vec![dog.clone()], Type::none());
+        let func_animal = Type::fun_unnamed(vec![animal.clone()], Type::none());
+
+        let arg_types = vec![(func_dog, test_span())];
+        let ret_ty = tvar(0);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Call(
+                Type::fun_unnamed(vec![func_animal], Type::none()),
+                arg_types,
+                vec![],
+                ret_ty,
+                test_span(),
+            )],
+        };
+
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            !errors.is_empty(),
+            "Callable[[Dog], None] should NOT be accepted where Callable[[Animal], None] is expected"
+        );
+    }
+
+    #[test]
+    fn test_class_inheritance_setup() {
+        let mut registry = ClassRegistry::new();
+        let animal_meta = ClassMetadata::new("Animal".to_string());
+        let mut dog_meta = ClassMetadata::new("Dog".to_string());
+        dog_meta.base_classes.push("Animal".to_string());
+        registry.register_class("Animal".to_string(), animal_meta);
+        registry.register_class("Dog".to_string(), dog_meta);
+
+        assert!(
+            registry.is_subclass_of("Dog", "Animal"),
+            "Dog should be a subclass of Animal"
+        );
+        assert!(
+            !registry.is_subclass_of("Animal", "Dog"),
+            "Animal should NOT be a subclass of Dog"
+        );
+    }
+
+    #[test]
+    fn test_function_contravariance_reverse_valid() {
+        let mut registry = ClassRegistry::new();
+        let animal_meta = ClassMetadata::new("Animal".to_string());
+        let mut dog_meta = ClassMetadata::new("Dog".to_string());
+        dog_meta.base_classes.push("Animal".to_string());
+        registry.register_class("Animal".to_string(), animal_meta);
+        registry.register_class("Dog".to_string(), dog_meta);
+
+        assert!(
+            registry.is_subclass_of("Dog", "Animal"),
+            "Setup error: Dog should be subclass of Animal"
+        );
+
+        let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
+        let dog = Type::Con(TypeCtor::Class("Dog".to_string()));
+        let func_animal = Type::fun_unnamed(vec![animal.clone()], Type::none());
+        let func_dog = Type::fun_unnamed(vec![dog.clone()], Type::none());
+
+        let arg_types = vec![(func_animal, test_span())];
+        let ret_ty = tvar(0);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Call(
+                Type::fun_unnamed(vec![func_dog], Type::none()),
+                arg_types,
+                vec![],
+                ret_ty,
+                test_span(),
+            )],
+        };
+
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "Callable[[Animal], None] should be accepted where Callable[[Dog], None] is expected (contravariance)"
+        );
+    }
+
+    #[test]
+    fn test_function_covariance_return_types() {
+        let mut registry = ClassRegistry::new();
+        let animal_meta = ClassMetadata::new("Animal".to_string());
+        let mut dog_meta = ClassMetadata::new("Dog".to_string());
+        dog_meta.base_classes.push("Animal".to_string());
+        registry.register_class("Animal".to_string(), animal_meta);
+        registry.register_class("Dog".to_string(), dog_meta);
+
+        let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
+        let dog = Type::Con(TypeCtor::Class("Dog".to_string()));
+        let func_returns_dog = Type::fun_unnamed(vec![], dog.clone());
+        let func_returns_animal = Type::fun_unnamed(vec![], animal.clone());
+
+        let arg_types = vec![(func_returns_dog, test_span())];
+        let ret_ty = tvar(0);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Call(
+                Type::fun_unnamed(vec![func_returns_animal], Type::none()),
+                arg_types,
+                vec![],
+                ret_ty,
+                test_span(),
+            )],
+        };
+
+        let result = solve_constraints(constraints, &registry);
+        assert!(result.is_ok());
+
+        let (_, errors) = result.unwrap();
+        assert!(
+            errors.is_empty(),
+            "Callable[[], Dog] should be accepted where Callable[[], Animal] is expected (covariance)"
+        );
     }
 
     #[test]
@@ -3134,6 +3363,135 @@ mod tests {
         assert!(
             types_compatible(&in_memory_ty, &data_provider_ty, &registry),
             "InMemoryProvider should be compatible with DataProvider[object]"
+        );
+    }
+
+    #[test]
+    fn test_user_defined_covariant_variance() {
+        let mut registry = ClassRegistry::new();
+        let mut producer_meta = ClassMetadata::new("Producer".to_string());
+        producer_meta.add_base_class("Generic[T_Co]".to_string());
+        producer_meta.type_params.push("T_Co".to_string());
+        producer_meta.type_param_vars.push(TypeVar::with_variance(
+            0,
+            Some("T_Co".to_string()),
+            beacon_core::Variance::Covariant,
+        ));
+        registry.register_class("Producer".to_string(), producer_meta);
+
+        let mut dog_meta = ClassMetadata::new("Dog".to_string());
+        dog_meta.add_base_class("Animal".to_string());
+        registry.register_class("Dog".to_string(), dog_meta);
+
+        registry.register_class("Animal".to_string(), ClassMetadata::new("Animal".to_string()));
+
+        let dog_ty = Type::Con(TypeCtor::Class("Dog".to_string()));
+        let animal_ty = Type::Con(TypeCtor::Class("Animal".to_string()));
+        let producer_dog = Type::App(
+            Box::new(Type::Con(TypeCtor::Class("Producer".to_string()))),
+            Box::new(dog_ty.clone()),
+        );
+        let producer_animal = Type::App(
+            Box::new(Type::Con(TypeCtor::Class("Producer".to_string()))),
+            Box::new(animal_ty.clone()),
+        );
+
+        assert!(
+            types_compatible(&producer_dog, &producer_animal, &registry),
+            "Producer[Dog] should be assignable to Producer[Animal] with covariant T_Co"
+        );
+        assert!(
+            !types_compatible(&producer_animal, &producer_dog, &registry),
+            "Producer[Animal] should NOT be assignable to Producer[Dog]"
+        );
+    }
+
+    #[test]
+    fn test_user_defined_contravariant_variance() {
+        let mut registry = ClassRegistry::new();
+        let mut consumer_meta = ClassMetadata::new("Consumer".to_string());
+        consumer_meta.add_base_class("Generic[T_Contra]".to_string());
+        consumer_meta.type_params.push("T_Contra".to_string());
+        consumer_meta.type_param_vars.push(TypeVar::with_variance(
+            0,
+            Some("T_Contra".to_string()),
+            beacon_core::Variance::Contravariant,
+        ));
+        registry.register_class("Consumer".to_string(), consumer_meta);
+
+        let mut dog_meta = ClassMetadata::new("Dog".to_string());
+        dog_meta.add_base_class("Animal".to_string());
+        registry.register_class("Dog".to_string(), dog_meta);
+
+        registry.register_class("Animal".to_string(), ClassMetadata::new("Animal".to_string()));
+
+        let dog_ty = Type::Con(TypeCtor::Class("Dog".to_string()));
+        let animal_ty = Type::Con(TypeCtor::Class("Animal".to_string()));
+        let consumer_dog = Type::App(
+            Box::new(Type::Con(TypeCtor::Class("Consumer".to_string()))),
+            Box::new(dog_ty.clone()),
+        );
+        let consumer_animal = Type::App(
+            Box::new(Type::Con(TypeCtor::Class("Consumer".to_string()))),
+            Box::new(animal_ty.clone()),
+        );
+
+        assert!(
+            types_compatible(&consumer_animal, &consumer_dog, &registry),
+            "Consumer[Animal] should be assignable to Consumer[Dog] with contravariant T_Contra"
+        );
+        assert!(
+            !types_compatible(&consumer_dog, &consumer_animal, &registry),
+            "Consumer[Dog] should NOT be assignable to Consumer[Animal]"
+        );
+    }
+
+    #[test]
+    fn test_user_defined_invariant_variance() {
+        let mut registry = ClassRegistry::new();
+        let mut box_meta = ClassMetadata::new("Box".to_string());
+        box_meta.add_base_class("Generic[T_Inv]".to_string());
+        box_meta.type_params.push("T_Inv".to_string());
+        box_meta.type_param_vars.push(TypeVar::with_variance(
+            0,
+            Some("T_Inv".to_string()),
+            beacon_core::Variance::Invariant,
+        ));
+        registry.register_class("Box".to_string(), box_meta);
+
+        let mut dog_meta = ClassMetadata::new("Dog".to_string());
+        dog_meta.add_base_class("Animal".to_string());
+        registry.register_class("Dog".to_string(), dog_meta);
+
+        registry.register_class("Animal".to_string(), ClassMetadata::new("Animal".to_string()));
+
+        let dog_ty = Type::Con(TypeCtor::Class("Dog".to_string()));
+        let animal_ty = Type::Con(TypeCtor::Class("Animal".to_string()));
+        let box_dog = Type::App(
+            Box::new(Type::Con(TypeCtor::Class("Box".to_string()))),
+            Box::new(dog_ty.clone()),
+        );
+        let box_animal = Type::App(
+            Box::new(Type::Con(TypeCtor::Class("Box".to_string()))),
+            Box::new(animal_ty.clone()),
+        );
+
+        assert!(
+            !types_compatible(&box_dog, &box_animal, &registry),
+            "Box[Dog] should NOT be assignable to Box[Animal] with invariant T_Inv"
+        );
+        assert!(
+            !types_compatible(&box_animal, &box_dog, &registry),
+            "Box[Animal] should NOT be assignable to Box[Dog] with invariant T_Inv"
+        );
+
+        let box_dog2 = Type::App(
+            Box::new(Type::Con(TypeCtor::Class("Box".to_string()))),
+            Box::new(dog_ty.clone()),
+        );
+        assert!(
+            types_compatible(&box_dog, &box_dog2, &registry),
+            "Box[Dog] should be assignable to Box[Dog] (same type)"
         );
     }
 }

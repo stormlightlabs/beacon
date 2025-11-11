@@ -26,6 +26,7 @@ struct HmTestHarness {
     analyzer: Analyzer,
     documents: DocumentManager,
     counter: usize,
+    last_uri: Option<Url>,
 }
 
 impl HmTestHarness {
@@ -35,7 +36,7 @@ impl HmTestHarness {
         let documents = DocumentManager::new().unwrap();
         let analyzer = Analyzer::new(config, documents.clone());
 
-        Self { analyzer, documents, counter: 0 }
+        Self { analyzer, documents, counter: 0, last_uri: None }
     }
 
     /// Check a fixture by name and source code
@@ -56,22 +57,23 @@ impl HmTestHarness {
             .open_document(uri.clone(), 1, source.to_string())
             .unwrap();
 
+        self.last_uri = Some(uri.clone());
+
         self.analyzer
             .analyze(&uri)
             .unwrap_or_else(|e| panic!("Analysis failed for {name}: {e}"))
     }
 
     /// Get the inferred type for a symbol by name
-    ///
-    /// TODO: Implement proper symbol lookup using the symbol table
-    #[allow(dead_code)]
-    fn get_symbol_type(&self, result: &beacon_lsp::analysis::AnalysisResult, _symbol_name: &str) -> Option<Type> {
-        for ty in result.type_map.values() {
-            if !matches!(ty, Type::Con(TypeCtor::Any)) {
-                return Some(ty.clone());
-            }
-        }
-        None
+    fn get_symbol_type(&self, result: &beacon_lsp::analysis::AnalysisResult, symbol_name: &str) -> Option<Type> {
+        let uri = self.last_uri.as_ref()?;
+
+        self.documents.get_document(uri, |doc| {
+            let symbol_table = doc.symbol_table()?;
+            let symbol = symbol_table.lookup_symbol(symbol_name, symbol_table.root_scope)?;
+            let node_id = result.position_map.get(&(symbol.line, symbol.col))?;
+            result.type_map.get(node_id).cloned()
+        })?
     }
 
     /// Check if any type in the result matches a predicate
@@ -321,8 +323,6 @@ fn test_contravariant_parameters() {
     if !has_function_error && !errors.is_empty() {
         eprintln!("Expected contravariance-related errors, got: {errors:?}");
     }
-
-    // TODO: Full contravariance checking for function types
 }
 
 #[test]
@@ -362,24 +362,21 @@ fn test_covariant_containers() {
     let mut harness = HmTestHarness::new();
     let result = harness.check_fixture("covariant", COVARIANT);
 
-    // Should have tuple types (covariant containers)
     let has_tuples = harness.has_type(&result, |ty| match ty {
         Type::App(f, _) => matches!(**f, Type::Con(TypeCtor::Tuple)),
+        Type::Tuple(_) => true,
         _ => false,
     });
 
-    // TODO: Full tuple support
-    assert!(
-        has_tuples || result.type_map.len() > 5,
-        "Should handle tuple types or have substantial type inference"
-    );
+    assert!(has_tuples, "Should infer tuple types (homogeneous or heterogeneous)");
 
     let errors = harness.get_errors(&result);
     let has_tuple_errors = errors.iter().any(|e| e.contains("tuple") && e.contains("Unification"));
 
-    if has_tuple_errors {
-        eprintln!("Unexpected tuple covariance errors: {errors:?}");
-    }
+    assert!(
+        !has_tuple_errors,
+        "Should not have tuple covariance errors, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -409,8 +406,6 @@ fn test_typevar_covariant() {
     if has_producer_errors {
         eprintln!("TypeVar covariant-related errors: {errors:?}");
     }
-
-    // TODO: Full TypeVar variance annotation
 }
 
 #[test]
@@ -455,11 +450,59 @@ fn test_variance_composition() {
 
     let errors = harness.get_errors(&result);
 
-    let has_nested_errors = errors.iter().any(|e| e.contains("nested") || e.contains("Variance"));
+    assert!(
+        !result.type_map.is_empty(),
+        "Should produce type inference results for variance annotations"
+    );
 
-    if has_nested_errors {
-        eprintln!("Nested variance-related errors: {errors:?}");
+    if !errors.is_empty() {
+        eprintln!("Variance composition errors (expected for user-defined generics): {errors:?}");
+    }
+}
+
+#[test]
+fn test_symbol_lookup_by_name() {
+    let mut harness = HmTestHarness::new();
+    let source = r#"
+class Animal:
+    def speak(self) -> str:
+        return "..."
+
+def identity(x):
+    return x
+
+result = identity(42)
+"#;
+
+    let result = harness.check_fixture("symbol_lookup_test", source);
+
+    let animal_type = harness.get_symbol_type(&result, "Animal");
+    assert!(animal_type.is_some(), "Should be able to look up 'Animal' class symbol");
+    if let Some(ty) = animal_type {
+        assert!(
+            matches!(ty, Type::Con(TypeCtor::Class(_))),
+            "Animal should be a class type, got: {ty}"
+        );
     }
 
-    // TODO: Full nested variance composition
+    let identity_type = harness.get_symbol_type(&result, "identity");
+    assert!(
+        identity_type.is_some(),
+        "Should be able to look up 'identity' function symbol"
+    );
+    if let Some(ty) = identity_type {
+        assert!(
+            matches!(ty, Type::Fun(_, _)),
+            "identity should be a function type, got: {ty}"
+        );
+    }
+
+    let result_type = harness.get_symbol_type(&result, "result");
+    assert!(
+        result_type.is_some(),
+        "Should be able to look up 'result' variable symbol"
+    );
+
+    let nonexistent = harness.get_symbol_type(&result, "nonexistent_symbol");
+    assert!(nonexistent.is_none(), "Should return None for non-existent symbol");
 }

@@ -310,21 +310,26 @@ impl Parser {
                     Type::App(Box::new(Type::Con(TypeCtor::Set)), Box::new(Type::any()))
                 }
             }
-            // TODO: Handle heterogeneous tuples properly
             "tuple" => {
                 if matches!(self.peek(), Some(Token::LBracket)) {
                     self.advance();
-                    let element_type = self.parse_type()?;
+
+                    let mut element_types = vec![self.parse_type()?];
                     while matches!(self.peek(), Some(Token::Comma)) {
                         self.advance();
                         if matches!(self.peek(), Some(Token::RBracket)) {
                             break;
                         }
-                        let _ = self.parse_type()?;
+                        element_types.push(self.parse_type()?);
                     }
 
                     self.expect(Token::RBracket)?;
-                    Type::App(Box::new(Type::Con(TypeCtor::Tuple)), Box::new(element_type))
+
+                    if element_types.len() == 1 {
+                        Type::App(Box::new(Type::Con(TypeCtor::Tuple)), Box::new(element_types[0].clone()))
+                    } else {
+                        Type::Tuple(element_types)
+                    }
                 } else {
                     Type::Con(TypeCtor::Tuple)
                 }
@@ -952,5 +957,43 @@ mod tests {
         let parser = AnnotationParser::new();
         let coro = parser.parse("Coroutine[None, None, int]").unwrap();
         assert_eq!(coro, Type::coroutine(Type::none(), Type::none(), Type::int()));
+    }
+
+    #[test]
+    fn test_parse_tuple_homogeneous() {
+        let parser = AnnotationParser::new();
+        let tuple_ty = parser.parse("tuple[int]").unwrap();
+        assert_eq!(tuple_ty, Type::tuple(Type::int()));
+    }
+
+    #[test]
+    fn test_parse_tuple_heterogeneous() {
+        let parser = AnnotationParser::new();
+        let tuple_ty = parser.parse("tuple[int, str, bool]").unwrap();
+        assert_eq!(tuple_ty, Type::Tuple(vec![Type::int(), Type::string(), Type::bool()]));
+    }
+
+    #[test]
+    fn test_parse_tuple_two_elements() {
+        let parser = AnnotationParser::new();
+        let tuple_ty = parser.parse("tuple[str, int]").unwrap();
+        assert_eq!(tuple_ty, Type::Tuple(vec![Type::string(), Type::int()]));
+    }
+
+    #[test]
+    fn test_parse_tuple_nested() {
+        let parser = AnnotationParser::new();
+        let tuple_ty = parser.parse("tuple[int, tuple[str, bool]]").unwrap();
+        assert_eq!(
+            tuple_ty,
+            Type::Tuple(vec![Type::int(), Type::Tuple(vec![Type::string(), Type::bool()])])
+        );
+    }
+
+    #[test]
+    fn test_parse_tuple_empty_brackets() {
+        let parser = AnnotationParser::new();
+        let tuple_ty = parser.parse("tuple").unwrap();
+        assert_eq!(tuple_ty, Type::Con(TypeCtor::Tuple));
     }
 }

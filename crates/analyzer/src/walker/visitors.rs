@@ -13,12 +13,71 @@ use crate::type_env::TypeEnvironment;
 use crate::walker::{ExprContext, visit_node_with_context, visit_node_with_env};
 
 use beacon_constraint::{Constraint, ConstraintGenContext, Span, TypePredicate};
-use beacon_core::{AnalysisError, BeaconError, TypeCtor};
+use beacon_core::{AnalysisError, BeaconError, TypeCtor, TypeVar, Variance};
 use beacon_core::{Type, TypeScheme, errors::Result};
 use beacon_parser::AstNode;
 use std::sync::Arc;
 
 pub type TStubCache = Arc<std::sync::RwLock<StubCache>>;
+
+/// Extract type parameters from Generic[T1, T2, ...] base class notation.
+///
+/// Parses strings like "Generic[T_Co]", "Generic[T_Co, T_Contra]" and looks up
+/// the TypeVar instances in the environment to get their variance information.
+fn extract_generic_type_params(base: &str, env: &mut TypeEnvironment) -> Option<Vec<TypeVar>> {
+    if !base.starts_with("Generic[") || !base.ends_with(']') {
+        return None;
+    }
+
+    let content = &base[8..base.len() - 1];
+    let type_param_names: Vec<&str> = content.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+
+    let mut type_params = Vec::new();
+    for param_name in type_param_names {
+        if let Some(Type::Var(tv)) = env.lookup(param_name) {
+            type_params.push(tv);
+        }
+    }
+
+    if type_params.is_empty() { None } else { Some(type_params) }
+}
+
+/// Extract variance from TypeVar keyword arguments.
+///
+/// Parses `covariant=True` and `contravariant=True` from TypeVar calls:
+/// - `TypeVar('T_Co', covariant=True)` → Variance::Covariant
+/// - `TypeVar('T_Contra', contravariant=True)` → Variance::Contravariant
+/// - `TypeVar('T')` → Variance::Invariant (default)
+fn extract_variance_from_typevar_call(keywords: &[(String, AstNode)]) -> Variance {
+    let mut covariant = false;
+    let mut contravariant = false;
+
+    for (key, value) in keywords {
+        match key.as_str() {
+            "covariant" => {
+                covariant = is_true_literal(value);
+            }
+            "contravariant" => {
+                contravariant = is_true_literal(value);
+            }
+            _ => {}
+        }
+    }
+
+    match (covariant, contravariant) {
+        (true, false) => Variance::Covariant,
+        (false, true) => Variance::Contravariant,
+        _ => Variance::Invariant,
+    }
+}
+
+/// Check if an AST node is a True literal
+fn is_true_literal(node: &AstNode) -> bool {
+    matches!(
+        node,
+        AstNode::Literal { value: beacon_parser::LiteralValue::Boolean(true), .. }
+    )
+}
 
 pub fn visit_class_def(
     class_def: &AstNode, env: &mut TypeEnvironment, ctx: &mut ConstraintGenContext, stub_cache: Option<&TStubCache>,
@@ -30,6 +89,10 @@ pub fn visit_class_def(
 
             for base in bases {
                 metadata.add_base_class(base.clone());
+
+                if let Some(type_params) = extract_generic_type_params(base, env) {
+                    metadata.type_param_vars.extend(type_params);
+                }
             }
 
             let has_dataclass = is_dataclass_decorator(decorators);
@@ -640,6 +703,22 @@ pub fn visit_assignments(
 ) -> Result<Type> {
     match node {
         AstNode::Assignment { target, value, line, col, .. } => {
+            if let AstNode::Call { function, keywords, .. } = value.as_ref() {
+                let function_name = function.function_to_string();
+                if function_name == "TypeVar" || function_name.ends_with(".TypeVar") {
+                    let variance = extract_variance_from_typevar_call(keywords);
+                    let type_var =
+                        TypeVar::with_variance(env.fresh_var().id, target.target_to_string().into(), variance);
+                    let type_var_ty = Type::Var(type_var);
+
+                    for name in target.extract_target_names() {
+                        env.bind(name, TypeScheme::mono(type_var_ty.clone()));
+                    }
+                    ctx.record_type(*line, *col, type_var_ty.clone());
+                    return Ok(type_var_ty);
+                }
+            }
+
             let value_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
             for name in target.extract_target_names() {
                 env.bind(name, TypeScheme::mono(value_ty.clone()));
