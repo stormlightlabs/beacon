@@ -13,6 +13,7 @@ pub mod errors;
 pub mod logging;
 pub mod protocols;
 pub mod subst;
+pub mod suppressor;
 pub mod types;
 pub mod unify;
 
@@ -22,6 +23,7 @@ pub use errors::*;
 pub use logging::*;
 pub use protocols::*;
 pub use subst::*;
+pub use suppressor::*;
 pub use types::*;
 pub use unify::*;
 

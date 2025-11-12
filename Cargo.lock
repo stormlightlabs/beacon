@@ -199,6 +199,7 @@ dependencies = [
  "chrono",
  "indexmap",
  "lsp-types",
+ "regex",
  "rustc-hash",
  "thiserror 2.0.17",
  "toml",

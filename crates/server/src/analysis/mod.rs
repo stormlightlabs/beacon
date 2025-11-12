@@ -21,7 +21,7 @@ use crate::workspace::Workspace;
 
 use beacon_constraint::{ConstraintResult, TypeErrorInfo};
 use beacon_core::{
-    Type, TypeVarGen,
+    SuppressionMap, Type, TypeVarGen,
     errors::{AnalysisError, Result},
 };
 use beacon_parser::{AstNode, ScopeId, SymbolTable, resolve::Scope};
@@ -229,7 +229,11 @@ impl Analyzer {
             "Constraints generated, starting solver"
         );
 
-        let (substitution, type_errors) = beacon_constraint::solver::solve_constraints(constraints, &class_registry)?;
+        let (substitution, mut type_errors) =
+            beacon_constraint::solver::solve_constraints(constraints, &class_registry)?;
+
+        let suppression_map = SuppressionMap::from_source(&source);
+        type_errors.retain(|error| !suppression_map.is_suppressed(error.span.line, None));
 
         tracing::info!(
             uri = %uri,

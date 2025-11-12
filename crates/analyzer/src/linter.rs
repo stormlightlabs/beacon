@@ -5,6 +5,7 @@
 use super::const_eval::{ConstValue, evaluate_const_expr};
 use super::rules::{DiagnosticMessage, RuleKind};
 
+use beacon_core::SuppressionMap;
 use beacon_parser::{
     AstNode, BinaryOperator, CompareOperator, Comprehension, ExceptHandler, LiteralValue, MatchCase, ReferenceKind,
     SymbolKind, SymbolTable, WithItem,
@@ -125,19 +126,27 @@ pub struct Linter<'a> {
     symbol_table: &'a SymbolTable,
     /// Source filename
     filename: String,
+    /// Suppression map for filtering diagnostics
+    suppression_map: SuppressionMap,
 }
 
 impl<'a> Linter<'a> {
     /// Create a new linter for the given AST and symbol table
-    pub fn new(symbol_table: &'a SymbolTable, filename: String) -> Self {
-        Self { diagnostics: Vec::new(), ctx: LinterContext::new(), symbol_table, filename }
+    pub fn new(symbol_table: &'a SymbolTable, filename: String, source: &str) -> Self {
+        let suppression_map = SuppressionMap::from_source(source);
+        Self { diagnostics: Vec::new(), ctx: LinterContext::new(), symbol_table, filename, suppression_map }
     }
 
     /// Analyze the AST and return collected diagnostics
     pub fn analyze(&mut self, ast: &AstNode) -> Vec<DiagnosticMessage> {
         self.visit_node(ast);
         self.check_symbol_table_rules();
-        std::mem::take(&mut self.diagnostics)
+        let diagnostics = std::mem::take(&mut self.diagnostics);
+
+        diagnostics
+            .into_iter()
+            .filter(|diag| !self.suppression_map.is_suppressed(diag.line, Some(diag.rule.code())))
+            .collect()
     }
 
     /// Report a diagnostic message
@@ -1134,7 +1143,7 @@ mod tests {
     fn lint_source(source: &str) -> Vec<DiagnosticMessage> {
         let mut parser = PythonParser::new().unwrap();
         let (ast, symbol_table) = parser.parse_and_resolve(source).unwrap();
-        let mut linter = Linter::new(&symbol_table, "test.py".to_string());
+        let mut linter = Linter::new(&symbol_table, "test.py".to_string(), source);
         linter.analyze(&ast)
     }
 
@@ -1891,5 +1900,41 @@ except:
         let diagnostics = lint_source(source);
         let redundant_count = diagnostics.iter().filter(|d| d.rule == RuleKind::RedundantPass).count();
         assert_eq!(redundant_count, 2);
+    }
+
+    #[test]
+    fn test_suppression_noqa_all() {
+        let source = "return 42  # noqa";
+        let diagnostics = lint_source(source);
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_suppression_noqa_specific() {
+        let source = "return 42  # noqa: BEA003";
+        let diagnostics = lint_source(source);
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_suppression_noqa_wrong_code() {
+        let source = "return 42  # noqa: BEA001";
+        let diagnostics = lint_source(source);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].rule, RuleKind::ReturnOutsideFunction);
+    }
+
+    #[test]
+    fn test_suppression_noqa_multiple_codes() {
+        let source = "return 42  # noqa: BEA001, BEA003, BEA999";
+        let diagnostics = lint_source(source);
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_suppression_case_insensitive() {
+        let source = "return 42  # noqa: bea003";
+        let diagnostics = lint_source(source);
+        assert!(diagnostics.is_empty());
     }
 }
