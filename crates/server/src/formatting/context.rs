@@ -106,6 +106,12 @@ impl<'a> FormattingContext<'a> {
         }
     }
 
+    /// Reset column position to 0 (start of line)
+    pub fn reset_column(&mut self) {
+        self.current_column = 0;
+        self.at_line_start = true;
+    }
+
     /// Get the current line number
     pub fn current_line(&self) -> usize {
         self.current_line

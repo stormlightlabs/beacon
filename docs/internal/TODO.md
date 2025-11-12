@@ -211,7 +211,6 @@ Implemented `textDocument/formatting` and `textDocument/rangeFormatting` handler
 
 - [x] Implement `textDocument/willSaveWaitUntil` for format-on-save
 - [x] Implement `textDocument/onTypeFormatting` for automatic formatting as user types (e.g., after typing `:` in function definitions)
-- [ ] Support `# beacon: disable` comments to skip formatting for specific regions
 - [ ] Add performance monitoring to track formatting duration and emit warnings for slow operations (threshold-based)
 - [ ] Implement configurable timeout for large files to prevent LSP hangs
 
@@ -237,7 +236,6 @@ See [Linter Rules](#linter-rules) section below for BEA code implementation stat
 
 ### Infrastructure
 
-- [ ] Suppression support (`# type: ignore`, `# noqa:`)
 - [ ] Rule configuration (per-rule enable/disable, severity)
 - [ ] Symbol table integration for unused detection
 
