@@ -109,28 +109,66 @@ Show unification trace (TODO):
 beacon-cli debug unify [FILE]
 ```
 
-## Use Cases
+### Diagnostics
 
-### Debugging Parser Issues
-
-When the AST doesn't match expectations, inspect the tree-sitter CST:
+Run comprehensive diagnostics (parse errors, lint issues, type errors, static analysis) on Python files:
 
 ```sh
-beacon-cli debug tree --json problematic.py > cst.json
+beacon debug diagnostics [OPTIONS] <PATHS>...
 ```
 
-### Understanding Type Inference
+Accepts:
 
-See what constraints are generated for a piece of code:
+- Single file: `beacon debug diagnostics file.py`
+- Multiple files: `beacon debug diagnostics file1.py file2.py file3.py`
+- Directory: `beacon debug diagnostics src/` (recursively finds all .py files)
+
+Options:
+
+- `-f, --format <FORMAT>` - Output format (human, json, compact) [default: human]
+
+Example output (human format):
 
 ```sh
-beacon-cli debug constraints example.py
+$ beacon debug diagnostics src/
+
+⚡ Running comprehensive diagnostics on 5 file(s)...
+
+✓ 0 Parse Errors
+
+✗ 3 Lint Issues
+  ▸ src/main.py:5:1 [BEA015] 'os' imported but never used
+    5 import os
+      ~
+  ▸ src/utils.py:10:5 [BEA018] 'x' is redefined before being used
+    10     x = 2
+           ~
+  ▸ src/helper.py:3:1 [BEA015] 'sys' imported but never used
+    3 import sys
+      ~
+
+✗ 2 Type Errors
+  ▸ src/main.py:12:9 Cannot unify types: Int ~ Str
+    12     z = x + y
+               ~
+  ▸ src/utils.py:20:5 Undefined type variable: τ5
+    20     result = unknown_func()
+           ~
+
+Summary: 5 total issue(s) found
 ```
 
-### Investigating Type Errors
-
-Check the AST with types to understand what types were inferred:
+JSON output:
 
 ```sh
-beacon-cli debug ast example.py
+beacon debug diagnostics --format json src/ > diagnostics.json
+```
+
+Compact output (for editor integration):
+
+```sh
+beacon debug diagnostics --format compact src/
+src/main.py:5:1: [BEA015] 'os' imported but never used
+src/utils.py:10:5: [BEA018] 'x' is redefined before being used
+src/main.py:12:9: [TYPE] Cannot unify types: Int ~ Str
 ```

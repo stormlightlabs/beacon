@@ -5,13 +5,19 @@ The `typecheck` command performs Hindley-Milner type inference on Python code an
 ## Usage
 
 ```sh
-beacon-cli typecheck [OPTIONS] [FILE]
+beacon typecheck [OPTIONS] [PATHS]...
 ```
+
+Accepts:
+
+- Single file: `beacon typecheck file.py`
+- Multiple files: `beacon typecheck file1.py file2.py file3.py`
+- Directory: `beacon typecheck src/` (recursively finds all .py files)
+- Stdin: `beacon typecheck` (reads from stdin)
 
 ## Options
 
 - `-f, --format <FORMAT>` - Output format (human, json, compact) [default: human]
-- `-w, --workspace` - Analyze all files in workspace (follow imports)
 
 ## Output Formats
 
@@ -20,7 +26,7 @@ beacon-cli typecheck [OPTIONS] [FILE]
 Human-readable output with context and visual pointers:
 
 ```sh
-$ beacon-cli typecheck example.py
+$ beacon typecheck example.py
 Found 1 type error(s):
 
 Error 1: Cannot unify types: Int ~ Str (line 3, col 5)
@@ -35,7 +41,7 @@ Error 1: Cannot unify types: Int ~ Str (line 3, col 5)
 Machine-readable JSON format for tooling integration:
 
 ```sh
-$ beacon-cli typecheck --format json example.py
+$ beacon typecheck --format json example.py
 {
   "errors": [
     {
@@ -55,7 +61,7 @@ $ beacon-cli typecheck --format json example.py
 Single-line format compatible with editor quickfix lists:
 
 ```sh
-$ beacon-cli typecheck --format compact example.py
+$ beacon typecheck --format compact example.py
 example.py:3:5: Cannot unify types: Int ~ Str
 ```
 
@@ -64,19 +70,31 @@ example.py:3:5: Cannot unify types: Int ~ Str
 ### Check a single file
 
 ```sh
-beacon-cli typecheck src/main.py
+beacon typecheck src/main.py
+```
+
+### Check multiple files
+
+```sh
+beacon typecheck src/main.py src/utils.py tests/test_main.py
+```
+
+### Check all files in a directory
+
+```sh
+beacon typecheck src/
 ```
 
 ### Check with JSON output for CI
 
 ```sh
-beacon-cli typecheck --format json src/*.py > type-errors.json
+beacon typecheck --format json src/ > type-errors.json
 ```
 
 ### Check from stdin
 
 ```sh
-cat src/main.py | beacon-cli typecheck
+cat src/main.py | beacon typecheck
 ```
 
 ## Exit Codes
@@ -84,12 +102,10 @@ cat src/main.py | beacon-cli typecheck
 - `0` - No type errors found
 - `1` - Type errors found or analysis failed
 
-## Workspace Mode
+## Directory Traversal
 
-The `--workspace` flag (currently TODO) will follow imports and analyze all Python files in the project:
+When a directory is provided, the command:
 
-```sh
-beacon-cli typecheck --workspace src/main.py
-```
-
-This performs multi-file analysis, tracking types across module boundaries.
+- Recursively discovers all `.py` files
+- Respects `.gitignore` rules
+- Excludes common patterns: `__pycache__/`, `*.pyc`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `venv/`, `.venv/`, `env/`, `.env/`
