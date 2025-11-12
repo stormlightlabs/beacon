@@ -33,6 +33,8 @@ The formatter operates in four stages:
 - Manages blank lines between definitions and statements
 - Controls whitespace around operators, commas, and colons
 
+See [Whitespace](./whitespace.md) for detailed formatting rules.
+
 ### Line Length Management
 
 - Enforces maximum line length (default: 88 characters, matching Black)
@@ -40,12 +42,25 @@ The formatter operates in four stages:
 - Handles multi-byte Unicode characters correctly
 - Preserves user line breaks when under the limit
 
+See [Print Width](./print-width.md) for line length handling.
+
 ### Structural Formatting
 
 - Function call and definition parameter wrapping
 - Collection literal formatting (lists, dicts, sets, tuples)
 - Binary expression breaking
 - Import statement organization and sorting
+
+See [Structure](./structure.md) and [Imports](./imports.md) for structural rules.
+
+### Suppression Comments
+
+The formatter respects suppression directives:
+
+- `# fmt: skip` - Skip formatting for a single line
+- `# fmt: off` / `# fmt: on` - Disable formatting for regions
+
+See [Suppressions](./suppressions.md) for complete documentation on formatter, linter, and type checker suppressions.
 
 ## Configuration
 

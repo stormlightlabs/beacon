@@ -6,15 +6,9 @@ All integration tests (parser, config, analyzer, HM, linter, completion, formatt
 
 ## LSP Features
 
-**Files:** `crates/server/src/features/diagnostics.rs`, `crates/server/src/features/code_actions.rs`
-
 ### Quick Fixes
 
 - [ ] Move pattern before subsuming pattern (PM002)
-
-### Configuration
-
-- Implements full LSP configuration support, including interpreter path, config file parsing, workspace settings, hot-reload, and diagnostic and inlay-hint customization—with one remaining quick-fix rule pending.
 
 ## Snippet Engine
 

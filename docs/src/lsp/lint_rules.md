@@ -4,6 +4,17 @@ The Beacon Rule Engine is a modular static analysis system powering diagnostics 
 
 It's foundationally a pure Rust implementation of PyFlakes.
 
+## Suppressing Warnings
+
+Individual linter warnings can be suppressed using inline comments:
+
+```python
+import os  # noqa: BEA015  # Suppress unused import warning
+x = undefined  # noqa  # Suppress all warnings on this line
+```
+
+See [Suppressions](../format/suppressions.md) for complete documentation on suppression comments.
+
 ---
 
 **Legend:** &#9888; = Warning &#10005; = Error &#9432; = Info
