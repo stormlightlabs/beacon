@@ -1775,7 +1775,7 @@ mod tests {
     use super::*;
     use beacon_parser::SymbolTable;
     use std::io::Write;
-    use tempfile::NamedTempFile;
+    use tempfile::{Builder, NamedTempFile};
 
     fn format_symbol_table_for_test(table: &SymbolTable, verbose: bool) -> String {
         let mut output = String::new();
@@ -2304,7 +2304,7 @@ result = obj.method(10)
 
     #[test]
     fn test_lint_command_no_errors() {
-        let mut temp_file = NamedTempFile::new().unwrap();
+        let mut temp_file = Builder::new().suffix(".py").tempfile().unwrap();
         writeln!(temp_file, "def greet(name):\n    return f'Hello {{name}}'").unwrap();
 
         let result = lint_command(vec![temp_file.path().to_path_buf()], OutputFormat::Human);
@@ -2313,7 +2313,7 @@ result = obj.method(10)
 
     #[test]
     fn test_lint_command_with_errors() {
-        let mut temp_file = NamedTempFile::new().unwrap();
+        let mut temp_file = Builder::new().suffix(".py").tempfile().unwrap();
         writeln!(temp_file, "import os\nx = 42").unwrap();
 
         let result = lint_command(vec![temp_file.path().to_path_buf()], OutputFormat::Human);
