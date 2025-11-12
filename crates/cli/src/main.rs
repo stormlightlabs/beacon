@@ -915,7 +915,7 @@ fn lint_command(paths: Vec<PathBuf>, format: OutputFormat) -> Result<()> {
             .with_context(|| "Failed to parse and resolve Python source")?;
 
         let filename = "stdin.py".to_string();
-        let mut linter = Linter::new(&symbol_table, filename);
+        let mut linter = Linter::new(&symbol_table, filename, &source);
         let diagnostics = linter.analyze(&ast);
 
         format_diagnostics(&diagnostics, &source, None, format)?;
@@ -949,7 +949,7 @@ fn lint_command(paths: Vec<PathBuf>, format: OutputFormat) -> Result<()> {
         };
 
         let filename = file_path.display().to_string();
-        let mut linter = Linter::new(&symbol_table, filename);
+        let mut linter = Linter::new(&symbol_table, filename, &source);
         let diagnostics = linter.analyze(&ast);
 
         for diagnostic in diagnostics {
@@ -1030,7 +1030,7 @@ fn analyze_file(
     let mut all_diagnostics = Vec::new();
 
     if !dataflow_only {
-        let mut linter = Linter::new(&symbol_table, filename.clone());
+        let mut linter = Linter::new(&symbol_table, filename.clone(), source.as_str());
         let lint_diagnostics = linter.analyze(&ast);
         all_diagnostics.extend(lint_diagnostics);
     }
@@ -1072,7 +1072,7 @@ fn analyze_function(
     let mut all_diagnostics = Vec::new();
 
     if !dataflow_only {
-        let mut linter = Linter::new(&symbol_table, filename.clone());
+        let mut linter = Linter::new(&symbol_table, filename.clone(), source.as_str());
         let lint_diagnostics = linter.analyze(function_node);
         all_diagnostics.extend(lint_diagnostics);
     }
@@ -1118,7 +1118,7 @@ fn analyze_class(
     let mut all_diagnostics = Vec::new();
 
     if !dataflow_only {
-        let mut linter = Linter::new(&symbol_table, filename.clone());
+        let mut linter = Linter::new(&symbol_table, filename.clone(), source.as_str());
         let lint_diagnostics = linter.analyze(class_node);
         all_diagnostics.extend(lint_diagnostics);
     }
@@ -1542,7 +1542,7 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
 
                 if let Ok((ast, symbol_table)) = parser.parse_and_resolve(&source) {
                     let filename = file_path.display().to_string();
-                    let mut linter = Linter::new(&symbol_table, filename);
+                    let mut linter = Linter::new(&symbol_table, filename, &source);
                     let diagnostics = linter.analyze(&ast);
 
                     for diagnostic in diagnostics {

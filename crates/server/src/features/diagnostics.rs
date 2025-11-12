@@ -71,7 +71,8 @@ impl DiagnosticProvider {
         self.documents.get_document(uri, |doc| {
             if let (Some(ast), Some(symbol_table)) = (doc.ast(), doc.symbol_table()) {
                 let filename = uri.path().to_string();
-                let mut linter = crate::analysis::linter::Linter::new(symbol_table, filename);
+                let source = doc.text();
+                let mut linter = crate::analysis::linter::Linter::new(symbol_table, filename, &source);
                 let linter_diagnostics = linter.analyze(ast);
 
                 for msg in linter_diagnostics {

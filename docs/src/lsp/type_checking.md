@@ -2,6 +2,17 @@
 
 Beacon provides powerful static type checking for Python code, combining the rigor of Hindley-Milner type inference with the flexibility needed for Python's dynamic features.
 
+## Suppressing Type Errors
+
+Type checking errors can be suppressed using inline comments:
+
+```python
+x: int = "string"  # type: ignore
+value: str = 42  # type: ignore[assignment]  # Suppress specific error type
+```
+
+See [Suppressions](../format/suppressions.md) for complete documentation on suppression comments.
+
 ## Type System Philosophy
 
 Beacon's type checker is designed with a core principle: **context-aware strictness**. It maintains strong type safety for genuinely unsafe operations while being permissive for common, safe Python patterns.

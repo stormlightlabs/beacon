@@ -20,7 +20,7 @@ use token_stream::Comment;
 pub use token_stream::TokenStream;
 pub use writer::FormattedWriter;
 
-use beacon_core::Result;
+use beacon_core::{Result, suppressor::SuppressionMap};
 use beacon_parser::{AstNode, ParsedFile, PythonParser};
 use tree_sitter::Node;
 
@@ -50,6 +50,17 @@ impl Formatter {
 
     /// Format a parsed Python file
     pub fn format_file(&self, parsed: &ParsedFile) -> Result<String> {
+        let suppression_map = SuppressionMap::from_source(&parsed.source);
+
+        if !Self::has_formatter_suppressions(&suppression_map, &parsed.source) {
+            return self.format_file_without_suppressions(parsed);
+        }
+
+        self.format_file_with_suppressions(parsed, &suppression_map)
+    }
+
+    /// Format a file without suppression handling (fast path)
+    fn format_file_without_suppressions(&self, parsed: &ParsedFile) -> Result<String> {
         let ast = self.parser.to_ast(parsed)?;
         let sorted_ast = self.sort_imports_in_module(&ast);
         let total_lines = parsed.source.lines().count().max(1);
@@ -66,6 +77,74 @@ impl Formatter {
         }
 
         Ok(writer.output().to_string())
+    }
+
+    /// Format a file with suppression handling in regions, preserving suppressed lines.
+    fn format_file_with_suppressions(&self, parsed: &ParsedFile, suppression_map: &SuppressionMap) -> Result<String> {
+        let original_lines: Vec<&str> = parsed.source.lines().collect();
+
+        let mut regions: Vec<(usize, usize, bool)> = Vec::new();
+        let mut current_start = 1;
+        let mut current_suppressed = suppression_map.is_formatting_disabled(1);
+
+        for line_num in 2..=original_lines.len() {
+            let is_suppressed = suppression_map.is_formatting_disabled(line_num);
+            if is_suppressed != current_suppressed {
+                regions.push((current_start, line_num - 1, current_suppressed));
+                current_start = line_num;
+                current_suppressed = is_suppressed;
+            }
+        }
+
+        if current_start <= original_lines.len() {
+            regions.push((current_start, original_lines.len(), current_suppressed));
+        }
+
+        let mut output = String::new();
+        for (start_line, end_line, is_suppressed) in regions {
+            if is_suppressed {
+                for line_num in start_line..=end_line {
+                    if let Some(line) = original_lines.get(line_num - 1) {
+                        output.push_str(line);
+                        output.push('\n');
+                    }
+                }
+            } else {
+                let region_source: String = (start_line..=end_line)
+                    .filter_map(|line_num| original_lines.get(line_num - 1))
+                    .map(|line| format!("{line}\n"))
+                    .collect();
+
+                if !region_source.trim().is_empty() {
+                    let mut region_parser = PythonParser::default();
+                    if let Ok(region_parsed) = region_parser.parse(&region_source) {
+                        if let Ok(formatted_region) = self.format_file_without_suppressions(&region_parsed) {
+                            output.push_str(&formatted_region);
+                        } else {
+                            output.push_str(&region_source);
+                        }
+                    } else {
+                        output.push_str(&region_source);
+                    }
+                }
+            }
+        }
+
+        if !parsed.source.ends_with('\n') && output.ends_with('\n') {
+            output.pop();
+        }
+
+        Ok(output)
+    }
+
+    /// Check if the suppression map contains any formatter-related suppressions
+    fn has_formatter_suppressions(suppression_map: &SuppressionMap, source: &str) -> bool {
+        for line_num in 1..=source.lines().count() {
+            if suppression_map.is_formatting_disabled(line_num) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Format a specific AST node
@@ -610,5 +689,106 @@ def bar():
         } else {
             panic!("Expected Module node");
         }
+    }
+
+    #[test]
+    fn test_fmt_skip_suppression() {
+        let source = r#"x=1
+y=2  # fmt: skip
+z=3
+"#;
+        let formatter = Formatter::with_defaults();
+        let parsed = PythonParser::default().parse(source).unwrap();
+        let formatted = formatter.format_file(&parsed).unwrap();
+        let lines: Vec<&str> = formatted.lines().collect();
+
+        assert_eq!(lines[0], "x = 1");
+        assert_eq!(lines[1], "y=2  # fmt: skip");
+        assert_eq!(lines[2], "z = 3");
+    }
+
+    #[test]
+    fn test_fmt_off_on_suppression() {
+        let source = r#"x=1
+# fmt: off
+y=2
+z=3
+# fmt: on
+a=4
+"#;
+        let formatter = Formatter::with_defaults();
+        let parsed = PythonParser::default().parse(source).unwrap();
+        let formatted = formatter.format_file(&parsed).unwrap();
+        let lines: Vec<&str> = formatted.lines().collect();
+
+        assert_eq!(lines[0], "x = 1");
+        assert_eq!(lines[1], "# fmt: off");
+        assert_eq!(lines[2], "y=2");
+        assert_eq!(lines[3], "z=3");
+        assert_eq!(lines[4], "# fmt: on");
+        assert_eq!(lines[5], "a = 4");
+    }
+
+    #[test]
+    fn test_fmt_off_unclosed() {
+        let source = r#"x=1
+# fmt: off
+y=2
+z=3
+"#;
+        let formatter = Formatter::with_defaults();
+        let parsed = PythonParser::default().parse(source).unwrap();
+        let formatted = formatter.format_file(&parsed).unwrap();
+
+        assert!(formatted.contains("x = 1"));
+        assert!(formatted.contains("y=2"));
+        assert!(formatted.contains("z=3"));
+    }
+
+    #[test]
+    fn test_no_suppressions_fast_path() {
+        let source = r#"x=1
+y=2
+z=3
+"#;
+        let formatter = Formatter::with_defaults();
+        let parsed = PythonParser::default().parse(source).unwrap();
+        let formatted = formatter.format_file(&parsed).unwrap();
+
+        assert!(formatted.contains("x = 1"));
+        assert!(formatted.contains("y = 2"));
+        assert!(formatted.contains("z = 3"));
+    }
+
+    #[test]
+    fn test_fmt_skip_multiline_statement() {
+        let source = r#"long_variable_name = {  # fmt: skip
+    "key": "value"
+}
+"#;
+        let formatter = Formatter::with_defaults();
+        let parsed = PythonParser::default().parse(source).unwrap();
+        let formatted = formatter.format_file(&parsed).unwrap();
+        assert!(formatted.contains("long_variable_name = {  # fmt: skip"));
+    }
+
+    #[test]
+    fn test_mixed_suppressions() {
+        let source = r#"x=1
+y=2  # fmt: skip
+# fmt: off
+z=3
+a=4
+# fmt: on
+b=5
+"#;
+        let formatter = Formatter::with_defaults();
+        let parsed = PythonParser::default().parse(source).unwrap();
+        let formatted = formatter.format_file(&parsed).unwrap();
+        assert!(formatted.contains("x = 1"));
+        assert!(formatted.contains("b = 5"));
+        assert!(formatted.contains("y=2  # fmt: skip"));
+        assert!(formatted.contains("z=3"));
+        assert!(formatted.contains("a=4"));
     }
 }

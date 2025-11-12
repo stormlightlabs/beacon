@@ -6,15 +6,9 @@ All integration tests (parser, config, analyzer, HM, linter, completion, formatt
 
 ## LSP Features
 
-**Files:** `crates/server/src/features/diagnostics.rs`, `crates/server/src/features/code_actions.rs`
-
 ### Quick Fixes
 
 - [ ] Move pattern before subsuming pattern (PM002)
-
-### Configuration
-
-- Implements full LSP configuration support, including interpreter path, config file parsing, workspace settings, hot-reload, and diagnostic and inlay-hint customization—with one remaining quick-fix rule pending.
 
 ## Snippet Engine
 
@@ -211,7 +205,6 @@ Implemented `textDocument/formatting` and `textDocument/rangeFormatting` handler
 
 - [x] Implement `textDocument/willSaveWaitUntil` for format-on-save
 - [x] Implement `textDocument/onTypeFormatting` for automatic formatting as user types (e.g., after typing `:` in function definitions)
-- [ ] Support `# beacon: disable` comments to skip formatting for specific regions
 - [ ] Add performance monitoring to track formatting duration and emit warnings for slow operations (threshold-based)
 - [ ] Implement configurable timeout for large files to prevent LSP hangs
 
@@ -237,7 +230,6 @@ See [Linter Rules](#linter-rules) section below for BEA code implementation stat
 
 ### Infrastructure
 
-- [ ] Suppression support (`# type: ignore`, `# noqa:`)
 - [ ] Rule configuration (per-rule enable/disable, severity)
 - [ ] Symbol table integration for unused detection
 

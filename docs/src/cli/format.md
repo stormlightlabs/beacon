@@ -73,6 +73,22 @@ When a directory is provided, the command:
 - Respects `.gitignore` rules
 - Excludes common patterns: `__pycache__/`, `*.pyc`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `venv/`, `.venv/`, `env/`, `.env/`
 
+## Suppression Comments
+
+The formatter respects suppression directives in your code:
+
+```python
+# Skip formatting for a single line
+x=1+2  # fmt: skip
+
+# Skip formatting for a region
+# fmt: off
+unformatted=code
+# fmt: on
+```
+
+See [Formatter Suppressions](../format/suppressions.md) for complete documentation.
+
 ## Exit Codes
 
 - `0` - All files are formatted correctly (or formatting succeeded)
