@@ -8,6 +8,7 @@ mod predicate;
 pub use predicate::TypePredicate;
 
 use beacon_core::{ClassRegistry, Type, TypeCtor, TypeError};
+use beacon_parser::ScopeId;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Check if a type is a sequence type (list, tuple)
@@ -145,6 +146,8 @@ pub struct ConstraintResult(
     pub FxHashMap<usize, Type>,
     pub FxHashMap<(usize, usize), usize>,
     pub ClassRegistry,
+    pub FxHashMap<usize, ScopeId>,
+    pub FxHashMap<ScopeId, FxHashSet<ScopeId>>,
 );
 
 /// A single narrowing scope in the control flow stack
@@ -380,7 +383,7 @@ impl Default for ControlFlowContext {
 }
 
 /// Context for tracking node information during constraint generation
-pub struct ConstraintGenContext {
+pub struct ConstraintGenContext<'a> {
     pub constraints: Vec<Constraint>,
     pub node_counter: usize,
     pub type_map: FxHashMap<usize, Type>,
@@ -390,11 +393,72 @@ pub struct ConstraintGenContext {
     pub control_flow: ControlFlowContext,
     /// Tracks which stub modules have been loaded into the class registry
     pub loaded_stub_modules: FxHashSet<String>,
+    /// Stack of active scopes during AST traversal (innermost scope is last)
+    pub scope_stack: Vec<ScopeId>,
+    /// Maps each node (by node_id) to its containing scope
+    pub node_to_scope: FxHashMap<usize, ScopeId>,
+    /// Tracks dependencies between scopes (scope_id -> set of scopes it depends on)
+    pub scope_dependencies: FxHashMap<ScopeId, FxHashSet<ScopeId>>,
+    /// Reference to the symbol table for scope lookups
+    symbol_table: Option<&'a beacon_parser::SymbolTable>,
+    /// Source code for calculating byte offsets from line/col positions
+    source: Option<&'a str>,
 }
 
-impl ConstraintGenContext {
+impl<'a> ConstraintGenContext<'a> {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the symbol table and source code for scope tracking
+    pub fn set_context(&mut self, symbol_table: &'a beacon_parser::SymbolTable, source: &'a str) {
+        self.symbol_table = Some(symbol_table);
+        self.source = Some(source);
+    }
+
+    /// Calculate byte offset from line and column numbers (1-indexed)
+    fn line_col_to_byte_offset(&self, line: usize, col: usize) -> Option<usize> {
+        let source = self.source?;
+        let mut current_line = 1;
+
+        for (idx, ch) in source.char_indices() {
+            if current_line == line {
+                let line_start = source[..idx].rfind('\n').map(|pos| pos + 1).unwrap_or(0);
+                let chars_in_line = source[line_start..idx].chars().count();
+                if chars_in_line + 1 == col {
+                    return Some(idx);
+                }
+            }
+
+            if ch == '\n' {
+                current_line += 1;
+                if current_line > line {
+                    break;
+                }
+            }
+        }
+
+        if current_line == line {
+            let line_start = source[..].rfind('\n').map(|pos| pos + 1).unwrap_or(0);
+            let chars_in_line = source[line_start..].chars().count();
+            if chars_in_line + 1 >= col {
+                return Some(source.len());
+            }
+        }
+
+        None
+    }
+
+    /// Find the scope at a given line and column position
+    pub fn find_scope_at_position(&self, line: usize, col: usize) -> Option<ScopeId> {
+        let symbol_table = self.symbol_table?;
+        let byte_offset = self.line_col_to_byte_offset(line, col)?;
+        Some(symbol_table.find_scope_at_position(byte_offset))
+    }
+
+    /// Get a reference to the symbol table
+    pub fn symbol_table(&self) -> Option<&beacon_parser::SymbolTable> {
+        self.symbol_table
     }
 
     /// Record a type for a node at a specific position, returning the node ID
@@ -403,11 +467,32 @@ impl ConstraintGenContext {
         self.node_counter += 1;
         self.type_map.insert(node_id, ty);
         self.position_map.insert((line, col), node_id);
+
+        if let Some(&scope_id) = self.scope_stack.last() {
+            self.node_to_scope.insert(node_id, scope_id);
+        }
+
         node_id
+    }
+
+    /// Push a scope onto the scope stack when entering a new scope (module, function, class, block)
+    pub fn push_scope(&mut self, scope_id: ScopeId) {
+        self.scope_stack.push(scope_id);
+    }
+
+    /// Pop a scope from the scope stack when exiting a scope
+    pub fn pop_scope(&mut self) -> Option<ScopeId> {
+        self.scope_stack.pop()
+    }
+
+    /// Track a dependency between scopes
+    /// Records that `from_scope` depends on `to_scope` (e.g., because it references a symbol defined in `to_scope`)
+    pub fn add_scope_dependency(&mut self, from_scope: ScopeId, to_scope: ScopeId) {
+        self.scope_dependencies.entry(from_scope).or_default().insert(to_scope);
     }
 }
 
-impl Default for ConstraintGenContext {
+impl<'a> Default for ConstraintGenContext<'a> {
     fn default() -> Self {
         Self {
             constraints: Vec::new(),
@@ -417,6 +502,11 @@ impl Default for ConstraintGenContext {
             class_registry: ClassRegistry::new(),
             control_flow: ControlFlowContext::new(),
             loaded_stub_modules: FxHashSet::default(),
+            scope_stack: Vec::new(),
+            node_to_scope: FxHashMap::default(),
+            scope_dependencies: FxHashMap::default(),
+            symbol_table: None,
+            source: None,
         }
     }
 }
@@ -455,7 +545,76 @@ impl Span {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beacon_parser::Pattern;
+    use beacon_parser::{Pattern, ScopeKind};
+
+    #[test]
+    fn test_scope_stack_push_pop() {
+        let mut ctx = ConstraintGenContext::new();
+        let scope_id1 = ScopeId::from_raw(1);
+        let scope_id2 = ScopeId::from_raw(2);
+        assert!(ctx.scope_stack.is_empty());
+
+        ctx.push_scope(scope_id1);
+        assert_eq!(ctx.scope_stack.len(), 1);
+        assert_eq!(ctx.scope_stack.last(), Some(&scope_id1));
+
+        ctx.push_scope(scope_id2);
+        assert_eq!(ctx.scope_stack.len(), 2);
+        assert_eq!(ctx.scope_stack.last(), Some(&scope_id2));
+
+        assert_eq!(ctx.pop_scope(), Some(scope_id2));
+        assert_eq!(ctx.scope_stack.len(), 1);
+        assert_eq!(ctx.scope_stack.last(), Some(&scope_id1));
+
+        assert_eq!(ctx.pop_scope(), Some(scope_id1));
+        assert!(ctx.scope_stack.is_empty());
+
+        assert_eq!(ctx.pop_scope(), None);
+    }
+
+    #[test]
+    fn test_node_to_scope_mapping() {
+        let mut ctx = ConstraintGenContext::new();
+        let scope_id = ScopeId::from_raw(1);
+
+        let node_id1 = ctx.record_type(1, 1, Type::int());
+        assert!(!ctx.node_to_scope.contains_key(&node_id1));
+
+        ctx.push_scope(scope_id);
+        let node_id2 = ctx.record_type(2, 2, Type::string());
+        assert_eq!(ctx.node_to_scope.get(&node_id2), Some(&scope_id));
+
+        let node_id3 = ctx.record_type(3, 3, Type::bool());
+        assert_eq!(ctx.node_to_scope.get(&node_id3), Some(&scope_id));
+
+        ctx.pop_scope();
+        let node_id4 = ctx.record_type(4, 4, Type::float());
+        assert!(!ctx.node_to_scope.contains_key(&node_id4));
+    }
+
+    #[test]
+    fn test_scope_dependencies() {
+        let mut ctx = ConstraintGenContext::new();
+        let scope1 = ScopeId::from_raw(1);
+        let scope2 = ScopeId::from_raw(2);
+        let scope3 = ScopeId::from_raw(3);
+
+        assert!(ctx.scope_dependencies.is_empty());
+
+        ctx.add_scope_dependency(scope1, scope2);
+        assert_eq!(ctx.scope_dependencies.get(&scope1).map(|s| s.len()), Some(1));
+        assert!(ctx.scope_dependencies.get(&scope1).unwrap().contains(&scope2));
+
+        ctx.add_scope_dependency(scope1, scope3);
+        assert_eq!(ctx.scope_dependencies.get(&scope1).map(|s| s.len()), Some(2));
+        assert!(ctx.scope_dependencies.get(&scope1).unwrap().contains(&scope2));
+        assert!(ctx.scope_dependencies.get(&scope1).unwrap().contains(&scope3));
+
+        ctx.add_scope_dependency(scope1, scope2);
+        assert_eq!(ctx.scope_dependencies.get(&scope1).map(|s| s.len()), Some(2));
+
+        assert!(!ctx.scope_dependencies.contains_key(&scope2));
+    }
 
     #[test]
     fn test_is_sequence_type() {
@@ -796,5 +955,53 @@ mod tests {
         let predicate = TypePredicate::Or(Box::new(pred1), Box::new(pred2));
         let eliminated = predicate.eliminated_types(&union_type);
         assert_eq!(eliminated, vec![Type::none()]);
+    }
+
+    #[test]
+    fn test_line_col_to_byte_offset() {
+        let source = "def foo():\n    return 42\n";
+        let mut ctx = ConstraintGenContext::new();
+        let symbol_table = beacon_parser::SymbolTable::new();
+        ctx.set_context(&symbol_table, source);
+
+        assert_eq!(ctx.line_col_to_byte_offset(1, 1), Some(0));
+
+        assert_eq!(ctx.line_col_to_byte_offset(1, 4), Some(3));
+
+        assert_eq!(ctx.line_col_to_byte_offset(2, 1), Some(11));
+
+        assert_eq!(ctx.line_col_to_byte_offset(2, 5), Some(15));
+    }
+
+    #[test]
+    fn test_find_scope_at_position() {
+        let source = "x = 1\ndef foo():\n    return 42\n";
+        let mut symbol_table = beacon_parser::SymbolTable::new();
+
+        let func_scope = symbol_table.create_scope(ScopeKind::Function, symbol_table.root_scope, 17, source.len());
+
+        let mut ctx = ConstraintGenContext::new();
+        ctx.set_context(&symbol_table, source);
+
+        let scope = ctx.find_scope_at_position(3, 5);
+        assert_eq!(scope, Some(func_scope));
+
+        let scope = ctx.find_scope_at_position(1, 1);
+        assert_eq!(scope, Some(symbol_table.root_scope));
+    }
+
+    #[test]
+    fn test_set_context_stores_references() {
+        let source = "x = 1\n";
+        let symbol_table = beacon_parser::SymbolTable::new();
+        let mut ctx = ConstraintGenContext::new();
+
+        assert!(ctx.symbol_table().is_none());
+        assert!(ctx.source.is_none());
+
+        ctx.set_context(&symbol_table, source);
+
+        assert!(ctx.symbol_table().is_some());
+        assert!(ctx.source.is_some());
     }
 }

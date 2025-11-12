@@ -926,7 +926,7 @@ impl PythonParser {
                     },
                 )
             }
-            "unary_operator" => {
+            "unary_operator" | "not_operator" => {
                 let (op, operand) = self.extract_unary_op_info(&node, source)?;
                 Ok(AstNode::UnaryOp { op, operand: Box::new(operand), line, col, end_line, end_col })
             }
@@ -2158,30 +2158,23 @@ impl PythonParser {
     }
 
     fn extract_match_case(&self, node: &Node, source: &str) -> Result<MatchCase> {
-        let mut pattern_node = None;
-        let mut body_node = None;
-        let mut guard = None;
-
         let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            match child.kind() {
-                "case_pattern" => pattern_node = Some(child),
-                "block" => body_node = Some(child),
-                "if_clause" => {
-                    if let Some(cond) = child.named_child(0) {
-                        guard = Some(self.node_to_ast(cond, source)?);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        let pattern_node =
-            pattern_node.ok_or_else(|| ParseError::TreeSitterError("Missing case pattern".to_string()))?;
+        let pattern_node = node
+            .children(&mut cursor)
+            .find(|child| child.kind() == "case_pattern")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing case pattern".to_string()))?;
         let pattern = self.extract_pattern(&pattern_node, source)?;
 
-        let body_node = body_node.ok_or_else(|| ParseError::TreeSitterError("Missing case body".to_string()))?;
+        let body_node = node
+            .child_by_field_name("consequence")
+            .ok_or_else(|| ParseError::TreeSitterError("Missing case body".to_string()))?;
         let body = self.extract_body(&body_node, source)?;
+
+        let guard = node
+            .child_by_field_name("guard")
+            .and_then(|if_clause| if_clause.named_child(0))
+            .map(|cond| self.node_to_ast(cond, source))
+            .transpose()?;
 
         Ok(MatchCase { pattern, guard, body })
     }
@@ -2204,8 +2197,7 @@ impl PythonParser {
             }
             "as_pattern" => {
                 let pattern = node
-                    .child_by_field_name("pattern")
-                    .or_else(|| node.named_child(0))
+                    .named_child(0)
                     .map(|p| self.extract_pattern(&p, source))
                     .transpose()?
                     .map(Box::new);
@@ -2268,17 +2260,19 @@ impl PythonParser {
                 Ok(Pattern::MatchMapping { keys, patterns })
             }
             "class_pattern" => {
+                let mut cursor = node.walk();
                 let cls = node
-                    .child_by_field_name("class")
+                    .children(&mut cursor)
+                    .find(|n| n.kind() == "dotted_name")
                     .and_then(|n| n.utf8_text(source.as_bytes()).ok())
-                    .ok_or_else(|| ParseError::TreeSitterError("Missing class in class pattern".to_string()))?
+                    .ok_or_else(|| ParseError::TreeSitterError("Missing dotted_name in class pattern".to_string()))?
                     .to_string();
 
                 let mut patterns = Vec::new();
                 let mut cursor = node.walk();
 
                 for child in node.children(&mut cursor) {
-                    if child.kind() == "pattern" {
+                    if child.kind() == "case_pattern" {
                         patterns.push(self.extract_pattern(&child, source)?);
                     }
                 }
@@ -4101,6 +4095,26 @@ count: int = 0"#;
                     assert!(matches!(value.as_ref(), AstNode::UnaryOp { .. }));
                 }
                 _ => panic!("Expected Assignment"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_unary_not_operator() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "if not x:\n    pass";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::If { test, .. } => {
+                    assert!(
+                        matches!(test.as_ref(), AstNode::UnaryOp { op: UnaryOperator::Not, .. }),
+                        "Expected UnaryOp with Not operator, got: {test:#?}"
+                    );
+                }
+                _ => panic!("Expected If node"),
             },
             _ => panic!("Expected module"),
         }

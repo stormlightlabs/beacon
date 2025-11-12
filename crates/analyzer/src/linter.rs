@@ -37,6 +37,10 @@ struct LinterContext {
     global_nonlocal_decls: Vec<GlobalOrNonlocalDecl>,
     /// Variables assigned in the current function scope
     assigned_vars: FxHashSet<String>,
+    /// Track class scopes that are dataclasses (line -> is_dataclass)
+    dataclass_scopes: FxHashMap<usize, bool>,
+    /// Track class scopes that inherit from Protocol (line -> is_protocol)
+    protocol_scopes: FxHashMap<usize, bool>,
 }
 
 impl LinterContext {
@@ -49,6 +53,8 @@ impl LinterContext {
             loop_vars: Vec::new(),
             global_nonlocal_decls: Vec::new(),
             assigned_vars: FxHashSet::default(),
+            dataclass_scopes: FxHashMap::default(),
+            protocol_scopes: FxHashMap::default(),
         }
     }
 
@@ -145,7 +151,9 @@ impl<'a> Linter<'a> {
         match node {
             AstNode::Module { body, .. } => self.visit_body(body),
             AstNode::FunctionDef { name, args, body, .. } => self.visit_function_def(name, args, body),
-            AstNode::ClassDef { body, .. } => self.visit_class_def(body),
+            AstNode::ClassDef { body, decorators, bases, line, .. } => {
+                self.visit_class_def(body, decorators, bases, *line)
+            }
             AstNode::Return { line, col, value, .. } => self.visit_return(*line, *col, value.as_deref()),
             AstNode::Break { line, col, .. } => self.check_break_outside_loop(*line, *col),
             AstNode::Continue { line, col, .. } => self.check_continue_outside_loop(*line, *col),
@@ -272,8 +280,19 @@ impl<'a> Linter<'a> {
         self.ctx.exit_function();
     }
 
-    fn visit_class_def(&mut self, body: &[AstNode]) {
+    fn visit_class_def(&mut self, body: &[AstNode], decorators: &[String], bases: &[String], line: usize) {
         self.check_redundant_pass(body);
+
+        let is_dataclass = decorators.iter().any(|d| d.contains("dataclass"));
+        if is_dataclass {
+            self.ctx.dataclass_scopes.insert(line, true);
+        }
+
+        let is_protocol = bases.iter().any(|b| b.contains("Protocol"));
+        if is_protocol {
+            self.ctx.protocol_scopes.insert(line, true);
+        }
+
         self.ctx.enter_class();
         self.visit_body(body);
         self.ctx.exit_class();
@@ -990,6 +1009,8 @@ impl<'a> Linter<'a> {
     ///
     /// Check for imports that are never read
     fn check_unused_imports(&mut self) {
+        const FUTURE_IMPORTS: &[&str] = &["annotations", "barry_as_FLUFL"];
+
         for scope in self.symbol_table.scopes.values() {
             for symbol in scope.symbols.values() {
                 if symbol.kind != SymbolKind::Import {
@@ -997,6 +1018,10 @@ impl<'a> Linter<'a> {
                 }
 
                 if symbol.name.starts_with('_') {
+                    continue;
+                }
+
+                if FUTURE_IMPORTS.contains(&symbol.name.as_str()) {
                     continue;
                 }
 
@@ -1019,6 +1044,15 @@ impl<'a> Linter<'a> {
     /// Check for annotated variables that are never read
     fn check_unused_annotations(&mut self) {
         for scope in self.symbol_table.scopes.values() {
+            if scope.kind == beacon_parser::ScopeKind::Class {
+                let is_dataclass = self.ctx.dataclass_scopes.values().any(|&v| v);
+                let is_protocol = self.ctx.protocol_scopes.values().any(|&v| v);
+
+                if is_dataclass || is_protocol {
+                    continue;
+                }
+            }
+
             for symbol in scope.symbols.values() {
                 if symbol.kind != SymbolKind::Variable {
                     continue;
@@ -1389,6 +1423,53 @@ except:
     }
 
     #[test]
+    fn test_import_used_in_nested_function_with_if_not() {
+        let source = r#"
+import os
+
+def outer():
+    def inner():
+        if not os.path.exists("/tmp"):
+            return []
+    inner()
+"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics.iter().any(|d| d.rule == RuleKind::UnusedImport),
+            "os should not be flagged as unused when used in nested function"
+        );
+    }
+
+    #[test]
+    fn test_import_used_in_nested_function_simple() {
+        let source = r#"
+import os
+
+def outer():
+    def inner():
+        print(os.name)
+    inner()
+"#;
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedImport));
+    }
+
+    #[test]
+    fn test_import_used_in_nested_function_attribute_access() {
+        let source = r#"
+import os
+
+def outer():
+    def inner():
+        result = os.path.exists("/tmp")
+        return result
+    inner()
+"#;
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedImport));
+    }
+
+    #[test]
     fn test_unused_annotation() {
         let source = "x: int";
         let diagnostics = lint_source(source);
@@ -1405,6 +1486,55 @@ except:
     #[test]
     fn test_annotation_with_underscore_prefix() {
         let source = "_x: int";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_loop_variable_used() {
+        let source = "for entry in [1, 2, 3]:\n    print(entry)";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_loop_variable_used_in_fstring() {
+        let source = "for entry in [1, 2, 3]:\n    print(f'History: {entry}')";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_loop_variable_with_attribute_in_fstring() {
+        let source = "for item in items:\n    print(f'Item name: {item.name}')";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_loop_variable_with_format_spec_in_fstring() {
+        let source = "for value in values:\n    print(f'Value: {value:.2f}')";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_comprehension_variable_in_fstring() {
+        let source = "[f'{x}' for x in range(10)]";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_nested_loops_with_fstring() {
+        let source = "for i in range(3):\n    for j in range(3):\n        print(f'{i},{j}')";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_loop_variable_in_tstring() {
+        let source = "for entry in [1, 2, 3]:\n    sql = t'SELECT * FROM table WHERE id = {entry}'";
         let diagnostics = lint_source(source);
         assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
     }
@@ -1673,7 +1803,6 @@ except:
     fn test_dict_with_variable_keys_no_warning() {
         let source = r#"x = {a: 1, b: 2}"#;
         let diagnostics = lint_source(source);
-        // Should not warn because 'a' and 'b' are variables, not literals
         assert!(
             !diagnostics
                 .iter()
@@ -1685,7 +1814,6 @@ except:
     fn test_dict_mixed_literal_and_variable_keys() {
         let source = r#"x = {'a': 1, b: 2, 'a': 3}"#;
         let diagnostics = lint_source(source);
-        // Should warn because 'a' literal appears twice
         assert!(
             diagnostics
                 .iter()
@@ -1725,7 +1853,6 @@ except:
     fn test_redundant_pass_in_try_block() {
         let source = "try:\n    pass\n    x = 1\nexcept:\n    pass";
         let diagnostics = lint_source(source);
-        // Only the try block should have redundant pass, not the except
         let redundant_count = diagnostics.iter().filter(|d| d.rule == RuleKind::RedundantPass).count();
         assert_eq!(redundant_count, 1);
     }
@@ -1762,7 +1889,6 @@ except:
     fn test_multiple_pass_in_block() {
         let source = "def f():\n    pass\n    pass\n    return 1";
         let diagnostics = lint_source(source);
-        // All pass statements should be flagged as redundant
         let redundant_count = diagnostics.iter().filter(|d| d.rule == RuleKind::RedundantPass).count();
         assert_eq!(redundant_count, 2);
     }

@@ -4,17 +4,16 @@ The `lint` command runs the Beacon linter on Python code to detect common coding
 
 ## Usage
 
-Lint a Python file:
-
 ```sh
-beacon lint example.py
+beacon lint [OPTIONS] [PATHS]...
 ```
 
-Read from stdin:
+Accepts:
 
-```sh
-cat example.py | beacon lint
-```
+- Single file: `beacon lint file.py`
+- Multiple files: `beacon lint file1.py file2.py file3.py`
+- Directory: `beacon lint src/` (recursively finds all .py files)
+- Stdin: `beacon lint` (reads from stdin)
 
 ## Examples
 
@@ -141,6 +140,34 @@ The linter implements PyFlakes-style rules (BEA001-BEA030):
 
 For a complete list of rules, see the [Lint Rules](../lsp/lint_rules.md) documentation.
 
+## Multiple Files and Directories
+
+### Lint all files in a directory
+
+```sh
+beacon lint src/
+```
+
+### Lint multiple specific files
+
+```sh
+beacon lint src/main.py src/utils.py tests/test_main.py
+```
+
+### Lint for CI with JSON output
+
+```sh
+beacon lint --format json src/ > lint-results.json
+```
+
+## Directory Traversal
+
+When a directory is provided, the command:
+
+- Recursively discovers all `.py` files
+- Respects `.gitignore` rules
+- Excludes common patterns: `__pycache__/`, `*.pyc`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `venv/`, `.venv/`, `env/`, `.env/`
+
 ## Exit Codes
 
 - `0` - No issues found
@@ -149,9 +176,9 @@ For a complete list of rules, see the [Lint Rules](../lsp/lint_rules.md) documen
 This makes it easy to use in CI/CD pipelines:
 
 ```sh
-beacon lint src/**/*.py || exit 1
+beacon lint src/ || exit 1
 ```
 
 ## Notes
 
-The linter does not fix issues automatically. It only reports them.
+The linter does not fix issues automatically (yet). It only reports them.

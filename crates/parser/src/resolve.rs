@@ -1,4 +1,4 @@
-use crate::AstNode;
+use crate::{AstNode, LiteralValue};
 
 use beacon_core::Result;
 use rustc_hash::FxHashMap;
@@ -492,6 +492,152 @@ impl NameResolver {
         Ok(())
     }
 
+    /// Extract variable names from a comprehension target string
+    fn extract_comprehension_target_names(target: &str) -> Vec<String> {
+        target
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    /// Track identifiers in f-string template
+    ///
+    /// Extracts simple identifiers from f-string placeholders like {name} or {obj.attr} and records them as Read references.
+    fn track_fstring_references(&mut self, template: &str, line: usize, col: usize) -> Result<()> {
+        let mut chars = template.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '{' {
+                if chars.peek() == Some(&'{') {
+                    chars.next();
+                    continue;
+                }
+
+                let mut expr = String::new();
+                let mut brace_depth = 1;
+
+                for ch in chars.by_ref() {
+                    if ch == '{' {
+                        brace_depth += 1;
+                        expr.push(ch);
+                    } else if ch == '}' {
+                        brace_depth -= 1;
+                        if brace_depth == 0 {
+                            break;
+                        }
+                        expr.push(ch);
+                    } else {
+                        expr.push(ch);
+                    }
+                }
+
+                self.extract_fstring_identifiers(&expr, line, col)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extract identifiers from an f-string expression
+    ///
+    /// Handles common patterns:
+    /// - Simple identifiers: {name}
+    /// - Attribute access: {obj.attr}
+    /// - Subscripts: {list[0]}
+    /// - Method calls: {obj.method()}
+    /// - Format specs: {value:.2f}
+    fn extract_fstring_identifiers(&mut self, expr: &str, line: usize, col: usize) -> Result<()> {
+        let expr_ = if let Some(idx) = expr.find(':') { &expr[..idx] } else { expr }.trim();
+        let expr = if let Some(idx) = expr_.find('!') { &expr_[..idx] } else { expr_ }.trim();
+
+        if expr.is_empty() {
+            return Ok(());
+        }
+
+        let base_id = if let Some(idx) = expr.find(['.', '[', '(']) { &expr[..idx] } else { expr }.trim();
+
+        if !base_id.is_empty() && (base_id.chars().next().unwrap().is_alphabetic() || base_id.starts_with('_')) {
+            let byte_offset = self.line_col_to_byte_offset(line, col);
+            let scope = self.symbol_table.find_scope_at_position(byte_offset);
+            self.symbol_table
+                .add_reference(base_id, scope, line, col, ReferenceKind::Read);
+        }
+
+        Ok(())
+    }
+
+    /// Extract identifiers from a type annotation string
+    ///
+    /// Parses type annotations like "List[int]", "Dict[str, int]", "Optional[List[str]]" and tracks references to non-builtin type names.
+    ///
+    /// Built-in types like int, str, bool, float, etc. are ignored as they don't need to be imported.
+    fn track_type_annotation_references(&mut self, type_ann: &str, line: usize, col: usize) -> Result<()> {
+        const BUILTINS: &[&str] = &[
+            "int",
+            "str",
+            "bool",
+            "float",
+            "complex",
+            "bytes",
+            "bytearray",
+            "list",
+            "tuple",
+            "dict",
+            "set",
+            "frozenset",
+            "object",
+            "type",
+            "None",
+            "NoneType",
+        ];
+
+        let mut current_word = String::new();
+        let mut in_string = false;
+        let mut string_char = '\0';
+
+        for ch in type_ann.chars() {
+            match ch {
+                '"' | '\'' if !in_string => {
+                    in_string = true;
+                    string_char = ch;
+                }
+                '"' | '\'' if in_string && ch == string_char => {
+                    in_string = false;
+                }
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' if !in_string => {
+                    current_word.push(ch);
+                }
+                _ if !in_string => {
+                    if !current_word.is_empty() {
+                        if !current_word.chars().next().unwrap().is_ascii_digit()
+                            && !BUILTINS.contains(&current_word.as_str())
+                        {
+                            let byte_offset = self.line_col_to_byte_offset(line, col);
+                            let scope = self.symbol_table.find_scope_at_position(byte_offset);
+                            self.symbol_table
+                                .add_reference(&current_word, scope, line, col, ReferenceKind::Read);
+                        }
+                        current_word.clear();
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if !current_word.is_empty()
+            && !current_word.chars().next().unwrap().is_ascii_digit()
+            && !BUILTINS.contains(&current_word.as_str())
+        {
+            let byte_offset = self.line_col_to_byte_offset(line, col);
+            let scope = self.symbol_table.find_scope_at_position(byte_offset);
+            self.symbol_table
+                .add_reference(&current_word, scope, line, col, ReferenceKind::Read);
+        }
+
+        Ok(())
+    }
+
     /// Second pass: track all symbol references (reads)
     ///
     /// This walks the AST again and records references to identifiers.
@@ -503,13 +649,41 @@ impl NameResolver {
                     self.track_references(stmt)?;
                 }
             }
-            AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } => {
+            AstNode::FunctionDef { args, return_type, body, decorators, line, col, .. } => {
+                for decorator in decorators {
+                    self.track_type_annotation_references(decorator, *line, *col)?;
+                }
+
+                for param in args {
+                    if let Some(type_ann) = &param.type_annotation {
+                        self.track_type_annotation_references(type_ann, param.line, param.col)?;
+                    }
+                }
+
+                if let Some(ret_type) = return_type {
+                    self.track_type_annotation_references(ret_type, *line, *col)?;
+                }
+
+                for stmt in body {
+                    self.track_references(stmt)?;
+                }
+            }
+            AstNode::ClassDef { body, decorators, bases, line, col, .. } => {
+                for decorator in decorators {
+                    self.track_type_annotation_references(decorator, *line, *col)?;
+                }
+
+                for base in bases {
+                    self.track_type_annotation_references(base, *line, *col)?;
+                }
+
                 for stmt in body {
                     self.track_references(stmt)?;
                 }
             }
             AstNode::Assignment { value, .. } => self.track_references(value)?,
-            AstNode::AnnotatedAssignment { value, .. } => {
+            AstNode::AnnotatedAssignment { type_annotation, value, line, col, .. } => {
+                self.track_type_annotation_references(type_annotation, *line, *col)?;
                 if let Some(val) = value {
                     self.track_references(val)?;
                 }
@@ -642,7 +816,12 @@ impl NameResolver {
                     self.track_references(comp)?;
                 }
             }
-            AstNode::Lambda { body, .. } => {
+            AstNode::Lambda { args, body, .. } => {
+                for param in args {
+                    if let Some(type_ann) = &param.type_annotation {
+                        self.track_type_annotation_references(type_ann, param.line, param.col)?;
+                    }
+                }
                 self.track_references(body)?;
             }
             AstNode::Subscript { value, slice, .. } => {
@@ -683,10 +862,17 @@ impl NameResolver {
                     self.track_references(elem)?;
                 }
             }
+            AstNode::Literal { value, line, col, .. } => {
+                if let LiteralValue::String { value: string_value, prefix } = value {
+                    let prefix_lower = prefix.to_lowercase();
+                    if prefix_lower.contains('f') || prefix_lower.contains('t') {
+                        self.track_fstring_references(string_value, *line, *col)?;
+                    }
+                }
+            }
             AstNode::Yield { .. }
             | AstNode::YieldFrom { .. }
             | AstNode::Await { .. }
-            | AstNode::Literal { .. }
             | AstNode::Pass { .. }
             | AstNode::Break { .. }
             | AstNode::Continue { .. }
@@ -1115,16 +1301,18 @@ impl NameResolver {
                 for generator in generators {
                     self.visit_node(&generator.iter)?;
 
-                    let symbol = Symbol {
-                        name: generator.target.clone(),
-                        kind: SymbolKind::Variable,
-                        line: *line,
-                        col: *col,
-                        scope_id: self.current_scope,
-                        docstring: None,
-                        references: Vec::new(),
-                    };
-                    self.symbol_table.add_symbol(self.current_scope, symbol);
+                    for var_name in Self::extract_comprehension_target_names(&generator.target) {
+                        let symbol = Symbol {
+                            name: var_name,
+                            kind: SymbolKind::Variable,
+                            line: *line,
+                            col: *col,
+                            scope_id: self.current_scope,
+                            docstring: None,
+                            references: Vec::new(),
+                        };
+                        self.symbol_table.add_symbol(self.current_scope, symbol);
+                    }
 
                     for if_clause in &generator.ifs {
                         self.visit_node(if_clause)?;
@@ -1136,17 +1324,19 @@ impl NameResolver {
                 for generator in generators {
                     self.visit_node(&generator.iter)?;
 
-                    let symbol = Symbol {
-                        name: generator.target.clone(),
-                        kind: SymbolKind::Variable,
-                        line: *line,
-                        col: *col,
-                        scope_id: self.current_scope,
-                        docstring: None,
-                        references: Vec::new(),
-                    };
+                    for var_name in Self::extract_comprehension_target_names(&generator.target) {
+                        let symbol = Symbol {
+                            name: var_name,
+                            kind: SymbolKind::Variable,
+                            line: *line,
+                            col: *col,
+                            scope_id: self.current_scope,
+                            docstring: None,
+                            references: Vec::new(),
+                        };
 
-                    self.symbol_table.add_symbol(self.current_scope, symbol);
+                        self.symbol_table.add_symbol(self.current_scope, symbol);
+                    }
 
                     for if_clause in &generator.ifs {
                         self.visit_node(if_clause)?;

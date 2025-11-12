@@ -7,44 +7,73 @@ It is helpful for debugging formatter behaviour (for example, while comparing
 ## Usage
 
 ```sh
-beacon-cli format [OPTIONS] [FILE]
+beacon format [OPTIONS] [PATHS]...
 ```
 
-- Reads from the specified `FILE`. If omitted, source is read from `stdin`.
-- Writes formatted output to `stdout` by default.
+Accepts:
+
+- Single file: `beacon format file.py`
+- Multiple files: `beacon format file1.py file2.py file3.py`
+- Directory: `beacon format src/` (recursively finds all .py files)
+- Stdin: `beacon format` (reads from stdin)
 
 ### Options
 
-| Flag | Description |
-| --- | --- |
-| `--write` | Overwrite the given file with formatted output. Requires `FILE`. |
-| `--check` | Exit with a non-zero status if formatting would change the input. |
-| `--output <PATH>` | Write formatted output to a different file instead of `stdout`. |
+| Flag              | Description                                                                     |
+| ----------------- | ------------------------------------------------------------------------------- |
+| `--write`         | Overwrite files with formatted output.                                          |
+| `--check`         | Exit with a non-zero status if formatting would change the input.               |
+| `--output <PATH>` | Write formatted output to a different file (only works with single file input). |
 
 `--write` conflicts with both `--check` and `--output` to prevent accidental combinations.
 
 ## Examples
 
-Format a module and show the result in the terminal:
+### Format a single file and display to terminal
 
 ```sh
-beacon-cli format samples/capabilities_support.py
+beacon format samples/capabilities_support.py
 ```
 
-Overwrite the file in-place:
+### Format file in-place
 
 ```sh
-beacon-cli format samples/capabilities_support.py --write
+beacon format samples/capabilities_support.py --write
 ```
 
-Guard against accidental diffs in CI:
+### Format all files in a directory
 
 ```sh
-beacon-cli format samples/capabilities_support.py --check
+beacon format src/ --write
 ```
 
-Write the formatted output to a side file:
+### Format multiple specific files
 
 ```sh
-beacon-cli format samples/capabilities_support.py --output samples/capabilities_support_formatted.py
+beacon format src/main.py src/utils.py tests/test_main.py --write
 ```
+
+### Check formatting in CI
+
+```sh
+beacon format src/ --check
+```
+
+### Write formatted output to a different file
+
+```sh
+beacon format samples/capabilities_support.py --output samples/capabilities_support_formatted.py
+```
+
+## Directory Traversal
+
+When a directory is provided, the command:
+
+- Recursively discovers all `.py` files
+- Respects `.gitignore` rules
+- Excludes common patterns: `__pycache__/`, `*.pyc`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `venv/`, `.venv/`, `env/`, `.env/`
+
+## Exit Codes
+
+- `0` - All files are formatted correctly (or formatting succeeded)
+- `1` - Formatting would change files (with `--check`) or formatting failed
