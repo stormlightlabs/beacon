@@ -9,7 +9,7 @@ use super::loader::{self};
 use super::type_env::TypeEnvironment;
 
 use beacon_constraint::{Constraint, ConstraintGenContext, ConstraintResult, ConstraintSet, Span};
-use beacon_core::{Type, TypeScheme, errors::Result};
+use beacon_core::{Type, TypeCtor, TypeScheme, errors::Result};
 use beacon_parser::{AstNode, LiteralValue, SymbolTable};
 
 /// Expression context for constraint generation
@@ -23,15 +23,12 @@ enum ExprContext {
     Void,
 }
 
-// Note: FunctionKind, detect_function_kind, contains_yield, analyze_return_paths,
-// and all_paths_exit are now defined in function.rs and imported above.
-// is_docstring, get_node_position, type_name_to_type, is_main_guard are now defined
-// in utils.rs and imported above.
-
 pub fn generate_constraints(
-    stub_cache: &Option<visitors::TStubCache>, ast: &AstNode, symbol_table: &SymbolTable,
+    stub_cache: &Option<visitors::TStubCache>, ast: &AstNode, symbol_table: &SymbolTable, source: &str,
 ) -> Result<ConstraintResult> {
     let mut ctx = ConstraintGenContext::new();
+
+    ctx.set_context(symbol_table, source);
 
     if let Some(stub_cache) = &stub_cache {
         if let Ok(cache) = stub_cache.try_read() {
@@ -43,7 +40,6 @@ pub fn generate_constraints(
 
     let mut env = TypeEnvironment::from_symbol_table(symbol_table, ast);
 
-    // TODO: Track function and class scopes: pass symbol_table through all visitor functions or store it in the context.
     ctx.push_scope(symbol_table.root_scope);
 
     visit_node_with_env(ast, &mut env, &mut ctx, stub_cache.as_ref())?;
@@ -88,6 +84,16 @@ fn visit_node_with_context(
         AstNode::Identifier { name, line, col, .. } => {
             let ty = env.lookup(name).unwrap_or_else(|| Type::Var(env.fresh_var()));
             ctx.record_type(*line, *col, ty.clone());
+
+            if let (Some(current_scope), Some(symbol_table)) = (ctx.scope_stack.last(), ctx.symbol_table()) {
+                if let Some(symbol) = symbol_table.lookup_symbol(name, *current_scope) {
+                    let defining_scope = symbol.scope_id;
+                    if defining_scope != *current_scope {
+                        ctx.add_scope_dependency(*current_scope, defining_scope);
+                    }
+                }
+            }
+
             Ok(ty)
         }
         AstNode::Literal { value, line, col, .. } => {
@@ -123,9 +129,26 @@ fn visit_node_with_context(
             let obj_ty = visit_node_with_env(object, env, ctx, stub_cache)?;
             let attr_ty = Type::Var(env.fresh_var());
             let span = Span::with_end(*line, *col, *end_line, *end_col);
-            ctx.constraints
-                .push(Constraint::HasAttr(obj_ty, attribute.clone(), attr_ty.clone(), span));
+            ctx.constraints.push(Constraint::HasAttr(
+                obj_ty.clone(),
+                attribute.clone(),
+                attr_ty.clone(),
+                span,
+            ));
             ctx.record_type(*line, *col, attr_ty.clone());
+
+            if let (Some(current_scope), Some(symbol_table)) = (ctx.scope_stack.last(), ctx.symbol_table()) {
+                if let Type::Con(TypeCtor::Class(class_name)) = &obj_ty {
+                    if let Some(symbol) = symbol_table.lookup_symbol(class_name, *current_scope) {
+                        let defining_scope = symbol.scope_id;
+                        if defining_scope != *current_scope {
+                            ctx.add_scope_dependency(*current_scope, defining_scope);
+                        }
+                    }
+                }
+                // TODO: Track dependencies for import usage (e.g., module.attribute)
+            }
+
             Ok(attr_ty)
         }
         AstNode::BinaryOp { .. } | AstNode::UnaryOp { .. } => visitors::visit_ops(node, env, ctx, stub_cache),

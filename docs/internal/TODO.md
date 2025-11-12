@@ -270,12 +270,11 @@ See [Linter Rules](#linter-rules) section below for BEA code implementation stat
 Current limitations from `analysis/mod.rs`:
 
 - Scope cache implementation is basic (extracts all nodes, no real filtering)
-- No dependency tracking between scopes
 - Cache invalidation is wholesale per document
 
 Tasks:
 
-- [ ] Track inter-scope dependencies (e.g., function calls, imports)
+- [ ] Import usage tracking
 - [ ] Selective invalidation: only reanalyze changed scopes and dependents
 
 ## Logging

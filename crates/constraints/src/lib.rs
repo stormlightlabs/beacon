@@ -383,7 +383,7 @@ impl Default for ControlFlowContext {
 }
 
 /// Context for tracking node information during constraint generation
-pub struct ConstraintGenContext {
+pub struct ConstraintGenContext<'a> {
     pub constraints: Vec<Constraint>,
     pub node_counter: usize,
     pub type_map: FxHashMap<usize, Type>,
@@ -399,11 +399,66 @@ pub struct ConstraintGenContext {
     pub node_to_scope: FxHashMap<usize, ScopeId>,
     /// Tracks dependencies between scopes (scope_id -> set of scopes it depends on)
     pub scope_dependencies: FxHashMap<ScopeId, FxHashSet<ScopeId>>,
+    /// Reference to the symbol table for scope lookups
+    symbol_table: Option<&'a beacon_parser::SymbolTable>,
+    /// Source code for calculating byte offsets from line/col positions
+    source: Option<&'a str>,
 }
 
-impl ConstraintGenContext {
+impl<'a> ConstraintGenContext<'a> {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the symbol table and source code for scope tracking
+    pub fn set_context(&mut self, symbol_table: &'a beacon_parser::SymbolTable, source: &'a str) {
+        self.symbol_table = Some(symbol_table);
+        self.source = Some(source);
+    }
+
+    /// Calculate byte offset from line and column numbers (1-indexed)
+    fn line_col_to_byte_offset(&self, line: usize, col: usize) -> Option<usize> {
+        let source = self.source?;
+        let mut current_line = 1;
+
+        for (idx, ch) in source.char_indices() {
+            if current_line == line {
+                let line_start = source[..idx].rfind('\n').map(|pos| pos + 1).unwrap_or(0);
+                let chars_in_line = source[line_start..idx].chars().count();
+                if chars_in_line + 1 == col {
+                    return Some(idx);
+                }
+            }
+
+            if ch == '\n' {
+                current_line += 1;
+                if current_line > line {
+                    break;
+                }
+            }
+        }
+
+        if current_line == line {
+            let line_start = source[..].rfind('\n').map(|pos| pos + 1).unwrap_or(0);
+            let chars_in_line = source[line_start..].chars().count();
+            if chars_in_line + 1 >= col {
+                return Some(source.len());
+            }
+        }
+
+        None
+    }
+
+    /// Find the scope at a given line and column position
+    pub fn find_scope_at_position(&self, line: usize, col: usize) -> Option<ScopeId> {
+        let symbol_table = self.symbol_table?;
+        let byte_offset = self.line_col_to_byte_offset(line, col)?;
+        Some(symbol_table.find_scope_at_position(byte_offset))
+    }
+
+    /// Get a reference to the symbol table
+    pub fn symbol_table(&self) -> Option<&beacon_parser::SymbolTable> {
+        self.symbol_table
     }
 
     /// Record a type for a node at a specific position, returning the node ID
@@ -437,7 +492,7 @@ impl ConstraintGenContext {
     }
 }
 
-impl Default for ConstraintGenContext {
+impl<'a> Default for ConstraintGenContext<'a> {
     fn default() -> Self {
         Self {
             constraints: Vec::new(),
@@ -450,6 +505,8 @@ impl Default for ConstraintGenContext {
             scope_stack: Vec::new(),
             node_to_scope: FxHashMap::default(),
             scope_dependencies: FxHashMap::default(),
+            symbol_table: None,
+            source: None,
         }
     }
 }
@@ -488,7 +545,7 @@ impl Span {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beacon_parser::Pattern;
+    use beacon_parser::{Pattern, ScopeKind};
 
     #[test]
     fn test_scope_stack_push_pop() {
@@ -898,5 +955,53 @@ mod tests {
         let predicate = TypePredicate::Or(Box::new(pred1), Box::new(pred2));
         let eliminated = predicate.eliminated_types(&union_type);
         assert_eq!(eliminated, vec![Type::none()]);
+    }
+
+    #[test]
+    fn test_line_col_to_byte_offset() {
+        let source = "def foo():\n    return 42\n";
+        let mut ctx = ConstraintGenContext::new();
+        let symbol_table = beacon_parser::SymbolTable::new();
+        ctx.set_context(&symbol_table, source);
+
+        assert_eq!(ctx.line_col_to_byte_offset(1, 1), Some(0));
+
+        assert_eq!(ctx.line_col_to_byte_offset(1, 4), Some(3));
+
+        assert_eq!(ctx.line_col_to_byte_offset(2, 1), Some(11));
+
+        assert_eq!(ctx.line_col_to_byte_offset(2, 5), Some(15));
+    }
+
+    #[test]
+    fn test_find_scope_at_position() {
+        let source = "x = 1\ndef foo():\n    return 42\n";
+        let mut symbol_table = beacon_parser::SymbolTable::new();
+
+        let func_scope = symbol_table.create_scope(ScopeKind::Function, symbol_table.root_scope, 17, source.len());
+
+        let mut ctx = ConstraintGenContext::new();
+        ctx.set_context(&symbol_table, source);
+
+        let scope = ctx.find_scope_at_position(3, 5);
+        assert_eq!(scope, Some(func_scope));
+
+        let scope = ctx.find_scope_at_position(1, 1);
+        assert_eq!(scope, Some(symbol_table.root_scope));
+    }
+
+    #[test]
+    fn test_set_context_stores_references() {
+        let source = "x = 1\n";
+        let symbol_table = beacon_parser::SymbolTable::new();
+        let mut ctx = ConstraintGenContext::new();
+
+        assert!(ctx.symbol_table().is_none());
+        assert!(ctx.source.is_none());
+
+        ctx.set_context(&symbol_table, source);
+
+        assert!(ctx.symbol_table().is_some());
+        assert!(ctx.source.is_some());
     }
 }

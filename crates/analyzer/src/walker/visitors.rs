@@ -108,6 +108,10 @@ pub fn visit_class_def(
 
             ctx.class_registry.register_class(name.clone(), metadata);
 
+            if let Some(scope_id) = ctx.find_scope_at_position(*line, *col) {
+                ctx.push_scope(scope_id);
+            }
+
             for (i, stmt) in body.iter().enumerate() {
                 if i == 0 && is_docstring(stmt) {
                     continue;
@@ -116,6 +120,8 @@ pub fn visit_class_def(
                     visit_node_with_env(stmt, env, ctx, stub_cache)?;
                 }
             }
+
+            ctx.pop_scope();
 
             let type_transforming_decorators: Vec<&String> =
                 decorators.iter().filter(|d| !is_special_class_decorator(d)).collect();
@@ -239,12 +245,18 @@ pub fn visit_function(
 
             body_env.set_expected_return_type(ret_type);
 
+            if let Some(scope_id) = ctx.find_scope_at_position(*line, *col) {
+                ctx.push_scope(scope_id);
+            }
+
             for (i, stmt) in body.iter().enumerate() {
                 if i == 0 && is_docstring(stmt) {
                     continue;
                 }
                 visit_node_with_context(stmt, &mut body_env, ctx, stub_cache, ExprContext::Void)?;
             }
+
+            ctx.pop_scope();
 
             let mut decorated_type = fn_type;
             for decorator in decorators.iter().rev() {

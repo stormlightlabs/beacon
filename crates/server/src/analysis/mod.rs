@@ -221,7 +221,7 @@ impl Analyzer {
             class_registry,
             node_to_scope,
             scope_dependencies,
-        ) = walker::generate_constraints(&self.stub_cache, &ast, &symbol_table)?;
+        ) = walker::generate_constraints(&self.stub_cache, &ast, &symbol_table, &source)?;
 
         tracing::debug!(
             uri = %uri,
