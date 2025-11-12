@@ -8,6 +8,7 @@ mod predicate;
 pub use predicate::TypePredicate;
 
 use beacon_core::{ClassRegistry, Type, TypeCtor, TypeError};
+use beacon_parser::ScopeId;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Check if a type is a sequence type (list, tuple)
@@ -145,6 +146,8 @@ pub struct ConstraintResult(
     pub FxHashMap<usize, Type>,
     pub FxHashMap<(usize, usize), usize>,
     pub ClassRegistry,
+    pub FxHashMap<usize, ScopeId>,
+    pub FxHashMap<ScopeId, FxHashSet<ScopeId>>,
 );
 
 /// A single narrowing scope in the control flow stack
@@ -390,6 +393,12 @@ pub struct ConstraintGenContext {
     pub control_flow: ControlFlowContext,
     /// Tracks which stub modules have been loaded into the class registry
     pub loaded_stub_modules: FxHashSet<String>,
+    /// Stack of active scopes during AST traversal (innermost scope is last)
+    pub scope_stack: Vec<ScopeId>,
+    /// Maps each node (by node_id) to its containing scope
+    pub node_to_scope: FxHashMap<usize, ScopeId>,
+    /// Tracks dependencies between scopes (scope_id -> set of scopes it depends on)
+    pub scope_dependencies: FxHashMap<ScopeId, FxHashSet<ScopeId>>,
 }
 
 impl ConstraintGenContext {
@@ -403,7 +412,28 @@ impl ConstraintGenContext {
         self.node_counter += 1;
         self.type_map.insert(node_id, ty);
         self.position_map.insert((line, col), node_id);
+
+        if let Some(&scope_id) = self.scope_stack.last() {
+            self.node_to_scope.insert(node_id, scope_id);
+        }
+
         node_id
+    }
+
+    /// Push a scope onto the scope stack when entering a new scope (module, function, class, block)
+    pub fn push_scope(&mut self, scope_id: ScopeId) {
+        self.scope_stack.push(scope_id);
+    }
+
+    /// Pop a scope from the scope stack when exiting a scope
+    pub fn pop_scope(&mut self) -> Option<ScopeId> {
+        self.scope_stack.pop()
+    }
+
+    /// Track a dependency between scopes
+    /// Records that `from_scope` depends on `to_scope` (e.g., because it references a symbol defined in `to_scope`)
+    pub fn add_scope_dependency(&mut self, from_scope: ScopeId, to_scope: ScopeId) {
+        self.scope_dependencies.entry(from_scope).or_default().insert(to_scope);
     }
 }
 
@@ -417,6 +447,9 @@ impl Default for ConstraintGenContext {
             class_registry: ClassRegistry::new(),
             control_flow: ControlFlowContext::new(),
             loaded_stub_modules: FxHashSet::default(),
+            scope_stack: Vec::new(),
+            node_to_scope: FxHashMap::default(),
+            scope_dependencies: FxHashMap::default(),
         }
     }
 }
@@ -456,6 +489,75 @@ impl Span {
 mod tests {
     use super::*;
     use beacon_parser::Pattern;
+
+    #[test]
+    fn test_scope_stack_push_pop() {
+        let mut ctx = ConstraintGenContext::new();
+        let scope_id1 = ScopeId::from_raw(1);
+        let scope_id2 = ScopeId::from_raw(2);
+        assert!(ctx.scope_stack.is_empty());
+
+        ctx.push_scope(scope_id1);
+        assert_eq!(ctx.scope_stack.len(), 1);
+        assert_eq!(ctx.scope_stack.last(), Some(&scope_id1));
+
+        ctx.push_scope(scope_id2);
+        assert_eq!(ctx.scope_stack.len(), 2);
+        assert_eq!(ctx.scope_stack.last(), Some(&scope_id2));
+
+        assert_eq!(ctx.pop_scope(), Some(scope_id2));
+        assert_eq!(ctx.scope_stack.len(), 1);
+        assert_eq!(ctx.scope_stack.last(), Some(&scope_id1));
+
+        assert_eq!(ctx.pop_scope(), Some(scope_id1));
+        assert!(ctx.scope_stack.is_empty());
+
+        assert_eq!(ctx.pop_scope(), None);
+    }
+
+    #[test]
+    fn test_node_to_scope_mapping() {
+        let mut ctx = ConstraintGenContext::new();
+        let scope_id = ScopeId::from_raw(1);
+
+        let node_id1 = ctx.record_type(1, 1, Type::int());
+        assert!(!ctx.node_to_scope.contains_key(&node_id1));
+
+        ctx.push_scope(scope_id);
+        let node_id2 = ctx.record_type(2, 2, Type::string());
+        assert_eq!(ctx.node_to_scope.get(&node_id2), Some(&scope_id));
+
+        let node_id3 = ctx.record_type(3, 3, Type::bool());
+        assert_eq!(ctx.node_to_scope.get(&node_id3), Some(&scope_id));
+
+        ctx.pop_scope();
+        let node_id4 = ctx.record_type(4, 4, Type::float());
+        assert!(!ctx.node_to_scope.contains_key(&node_id4));
+    }
+
+    #[test]
+    fn test_scope_dependencies() {
+        let mut ctx = ConstraintGenContext::new();
+        let scope1 = ScopeId::from_raw(1);
+        let scope2 = ScopeId::from_raw(2);
+        let scope3 = ScopeId::from_raw(3);
+
+        assert!(ctx.scope_dependencies.is_empty());
+
+        ctx.add_scope_dependency(scope1, scope2);
+        assert_eq!(ctx.scope_dependencies.get(&scope1).map(|s| s.len()), Some(1));
+        assert!(ctx.scope_dependencies.get(&scope1).unwrap().contains(&scope2));
+
+        ctx.add_scope_dependency(scope1, scope3);
+        assert_eq!(ctx.scope_dependencies.get(&scope1).map(|s| s.len()), Some(2));
+        assert!(ctx.scope_dependencies.get(&scope1).unwrap().contains(&scope2));
+        assert!(ctx.scope_dependencies.get(&scope1).unwrap().contains(&scope3));
+
+        ctx.add_scope_dependency(scope1, scope2);
+        assert_eq!(ctx.scope_dependencies.get(&scope1).map(|s| s.len()), Some(2));
+
+        assert!(!ctx.scope_dependencies.contains_key(&scope2));
+    }
 
     #[test]
     fn test_is_sequence_type() {

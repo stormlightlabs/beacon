@@ -614,7 +614,7 @@ fn debug_constraints_command(file: Option<PathBuf>) -> Result<()> {
         .parse_and_resolve(&source)
         .with_context(|| "Failed to parse and resolve Python source")?;
 
-    let ConstraintResult(constraint_set, _type_map, _position_map, _class_registry) =
+    let ConstraintResult(constraint_set, ..) =
         beacon_lsp::analysis::walker::generate_constraints(&None, &ast, &symbol_table)?;
 
     println!(

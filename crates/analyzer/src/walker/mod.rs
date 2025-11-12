@@ -43,6 +43,9 @@ pub fn generate_constraints(
 
     let mut env = TypeEnvironment::from_symbol_table(symbol_table, ast);
 
+    // TODO: Track function and class scopes: pass symbol_table through all visitor functions or store it in the context.
+    ctx.push_scope(symbol_table.root_scope);
+
     visit_node_with_env(ast, &mut env, &mut ctx, stub_cache.as_ref())?;
 
     Ok(ConstraintResult(
@@ -50,6 +53,8 @@ pub fn generate_constraints(
         ctx.type_map,
         ctx.position_map,
         ctx.class_registry,
+        ctx.node_to_scope,
+        ctx.scope_dependencies,
     ))
 }
 

@@ -136,7 +136,6 @@ Implement a PEP8-compliant code formatter with LSP integration, offering both do
 
 ### Incremental Re-analysis
 
-- [ ] Implement proper node-to-scope mapping (currently includes all nodes)
 - [ ] Track scope dependencies for transitive invalidation
 - [ ] Selective re-analysis: only re-analyze changed scopes (requires refactoring walker)
 - [ ] Add scope boundary detection in position_map filtering

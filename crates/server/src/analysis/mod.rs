@@ -26,7 +26,7 @@ use beacon_core::{
 };
 use beacon_parser::{AstNode, ScopeId, SymbolTable, resolve::Scope};
 use lsp_types::Position;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{collections::HashSet, sync::Arc};
 use tokio::sync::RwLock;
 use url::Url;
@@ -121,33 +121,34 @@ impl Analyzer {
         changed
     }
 
-    /// Cache scope analysis results for each scope
-    /// TODO: Implement proper node-to-scope mapping
-    /// TODO: Track scope dependencies
+    /// Cache scope analysis results using node-to-scope mapping for accurate filtering
+    ///
+    /// Filters type_map and position_map to only include nodes belonging to each scope.
     fn cache_scope_results(
         &self, uri: &Url, scopes: &[(ScopeId, String, Scope)], type_map: &FxHashMap<usize, Type>,
-        position_map: &FxHashMap<(usize, usize), usize>,
+        position_map: &FxHashMap<(usize, usize), usize>, node_to_scope: &FxHashMap<usize, ScopeId>,
+        scope_dependencies: &FxHashMap<ScopeId, FxHashSet<ScopeId>>,
     ) {
-        for (scope_id, content, scope) in scopes {
+        for (scope_id, content, _scope) in scopes {
             let scope_type_map: FxHashMap<usize, Type> = type_map
                 .iter()
-                .filter(|(_node_id, _ty)| true)
+                .filter(|(node_id, _ty)| node_to_scope.get(node_id).is_none_or(|sid| sid == scope_id))
                 .map(|(k, v)| (*k, v.clone()))
                 .collect();
 
             let scope_position_map: FxHashMap<(usize, usize), usize> = position_map
                 .iter()
-                .filter(|((line, _col), _node_id)| {
-                    let scope_start_line = scope.start_byte / 80;
-                    let scope_end_line = scope.end_byte / 80;
-                    *line >= scope_start_line && *line <= scope_end_line
-                })
+                .filter(|(_pos, node_id)| node_to_scope.get(node_id).is_none_or(|sid| sid == scope_id))
                 .map(|(k, v)| (*k, *v))
                 .collect();
 
+            let dependencies: Vec<ScopeId> = scope_dependencies
+                .get(scope_id)
+                .map(|deps| deps.iter().copied().collect())
+                .unwrap_or_default();
+
             let key = ScopeCacheKey::new(uri.clone(), *scope_id, content);
-            let result =
-                CachedScopeResult { type_map: scope_type_map, position_map: scope_position_map, dependencies: vec![] };
+            let result = CachedScopeResult { type_map: scope_type_map, position_map: scope_position_map, dependencies };
 
             self.cache.scope_cache.insert(key, result);
         }
@@ -213,8 +214,14 @@ impl Analyzer {
         }
 
         tracing::debug!(uri = %uri, "Generating constraints");
-        let ConstraintResult(constraints, mut type_map, position_map, class_registry) =
-            walker::generate_constraints(&self.stub_cache, &ast, &symbol_table)?;
+        let ConstraintResult(
+            constraints,
+            mut type_map,
+            position_map,
+            class_registry,
+            node_to_scope,
+            scope_dependencies,
+        ) = walker::generate_constraints(&self.stub_cache, &ast, &symbol_table)?;
 
         tracing::debug!(
             uri = %uri,
@@ -238,7 +245,14 @@ impl Analyzer {
 
         let static_analysis = self.perform_static_analysis(&ast, &symbol_table, &source);
 
-        self.cache_scope_results(uri, &scopes, &type_map, &position_map);
+        self.cache_scope_results(
+            uri,
+            &scopes,
+            &type_map,
+            &position_map,
+            &node_to_scope,
+            &scope_dependencies,
+        );
 
         let scope_stats = self.cache.scope_stats();
         if scope_stats.hits + scope_stats.misses > 0 {
