@@ -926,7 +926,7 @@ impl PythonParser {
                     },
                 )
             }
-            "unary_operator" => {
+            "unary_operator" | "not_operator" => {
                 let (op, operand) = self.extract_unary_op_info(&node, source)?;
                 Ok(AstNode::UnaryOp { op, operand: Box::new(operand), line, col, end_line, end_col })
             }
@@ -4095,6 +4095,26 @@ count: int = 0"#;
                     assert!(matches!(value.as_ref(), AstNode::UnaryOp { .. }));
                 }
                 _ => panic!("Expected Assignment"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_unary_not_operator() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "if not x:\n    pass";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::If { test, .. } => {
+                    assert!(
+                        matches!(test.as_ref(), AstNode::UnaryOp { op: UnaryOperator::Not, .. }),
+                        "Expected UnaryOp with Not operator, got: {test:#?}"
+                    );
+                }
+                _ => panic!("Expected If node"),
             },
             _ => panic!("Expected module"),
         }

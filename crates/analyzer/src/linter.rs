@@ -1423,6 +1423,53 @@ except:
     }
 
     #[test]
+    fn test_import_used_in_nested_function_with_if_not() {
+        let source = r#"
+import os
+
+def outer():
+    def inner():
+        if not os.path.exists("/tmp"):
+            return []
+    inner()
+"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics.iter().any(|d| d.rule == RuleKind::UnusedImport),
+            "os should not be flagged as unused when used in nested function"
+        );
+    }
+
+    #[test]
+    fn test_import_used_in_nested_function_simple() {
+        let source = r#"
+import os
+
+def outer():
+    def inner():
+        print(os.name)
+    inner()
+"#;
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedImport));
+    }
+
+    #[test]
+    fn test_import_used_in_nested_function_attribute_access() {
+        let source = r#"
+import os
+
+def outer():
+    def inner():
+        result = os.path.exists("/tmp")
+        return result
+    inner()
+"#;
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedImport));
+    }
+
+    #[test]
     fn test_unused_annotation() {
         let source = "x: int";
         let diagnostics = lint_source(source);
