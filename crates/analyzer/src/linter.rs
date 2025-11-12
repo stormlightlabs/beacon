@@ -1410,6 +1410,55 @@ except:
     }
 
     #[test]
+    fn test_loop_variable_used() {
+        let source = "for entry in [1, 2, 3]:\n    print(entry)";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_loop_variable_used_in_fstring() {
+        let source = "for entry in [1, 2, 3]:\n    print(f'History: {entry}')";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_loop_variable_with_attribute_in_fstring() {
+        let source = "for item in items:\n    print(f'Item name: {item.name}')";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_loop_variable_with_format_spec_in_fstring() {
+        let source = "for value in values:\n    print(f'Value: {value:.2f}')";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_comprehension_variable_in_fstring() {
+        let source = "[f'{x}' for x in range(10)]";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_nested_loops_with_fstring() {
+        let source = "for i in range(3):\n    for j in range(3):\n        print(f'{i},{j}')";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
+    fn test_loop_variable_in_tstring() {
+        let source = "for entry in [1, 2, 3]:\n    sql = t'SELECT * FROM table WHERE id = {entry}'";
+        let diagnostics = lint_source(source);
+        assert!(!diagnostics.iter().any(|d| d.rule == RuleKind::UnusedAnnotation));
+    }
+
+    #[test]
     fn test_redefined_while_unused() {
         let source = "x = 1\nx = 2";
         let diagnostics = lint_source(source);
@@ -1673,7 +1722,6 @@ except:
     fn test_dict_with_variable_keys_no_warning() {
         let source = r#"x = {a: 1, b: 2}"#;
         let diagnostics = lint_source(source);
-        // Should not warn because 'a' and 'b' are variables, not literals
         assert!(
             !diagnostics
                 .iter()
@@ -1685,7 +1733,6 @@ except:
     fn test_dict_mixed_literal_and_variable_keys() {
         let source = r#"x = {'a': 1, b: 2, 'a': 3}"#;
         let diagnostics = lint_source(source);
-        // Should warn because 'a' literal appears twice
         assert!(
             diagnostics
                 .iter()
@@ -1725,7 +1772,6 @@ except:
     fn test_redundant_pass_in_try_block() {
         let source = "try:\n    pass\n    x = 1\nexcept:\n    pass";
         let diagnostics = lint_source(source);
-        // Only the try block should have redundant pass, not the except
         let redundant_count = diagnostics.iter().filter(|d| d.rule == RuleKind::RedundantPass).count();
         assert_eq!(redundant_count, 1);
     }
@@ -1762,7 +1808,6 @@ except:
     fn test_multiple_pass_in_block() {
         let source = "def f():\n    pass\n    pass\n    return 1";
         let diagnostics = lint_source(source);
-        // All pass statements should be flagged as redundant
         let redundant_count = diagnostics.iter().filter(|d| d.rule == RuleKind::RedundantPass).count();
         assert_eq!(redundant_count, 2);
     }

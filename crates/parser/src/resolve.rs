@@ -1,4 +1,4 @@
-use crate::AstNode;
+use crate::{AstNode, LiteralValue};
 
 use beacon_core::Result;
 use rustc_hash::FxHashMap;
@@ -492,6 +492,72 @@ impl NameResolver {
         Ok(())
     }
 
+    /// Track identifiers in f-string template
+    ///
+    /// Extracts simple identifiers from f-string placeholders like {name} or {obj.attr} and records them as Read references.
+    fn track_fstring_references(&mut self, template: &str, line: usize, col: usize) -> Result<()> {
+        let mut chars = template.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '{' {
+                if chars.peek() == Some(&'{') {
+                    chars.next();
+                    continue;
+                }
+
+                let mut expr = String::new();
+                let mut brace_depth = 1;
+
+                for ch in chars.by_ref() {
+                    if ch == '{' {
+                        brace_depth += 1;
+                        expr.push(ch);
+                    } else if ch == '}' {
+                        brace_depth -= 1;
+                        if brace_depth == 0 {
+                            break;
+                        }
+                        expr.push(ch);
+                    } else {
+                        expr.push(ch);
+                    }
+                }
+
+                self.extract_fstring_identifiers(&expr, line, col)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extract identifiers from an f-string expression
+    ///
+    /// Handles common patterns:
+    /// - Simple identifiers: {name}
+    /// - Attribute access: {obj.attr}
+    /// - Subscripts: {list[0]}
+    /// - Method calls: {obj.method()}
+    /// - Format specs: {value:.2f}
+    fn extract_fstring_identifiers(&mut self, expr: &str, line: usize, col: usize) -> Result<()> {
+        let expr_ = if let Some(idx) = expr.find(':') { &expr[..idx] } else { expr }.trim();
+        let expr = if let Some(idx) = expr_.find('!') { &expr_[..idx] } else { expr_ }.trim();
+
+        if expr.is_empty() {
+            return Ok(());
+        }
+
+        let base_id = if let Some(idx) = expr.find(['.', '[', '(']) { &expr[..idx] } else { expr }.trim();
+
+        if !base_id.is_empty() && (base_id.chars().next().unwrap().is_alphabetic() || base_id.starts_with('_')) {
+            let byte_offset = self.line_col_to_byte_offset(line, col);
+            let scope = self.symbol_table.find_scope_at_position(byte_offset);
+            self.symbol_table
+                .add_reference(base_id, scope, line, col, ReferenceKind::Read);
+        }
+
+        Ok(())
+    }
+
     /// Second pass: track all symbol references (reads)
     ///
     /// This walks the AST again and records references to identifiers.
@@ -683,10 +749,17 @@ impl NameResolver {
                     self.track_references(elem)?;
                 }
             }
+            AstNode::Literal { value, line, col, .. } => {
+                if let LiteralValue::String { value: string_value, prefix } = value {
+                    let prefix_lower = prefix.to_lowercase();
+                    if prefix_lower.contains('f') || prefix_lower.contains('t') {
+                        self.track_fstring_references(string_value, *line, *col)?;
+                    }
+                }
+            }
             AstNode::Yield { .. }
             | AstNode::YieldFrom { .. }
             | AstNode::Await { .. }
-            | AstNode::Literal { .. }
             | AstNode::Pass { .. }
             | AstNode::Break { .. }
             | AstNode::Continue { .. }
