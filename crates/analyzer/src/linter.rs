@@ -37,6 +37,10 @@ struct LinterContext {
     global_nonlocal_decls: Vec<GlobalOrNonlocalDecl>,
     /// Variables assigned in the current function scope
     assigned_vars: FxHashSet<String>,
+    /// Track class scopes that are dataclasses (line -> is_dataclass)
+    dataclass_scopes: FxHashMap<usize, bool>,
+    /// Track class scopes that inherit from Protocol (line -> is_protocol)
+    protocol_scopes: FxHashMap<usize, bool>,
 }
 
 impl LinterContext {
@@ -49,6 +53,8 @@ impl LinterContext {
             loop_vars: Vec::new(),
             global_nonlocal_decls: Vec::new(),
             assigned_vars: FxHashSet::default(),
+            dataclass_scopes: FxHashMap::default(),
+            protocol_scopes: FxHashMap::default(),
         }
     }
 
@@ -145,7 +151,9 @@ impl<'a> Linter<'a> {
         match node {
             AstNode::Module { body, .. } => self.visit_body(body),
             AstNode::FunctionDef { name, args, body, .. } => self.visit_function_def(name, args, body),
-            AstNode::ClassDef { body, .. } => self.visit_class_def(body),
+            AstNode::ClassDef { body, decorators, bases, line, .. } => {
+                self.visit_class_def(body, decorators, bases, *line)
+            }
             AstNode::Return { line, col, value, .. } => self.visit_return(*line, *col, value.as_deref()),
             AstNode::Break { line, col, .. } => self.check_break_outside_loop(*line, *col),
             AstNode::Continue { line, col, .. } => self.check_continue_outside_loop(*line, *col),
@@ -272,8 +280,19 @@ impl<'a> Linter<'a> {
         self.ctx.exit_function();
     }
 
-    fn visit_class_def(&mut self, body: &[AstNode]) {
+    fn visit_class_def(&mut self, body: &[AstNode], decorators: &[String], bases: &[String], line: usize) {
         self.check_redundant_pass(body);
+
+        let is_dataclass = decorators.iter().any(|d| d.contains("dataclass"));
+        if is_dataclass {
+            self.ctx.dataclass_scopes.insert(line, true);
+        }
+
+        let is_protocol = bases.iter().any(|b| b.contains("Protocol"));
+        if is_protocol {
+            self.ctx.protocol_scopes.insert(line, true);
+        }
+
         self.ctx.enter_class();
         self.visit_body(body);
         self.ctx.exit_class();
@@ -990,6 +1009,8 @@ impl<'a> Linter<'a> {
     ///
     /// Check for imports that are never read
     fn check_unused_imports(&mut self) {
+        const FUTURE_IMPORTS: &[&str] = &["annotations", "barry_as_FLUFL"];
+
         for scope in self.symbol_table.scopes.values() {
             for symbol in scope.symbols.values() {
                 if symbol.kind != SymbolKind::Import {
@@ -997,6 +1018,10 @@ impl<'a> Linter<'a> {
                 }
 
                 if symbol.name.starts_with('_') {
+                    continue;
+                }
+
+                if FUTURE_IMPORTS.contains(&symbol.name.as_str()) {
                     continue;
                 }
 
@@ -1019,6 +1044,15 @@ impl<'a> Linter<'a> {
     /// Check for annotated variables that are never read
     fn check_unused_annotations(&mut self) {
         for scope in self.symbol_table.scopes.values() {
+            if scope.kind == beacon_parser::ScopeKind::Class {
+                let is_dataclass = self.ctx.dataclass_scopes.values().any(|&v| v);
+                let is_protocol = self.ctx.protocol_scopes.values().any(|&v| v);
+
+                if is_dataclass || is_protocol {
+                    continue;
+                }
+            }
+
             for symbol in scope.symbols.values() {
                 if symbol.kind != SymbolKind::Variable {
                     continue;

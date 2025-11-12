@@ -492,6 +492,15 @@ impl NameResolver {
         Ok(())
     }
 
+    /// Extract variable names from a comprehension target string
+    fn extract_comprehension_target_names(target: &str) -> Vec<String> {
+        target
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
     /// Track identifiers in f-string template
     ///
     /// Extracts simple identifiers from f-string placeholders like {name} or {obj.attr} and records them as Read references.
@@ -640,7 +649,11 @@ impl NameResolver {
                     self.track_references(stmt)?;
                 }
             }
-            AstNode::FunctionDef { args, return_type, body, line, col, .. } => {
+            AstNode::FunctionDef { args, return_type, body, decorators, line, col, .. } => {
+                for decorator in decorators {
+                    self.track_type_annotation_references(decorator, *line, *col)?;
+                }
+
                 for param in args {
                     if let Some(type_ann) = &param.type_annotation {
                         self.track_type_annotation_references(type_ann, param.line, param.col)?;
@@ -655,7 +668,15 @@ impl NameResolver {
                     self.track_references(stmt)?;
                 }
             }
-            AstNode::ClassDef { body, .. } => {
+            AstNode::ClassDef { body, decorators, bases, line, col, .. } => {
+                for decorator in decorators {
+                    self.track_type_annotation_references(decorator, *line, *col)?;
+                }
+
+                for base in bases {
+                    self.track_type_annotation_references(base, *line, *col)?;
+                }
+
                 for stmt in body {
                     self.track_references(stmt)?;
                 }
@@ -1280,16 +1301,18 @@ impl NameResolver {
                 for generator in generators {
                     self.visit_node(&generator.iter)?;
 
-                    let symbol = Symbol {
-                        name: generator.target.clone(),
-                        kind: SymbolKind::Variable,
-                        line: *line,
-                        col: *col,
-                        scope_id: self.current_scope,
-                        docstring: None,
-                        references: Vec::new(),
-                    };
-                    self.symbol_table.add_symbol(self.current_scope, symbol);
+                    for var_name in Self::extract_comprehension_target_names(&generator.target) {
+                        let symbol = Symbol {
+                            name: var_name,
+                            kind: SymbolKind::Variable,
+                            line: *line,
+                            col: *col,
+                            scope_id: self.current_scope,
+                            docstring: None,
+                            references: Vec::new(),
+                        };
+                        self.symbol_table.add_symbol(self.current_scope, symbol);
+                    }
 
                     for if_clause in &generator.ifs {
                         self.visit_node(if_clause)?;
@@ -1301,17 +1324,19 @@ impl NameResolver {
                 for generator in generators {
                     self.visit_node(&generator.iter)?;
 
-                    let symbol = Symbol {
-                        name: generator.target.clone(),
-                        kind: SymbolKind::Variable,
-                        line: *line,
-                        col: *col,
-                        scope_id: self.current_scope,
-                        docstring: None,
-                        references: Vec::new(),
-                    };
+                    for var_name in Self::extract_comprehension_target_names(&generator.target) {
+                        let symbol = Symbol {
+                            name: var_name,
+                            kind: SymbolKind::Variable,
+                            line: *line,
+                            col: *col,
+                            scope_id: self.current_scope,
+                            docstring: None,
+                            references: Vec::new(),
+                        };
 
-                    self.symbol_table.add_symbol(self.current_scope, symbol);
+                        self.symbol_table.add_symbol(self.current_scope, symbol);
+                    }
 
                     for if_clause in &generator.ifs {
                         self.visit_node(if_clause)?;
