@@ -240,7 +240,6 @@ Tasks:
 - [x] Log all protocol events (`textDocument/*`, `workspace/*`, etc.) using `debug!` and `trace!`.
 - [ ] Detailed symbol resolution tracing (partial coverage)
 - [ ] Per-module diagnostic generation
-- [ ] Stub cache operations and introspection queries
 
 ### LSP Client
 

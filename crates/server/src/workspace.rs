@@ -25,6 +25,15 @@ const OS_STUB: &str = include_str!("../../../stubs/os.pyi");
 const ENUM_STUB: &str = include_str!("../../../stubs/enum.pyi");
 const PATHLIB_STUB: &str = include_str!("../../../stubs/pathlib.pyi");
 
+/// Symbol import information
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SymbolImport {
+    /// Module being imported from (e.g., "os.path")
+    pub from_module: String,
+    /// Symbol name being imported (e.g., "join"), or "*" for wildcard imports
+    pub symbol: String,
+}
+
 /// Information about a Python module in the workspace
 #[derive(Debug, Clone)]
 pub struct ModuleInfo {
@@ -36,13 +45,22 @@ pub struct ModuleInfo {
     pub source_root: PathBuf,
     /// Module names this module imports (not yet resolved to URIs)
     pub dependencies: FxHashSet<String>,
+    /// Specific symbols imported from other modules
+    pub symbol_imports: Vec<SymbolImport>,
     /// Whether this is a package (has __init__.py or is a directory)
     pub is_package: bool,
 }
 
 impl ModuleInfo {
     pub fn new(uri: Url, module_name: String, source_root: PathBuf, is_package: bool) -> Self {
-        Self { uri, module_name, source_root, dependencies: FxHashSet::default(), is_package }
+        Self {
+            uri,
+            module_name,
+            source_root,
+            dependencies: FxHashSet::default(),
+            symbol_imports: Vec::new(),
+            is_package,
+        }
     }
 }
 
@@ -161,16 +179,21 @@ impl Workspace {
     /// Uses [rayon] for parallel processing of files.
     fn build_dependency_graph(&mut self) {
         let uris: Vec<Url> = self.index.modules.keys().cloned().collect();
-        let imports: Vec<(Url, Vec<String>)> = uris
+        let imports: Vec<(Url, Vec<String>, Vec<SymbolImport>)> = uris
             .par_iter()
             .filter_map(|uri| {
                 let module_imports = self.extract_imports(uri)?;
-                Some((uri.clone(), module_imports))
+                let symbol_imports = self.extract_symbol_imports(uri).unwrap_or_default();
+                Some((uri.clone(), module_imports, symbol_imports))
             })
             .collect();
 
-        for (from_uri, import_names) in imports {
+        for (from_uri, import_names, symbol_imports) in imports {
             let from_module = self.uri_to_module_name(&from_uri).unwrap_or_default();
+
+            if let Some(module_info) = self.index.modules.get_mut(&from_uri) {
+                module_info.symbol_imports = symbol_imports;
+            }
 
             for import_name in import_names {
                 let resolved = if import_name.starts_with('.') {
@@ -189,9 +212,6 @@ impl Workspace {
     }
 
     /// Extract import statements from a Python file
-    ///
-    /// Returns a list of module names that this file imports.
-    /// Relative imports are returned with their leading dots (e.g., "..foo", ".bar")
     fn extract_imports(&self, uri: &Url) -> Option<Vec<String>> {
         let text = self.documents.get_document(uri, |doc| doc.text())?;
         let mut parser = crate::parser::LspParser::new().ok()?;
@@ -201,6 +221,18 @@ impl Workspace {
         Self::collect_imports_from_ast(&parse_result.ast, &mut imports);
 
         Some(imports)
+    }
+
+    /// Extract detailed symbol imports from a Python file
+    fn extract_symbol_imports(&self, uri: &Url) -> Option<Vec<SymbolImport>> {
+        let text = self.documents.get_document(uri, |doc| doc.text())?;
+        let mut parser = crate::parser::LspParser::new().ok()?;
+        let parse_result = parser.parse(&text).ok()?;
+        let mut symbol_imports = Vec::new();
+
+        Self::collect_symbol_imports_from_ast(&parse_result.ast, &mut symbol_imports);
+
+        Some(symbol_imports)
     }
 
     /// Recursively collect imports from an AST node
@@ -271,6 +303,96 @@ impl Workspace {
             AstNode::With { body, .. } => {
                 for stmt in body {
                     Self::collect_imports_from_ast(stmt, imports);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Recursively collect symbol-level imports from an AST node
+    fn collect_symbol_imports_from_ast(node: &beacon_parser::AstNode, symbol_imports: &mut Vec<SymbolImport>) {
+        match node {
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    Self::collect_symbol_imports_from_ast(stmt, symbol_imports);
+                }
+            }
+            AstNode::Import { module, alias, extra_modules, .. } => {
+                symbol_imports.push(SymbolImport {
+                    from_module: module.clone(),
+                    symbol: alias.clone().unwrap_or_else(|| module.clone()),
+                });
+
+                for (extra_module, extra_alias) in extra_modules {
+                    symbol_imports.push(SymbolImport {
+                        from_module: extra_module.clone(),
+                        symbol: extra_alias.clone().unwrap_or_else(|| extra_module.clone()),
+                    });
+                }
+            }
+            AstNode::ImportFrom { module, names, .. } => {
+                for name in names {
+                    symbol_imports.push(SymbolImport { from_module: module.clone(), symbol: name.clone() });
+                }
+            }
+            AstNode::FunctionDef { body, .. } => {
+                for stmt in body {
+                    Self::collect_symbol_imports_from_ast(stmt, symbol_imports);
+                }
+            }
+            AstNode::ClassDef { body, .. } => {
+                for stmt in body {
+                    Self::collect_symbol_imports_from_ast(stmt, symbol_imports);
+                }
+            }
+            AstNode::If { body, elif_parts, else_body, .. } => {
+                for stmt in body {
+                    Self::collect_symbol_imports_from_ast(stmt, symbol_imports);
+                }
+                for (_test, elif_body) in elif_parts {
+                    for stmt in elif_body {
+                        Self::collect_symbol_imports_from_ast(stmt, symbol_imports);
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        Self::collect_symbol_imports_from_ast(stmt, symbol_imports);
+                    }
+                }
+            }
+            AstNode::For { body, else_body, .. } | AstNode::While { body, else_body, .. } => {
+                for stmt in body {
+                    Self::collect_symbol_imports_from_ast(stmt, symbol_imports);
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        Self::collect_symbol_imports_from_ast(stmt, symbol_imports);
+                    }
+                }
+            }
+            AstNode::Try { body, handlers, else_body, finally_body, .. } => {
+                for stmt in body {
+                    Self::collect_symbol_imports_from_ast(stmt, symbol_imports);
+                }
+                for handler in handlers {
+                    for stmt in &handler.body {
+                        Self::collect_symbol_imports_from_ast(stmt, symbol_imports);
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        Self::collect_symbol_imports_from_ast(stmt, symbol_imports);
+                    }
+                }
+                if let Some(finally_stmts) = finally_body {
+                    for stmt in finally_stmts {
+                        Self::collect_symbol_imports_from_ast(stmt, symbol_imports);
+                    }
+                }
+            }
+            AstNode::With { body, .. } => {
+                for stmt in body {
+                    Self::collect_symbol_imports_from_ast(stmt, symbol_imports);
                 }
             }
             _ => {}
@@ -569,7 +691,13 @@ impl Workspace {
         self.dependency_graph.rm_edges(uri);
 
         let import_names = self.extract_imports(uri).unwrap_or_default();
+        let symbol_imports = self.extract_symbol_imports(uri).unwrap_or_default();
         let from_module = self.uri_to_module_name(uri).unwrap_or_default();
+
+        if let Some(module_info) = self.index.modules.get_mut(uri) {
+            tracing::debug!("Workspace: Updated {} symbol imports for {}", symbol_imports.len(), uri);
+            module_info.symbol_imports = symbol_imports;
+        }
 
         for import_name in import_names {
             let resolved = if import_name.starts_with('.') {
@@ -1336,6 +1464,15 @@ impl Workspace {
     /// Get all modules as a vec of (URI, module name) pairs
     pub fn all_modules(&self) -> Vec<(Url, String)> {
         self.index.all_modules()
+    }
+
+    /// Get symbol imports for a specific module
+    pub fn get_symbol_imports(&self, uri: &Url) -> Vec<SymbolImport> {
+        self.index
+            .modules
+            .get(uri)
+            .map(|info| info.symbol_imports.clone())
+            .unwrap_or_default()
     }
 
     /// Get configuration

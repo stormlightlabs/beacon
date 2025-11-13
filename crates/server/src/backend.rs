@@ -309,6 +309,24 @@ impl LanguageServer for Backend {
             return;
         }
 
+        let mut workspace = self.workspace.write().await;
+        workspace.update_dependencies(&url);
+
+        let symbol_imports = workspace.get_symbol_imports(&url);
+        let mut resolved_imports = Vec::new();
+        for import in &symbol_imports {
+            if let Some(resolved_uri) = workspace.resolve_import(&import.from_module) {
+                resolved_imports.push((resolved_uri, import.symbol.clone()));
+            }
+        }
+        drop(workspace);
+
+        if !resolved_imports.is_empty() {
+            let mut analyzer = self.analyzer.write().await;
+            analyzer.record_imports(&url, &resolved_imports);
+            drop(analyzer);
+        }
+
         tracing::debug!(uri = %url, "Publishing diagnostics for opened document");
         self.publish_diagnostics(url).await;
     }
@@ -332,6 +350,16 @@ impl LanguageServer for Backend {
 
                 let invalidated = workspace.invalidate_dependents(&uri);
                 let reanalyzed_count = workspace.reanalyze_affected(&invalidated, &mut analyzer);
+                let symbol_imports = workspace.get_symbol_imports(&uri);
+                let mut resolved_imports = Vec::new();
+                for import in &symbol_imports {
+                    if let Some(resolved_uri) = workspace.resolve_import(&import.from_module) {
+                        resolved_imports.push((resolved_uri, import.symbol.clone()));
+                    }
+                }
+                if !resolved_imports.is_empty() {
+                    analyzer.record_imports(&uri, &resolved_imports);
+                }
 
                 tracing::info!(uri = %uri, reanalyzed_count, "Reanalyzed affected modules");
                 self.client

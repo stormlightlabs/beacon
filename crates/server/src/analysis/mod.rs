@@ -313,6 +313,21 @@ impl Analyzer {
         self.position_maps.remove(uri);
     }
 
+    /// Record import dependencies in the cache tracker
+    ///
+    /// Should be called after analysis to populate the import dependency tracker.
+    /// This enables selective invalidation based on which symbols are imported.
+    pub fn record_imports(&mut self, importer_uri: &Url, imports: &[(Url, String)]) {
+        tracing::debug!(
+            "Analyzer: Recording {} import dependencies for {}",
+            imports.len(),
+            importer_uri
+        );
+        for (from_uri, symbol) in imports {
+            self.cache.record_import(from_uri, symbol, importer_uri);
+        }
+    }
+
     /// Update the analyzer's configuration
     ///
     /// This allows for runtime configuration updates without recreating the analyzer.
