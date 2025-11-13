@@ -363,24 +363,20 @@ fn validate_literal_pattern_type(
 }
 
 /// Validate that a class pattern can match the subject type
+///
+/// Class patterns like `case int():` or `case str():` match instances of those types.
+/// Built-in types are represented as `Type::Con(TypeCtor::Int)` not `Type::Con(TypeCtor::Class("int"))`.
 /// TODO: use registry lookup for inheritance checking
 fn validate_class_pattern_type(
     cls: &str, subject_type: &Type, _class_registry: &ClassRegistry,
 ) -> std::result::Result<(), TypeError> {
+    if class_pattern_matches_type(cls, subject_type) {
+        return Ok(());
+    }
+
     match subject_type {
-        Type::Con(TypeCtor::Class(subject_class)) => {
-            if subject_class != cls {
-                return Err(TypeError::PatternTypeMismatch {
-                    pattern_type: format!("class {cls}"),
-                    subject_type: format!("class {subject_class}"),
-                });
-            }
-            Ok(())
-        }
         Type::Union(variants) => {
-            let any_compatible = variants
-                .iter()
-                .any(|variant| matches!(variant, Type::Con(TypeCtor::Class(subject_class)) if subject_class == cls));
+            let any_compatible = variants.iter().any(|variant| class_pattern_matches_type(cls, variant));
             if any_compatible {
                 Ok(())
             } else {
@@ -390,11 +386,25 @@ fn validate_class_pattern_type(
                 })
             }
         }
-        Type::Var(_) => Ok(()), // Type variables are fine
+        Type::Var(_) => Ok(()),
         _ => Err(TypeError::PatternTypeMismatch {
             pattern_type: format!("class {cls}"),
             subject_type: subject_type.to_string(),
         }),
+    }
+}
+
+/// Check if a class pattern matches a given type
+///
+/// Handles both built-in types (int, str, bool, float) and user-defined classes.
+fn class_pattern_matches_type(cls: &str, ty: &Type) -> bool {
+    match (cls, ty) {
+        ("int", Type::Con(TypeCtor::Int)) => true,
+        ("str", Type::Con(TypeCtor::String)) => true,
+        ("bool", Type::Con(TypeCtor::Bool)) => true,
+        ("float", Type::Con(TypeCtor::Float)) => true,
+        (pattern_class, Type::Con(TypeCtor::Class(subject_class))) => pattern_class == subject_class,
+        _ => false,
     }
 }
 

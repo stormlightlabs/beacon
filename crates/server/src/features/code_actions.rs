@@ -47,7 +47,8 @@ impl CodeActionsProvider {
         let mut actions = Vec::new();
 
         for diagnostic in &params.context.diagnostics {
-            if let Some(action) = self.quick_fix_for_diagnostic(&params.text_document.uri, diagnostic) {
+            let fixes = self.quick_fix_for_diagnostic(&params.text_document.uri, diagnostic);
+            for action in fixes {
                 actions.push(CodeActionOrCommand::CodeAction(action));
             }
         }
@@ -62,17 +63,31 @@ impl CodeActionsProvider {
         actions
     }
 
-    /// Generate a quick fix for a diagnostic
-    fn quick_fix_for_diagnostic(&self, uri: &Url, diagnostic: &lsp_types::Diagnostic) -> Option<CodeAction> {
-        let code = diagnostic.code.as_ref()?.as_str()?;
+    /// Generate quick fixes for a diagnostic
+    ///
+    /// Returns a list of available code actions for the given diagnostic.
+    /// For some diagnostics (like PM002), multiple actions may be available.
+    fn quick_fix_for_diagnostic(&self, uri: &Url, diagnostic: &lsp_types::Diagnostic) -> Vec<CodeAction> {
+        let code = diagnostic.code.as_ref().and_then(|c| c.as_str());
 
         match code {
-            "unused-variable" | "unused-import" => self.remove_unused_line(uri, diagnostic),
-            "HM001" if diagnostic.message.contains("None") => self.suggest_optional(uri, diagnostic),
-            "HM006" => self.implement_protocol_methods(uri, diagnostic),
-            "PM001" => self.add_missing_patterns(uri, diagnostic),
-            "PM002" => self.remove_unreachable_pattern(uri, diagnostic),
-            _ => None,
+            Some("unused-variable" | "unused-import") => self.remove_unused_line(uri, diagnostic).into_iter().collect(),
+            Some("HM001") if diagnostic.message.contains("None") => {
+                self.suggest_optional(uri, diagnostic).into_iter().collect()
+            }
+            Some("HM006") => self.implement_protocol_methods(uri, diagnostic).into_iter().collect(),
+            Some("PM001") => self.add_missing_patterns(uri, diagnostic).into_iter().collect(),
+            Some("PM002") => {
+                let mut actions = Vec::new();
+                if let Some(move_action) = self.move_pattern_before_previous(uri, diagnostic) {
+                    actions.push(move_action);
+                }
+                if let Some(remove_action) = self.remove_unreachable_pattern(uri, diagnostic) {
+                    actions.push(remove_action);
+                }
+                actions
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -346,20 +361,91 @@ impl CodeActionsProvider {
         }
     }
 
+    /// Quick fix: Move unreachable pattern before the subsuming pattern (PM002)
+    ///
+    /// Moves the unreachable pattern case block before the previous case block (likely the subsuming one).
+    /// This allows the pattern to be checked before the more general pattern that subsumes it.
+    fn move_pattern_before_previous(&self, uri: &Url, diagnostic: &lsp_types::Diagnostic) -> Option<CodeAction> {
+        self.documents.get_document(uri, |document| {
+            let source = document.text();
+            let lines: Vec<&str> = source.lines().collect();
+            let diag_line = diagnostic.range.start.line as usize;
+
+            if diag_line >= lines.len() {
+                return None;
+            }
+
+            // Find the unreachable case statement (diagnostic should point to it)
+            let unreachable_case_start = (0..=diag_line)
+                .rev()
+                .find(|&i| i < lines.len() && lines[i].trim_start().starts_with("case "))?;
+
+            let unreachable_case_end = ((unreachable_case_start + 1)..lines.len())
+                .find(|&i| {
+                    let trimmed = lines[i].trim_start();
+                    trimmed.starts_with("case ")
+                        || (!trimmed.is_empty() && !trimmed.starts_with(' ') && !trimmed.starts_with('\t'))
+                })
+                .unwrap_or(lines.len());
+
+            let previous_case_start = (0..unreachable_case_start)
+                .rev()
+                .find(|&i| lines[i].trim_start().starts_with("case "))?;
+
+            let unreachable_case_text: String = lines[unreachable_case_start..unreachable_case_end]
+                .iter()
+                .map(|line| format!("{line}\n"))
+                .collect();
+
+            let edits = vec![
+                TextEdit {
+                    range: Range {
+                        start: Position { line: previous_case_start as u32, character: 0 },
+                        end: Position { line: previous_case_start as u32, character: 0 },
+                    },
+                    new_text: unreachable_case_text,
+                },
+                TextEdit {
+                    range: Range {
+                        start: Position { line: unreachable_case_start as u32, character: 0 },
+                        end: Position { line: unreachable_case_end as u32, character: 0 },
+                    },
+                    new_text: String::new(),
+                },
+            ];
+
+            let mut changes = HashMap::default();
+            changes.insert(uri.clone(), edits);
+
+            Some(CodeAction {
+                title: "Move pattern before subsuming pattern".to_string(),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diagnostic.clone()]),
+                edit: Some(WorkspaceEdit { changes: Some(changes), document_changes: None, change_annotations: None }),
+                command: None,
+                is_preferred: Some(true),
+                disabled: None,
+                data: None,
+            })
+        })?
+    }
+
     /// Quick fix: Remove unreachable pattern (PM002)
     ///
     /// Removes the entire case block that contains an unreachable pattern.
-    /// The diagnostic range points to the pattern, we need to extend it to include the entire case.
+    /// The diagnostic range points to the case pattern.
     fn remove_unreachable_pattern(&self, uri: &Url, diagnostic: &lsp_types::Diagnostic) -> Option<CodeAction> {
         self.documents.get_document(uri, |document| {
             let source = document.text();
             let lines: Vec<&str> = source.lines().collect();
-            let start_line = diagnostic.range.start.line as usize;
-            if start_line >= lines.len() {
+            let diag_line = diagnostic.range.start.line as usize;
+
+            if diag_line >= lines.len() {
                 return None;
             }
 
-            let case_start_line = (0..=start_line)
+            // Find the case statement (diagnostic should point to it)
+            let case_start_line = (0..=diag_line)
                 .rev()
                 .find(|&i| i < lines.len() && lines[i].trim_start().starts_with("case "))?;
 
@@ -385,7 +471,7 @@ impl CodeActionsProvider {
                 diagnostics: Some(vec![diagnostic.clone()]),
                 edit: Some(WorkspaceEdit { changes: Some(changes), document_changes: None, change_annotations: None }),
                 command: None,
-                is_preferred: Some(true),
+                is_preferred: Some(false),
                 disabled: None,
                 data: None,
             })
@@ -785,5 +871,100 @@ mod tests {
         assert!(result.contains("int"));
         assert!(result.contains("str"));
         assert!(result.contains("|"));
+    }
+
+    #[tokio::test]
+    async fn test_move_pattern_before_previous() {
+        let (provider, uri) = create_test_provider().await;
+        let documents = provider.documents.clone();
+
+        let source = "def foo(x):\n    match x:\n        case int():\n            return 1\n        case _:\n            return 0\n";
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostic = lsp_types::Diagnostic {
+            range: Range { start: Position { line: 4, character: 13 }, end: Position { line: 4, character: 14 } },
+            severity: Some(lsp_types::DiagnosticSeverity::WARNING),
+            code: Some(NumberOrString::String("PM002".to_string())),
+            message: "This pattern is unreachable (subsumed by an earlier pattern)".to_string(),
+            source: Some("beacon".to_string()),
+            ..Default::default()
+        };
+
+        let result = provider.move_pattern_before_previous(&uri, &diagnostic);
+        assert!(result.is_some());
+
+        let action = result.unwrap();
+        assert_eq!(action.title, "Move pattern before subsuming pattern");
+        assert_eq!(action.is_preferred, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_pm002_provides_both_actions() {
+        let (provider, uri) = create_test_provider().await;
+        let documents = provider.documents.clone();
+
+        let source = "def foo(x):\n    match x:\n        case int():\n            return 1\n        case _:\n            return 0\n";
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostic = lsp_types::Diagnostic {
+            range: Range { start: Position { line: 4, character: 13 }, end: Position { line: 4, character: 14 } },
+            severity: Some(lsp_types::DiagnosticSeverity::WARNING),
+            code: Some(NumberOrString::String("PM002".to_string())),
+            message: "This pattern is unreachable (subsumed by an earlier pattern)".to_string(),
+            source: Some("beacon".to_string()),
+            ..Default::default()
+        };
+
+        let actions = provider.quick_fix_for_diagnostic(&uri, &diagnostic);
+        assert_eq!(actions.len(), 2);
+
+        assert!(actions[0].title.contains("Move"));
+        assert_eq!(actions[0].is_preferred, Some(true));
+
+        assert!(actions[1].title.contains("Remove"));
+        assert_eq!(actions[1].is_preferred, Some(false));
+    }
+
+    #[tokio::test]
+    async fn test_pm002_code_actions_integration() {
+        let (provider, uri) = create_test_provider().await;
+        let documents = provider.documents.clone();
+
+        let source = "def foo(x):\n    match x:\n        case int():\n            return 1\n        case _:\n            return 0\n";
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostic = lsp_types::Diagnostic {
+            range: Range { start: Position { line: 4, character: 13 }, end: Position { line: 4, character: 14 } },
+            severity: Some(lsp_types::DiagnosticSeverity::WARNING),
+            code: Some(NumberOrString::String("PM002".to_string())),
+            message: "This pattern is unreachable (subsumed by an earlier pattern)".to_string(),
+            source: Some("beacon".to_string()),
+            ..Default::default()
+        };
+
+        let params = CodeActionParams {
+            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            range: diagnostic.range,
+            context: lsp_types::CodeActionContext { diagnostics: vec![diagnostic], only: None, trigger_kind: None },
+            work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
+            partial_result_params: lsp_types::PartialResultParams::default(),
+        };
+
+        let actions = provider.code_actions(params).await;
+        assert!(actions.len() >= 2, "Expected at least 2 actions, got {}", actions.len());
+
+        let move_action = actions.iter().find(|a| {
+            if let CodeActionOrCommand::CodeAction(ca) = a { ca.title.contains("Move") } else { false }
+        });
+
+        let remove_action = actions.iter().find(|a| {
+            if let CodeActionOrCommand::CodeAction(ca) = a { ca.title.contains("Remove") } else { false }
+        });
+
+        assert!(move_action.is_some(), "Move action not found");
+        assert!(remove_action.is_some(), "Remove action not found");
     }
 }

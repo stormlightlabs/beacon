@@ -39,19 +39,74 @@ impl DiagnosticProvider {
 
     /// Generate diagnostics for a document by combining syntax errors, type errors, and other analysis issues.
     pub fn generate_diagnostics(&self, uri: &Url, analyzer: &mut Analyzer) -> Vec<Diagnostic> {
+        tracing::debug!("Generating diagnostics for {}", uri);
         let mut diagnostics = Vec::new();
-        self.add_parse_errors(uri, &mut diagnostics);
-        self.add_linter_diagnostics(uri, &mut diagnostics);
-        self.add_unbound_variable_errors(uri, analyzer, &mut diagnostics);
-        self.add_type_errors(uri, analyzer, &mut diagnostics);
-        self.add_unsafe_any_warnings(uri, analyzer, &mut diagnostics);
-        self.add_annotation_mismatch_warnings(uri, analyzer, &mut diagnostics);
-        self.add_dunder_diagnostics(uri, &mut diagnostics);
-        self.add_static_analysis_diagnostics(uri, analyzer, &mut diagnostics);
-        self.add_circular_import_diagnostics(uri, &mut diagnostics);
-        self.add_unresolved_import_diagnostics(uri, &mut diagnostics);
-        self.add_missing_module_diagnostics(uri, &mut diagnostics);
 
+        let start = std::time::Instant::now();
+        self.add_parse_errors(uri, &mut diagnostics);
+        tracing::trace!("Parse errors: {} ({:?})", diagnostics.len(), start.elapsed());
+
+        let start = std::time::Instant::now();
+        self.add_linter_diagnostics(uri, &mut diagnostics);
+        tracing::trace!("Linter diagnostics: {} ({:?})", diagnostics.len(), start.elapsed());
+
+        let start = std::time::Instant::now();
+        self.add_unbound_variable_errors(uri, analyzer, &mut diagnostics);
+        tracing::trace!("Unbound variable errors: {} ({:?})", diagnostics.len(), start.elapsed());
+
+        let start = std::time::Instant::now();
+        self.add_type_errors(uri, analyzer, &mut diagnostics);
+        tracing::trace!("Type errors: {} ({:?})", diagnostics.len(), start.elapsed());
+
+        let start = std::time::Instant::now();
+        self.add_unsafe_any_warnings(uri, analyzer, &mut diagnostics);
+        tracing::trace!("Unsafe Any warnings: {} ({:?})", diagnostics.len(), start.elapsed());
+
+        let start = std::time::Instant::now();
+        self.add_annotation_mismatch_warnings(uri, analyzer, &mut diagnostics);
+        tracing::trace!(
+            "Annotation mismatch warnings: {} ({:?})",
+            diagnostics.len(),
+            start.elapsed()
+        );
+
+        let start = std::time::Instant::now();
+        self.add_dunder_diagnostics(uri, &mut diagnostics);
+        tracing::trace!("Dunder diagnostics: {} ({:?})", diagnostics.len(), start.elapsed());
+
+        let start = std::time::Instant::now();
+        self.add_static_analysis_diagnostics(uri, analyzer, &mut diagnostics);
+        tracing::trace!(
+            "Static analysis diagnostics: {} ({:?})",
+            diagnostics.len(),
+            start.elapsed()
+        );
+
+        let start = std::time::Instant::now();
+        self.add_circular_import_diagnostics(uri, &mut diagnostics);
+        tracing::trace!(
+            "Circular import diagnostics: {} ({:?})",
+            diagnostics.len(),
+            start.elapsed()
+        );
+
+        let start = std::time::Instant::now();
+        self.add_unresolved_import_diagnostics(uri, &mut diagnostics);
+        tracing::trace!(
+            "Unresolved import diagnostics: {} ({:?})",
+            diagnostics.len(),
+            start.elapsed()
+        );
+
+        let start = std::time::Instant::now();
+        self.add_missing_module_diagnostics(uri, &mut diagnostics);
+        tracing::trace!(
+            "Missing module diagnostics: {} ({:?})",
+            diagnostics.len(),
+            start.elapsed()
+        );
+
+        tracing::info!("Generated {} total diagnostics for {}", diagnostics.len(), uri);
         diagnostics
     }
 

@@ -4,12 +4,6 @@ Implementation details and mod-specific tasks.
 
 All integration tests (parser, config, analyzer, HM, linter, completion, formatting, LSP) are tracked in [e2e_test](./e2e_tests.md)
 
-## LSP Features
-
-### Quick Fixes
-
-- [ ] Move pattern before subsuming pattern (PM002)
-
 ## Snippet Engine
 
 **Files:** `crates/server/src/snippets/mod.rs`, `crates/server/src/snippets/library.rs`, `crates/server/src/snippets/context.rs`, `crates/server/src/features/snippet_completion.rs`
@@ -179,37 +173,6 @@ See `docs/internal/e2e_tests.md` for comprehensive snippet integration test task
 
 **Files:** `crates/server/src/formatting/mod.rs`, `crates/server/src/formatting/rules.rs`, `crates/server/src/formatting/config.rs`, `crates/server/src/features/formatting.rs`
 
-### Core Formatter Infrastructure
-
-- Core formatter infrastructure implemented (module structure, config, token stream, context tracking, and state machine)
-
-### Whitespace, Indentation & Line-Length
-
-- Implements comprehensive formatting rules for whitespace, indentation, and line wrapping with Unicode-aware width calculations, smart breakpoints, and detailed documentation for all formatting behaviors.
-
-### Import Formatting
-
-Implemented PEP8-compliant import sorting with automatic grouping (stdlib/third-party/local), alphabetical ordering, multi-line wrapping, and deduplication.
-
-### String & Comment Formatting
-
-Implemented intelligent string quote normalization with escape-avoidance, docstring formatting, and comment spacing while preserving special directives (type: ignore, noqa, etc.).
-
-### Structural Formatting
-
-Implemented trailing comma handling, decorator spacing, type annotation rules, lambda wrapping, dictionary value indentation, comprehension wrapping strategies, and context-aware blank line management for classes and functions.
-
-### LSP Integration
-
-Implemented `textDocument/formatting` and `textDocument/rangeFormatting` handlers with proper LSP capabilities registration, error recovery, and configuration integration through the workspace config.
-
-- [x] Implement `textDocument/willSaveWaitUntil` for format-on-save
-- [x] Implement `textDocument/onTypeFormatting` for automatic formatting as user types (e.g., after typing `:` in function definitions)
-- [ ] Add performance monitoring to track formatting duration and emit warnings for slow operations (threshold-based)
-- [ ] Implement configurable timeout for large files to prevent LSP hangs
-
-Added `FormatterConfig` to main LSP `Config` with full LSP/TOML support for all formatting options (line length, indent size, quote style, trailing commas, blank lines, import sorting, compatibility mode), hot-reload support via `did_change_configuration`, and comprehensive tests for JSON/TOML loading.
-
 ### Testing & Validation
 
 See `docs/internal/e2e_tests.md` for formatter integration test tasks including performance benchmarks, compatibility testing, and error handling.
@@ -253,9 +216,6 @@ See [Linter Rules](#linter-rules) section below for BEA code implementation stat
         - [ ] String quote handling in annotations needs refinement
         - [ ] Callable syntax validation incomplete
         - [ ] Identifier validation is basic (only checks numeric start)
-    - [ ] Use tree-sitter to parse annotation strings as Python expressions
-    - [ ] Implement full Python type annotation grammar validation
-    - [ ] Support PEP 604 union syntax (`int | str`)
 
 ### Improve Caching Granularity
 
@@ -273,15 +233,7 @@ Tasks:
 
 ### Local Dev
 
-#### Core
-
-Sets up a structured, rotating logging system using `tracing` with full verbosity, panic capture, JSON-RPC tracing, and developer tooling for live log viewing and documentation in `CONTRIBUTING.md`.
-
-#### CLI Command
-
-Implements a live log-watching CLI that streams and colorizes log output from the active file with optional filtering by level or module.
-
-#### Observability
+#### System-wide Observability
 
 - [x] Add detailed `debug!` logs for parsing, AST construction, type inference, and symbol resolution.
 - [x] Add `info!` logs for file analysis start/finish, workspace detection, and initialization success.

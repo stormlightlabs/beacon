@@ -159,7 +159,9 @@ impl<'a> Linter<'a> {
     fn visit_node(&mut self, node: &AstNode) {
         match node {
             AstNode::Module { body, .. } => self.visit_body(body),
-            AstNode::FunctionDef { name, args, body, .. } => self.visit_function_def(name, args, body),
+            AstNode::FunctionDef { name, args, body, return_type, line, .. } => {
+                self.visit_function_def(name, args, body, return_type, *line)
+            }
             AstNode::ClassDef { body, decorators, bases, line, .. } => {
                 self.visit_class_def(body, decorators, bases, *line)
             }
@@ -280,9 +282,23 @@ impl<'a> Linter<'a> {
         }
     }
 
-    fn visit_function_def(&mut self, name: &str, args: &[beacon_parser::Parameter], body: &[AstNode]) {
+    fn visit_function_def(
+        &mut self, name: &str, args: &[beacon_parser::Parameter], body: &[AstNode], return_type: &Option<String>,
+        line: usize,
+    ) {
         self.check_duplicate_arguments(args, name);
         self.check_redundant_pass(body);
+
+        for param in args {
+            if let Some(annotation) = &param.type_annotation {
+                self.check_forward_annotation_syntax(annotation, param.line, param.col);
+            }
+        }
+
+        if let Some(ret_type) = return_type {
+            self.check_forward_annotation_syntax(ret_type, line, 0);
+        }
+
         self.ctx.enter_function();
         self.visit_body(body);
         self.check_unused_global_nonlocal();
@@ -463,7 +479,6 @@ impl<'a> Linter<'a> {
         self.check_two_starred_expressions(target, line, col);
         self.check_too_many_expressions_in_starred_assignment(target, value, line, col);
 
-        // Track assignments for global/nonlocal checking
         if self.ctx.function_depth > 0 {
             for name in target.extract_target_names() {
                 self.ctx.track_assignment(name);
@@ -559,7 +574,6 @@ impl<'a> Linter<'a> {
     /// Valid: `def f(): pass` (single pass in block)
     /// Invalid: `def f(): pass; return 1` (pass is redundant)
     fn check_redundant_pass(&mut self, body: &[AstNode]) {
-        // A block with only a pass statement is valid
         if body.len() <= 1 {
             return;
         }
@@ -792,60 +806,33 @@ impl<'a> Linter<'a> {
         }
     }
 
+    /// Validate annotation syntax using the proper AnnotationParser
+    ///
+    /// This uses beacon_core's AnnotationParser for full PEP 484/585/604 validation:
+    /// - Basic types: int, str, bool, float, None
+    /// - Parameterized types: list[int], dict[str, int]
+    /// - Union types: Union[int, str], int | str (PEP 604)
+    /// - Optional: Optional[T]
+    /// - Callable: Callable[[args...], return]
+    /// - Complex nested generics
     fn validate_annotation_syntax(annotation: &str) -> Option<String> {
-        let annotation = annotation.trim();
+        let mut annotation = annotation.trim();
 
         if annotation.is_empty() {
             return None;
         }
 
-        let mut bracket_stack = Vec::new();
-        let mut in_string = false;
-        let mut escape_next = false;
-
-        for ch in annotation.chars() {
-            if escape_next {
-                escape_next = false;
-                continue;
-            }
-
-            match ch {
-                '\\' => escape_next = true,
-                '"' | '\'' => in_string = !in_string,
-                '[' | '(' if !in_string => bracket_stack.push(ch),
-                ']' if !in_string => {
-                    if bracket_stack.pop() != Some('[') {
-                        return Some("unmatched ']'".to_string());
-                    }
-                }
-                ')' if !in_string => {
-                    if bracket_stack.pop() != Some('(') {
-                        return Some("unmatched ')'".to_string());
-                    }
-                }
-                _ => {}
-            }
+        if (annotation.starts_with('\'') && annotation.ends_with('\''))
+            || (annotation.starts_with('"') && annotation.ends_with('"'))
+        {
+            annotation = &annotation[1..annotation.len() - 1];
         }
 
-        if !bracket_stack.is_empty() {
-            let unclosed = bracket_stack.last().unwrap();
-            return Some(format!("unclosed '{unclosed}'"));
+        let parser = beacon_core::AnnotationParser::new();
+        match parser.parse(annotation) {
+            Ok(_) => None,
+            Err(err) => Some(format!("{err}")),
         }
-
-        if annotation.contains(",,") {
-            return Some("consecutive commas".to_string());
-        }
-
-        if annotation.contains("[]") || annotation.contains("()") {
-            return Some("empty brackets".to_string());
-        }
-
-        let first_char = annotation.chars().next()?;
-        if first_char.is_numeric() {
-            return Some("annotation cannot start with a number".to_string());
-        }
-
-        None
     }
 
     /// BEA026: [RuleKind::IsLiteral]
@@ -1936,5 +1923,257 @@ except:
         let source = "return 42  # noqa: bea003";
         let diagnostics = lint_source(source);
         assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_annotation_pep604_union_syntax() {
+        let source = "def foo(x: 'int | str') -> str:\n    return str(x)";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "PEP 604 union syntax (int | str) should be valid"
+        );
+    }
+
+    #[test]
+    fn test_annotation_multiple_union_members() {
+        let source = "def foo(x: 'int | str | None') -> str:\n    return str(x)";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Multiple union members should be valid"
+        );
+    }
+
+    #[test]
+    fn test_annotation_complex_nested_generics() {
+        let source = "def foo(x: 'dict[str, list[int]]') -> None:\n    pass";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Complex nested generics should be valid"
+        );
+    }
+
+    #[test]
+    fn test_annotation_callable_syntax() {
+        let source = "def foo(f: 'Callable[[int, str], bool]') -> bool:\n    return f(1, 'x')";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Callable syntax should be valid"
+        );
+    }
+
+    #[test]
+    fn test_annotation_callable_no_args() {
+        let source = "def foo(f: 'Callable[[], int]') -> int:\n    return f()";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Callable with no args should be valid"
+        );
+    }
+
+    #[test]
+    fn test_annotation_callable_ellipsis() {
+        let source = "def foo(f: 'Callable[..., int]') -> int:\n    return f()";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Callable with ellipsis should be valid"
+        );
+    }
+
+    #[test]
+    fn test_annotation_optional_type() {
+        let source = "def foo(x: 'Optional[int]') -> int:\n    return x or 0";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Optional type should be valid"
+        );
+    }
+
+    #[test]
+    fn test_annotation_union_syntax() {
+        let source = "def foo(x: 'Union[int, str]') -> str:\n    return str(x)";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Union syntax should be valid"
+        );
+    }
+
+    #[test]
+    fn test_annotation_tuple_types() {
+        let source = "def foo(x: 'tuple[int, str, bool]') -> int:\n    return x[0]";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Tuple with multiple types should be valid"
+        );
+    }
+
+    #[test]
+    fn test_annotation_type_variables() {
+        let source = "def foo(x: 'T') -> 'T':\n    return x";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Type variables should be valid"
+        );
+    }
+
+    #[test]
+    fn test_annotation_intersection_types() {
+        let source = "def foo(x: 'Iterable & Sized') -> int:\n    return len(x)";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Intersection types should be valid"
+        );
+    }
+
+    #[test]
+    fn test_annotation_generic_class() {
+        let source = "def foo(x: 'MyGeneric[int, str]') -> None:\n    pass";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Generic user-defined classes should be valid"
+        );
+    }
+
+    #[test]
+    fn test_annotation_generator_types() {
+        let source = "def foo() -> 'Generator[int, None, str]':\n    yield 1\n    return 'done'";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Generator types should be valid"
+        );
+    }
+
+    #[test]
+    fn test_annotation_mismatched_brackets() {
+        let source = "def foo(x: 'list[int') -> None:\n    pass";
+        let diagnostics = lint_source(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Mismatched brackets should produce BEA023 error"
+        );
+    }
+
+    #[test]
+    fn test_annotation_invalid_syntax() {
+        let source = "def foo(x: 'int | | str') -> None:\n    pass";
+        let diagnostics = lint_source(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Invalid syntax (double pipe) should produce BEA023 error"
+        );
+    }
+
+    #[test]
+    fn test_annotation_unmatched_closing_bracket() {
+        let source = "def foo(x: 'list]int[') -> None:\n    pass";
+        let diagnostics = lint_source(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Unmatched closing bracket should produce BEA023 error"
+        );
+    }
+
+    #[test]
+    fn test_annotation_invalid_callable_syntax() {
+        let source = "def foo(f: 'Callable[int, str]') -> None:\n    pass";
+        let diagnostics = lint_source(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Invalid Callable syntax (missing nested brackets) should produce BEA023 error"
+        );
+    }
+
+    #[test]
+    fn test_annotation_deeply_nested_valid() {
+        let source = "def foo(x: 'dict[str, list[tuple[int, str, Optional[bool]]]]') -> None:\n    pass";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Deeply nested valid types should not produce errors"
+        );
+    }
+
+    #[test]
+    fn test_annotation_mixed_union_and_intersection() {
+        let source = "def foo(x: '(A | B) & (C | D)') -> None:\n    pass";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Mixed union and intersection types should be valid"
+        );
+    }
+
+    #[test]
+    fn test_annotation_basic_types() {
+        let source = "def foo(a: 'int', b: 'str', c: 'bool', d: 'float', e: 'None') -> 'Any':\n    pass";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Basic types should all be valid"
+        );
+    }
+
+    #[test]
+    fn test_annotation_whitespace_handling() {
+        let source = "def foo(x: '  int  |  str  ') -> None:\n    pass";
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
+            "Whitespace in annotations should be handled correctly"
+        );
     }
 }

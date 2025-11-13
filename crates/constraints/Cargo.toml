@@ -7,3 +7,4 @@ edition = "2024"
 rustc-hash = "2.0"
 beacon-core = { path = "../core" }
 beacon-parser = { path = "../parser" }
+tracing = "0.1"

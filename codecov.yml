@@ -18,4 +18,5 @@ ignore:
   - "crates/server/src/interpreter.rs"
   # These files are basically giant TODO lists
   - "crates/server/src/workspace.rs"
-  - "crates/server/src/features/code_actions.rs"
+  # Ignores zed extension impl
+  - "pkg/**"

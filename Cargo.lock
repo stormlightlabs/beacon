@@ -190,6 +190,7 @@ dependencies = [
  "beacon-core",
  "beacon-parser",
  "rustc-hash",
+ "tracing",
 ]
 
 [[package]]

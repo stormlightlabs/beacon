@@ -363,10 +363,11 @@ pub fn visit_match(
 
             let mut previous_patterns = Vec::new();
             for case in cases {
+                let case_span = Span::with_end(case.line, case.col, case.end_line, case.end_col);
                 ctx.constraints.push(Constraint::PatternReachable(
                     case.pattern.clone(),
                     previous_patterns.clone(),
-                    span,
+                    case_span,
                 ));
 
                 ctx.constraints.push(Constraint::PatternTypeCompatible(

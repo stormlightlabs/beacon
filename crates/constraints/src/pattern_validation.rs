@@ -58,23 +58,21 @@ fn validate_literal_pattern_type(literal: &AstNode, subject_type: &Type) -> Resu
 }
 
 /// Validate that a class pattern can match the subject type
+///
+/// Class patterns like `case int():` or `case str():` match instances of those types.
+/// Built-in types are represented as `Type::Con(TypeCtor::Int)` not `Type::Con(TypeCtor::Class("int"))`.
 fn validate_class_pattern_type(
     cls: &str, subject_type: &Type, _class_registry: &ClassRegistry,
 ) -> Result<(), TypeError> {
+    // Check if this class pattern matches the subject type
+    if class_pattern_matches_type(cls, subject_type) {
+        return Ok(());
+    }
+
     match subject_type {
-        Type::Con(TypeCtor::Class(subject_class)) => {
-            if subject_class != cls {
-                return Err(TypeError::PatternTypeMismatch {
-                    pattern_type: format!("class {cls}"),
-                    subject_type: format!("class {subject_class}"),
-                });
-            }
-            Ok(())
-        }
         Type::Union(variants) => {
-            let any_compatible = variants
-                .iter()
-                .any(|variant| matches!(variant, Type::Con(TypeCtor::Class(subject_class)) if subject_class == cls));
+            // For union types, check if the class pattern can match any variant
+            let any_compatible = variants.iter().any(|variant| class_pattern_matches_type(cls, variant));
             if any_compatible {
                 Ok(())
             } else {
@@ -89,6 +87,20 @@ fn validate_class_pattern_type(
             pattern_type: format!("class {cls}"),
             subject_type: subject_type.to_string(),
         }),
+    }
+}
+
+/// Check if a class pattern matches a given type
+///
+/// Handles both built-in types (int, str, bool, float) and user-defined classes.
+fn class_pattern_matches_type(cls: &str, ty: &Type) -> bool {
+    match (cls, ty) {
+        ("int", Type::Con(TypeCtor::Int)) => true,
+        ("str", Type::Con(TypeCtor::String)) => true,
+        ("bool", Type::Con(TypeCtor::Bool)) => true,
+        ("float", Type::Con(TypeCtor::Float)) => true,
+        (pattern_class, Type::Con(TypeCtor::Class(subject_class))) => pattern_class == subject_class,
+        _ => false,
     }
 }
 
@@ -186,7 +198,6 @@ pub fn validate_pattern_structure(pattern: &Pattern, subject_type: &Type) -> Res
                     }
                 }
                 // If arity is unknown (e.g., tuple[int, ...]), we can't validate
-                // TODO: Add comment in code to indicate this limitation for sequences
             }
             Ok(())
         }
@@ -201,5 +212,107 @@ fn extract_tuple_arity(ty: &Type) -> Option<usize> {
         Type::Tuple(types) => Some(types.len()),
         // Homogeneous tuple: tuple[T] - arbitrary length, no known arity
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use beacon_parser::Pattern;
+
+    #[test]
+    fn test_class_pattern_matches_int() {
+        let int_type = Type::int();
+        assert!(
+            class_pattern_matches_type("int", &int_type),
+            "case int() should match int type"
+        );
+    }
+
+    #[test]
+    fn test_class_pattern_matches_str() {
+        let str_type = Type::string();
+        assert!(
+            class_pattern_matches_type("str", &str_type),
+            "case str() should match str type"
+        );
+    }
+
+    #[test]
+    fn test_class_pattern_matches_bool() {
+        let bool_type = Type::bool();
+        assert!(
+            class_pattern_matches_type("bool", &bool_type),
+            "case bool() should match bool type"
+        );
+    }
+
+    #[test]
+    fn test_class_pattern_matches_float() {
+        let float_type = Type::float();
+        assert!(
+            class_pattern_matches_type("float", &float_type),
+            "case float() should match float type"
+        );
+    }
+
+    #[test]
+    fn test_class_pattern_int_union() {
+        let class_registry = ClassRegistry::new();
+        let union_type = Type::union(vec![Type::int(), Type::string()]);
+        let pattern = Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] };
+
+        let result = validate_pattern_type_compatibility(&pattern, &union_type, &class_registry);
+        assert!(result.is_ok(), "case int() should match int | str union without error");
+    }
+
+    #[test]
+    fn test_class_pattern_str_union() {
+        let class_registry = ClassRegistry::new();
+        let union_type = Type::union(vec![Type::int(), Type::string()]);
+        let pattern = Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] };
+
+        let result = validate_pattern_type_compatibility(&pattern, &union_type, &class_registry);
+        assert!(result.is_ok(), "case str() should match int | str union without error");
+    }
+
+    #[test]
+    fn test_class_pattern_int_simple() {
+        let class_registry = ClassRegistry::new();
+        let int_type = Type::int();
+        let pattern = Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] };
+
+        let result = validate_pattern_type_compatibility(&pattern, &int_type, &class_registry);
+        assert!(result.is_ok(), "case int() should match int type without error");
+    }
+
+    #[test]
+    fn test_class_pattern_mismatch() {
+        let class_registry = ClassRegistry::new();
+        let int_type = Type::int();
+        let pattern = Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] };
+
+        let result = validate_pattern_type_compatibility(&pattern, &int_type, &class_registry);
+        assert!(result.is_err(), "case str() should not match int type");
+    }
+
+    #[test]
+    fn test_class_pattern_custom_class() {
+        let class_registry = ClassRegistry::new();
+        let point_type = Type::Con(TypeCtor::Class("Point".to_string()));
+        let pattern = Pattern::MatchClass { cls: "Point".to_string(), patterns: vec![] };
+
+        let result = validate_pattern_type_compatibility(&pattern, &point_type, &class_registry);
+        assert!(result.is_ok(), "case Point() should match Point class");
+    }
+
+    #[test]
+    fn test_class_pattern_union_with_none() {
+        let class_registry = ClassRegistry::new();
+        let union_type = Type::union(vec![Type::int(), Type::none()]);
+        let pattern = Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] };
+
+        let result = validate_pattern_type_compatibility(&pattern, &union_type, &class_registry);
+        assert!(result.is_ok(), "case int() should match int | None union");
     }
 }

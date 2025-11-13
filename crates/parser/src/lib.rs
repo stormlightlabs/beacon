@@ -515,6 +515,10 @@ pub struct MatchCase {
     pub pattern: Pattern,
     pub guard: Option<AstNode>,
     pub body: Vec<AstNode>,
+    pub line: usize,
+    pub col: usize,
+    pub end_line: usize,
+    pub end_col: usize,
 }
 
 /// Pattern for pattern matching
@@ -2176,7 +2180,14 @@ impl PythonParser {
             .map(|cond| self.node_to_ast(cond, source))
             .transpose()?;
 
-        Ok(MatchCase { pattern, guard, body })
+        let start_position = node.start_position();
+        let end_position = node.end_position();
+        let line = start_position.row + 1;
+        let col = start_position.column + 1;
+        let end_line = end_position.row + 1;
+        let end_col = end_position.column + 1;
+
+        Ok(MatchCase { pattern, guard, body, line, col, end_line, end_col })
     }
 
     fn extract_pattern(&self, node: &Node, source: &str) -> Result<Pattern> {

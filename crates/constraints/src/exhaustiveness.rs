@@ -57,6 +57,12 @@ pub enum ReachabilityResult {
 
 /// Check if a set of patterns exhaustively covers a subject type
 pub fn check_exhaustiveness(subject_type: &Type, patterns: &[Pattern]) -> ExhaustivenessResult {
+    tracing::debug!(
+        "Checking exhaustiveness for subject type: {} with {} patterns",
+        subject_type,
+        patterns.len()
+    );
+
     let initial_uncovered = match subject_type {
         Type::Con(TypeCtor::Bool) => {
             vec![Type::union(vec![Type::literal_bool(true), Type::literal_bool(false)])]
@@ -65,11 +71,13 @@ pub fn check_exhaustiveness(subject_type: &Type, patterns: &[Pattern]) -> Exhaus
     };
 
     let mut uncovered = initial_uncovered;
-    for pattern in patterns {
+    for (idx, pattern) in patterns.iter().enumerate() {
         let covered = compute_coverage(pattern, subject_type);
+        tracing::trace!("Pattern {}: {:?} covers {} types", idx, pattern, covered.len());
         uncovered = subtract_coverage(uncovered, covered);
 
         if uncovered.is_empty() {
+            tracing::debug!("Match is exhaustive after pattern {}", idx);
             return ExhaustivenessResult::Exhaustive;
         }
     }
@@ -77,6 +85,10 @@ pub fn check_exhaustiveness(subject_type: &Type, patterns: &[Pattern]) -> Exhaus
     if uncovered.is_empty() {
         ExhaustivenessResult::Exhaustive
     } else {
+        tracing::debug!(
+            "Match is non-exhaustive. Uncovered types: {}",
+            uncovered.iter().map(|ty| ty.to_string()).collect::<Vec<_>>().join(", ")
+        );
         ExhaustivenessResult::NonExhaustive { uncovered }
     }
 }
@@ -139,12 +151,19 @@ fn types_equal_or_subtype(type1: &Type, type2: &Type) -> bool {
 /// - For each previous pattern, check if it subsumes the current pattern.
 /// - If any previous pattern fully subsumes this one, the pattern is unreachable.
 pub fn check_reachability(pattern: &Pattern, previous_patterns: &[Pattern]) -> ReachabilityResult {
+    tracing::trace!(
+        "Checking reachability for pattern against {} previous patterns",
+        previous_patterns.len()
+    );
+
     for (idx, prev_pattern) in previous_patterns.iter().enumerate() {
         if pattern_subsumes(prev_pattern, pattern) {
+            tracing::debug!("Pattern is unreachable, subsumed by pattern {}", idx);
             return ReachabilityResult::Unreachable { subsumed_by: idx };
         }
     }
 
+    tracing::trace!("Pattern is reachable");
     ReachabilityResult::Reachable
 }
 
@@ -180,8 +199,12 @@ fn compute_coverage(pattern: &Pattern, subject_type: &Type) -> Vec<Type> {
             ),
             _ => false,
         }),
-        Pattern::MatchClass { cls, .. } => filter_types(subject_type, |ty| match ty {
-            Type::Con(TypeCtor::Class(name)) => name == cls,
+        Pattern::MatchClass { cls, .. } => filter_types(subject_type, |ty| match (cls.as_str(), ty) {
+            ("int", Type::Con(TypeCtor::Int)) => true,
+            ("str", Type::Con(TypeCtor::String)) => true,
+            ("bool", Type::Con(TypeCtor::Bool)) => true,
+            ("float", Type::Con(TypeCtor::Float)) => true,
+            (_, Type::Con(TypeCtor::Class(name))) => name == cls,
             _ => false,
         }),
         Pattern::MatchOr(alternatives) => {
@@ -199,10 +222,10 @@ fn compute_coverage(pattern: &Pattern, subject_type: &Type) -> Vec<Type> {
 /// Check if pattern1 subsumes pattern2 (pattern2 is redundant after pattern1)
 fn pattern_subsumes(pattern1: &Pattern, pattern2: &Pattern) -> bool {
     match (pattern1, pattern2) {
-        (Pattern::MatchAs { pattern: None, name: Some(_) }, _) => true,
+        (Pattern::MatchAs { pattern: None, .. }, _) => true,
         (Pattern::MatchAs { pattern: Some(sub1), .. }, _) => pattern_subsumes(sub1, pattern2),
         (_, Pattern::MatchAs { pattern: Some(sub2), .. }) => pattern_subsumes(pattern1, sub2),
-        (_, Pattern::MatchAs { pattern: None, name: Some(_) }) => false,
+        (_, Pattern::MatchAs { pattern: None, .. }) => false,
         (Pattern::MatchValue(lit1), Pattern::MatchValue(lit2)) => literals_equal(lit1, lit2),
         (Pattern::MatchClass { cls: cls1, patterns: pats1 }, Pattern::MatchClass { cls: cls2, patterns: pats2 }) => {
             cls1 == cls2
@@ -643,5 +666,68 @@ mod tests {
         let coverage = compute_coverage(&pattern, &subject);
         assert_eq!(coverage.len(), 1);
         assert!(matches!(coverage[0], Type::App(_, _)));
+    }
+
+    #[test]
+    fn test_exhaustiveness_union_with_or_pattern() {
+        let subject = Type::union(vec![Type::int(), Type::string()]);
+        let pattern = Pattern::MatchOr(vec![
+            Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] },
+            Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] },
+        ]);
+        let patterns = vec![pattern];
+        let result = check_exhaustiveness(&subject, &patterns);
+        assert!(
+            matches!(result, ExhaustivenessResult::Exhaustive),
+            "str() | int() should be exhaustive for int | str"
+        );
+    }
+
+    #[test]
+    fn test_compute_coverage_class_int() {
+        let subject = Type::union(vec![Type::int(), Type::string()]);
+        let pattern = Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] };
+        let coverage = compute_coverage(&pattern, &subject);
+        assert_eq!(coverage.len(), 1);
+        assert!(
+            matches!(coverage[0], Type::Con(TypeCtor::Int)),
+            "case int() should cover int type"
+        );
+    }
+
+    #[test]
+    fn test_compute_coverage_class_str() {
+        let subject = Type::union(vec![Type::int(), Type::string()]);
+        let pattern = Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] };
+        let coverage = compute_coverage(&pattern, &subject);
+        assert_eq!(coverage.len(), 1);
+        assert!(
+            matches!(coverage[0], Type::Con(TypeCtor::String)),
+            "case str() should cover str type"
+        );
+    }
+
+    #[test]
+    fn test_compute_coverage_class_bool() {
+        let subject = Type::union(vec![Type::bool(), Type::string()]);
+        let pattern = Pattern::MatchClass { cls: "bool".to_string(), patterns: vec![] };
+        let coverage = compute_coverage(&pattern, &subject);
+        assert_eq!(coverage.len(), 1);
+        assert!(
+            matches!(coverage[0], Type::Con(TypeCtor::Bool)),
+            "case bool() should cover bool type"
+        );
+    }
+
+    #[test]
+    fn test_compute_coverage_class_float() {
+        let subject = Type::union(vec![Type::float(), Type::string()]);
+        let pattern = Pattern::MatchClass { cls: "float".to_string(), patterns: vec![] };
+        let coverage = compute_coverage(&pattern, &subject);
+        assert_eq!(coverage.len(), 1);
+        assert!(
+            matches!(coverage[0], Type::Con(TypeCtor::Float)),
+            "case float() should cover float type"
+        );
     }
 }

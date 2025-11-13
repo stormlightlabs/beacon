@@ -765,6 +765,10 @@ mod tests {
                     }),
                     guard: None,
                     body: vec![AstNode::Pass { line: 3, col: 9, end_col: 13, end_line: 3 }],
+                    line: 2,
+                    col: 5,
+                    end_line: 3,
+                    end_col: 13,
                 },
                 MatchCase {
                     pattern: Pattern::MatchValue(AstNode::Literal {
@@ -776,6 +780,10 @@ mod tests {
                     }),
                     guard: None,
                     body: vec![AstNode::Pass { line: 5, col: 9, end_line: 5, end_col: 13 }],
+                    line: 4,
+                    col: 5,
+                    end_line: 5,
+                    end_col: 13,
                 },
             ],
             line: 1,
