@@ -179,11 +179,9 @@ See `docs/internal/e2e_tests.md` for formatter integration test tasks including 
 
 ### Optimization
 
-- [ ] Incremental formatting (cache unchanged regions)
 - [ ] Parallel formatting for multiple files
 - [ ] Lazy token stream evaluation
 - [ ] Format buffer pooling (reduce allocations)
-- [ ] Short-circuit for already-formatted code detection
 
 ### Static Analysis & Linting
 
@@ -216,18 +214,6 @@ See [Linter Rules](#linter-rules) section below for BEA code implementation stat
         - [ ] String quote handling in annotations needs refinement
         - [ ] Callable syntax validation incomplete
         - [ ] Identifier validation is basic (only checks numeric start)
-
-### Improve Caching Granularity
-
-Current limitations from `analysis/mod.rs`:
-
-- Scope cache implementation is basic (extracts all nodes, no real filtering)
-- Cache invalidation is wholesale per document
-
-Tasks:
-
-- [ ] Import usage tracking
-- [ ] Selective invalidation: only reanalyze changed scopes and dependents
 
 ## Logging
 

@@ -13,7 +13,7 @@ The formatter follows these core principles:
 
 **Configurable**: Supports workspace and project-level configuration through beacon.toml or pyproject.toml files.
 
-**Incremental**: Designed to format code efficiently, with support for both full-file and range formatting.
+**Incremental**: Formats code caching of already-formatted sources and formatting results to minimize redundant processing.
 
 ## Formatting Pipeline
 
@@ -62,6 +62,51 @@ The formatter respects suppression directives:
 
 See [Suppressions](./suppressions.md) for complete documentation on formatter, linter, and type checker suppressions.
 
+## Optimizations
+
+The formatter includes intelligent caching to minimize formatting overhead:
+
+### Short-Circuit Cache
+
+The formatter maintains a hash-based cache of already-formatted sources. When formatting is requested:
+
+1. Source content and configuration are hashed
+2. Cache is checked for this hash combination
+3. If found, formatting is skipped entirely (O(1) operation)
+4. Source is returned unchanged
+
+### Incremental Formatting
+
+Formatting results are cached based on:
+
+- Source content hash
+- Configuration hash
+- Line range
+
+When formatting the same source multiple times (e.g., during editing), cached results are reused if:
+
+- Source hasn't changed
+- Configuration remains the same
+- Same range is being formatted
+
+The cache uses LRU (Least Recently Used) eviction with configurable size limits to prevent unbounded memory growth.
+
+### Cache Configuration
+
+Caching behavior can be controlled through configuration:
+
+```toml
+[formatting]
+cacheEnabled = true        # Enable result caching (default: true)
+cacheMaxEntries = 100      # Maximum cache entries (default: 100)
+```
+
+Disabling the cache may be useful in scenarios where:
+
+- Memory constraints are tight
+- Source changes very frequently
+- Deterministic performance is required
+
 ## Configuration
 
 Formatting behavior is controlled through settings:
@@ -76,6 +121,8 @@ trailingCommas = "multiline"
 maxBlankLines = 2
 importSorting = "pep8"
 compatibilityMode = "black"
+cacheEnabled = true
+cacheMaxEntries = 100
 ```
 
 See the [Configuration](../configuration.md) documentation for complete details.
