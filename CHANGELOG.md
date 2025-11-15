@@ -2,9 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Comprehensive cache architecture documentation covering multi-layer caching system, content hashing validation, and invalidation strategies
+
 ### Changed
 
-- Consolidated planning documents: deleted RELEASE.md, transformed ROADMAP.md into comprehensive release plan to v1.0 (19 releases), refactored TODO.md to focus on current milestone (v0.2.0) and tech debt
+- Consolidated planning documents: transformed ROADMAP.md into comprehensive release plan to v1.0 (19 releases), refactored TODO.md to focus on current active milestone and tech debt
+- Added documentation with detailed cache behavior descriptions & configuration options
 
 ## [0.1.0] - 2025-11-09
 

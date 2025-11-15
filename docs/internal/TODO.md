@@ -11,14 +11,13 @@ Cache granularity & selective invalidation tests & validation
 ### Merge Tasks
 
 - [x] ImportDependencyTracker integration tests
-- [ ] Scope-level content hashing validation
+- [x] Scope-level content hashing validation
 - [x] Cache regression tests
 
 ### Documentation
 
-- [ ] Document cache architecture and invalidation strategy
-- [ ] Add performance benchmarks for cache improvements
-- [ ] Update user-facing docs for cache behavior
+- [x] Document cache architecture and invalidation strategy
+- [x] Update user-facing docs for cache behavior
 
 ## Type Checker Bugs & Enhancements
 
@@ -246,3 +245,8 @@ See [Logging](#logging) section below for detailed logging standards.
     - Fatal errors and crash reports
 - [ ] Continue using `window/logMessage` for high-level, safe summaries ("Server initialized", "Analysis failed")
 - [ ] Provide a runtime flag or env var (`LSP_LOG_LEVEL`) for fine-grained control in deployments.
+
+## Parking Lot/Deferred
+
+- From 0.2.1
+    - [ ] Add performance benchmarks for cache improvements

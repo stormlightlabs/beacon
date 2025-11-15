@@ -427,7 +427,16 @@ workspace_analysis = true
 
 #### `enable_caching`
 
-Enable caching of parse trees and type inference results.
+Enable multi-layer caching of parse trees, type inference results, and formatting outputs. Caching dramatically improves performance for incremental edits and repeated operations.
+
+Beacon uses four cache layers:
+
+- **TypeCache**: Node-level type inference (capacity: 100)
+- **ScopeCache**: Scope-level analysis with content hashing (capacity: 200)
+- **AnalysisCache**: Document-level analysis artifacts (capacity: 50)
+- **IntrospectionCache**: Persistent Python introspection (capacity: 1000)
+
+When enabled, Beacon automatically invalidates stale cache entries when documents change. Scope-level content hashing ensures only modified scopes are re-analyzed.
 
 - **Type:** `boolean`
 - **Default:** `true`
@@ -437,9 +446,11 @@ Enable caching of parse trees and type inference results.
 enable_caching = true
 ```
 
+For technical details on cache architecture and invalidation strategies, see [Caching](./lsp/caching.md).
+
 #### `cache_size`
 
-Maximum number of documents to cache for faster analysis.
+Maximum number of documents to cache in the document-level analysis cache. Higher values improve performance for large workspaces at the cost of memory usage.
 
 - **Type:** `integer`
 - **Default:** `100`
