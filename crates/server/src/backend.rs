@@ -14,6 +14,7 @@ use lsp_types::{
     ServerCapabilities, ServerInfo, SignatureHelpOptions, TextDocumentSyncCapability, TextDocumentSyncKind,
     WorkDoneProgressOptions,
 };
+use rustc_hash::FxHashSet;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_lsp::{Client, LanguageServer, jsonrpc::Result, lsp_types::*};
@@ -309,6 +310,24 @@ impl LanguageServer for Backend {
             return;
         }
 
+        let mut workspace = self.workspace.write().await;
+        workspace.update_dependencies(&url);
+
+        let symbol_imports = workspace.get_symbol_imports(&url);
+        let mut resolved_imports = Vec::new();
+        for import in &symbol_imports {
+            if let Some(resolved_uri) = workspace.resolve_import(&import.from_module) {
+                resolved_imports.push((resolved_uri, import.symbol.clone()));
+            }
+        }
+        drop(workspace);
+
+        if !resolved_imports.is_empty() {
+            let mut analyzer = self.analyzer.write().await;
+            analyzer.record_imports(&url, &resolved_imports);
+            drop(analyzer);
+        }
+
         tracing::debug!(uri = %url, "Publishing diagnostics for opened document");
         self.publish_diagnostics(url).await;
     }
@@ -323,24 +342,73 @@ impl LanguageServer for Backend {
             .update_document(params.text_document, params.content_changes)
         {
             Ok(_) => {
-                tracing::trace!(uri = %uri, "Document updated, invalidating analysis");
+                tracing::trace!(uri = %uri, "Document updated, performing selective invalidation");
                 let mut analyzer = self.analyzer.write().await;
-                analyzer.invalidate(&uri);
+
+                let changed_scopes = analyzer.invalidate_selective(&uri);
 
                 let mut workspace = self.workspace.write().await;
                 workspace.update_dependencies(&uri);
 
-                let invalidated = workspace.invalidate_dependents(&uri);
-                let reanalyzed_count = workspace.reanalyze_affected(&invalidated, &mut analyzer);
+                let graph_dependents = workspace.invalidate_dependents(&uri);
 
-                tracing::info!(uri = %uri, reanalyzed_count, "Reanalyzed affected modules");
+                let symbol_imports = workspace.get_symbol_imports(&uri);
+                let mut resolved_imports = Vec::new();
+                for import in &symbol_imports {
+                    if let Some(resolved_uri) = workspace.resolve_import(&import.from_module) {
+                        resolved_imports.push((resolved_uri, import.symbol.clone()));
+                    }
+                }
+                if !resolved_imports.is_empty() {
+                    analyzer.record_imports(&uri, &resolved_imports);
+                }
+
+                let mut import_dependents = FxHashSet::default();
+                if !changed_scopes.is_empty() {
+                    let affected_exports = analyzer.get_affected_exports(&uri, &changed_scopes);
+
+                    if !affected_exports.is_empty() {
+                        let importers_map = analyzer.get_importers_by_symbol(&uri, &affected_exports);
+                        for importers in importers_map.values() {
+                            for importer in importers {
+                                import_dependents.insert(importer.clone());
+                            }
+                        }
+
+                        if !import_dependents.is_empty() {
+                            tracing::info!(
+                                uri = %uri,
+                                affected_symbols = affected_exports.len(),
+                                import_dependent_count = import_dependents.len(),
+                                "Cascading invalidation: {} affected exports, {} importing files",
+                                affected_exports.len(),
+                                import_dependents.len()
+                            );
+                        }
+                    }
+                }
+
+                let mut all_dependents = graph_dependents;
+                all_dependents.extend(import_dependents);
+
+                let reanalyzed_count = workspace.reanalyze_affected(&all_dependents, &mut analyzer);
+
+                tracing::info!(
+                    uri = %uri,
+                    changed_scopes = changed_scopes.len(),
+                    reanalyzed_count,
+                    "Selective invalidation complete: {} scopes changed, {} modules reanalyzed",
+                    changed_scopes.len(),
+                    reanalyzed_count
+                );
                 self.client
                     .log_message(
                         MessageType::INFO,
                         format!(
-                            "Reanalyzed {} module(s) after change to {}",
+                            "Reanalyzed {} module(s) after change to {} ({} scopes changed)",
                             reanalyzed_count,
-                            uri.path()
+                            uri.path(),
+                            changed_scopes.len()
                         ),
                     )
                     .await;

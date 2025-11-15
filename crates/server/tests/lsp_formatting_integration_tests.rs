@@ -151,7 +151,7 @@ def bar():
 
     let params = DocumentRangeFormattingParams {
         text_document: TextDocumentIdentifier { uri },
-        range: Range { start: Position { line: 4, character: 0 }, end: Position { line: 6, character: 0 } },
+        range: Range { start: Position { line: 4, character: 0 }, end: Position { line: 7, character: 0 } },
         options: FormattingOptions::default(),
         work_done_progress_params: Default::default(),
     };

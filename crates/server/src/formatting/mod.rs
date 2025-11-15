@@ -3,6 +3,7 @@
 //! Provides PEP8-compliant code formatting for Python source files.
 //! This module coordinates parsing, token stream generation, and formatting rules.
 
+pub mod cache;
 pub mod config;
 pub mod context;
 pub mod import;
@@ -11,6 +12,7 @@ pub mod state;
 pub mod token_stream;
 pub mod writer;
 
+pub use cache::FormatterCache;
 pub use config::FormatterConfig;
 pub use context::FormattingContext;
 pub use import::{ImportCategory, ImportSorter, ImportStatement};
@@ -31,21 +33,42 @@ use tree_sitter::Node;
 /// 2. Generate token stream from AST
 /// 3. Apply formatting rules while tracking context
 /// 4. Emit formatted output
+///
+/// Includes performance optimizations:
+/// - Short-circuit cache: detects already-formatted code in O(1)
+/// - Result cache: stores formatted output for incremental formatting
 pub struct Formatter {
     #[allow(dead_code)]
     config: FormatterConfig,
     parser: PythonParser,
+    cache: FormatterCache,
 }
 
 impl Formatter {
     /// Create a new formatter with the given configuration
     pub fn new(config: FormatterConfig, parser: PythonParser) -> Self {
-        Self { config, parser }
+        let cache = FormatterCache::new(config.cache_max_entries);
+        Self { config, parser, cache }
     }
 
     /// Create a formatter with default PEP8 configuration
     pub fn with_defaults() -> Self {
         Self::new(FormatterConfig::default(), PythonParser::default())
+    }
+
+    /// Get a reference to the formatter's cache
+    ///
+    /// Useful for inspecting cache state or manually clearing cache.
+    pub fn cache(&self) -> &FormatterCache {
+        &self.cache
+    }
+
+    /// Clear the formatting cache
+    ///
+    /// Removes all cached results and formatted source hashes.
+    /// Call this when configuration changes or cache needs invalidation.
+    pub fn clear_cache(&self) {
+        self.cache.clear();
     }
 
     /// Format a parsed Python file
@@ -167,7 +190,31 @@ impl Formatter {
     ///
     /// Formats only the AST nodes that fall within the specified line range.
     /// Returns the formatted content for the specified range.
+    ///
+    /// # Performance Optimizations
+    ///
+    /// 1. Short-circuit: If source is known to be already formatted, returns immediately
+    /// 2. Result cache: Checks cache for previously formatted (source, config, range) tuple
+    /// 3. Stores formatted result in cache for future reuse
     pub fn format_range(&mut self, source: &str, start_line: usize, end_line: usize) -> Result<String> {
+        if self.config.cache_enabled && self.cache.is_formatted(source, &self.config) {
+            tracing::debug!(
+                start_line,
+                end_line,
+                "Source already formatted (short-circuit cache hit)"
+            );
+            return Ok(source.to_string());
+        }
+
+        if self.config.cache_enabled {
+            if let Some(cached) = self.cache.get(source, &self.config, start_line, end_line) {
+                tracing::debug!(start_line, end_line, "Cache hit for formatted range");
+                return Ok(cached);
+            }
+        }
+
+        tracing::debug!(start_line, end_line, "Cache miss, performing full format");
+
         let parsed = self.parser.parse(source)?;
         let ast = self.parser.to_ast(&parsed)?;
 
@@ -183,7 +230,14 @@ impl Formatter {
             writer.write_token(&token);
         }
 
-        Ok(writer.output().to_string())
+        let formatted = writer.output().to_string();
+
+        if self.config.cache_enabled {
+            self.cache
+                .put(source, &self.config, start_line, end_line, formatted.clone());
+        }
+
+        Ok(formatted)
     }
 
     /// Filter an AST node to only include nodes within the specified line range
@@ -790,5 +844,126 @@ b=5
         assert!(formatted.contains("y=2  # fmt: skip"));
         assert!(formatted.contains("z=3"));
         assert!(formatted.contains("a=4"));
+    }
+
+    #[test]
+    fn test_cache_short_circuit() {
+        let source = "x = 1\ny = 2\n";
+        let mut formatter = Formatter::with_defaults();
+
+        let result1 = formatter.format_range(source, 0, 2).unwrap();
+        assert_eq!(result1, source);
+
+        assert!(formatter.cache().is_formatted(source, &formatter.config));
+
+        let result2 = formatter.format_range(source, 0, 2).unwrap();
+        assert_eq!(result2, source);
+    }
+
+    #[test]
+    fn test_cache_result_reuse() {
+        let source = "x=1\ny=2\n";
+        let expected = "x = 1\ny = 2\n";
+        let mut formatter = Formatter::with_defaults();
+
+        let result1 = formatter.format_range(source, 0, 2).unwrap();
+        assert_eq!(result1, expected);
+
+        assert_eq!(formatter.cache().results_count(), 1);
+
+        let result2 = formatter.format_range(source, 0, 2).unwrap();
+        assert_eq!(result2, expected);
+    }
+
+    #[test]
+    fn test_cache_different_ranges() {
+        let source = "x=1\ny=2\nz=3\n";
+        let mut formatter = Formatter::with_defaults();
+
+        let result1 = formatter.format_range(source, 0, 1).unwrap();
+        let result2 = formatter.format_range(source, 1, 2).unwrap();
+        let result3 = formatter.format_range(source, 0, 3).unwrap();
+
+        assert!(formatter.cache().results_count() >= 1);
+        assert!(!result1.is_empty());
+        assert!(!result2.is_empty());
+        assert!(!result3.is_empty());
+    }
+
+    #[test]
+    fn test_cache_disabled() {
+        let source = "x=1\n";
+        let config = FormatterConfig { cache_enabled: false, ..Default::default() };
+        let mut formatter = Formatter::new(config, PythonParser::default());
+
+        let result = formatter.format_range(source, 0, 1).unwrap();
+        assert!(!result.is_empty());
+
+        assert_eq!(formatter.cache().results_count(), 0);
+        assert_eq!(formatter.cache().formatted_count(), 0);
+    }
+
+    #[test]
+    fn test_cache_clear() {
+        let source = "x = 1\n";
+        let mut formatter = Formatter::with_defaults();
+
+        formatter.format_range(source, 0, 1).unwrap();
+        assert!(formatter.cache().is_formatted(source, &formatter.config));
+
+        formatter.clear_cache();
+
+        assert!(!formatter.cache().is_formatted(source, &formatter.config));
+        assert_eq!(formatter.cache().results_count(), 0);
+        assert_eq!(formatter.cache().formatted_count(), 0);
+    }
+
+    #[test]
+    fn test_cache_different_configs() {
+        let source = "x=1\n";
+
+        let config1 = FormatterConfig::default();
+        let mut formatter1 = Formatter::new(config1, PythonParser::default());
+
+        let config2 = FormatterConfig { line_length: 100, ..Default::default() };
+        let mut formatter2 = Formatter::new(config2, PythonParser::default());
+
+        let result1 = formatter1.format_range(source, 0, 1).unwrap();
+        let result2 = formatter2.format_range(source, 0, 1).unwrap();
+
+        assert_eq!(formatter1.cache().results_count(), 1);
+        assert_eq!(formatter2.cache().results_count(), 1);
+        assert_eq!(result1, result2);
+    }
+
+    #[test]
+    fn test_cache_with_malformed_source() {
+        let source = "def foo(:\n";
+        let mut formatter = Formatter::with_defaults();
+
+        let result = formatter.format_range(source, 0, 1);
+
+        if result.is_ok() {
+            assert!(formatter.cache().results_count() > 0 || formatter.cache().formatted_count() > 0);
+        } else {
+            assert_eq!(formatter.cache().results_count(), 0);
+            assert_eq!(formatter.cache().formatted_count(), 0);
+        }
+    }
+
+    #[test]
+    fn test_is_formatted_integration() {
+        let formatted_source = "def foo():\n    pass\n";
+        let unformatted_source = "def foo( ):\n  pass\n";
+
+        let mut formatter = Formatter::with_defaults();
+
+        let result1 = formatter.format_range(formatted_source, 0, 2).unwrap();
+        assert_eq!(result1, formatted_source);
+        assert!(formatter.cache().is_formatted(formatted_source, &formatter.config));
+
+        let result2 = formatter.format_range(unformatted_source, 0, 2);
+        assert!(result2.is_ok());
+        assert!(!formatter.cache().is_formatted(unformatted_source, &formatter.config));
     }
 }

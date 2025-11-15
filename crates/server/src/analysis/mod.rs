@@ -10,7 +10,6 @@
 //!  4. Unification/solving -> Type substitution
 //!  5. Caching -> Type cache
 
-// Re-export analysis modules from beacon-analyzer
 pub use beacon_analyzer::{cfg, data_flow, linter, loader, pattern, rules, type_env, walker};
 
 use crate::cache::{CacheManager, CachedScopeResult, ScopeCacheKey};
@@ -313,9 +312,145 @@ impl Analyzer {
         self.position_maps.remove(uri);
     }
 
-    /// Update the analyzer's configuration
+    /// Perform selective invalidation based on changed scopes
+    pub fn invalidate_selective(&mut self, uri: &Url) -> Vec<beacon_parser::ScopeId> {
+        let result = self.documents.get_document(uri, |doc| {
+            let symbol_table = match doc.symbol_table() {
+                Some(st) => st.clone(),
+                None => return None,
+            };
+            let source = doc.text();
+            Some((symbol_table, source))
+        });
+
+        let (symbol_table, source) = match result {
+            Some(Some(data)) => data,
+            _ => {
+                tracing::debug!(uri = %uri, "Could not get document for selective invalidation, falling back to full invalidation");
+                self.invalidate(uri);
+                return Vec::new();
+            }
+        };
+
+        let scopes = self.extract_scopes_with_content(&symbol_table, &source);
+        let changed_scopes: Vec<_> = self.find_changed_scopes(uri, &scopes).into_iter().collect();
+
+        if changed_scopes.is_empty() {
+            tracing::debug!(uri = %uri, "No scopes changed, skipping invalidation");
+            return Vec::new();
+        }
+
+        tracing::info!(
+            uri = %uri,
+            changed_scope_count = changed_scopes.len(),
+            total_scopes = scopes.len(),
+            "Selective invalidation: {} of {} scopes changed",
+            changed_scopes.len(),
+            scopes.len()
+        );
+
+        self.cache.invalidate_selective(uri, &changed_scopes);
+        self.position_maps.remove(uri);
+
+        changed_scopes
+    }
+
+    /// Record import dependencies in the cache tracker
     ///
-    /// This allows for runtime configuration updates without recreating the analyzer.
+    /// Should be called after analysis to populate the import dependency tracker.
+    /// This enables selective invalidation based on which symbols are imported.
+    pub fn record_imports(&mut self, importer_uri: &Url, imports: &[(Url, String)]) {
+        tracing::debug!(
+            "Analyzer: Recording {} import dependencies for {}",
+            imports.len(),
+            importer_uri
+        );
+        for (from_uri, symbol) in imports {
+            self.cache.record_import(from_uri, symbol, importer_uri);
+        }
+    }
+
+    /// Get files that import specific symbols from a URI
+    pub fn get_importers_by_symbol(&self, uri: &Url, symbols: &[String]) -> FxHashMap<String, Vec<Url>> {
+        let mut result = FxHashMap::default();
+        for symbol in symbols {
+            let importers = self.cache.get_symbol_importers(uri, symbol);
+            if !importers.is_empty() {
+                result.insert(symbol.clone(), importers);
+            }
+        }
+        result
+    }
+
+    /// Get exported (module-level) symbols affected by changes in specific scopes
+    ///
+    /// Given a list of changed scope IDs, this returns the names of module-level symbols
+    /// that are affected by those changes. For nested scopes (functions, classes), it traces
+    /// up to find which top-level definition contains them.
+    pub fn get_affected_exports(&self, uri: &Url, changed_scopes: &[ScopeId]) -> Vec<String> {
+        let (symbol_table, source) = match self
+            .documents
+            .get_document(uri, |doc| doc.symbol_table().cloned().map(|st| (st, doc.text())))
+        {
+            Some(Some((st, src))) => (st, src),
+            _ => return Vec::new(),
+        };
+
+        let mut affected_symbols = FxHashSet::default();
+        let root_scope_id = symbol_table.root_scope;
+
+        for scope_id in changed_scopes {
+            if *scope_id == root_scope_id {
+                if let Some(root_scope) = symbol_table.scopes.get(&root_scope_id) {
+                    for symbol_name in root_scope.symbols.keys() {
+                        affected_symbols.insert(symbol_name.clone());
+                    }
+                }
+                continue;
+            }
+
+            let mut current_scope_id = *scope_id;
+            let mut top_level_scope_id = None;
+
+            while let Some(scope) = symbol_table.scopes.get(&current_scope_id) {
+                if let Some(parent_id) = scope.parent {
+                    if parent_id == root_scope_id {
+                        top_level_scope_id = Some(current_scope_id);
+                        break;
+                    }
+                    current_scope_id = parent_id;
+                } else {
+                    break;
+                }
+            }
+
+            if let Some(tl_scope_id) = top_level_scope_id {
+                if let Some(tl_scope) = symbol_table.scopes.get(&tl_scope_id) {
+                    if let Some(root_scope) = symbol_table.scopes.get(&root_scope_id) {
+                        let scope_start_byte = tl_scope.start_byte;
+                        let scope_end_byte = tl_scope.end_byte;
+
+                        for (symbol_name, symbol) in &root_scope.symbols {
+                            if symbol.scope_id == root_scope_id {
+                                let symbol_byte = Self::line_col_to_byte_offset(&source, symbol.line, symbol.col);
+
+                                if (symbol_byte <= scope_start_byte && scope_start_byte - symbol_byte < 200)
+                                    || (symbol_byte >= scope_start_byte && symbol_byte < scope_end_byte)
+                                {
+                                    affected_symbols.insert(symbol_name.clone());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        affected_symbols.into_iter().collect()
+    }
+
+    /// Update the analyzer's configuration
     pub fn update_config(&mut self, config: Config) {
         self._config = config;
     }
@@ -2154,6 +2289,7 @@ method = s.upper
             );
         }
     }
+
     #[test]
     fn test_overload_parsing_from_stub() {
         let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2544,5 +2680,206 @@ def describe(x: int | str):
             0,
             "Union type with complete coverage should have no exhaustiveness errors"
         );
+    }
+
+    #[test]
+    fn test_selective_invalidation() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source1 = r#"
+def foo():
+    return 1
+
+def bar():
+    return 2
+"#;
+
+        documents.open_document(uri.clone(), 1, source1.to_string()).unwrap();
+        analyzer.analyze(&uri).unwrap();
+
+        let source2 = r#"
+def foo():
+    return 1
+
+def bar():
+    return 3
+"#;
+        documents
+            .update_document(
+                VersionedTextDocumentIdentifier { uri: uri.clone(), version: 2 },
+                vec![TextDocumentContentChangeEvent { range: None, range_length: None, text: source2.to_string() }],
+            )
+            .unwrap();
+
+        let changed_scopes = analyzer.invalidate_selective(&uri);
+        assert!(!changed_scopes.is_empty(), "Should detect changed scopes");
+    }
+
+    #[test]
+    fn test_import_tracking_integration() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut analyzer = Analyzer::new(config, documents.clone());
+
+        let module_uri = Url::from_str("file:///module.py").unwrap();
+        let user_uri = Url::from_str("file:///user.py").unwrap();
+
+        documents.open_document(module_uri.clone(), 1, "".to_string()).unwrap();
+        documents.open_document(user_uri.clone(), 1, "".to_string()).unwrap();
+
+        analyzer.record_imports(&user_uri, &[(module_uri.clone(), "MyClass".to_string())]);
+
+        let importers = analyzer.get_importers_by_symbol(&module_uri, &["MyClass".to_string()]);
+
+        assert_eq!(importers.len(), 1);
+        assert!(importers.contains_key("MyClass"));
+        assert_eq!(importers["MyClass"].len(), 1);
+        assert_eq!(importers["MyClass"][0], user_uri);
+    }
+
+    #[test]
+    fn test_get_affected_exports_module_level() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        let source = r#"
+def foo():
+    pass
+
+class Bar:
+    pass
+
+x = 42
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let symbol_table = documents
+            .get_document(&uri, |doc| doc.symbol_table().cloned())
+            .unwrap()
+            .unwrap();
+        let root_scope_id = symbol_table.root_scope;
+
+        let affected = analyzer.get_affected_exports(&uri, &[root_scope_id]);
+
+        assert!(!affected.is_empty(), "Should find module-level symbols");
+        assert!(affected.contains(&"foo".to_string()), "Should include function foo");
+        assert!(affected.contains(&"Bar".to_string()), "Should include class Bar");
+        assert!(affected.contains(&"x".to_string()), "Should include variable x");
+    }
+
+    #[test]
+    fn test_get_affected_exports_nested_scope() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        let source = r#"
+def foo():
+    def nested():
+        pass
+    return nested
+
+class Bar:
+    def method(self):
+        pass
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let symbol_table = documents
+            .get_document(&uri, |doc| doc.symbol_table().cloned())
+            .unwrap()
+            .unwrap();
+
+        let foo_scope = symbol_table
+            .scopes
+            .values()
+            .find(|s| s.kind == beacon_parser::ScopeKind::Function && s.parent == Some(symbol_table.root_scope))
+            .map(|s| s.id);
+
+        assert!(foo_scope.is_some(), "Should find foo function scope");
+
+        if let Some(foo_scope_id) = foo_scope {
+            let affected = analyzer.get_affected_exports(&uri, &[foo_scope_id]);
+
+            assert_eq!(affected.len(), 1, "Should find exactly one affected symbol");
+            assert!(affected.contains(&"foo".to_string()), "Should identify foo as affected");
+        }
+    }
+
+    #[test]
+    fn test_get_affected_exports_empty_scopes() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        documents.open_document(uri.clone(), 1, "pass\n".to_string()).unwrap();
+
+        let affected = analyzer.get_affected_exports(&uri, &[]);
+
+        assert!(affected.is_empty(), "Should return empty for no changed scopes");
+    }
+
+    #[test]
+    fn test_get_affected_exports_multiple_scopes() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+
+        let source = r#"
+def foo():
+    x = 1
+    return x
+
+def bar():
+    y = 2
+    return y
+
+class Baz:
+    def method(self):
+        pass
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let symbol_table = documents
+            .get_document(&uri, |doc| doc.symbol_table().cloned())
+            .unwrap()
+            .unwrap();
+
+        let function_scopes: Vec<ScopeId> = symbol_table
+            .scopes
+            .values()
+            .filter(|s| s.kind == beacon_parser::ScopeKind::Function && s.parent == Some(symbol_table.root_scope))
+            .map(|s| s.id)
+            .collect();
+
+        assert!(function_scopes.len() >= 2, "Should find at least 2 function scopes");
+
+        let affected = analyzer.get_affected_exports(&uri, &function_scopes);
+
+        assert!(affected.len() >= 2, "Should find multiple affected symbols");
+        assert!(affected.contains(&"foo".to_string()) || affected.contains(&"bar".to_string()));
+    }
+
+    #[test]
+    fn test_get_affected_exports_nonexistent_document() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///nonexistent.py").unwrap();
+
+        let affected = analyzer.get_affected_exports(&uri, &[ScopeId::from_raw(0)]);
+
+        assert!(affected.is_empty(), "Should return empty for nonexistent document");
     }
 }

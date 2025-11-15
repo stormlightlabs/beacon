@@ -10,7 +10,7 @@
 use beacon_core::Type;
 use beacon_parser::ScopeId;
 use lru::LruCache;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -56,15 +56,31 @@ impl TypeCache {
 
         let key = TypeCacheKey { uri: uri.clone(), node_id };
 
-        cache.get(&key).and_then(
-            |cached| {
-                if cached.version == version { Some(cached.ty.clone()) } else { None }
-            },
-        )
+        cache.get(&key).and_then(|cached| {
+            if cached.version == version {
+                tracing::debug!("TypeCache HIT: uri={}, node_id={}, version={}", uri, node_id, version);
+                Some(cached.ty.clone())
+            } else {
+                tracing::debug!(
+                    "TypeCache MISS (version mismatch): uri={}, node_id={}, cached_version={}, requested_version={}",
+                    uri,
+                    node_id,
+                    cached.version,
+                    version
+                );
+                None
+            }
+        })
     }
 
     /// Store a type in the cache
     pub fn insert(&self, uri: Url, node_id: usize, version: i32, ty: Type) {
+        tracing::debug!(
+            "TypeCache INSERT: uri={}, node_id={}, version={}",
+            uri,
+            node_id,
+            version
+        );
         let mut cache = self.cache.write().unwrap();
 
         let key = TypeCacheKey { uri, node_id };
@@ -82,6 +98,9 @@ impl TypeCache {
             .filter(|(key, _)| key.uri == *uri)
             .map(|(key, _)| key.clone())
             .collect();
+
+        let count = keys_to_remove.len();
+        tracing::debug!("TypeCache INVALIDATE: uri={}, removing {} entries", uri, count);
 
         for key in keys_to_remove {
             cache.pop(&key);
@@ -164,11 +183,20 @@ impl IntrospectionCache {
     pub fn get(&self, module: &str, symbol: &str) -> Option<crate::introspection::IntrospectionResult> {
         let mut cache = self.cache.write().unwrap();
         let key = IntrospectionCacheKey { module: module.to_string(), symbol: symbol.to_string() };
-        cache.get(&key).cloned()
+        let result = cache.get(&key).cloned();
+
+        if result.is_some() {
+            tracing::debug!("IntrospectionCache HIT: module={}, symbol={}", module, symbol);
+        } else {
+            tracing::debug!("IntrospectionCache MISS: module={}, symbol={}", module, symbol);
+        }
+
+        result
     }
 
     /// Store an introspection result in the cache and persists to disk asynchronously.
     pub fn insert(&self, module: String, symbol: String, result: crate::introspection::IntrospectionResult) {
+        tracing::debug!("IntrospectionCache INSERT: module={}, symbol={}", module, symbol);
         let mut cache = self.cache.write().unwrap();
         let key = IntrospectionCacheKey { module, symbol };
 
@@ -314,15 +342,33 @@ impl ScopeCache {
 
         if let Some(result) = cache.get(key).cloned() {
             *self.hits.write().unwrap() += 1;
+            tracing::debug!(
+                "ScopeCache HIT: uri={}, scope_id={:?}, content_hash={}",
+                key.uri,
+                key.scope_id,
+                key.content_hash
+            );
             Some(result)
         } else {
             *self.misses.write().unwrap() += 1;
+            tracing::debug!(
+                "ScopeCache MISS: uri={}, scope_id={:?}, content_hash={}",
+                key.uri,
+                key.scope_id,
+                key.content_hash
+            );
             None
         }
     }
 
     /// Store a scope analysis result in the cache
     pub fn insert(&self, key: ScopeCacheKey, result: CachedScopeResult) {
+        tracing::debug!(
+            "ScopeCache INSERT: uri={}, scope_id={:?}, content_hash={}",
+            key.uri,
+            key.scope_id,
+            key.content_hash
+        );
         let mut cache = self.cache.write().unwrap();
         cache.put(key, result);
     }
@@ -336,6 +382,14 @@ impl ScopeCache {
             .filter(|(key, _)| key.uri == *uri && key.scope_id == scope_id)
             .map(|(key, _)| key.clone())
             .collect();
+
+        let count = keys_to_remove.len();
+        tracing::debug!(
+            "ScopeCache INVALIDATE_SCOPE: uri={}, scope_id={:?}, removing {} entries",
+            uri,
+            scope_id,
+            count
+        );
 
         for key in keys_to_remove {
             cache.pop(&key);
@@ -351,6 +405,13 @@ impl ScopeCache {
             .filter(|(key, _)| key.uri == *uri)
             .map(|(key, _)| key.clone())
             .collect();
+
+        let count = keys_to_remove.len();
+        tracing::debug!(
+            "ScopeCache INVALIDATE_DOCUMENT: uri={}, removing {} scope entries",
+            uri,
+            count
+        );
 
         for key in keys_to_remove {
             cache.pop(&key);
@@ -440,11 +501,20 @@ impl AnalysisCache {
     pub fn get(&self, uri: &Url, version: i32) -> Option<CachedAnalysisResult> {
         let mut cache = self.cache.write().unwrap();
         let key = AnalysisCacheKey { uri: uri.clone(), version };
-        cache.get(&key).cloned()
+        let result = cache.get(&key).cloned();
+
+        if result.is_some() {
+            tracing::debug!("AnalysisCache HIT: uri={}, version={}", uri, version);
+        } else {
+            tracing::debug!("AnalysisCache MISS: uri={}, version={}", uri, version);
+        }
+
+        result
     }
 
     /// Store an analysis result in the cache
     pub fn insert(&self, uri: Url, version: i32, result: CachedAnalysisResult) {
+        tracing::debug!("AnalysisCache INSERT: uri={}, version={}", uri, version);
         let mut cache = self.cache.write().unwrap();
         let key = AnalysisCacheKey { uri, version };
         cache.put(key, result);
@@ -458,6 +528,13 @@ impl AnalysisCache {
             .filter(|(key, _)| key.uri == *uri)
             .map(|(key, _)| key.clone())
             .collect();
+
+        let count = keys_to_remove.len();
+        tracing::debug!(
+            "AnalysisCache INVALIDATE_DOCUMENT: uri={}, removing {} version entries",
+            uri,
+            count
+        );
 
         for key in keys_to_remove {
             cache.pop(&key);
@@ -483,6 +560,67 @@ impl Default for AnalysisCache {
     }
 }
 
+/// Import dependency tracker for selective invalidation
+#[derive(Debug, Clone, Default)]
+pub struct ImportDependencyTracker {
+    symbol_importers: FxHashMap<(Url, String), FxHashSet<Url>>,
+}
+
+impl ImportDependencyTracker {
+    pub fn new() -> Self {
+        Self { symbol_importers: FxHashMap::default() }
+    }
+
+    /// Record that `importer_uri` imports `symbol` from `from_uri`
+    pub fn add_import(&mut self, from_uri: &Url, symbol: &str, importer_uri: &Url) {
+        tracing::debug!(
+            "ImportDependencyTracker: {} imports {} from {}",
+            importer_uri,
+            symbol,
+            from_uri
+        );
+        let key = (from_uri.clone(), symbol.to_string());
+        self.symbol_importers
+            .entry(key)
+            .or_default()
+            .insert(importer_uri.clone());
+    }
+
+    /// Get all files that import a specific symbol from a URI
+    pub fn get_symbol_importers(&self, uri: &Url, symbol: &str) -> Vec<Url> {
+        let key = (uri.clone(), symbol.to_string());
+        self.symbol_importers
+            .get(&key)
+            .map(|set| set.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Remove all import records for a file (when it's being re-analyzed)
+    pub fn clear_imports_from(&mut self, uri: &Url) {
+        tracing::debug!("ImportDependencyTracker: Clearing all imports from {}", uri);
+        let keys_to_update: Vec<_> = self
+            .symbol_importers
+            .keys()
+            .filter(|(_, _)| self.symbol_importers.values().any(|importers| importers.contains(uri)))
+            .cloned()
+            .collect();
+
+        for key in keys_to_update {
+            if let Some(importers) = self.symbol_importers.get_mut(&key) {
+                importers.remove(uri);
+                if importers.is_empty() {
+                    self.symbol_importers.remove(&key);
+                }
+            }
+        }
+    }
+
+    /// Clear all tracking data
+    pub fn clear(&mut self) {
+        self.symbol_importers.clear();
+    }
+}
+
 /// Main cache manager coordinating all caches
 ///
 /// Provides a unified interface for caching all analysis artifacts.
@@ -495,6 +633,8 @@ pub struct CacheManager {
     pub analysis_cache: AnalysisCache,
     /// Scope-level analysis cache for granular incremental re-analysis
     pub scope_cache: ScopeCache,
+    /// Import dependency tracker for selective invalidation
+    pub import_tracker: Arc<RwLock<ImportDependencyTracker>>,
 }
 
 impl CacheManager {
@@ -505,6 +645,7 @@ impl CacheManager {
             introspection_cache: IntrospectionCache::default(),
             analysis_cache: AnalysisCache::default(),
             scope_cache: ScopeCache::default(),
+            import_tracker: Arc::new(RwLock::new(ImportDependencyTracker::new())),
         }
     }
 
@@ -515,6 +656,7 @@ impl CacheManager {
             introspection_cache: IntrospectionCache::default(),
             analysis_cache: AnalysisCache::new(capacity),
             scope_cache: ScopeCache::new(capacity * 2),
+            import_tracker: Arc::new(RwLock::new(ImportDependencyTracker::new())),
         }
     }
 
@@ -525,14 +667,54 @@ impl CacheManager {
             introspection_cache: IntrospectionCache::new(workspace_root),
             analysis_cache: AnalysisCache::new(capacity),
             scope_cache: ScopeCache::new(capacity * 2),
+            import_tracker: Arc::new(RwLock::new(ImportDependencyTracker::new())),
         }
     }
 
     /// Invalidate all caches for a document
     pub fn invalidate_document(&self, uri: &Url) {
+        tracing::info!("CacheManager: Invalidating all caches for uri={}", uri);
         self.type_cache.invalidate_document(uri);
         self.analysis_cache.invalidate_document(uri);
         self.scope_cache.invalidate_document(uri);
+
+        if let Ok(mut tracker) = self.import_tracker.write() {
+            tracker.clear_imports_from(uri);
+        }
+    }
+
+    /// Invalidate selective scopes and cascade to importers
+    pub fn invalidate_selective(&self, uri: &Url, changed_scopes: &[ScopeId]) -> FxHashSet<Url> {
+        let mut invalidated = FxHashSet::default();
+        invalidated.insert(uri.clone());
+
+        tracing::info!(
+            "CacheManager: Selective invalidation for uri={}, changed_scopes={:?}",
+            uri,
+            changed_scopes
+        );
+
+        for scope_id in changed_scopes {
+            self.scope_cache.invalidate_scope(uri, *scope_id);
+        }
+
+        invalidated
+    }
+
+    /// Get files that import a specific symbol from a URI
+    pub fn get_symbol_importers(&self, uri: &Url, symbol: &str) -> Vec<Url> {
+        self.import_tracker
+            .read()
+            .ok()
+            .map(|tracker| tracker.get_symbol_importers(uri, symbol))
+            .unwrap_or_default()
+    }
+
+    /// Record an import dependency
+    pub fn record_import(&self, from_uri: &Url, symbol: &str, importer_uri: &Url) {
+        if let Ok(mut tracker) = self.import_tracker.write() {
+            tracker.add_import(from_uri, symbol, importer_uri);
+        }
     }
 
     /// Clear all caches
@@ -540,6 +722,10 @@ impl CacheManager {
         self.type_cache.clear();
         self.analysis_cache.clear();
         self.scope_cache.clear();
+
+        if let Ok(mut tracker) = self.import_tracker.write() {
+            tracker.clear();
+        }
     }
 
     /// Get aggregate cache statistics
@@ -1013,5 +1199,87 @@ mod tests {
 
         manager.invalidate_document(&uri);
         assert_eq!(manager.scope_stats().size, 0);
+    }
+
+    #[test]
+    fn test_import_dependency_tracker() {
+        let mut tracker = ImportDependencyTracker::new();
+        let from_uri = Url::parse("file:///module.py").unwrap();
+        let importer1 = Url::parse("file:///user1.py").unwrap();
+        let importer2 = Url::parse("file:///user2.py").unwrap();
+
+        tracker.add_import(&from_uri, "foo", &importer1);
+        tracker.add_import(&from_uri, "foo", &importer2);
+        tracker.add_import(&from_uri, "bar", &importer1);
+
+        let foo_importers = tracker.get_symbol_importers(&from_uri, "foo");
+        assert_eq!(foo_importers.len(), 2);
+        assert!(foo_importers.contains(&importer1));
+        assert!(foo_importers.contains(&importer2));
+
+        let bar_importers = tracker.get_symbol_importers(&from_uri, "bar");
+        assert_eq!(bar_importers.len(), 1);
+        assert!(bar_importers.contains(&importer1));
+
+        tracker.clear_imports_from(&importer1);
+        let foo_importers_after = tracker.get_symbol_importers(&from_uri, "foo");
+        assert_eq!(foo_importers_after.len(), 1);
+        assert!(foo_importers_after.contains(&importer2));
+
+        let bar_importers_after = tracker.get_symbol_importers(&from_uri, "bar");
+        assert_eq!(bar_importers_after.len(), 0);
+    }
+
+    #[test]
+    fn test_cache_manager_import_tracking() {
+        let manager = CacheManager::new();
+        let from_uri = Url::parse("file:///module.py").unwrap();
+        let importer_uri = Url::parse("file:///user.py").unwrap();
+
+        manager.record_import(&from_uri, "MyClass", &importer_uri);
+        manager.record_import(&from_uri, "my_function", &importer_uri);
+
+        let class_importers = manager.get_symbol_importers(&from_uri, "MyClass");
+        assert_eq!(class_importers.len(), 1);
+        assert!(class_importers.contains(&importer_uri));
+
+        let func_importers = manager.get_symbol_importers(&from_uri, "my_function");
+        assert_eq!(func_importers.len(), 1);
+        assert!(func_importers.contains(&importer_uri));
+
+        manager.invalidate_document(&importer_uri);
+
+        let class_importers_after = manager.get_symbol_importers(&from_uri, "MyClass");
+        assert_eq!(class_importers_after.len(), 0);
+    }
+
+    #[test]
+    fn test_cache_manager_selective_invalidation() {
+        let manager = CacheManager::new();
+        let uri = Url::parse("file:///test.py").unwrap();
+        let scope_id1 = beacon_parser::ScopeId::from_raw(0);
+        let scope_id2 = beacon_parser::ScopeId::from_raw(1);
+
+        let source1 = "def foo(): pass";
+        let source2 = "def bar(): pass";
+        let key1 = ScopeCacheKey::new(uri.clone(), scope_id1, source1);
+        let key2 = ScopeCacheKey::new(uri.clone(), scope_id2, source2);
+
+        let result = CachedScopeResult {
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+            dependencies: vec![],
+        };
+
+        manager.scope_cache.insert(key1.clone(), result.clone());
+        manager.scope_cache.insert(key2.clone(), result);
+        assert_eq!(manager.scope_stats().size, 2);
+
+        let invalidated = manager.invalidate_selective(&uri, &[scope_id1]);
+        assert_eq!(invalidated.len(), 1);
+        assert!(invalidated.contains(&uri));
+
+        assert!(manager.scope_cache.get(&key1).is_none());
+        assert!(manager.scope_cache.get(&key2).is_some());
     }
 }

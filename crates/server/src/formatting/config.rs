@@ -134,6 +134,14 @@ pub struct FormatterConfig {
     /// Add blank line before function definitions
     #[serde(default = "default_true")]
     pub blank_line_before_function: bool,
+
+    /// Enable formatting result caching for performance optimization
+    #[serde(default = "default_true")]
+    pub cache_enabled: bool,
+
+    /// Maximum number of entries in the formatting cache
+    #[serde(default = "default_cache_max_entries")]
+    pub cache_max_entries: usize,
 }
 
 fn default_true() -> bool {
@@ -152,6 +160,10 @@ fn default_max_blank_lines() -> usize {
     2
 }
 
+fn default_cache_max_entries() -> usize {
+    100
+}
+
 impl Default for FormatterConfig {
     fn default() -> Self {
         Self {
@@ -168,6 +180,8 @@ impl Default for FormatterConfig {
             spaces_around_operators: true,
             blank_line_before_class: true,
             blank_line_before_function: true,
+            cache_enabled: true,
+            cache_max_entries: default_cache_max_entries(),
         }
     }
 }
@@ -266,5 +280,28 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: FormatterConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(config, deserialized);
+    }
+
+    #[test]
+    fn test_cache_defaults() {
+        let config = FormatterConfig::default();
+        assert!(config.cache_enabled);
+        assert_eq!(config.cache_max_entries, 100);
+    }
+
+    #[test]
+    fn test_cache_custom_values() {
+        let config = FormatterConfig { cache_enabled: false, cache_max_entries: 50, ..Default::default() };
+        assert!(!config.cache_enabled);
+        assert_eq!(config.cache_max_entries, 50);
+    }
+
+    #[test]
+    fn test_cache_serialization() {
+        let config = FormatterConfig { cache_enabled: false, cache_max_entries: 200, ..Default::default() };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: FormatterConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.cache_enabled, deserialized.cache_enabled);
+        assert_eq!(config.cache_max_entries, deserialized.cache_max_entries);
     }
 }
