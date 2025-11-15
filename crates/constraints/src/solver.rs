@@ -647,23 +647,21 @@ fn handle_call_args(
     }
 }
 
-fn unify_return_type(
-    subst: &mut Subst, type_errors: &mut Vec<TypeErrorInfo>, call_ret_ty: &Type, target_ty: &Type, span: Span,
-    typevar_registry: &beacon_core::TypeVarConstraintRegistry,
-) {
-    match Unifier::unify(&subst.apply(call_ret_ty), &subst.apply(target_ty), typevar_registry) {
-        Ok(s) => *subst = s.compose(subst.clone()),
-        Err(BeaconError::TypeError(type_err)) => type_errors.push(TypeErrorInfo::new(type_err, span)),
+fn unify_return_type(ctx: &mut CallContext<'_>, call_ret_ty: &Type, target_ty: &Type) {
+    match Unifier::unify(
+        &ctx.subst.apply(call_ret_ty),
+        &ctx.subst.apply(target_ty),
+        ctx.typevar_registry,
+    ) {
+        Ok(s) => *ctx.subst = s.compose(ctx.subst.clone()),
+        Err(BeaconError::TypeError(type_err)) => ctx.type_errors.push(TypeErrorInfo::new(type_err, ctx.span)),
         Err(_) => (),
     }
 }
 
-/// FIXME: address this with a context struct
-#[allow(clippy::too_many_arguments)]
 fn unify_with_adhoc_fun(
-    subst: &mut Subst, type_errors: &mut Vec<TypeErrorInfo>, callable: &Type, pos_args: &[(Type, Span)],
-    kw_args: &[(String, Type, Span)], ret_ty: &Type, span: Span,
-    typevar_registry: &beacon_core::TypeVarConstraintRegistry,
+    ctx: &mut CallContext<'_>, callable: &Type, pos_args: &[(Type, Span)], kw_args: &[(String, Type, Span)],
+    ret_ty: &Type,
 ) {
     let all_args: Vec<Type> = pos_args
         .iter()
@@ -673,12 +671,16 @@ fn unify_with_adhoc_fun(
 
     let expected_fn_ty = Type::fun_unnamed(all_args, ret_ty.clone());
 
-    match Unifier::unify(&subst.apply(callable), &subst.apply(&expected_fn_ty), typevar_registry) {
+    match Unifier::unify(
+        &ctx.subst.apply(callable),
+        &ctx.subst.apply(&expected_fn_ty),
+        ctx.typevar_registry,
+    ) {
         Ok(s) => {
-            *subst = s.compose(subst.clone());
+            *ctx.subst = s.compose(ctx.subst.clone());
         }
         Err(BeaconError::TypeError(type_err)) => {
-            type_errors.push(TypeErrorInfo::new(type_err, span));
+            ctx.type_errors.push(TypeErrorInfo::new(type_err, ctx.span));
         }
         Err(_) => {}
     }
@@ -780,14 +782,14 @@ pub fn solve_constraints(
                         }
 
                         let class_result_ty = instantiate_class_type(metadata, class_name, &subst);
-                        unify_return_type(
-                            &mut subst,
-                            &mut type_errors,
-                            &ret_ty,
-                            &class_result_ty,
-                            span,
+                        let mut ctx = CallContext {
+                            subst: &mut subst,
+                            type_errors: &mut type_errors,
+                            class_registry,
                             typevar_registry,
-                        );
+                            span,
+                        };
+                        unify_return_type(&mut ctx, &ret_ty, &class_result_ty);
                     }
                 } else if let Type::BoundMethod(receiver, method_name, method) = &applied_func {
                     let resolved_method = resolve_bound_method_type(
@@ -809,25 +811,16 @@ pub fn solve_constraints(
                         };
 
                         handle_call_args(&mut ctx, &pos_args, &kw_args, params, true);
-                        unify_return_type(
-                            &mut subst,
-                            &mut type_errors,
-                            &ret_ty,
-                            method_ret,
-                            span,
-                            typevar_registry,
-                        );
+                        unify_return_type(&mut ctx, &ret_ty, method_ret);
                     } else {
-                        unify_with_adhoc_fun(
-                            &mut subst,
-                            &mut type_errors,
-                            resolved_method,
-                            &pos_args,
-                            &kw_args,
-                            &ret_ty,
-                            span,
+                        let mut ctx = CallContext {
+                            subst: &mut subst,
+                            type_errors: &mut type_errors,
+                            class_registry,
                             typevar_registry,
-                        );
+                            span,
+                        };
+                        unify_with_adhoc_fun(&mut ctx, resolved_method, &pos_args, &kw_args, &ret_ty);
                     }
                 } else {
                     let applied_func = subst.apply(&func_ty);
@@ -840,19 +833,16 @@ pub fn solve_constraints(
                             span,
                         };
                         handle_call_args(&mut ctx, &pos_args, &kw_args, params, false);
-
-                        unify_return_type(&mut subst, &mut type_errors, &ret_ty, fn_ret, span, typevar_registry);
+                        unify_return_type(&mut ctx, &ret_ty, fn_ret);
                     } else {
-                        unify_with_adhoc_fun(
-                            &mut subst,
-                            &mut type_errors,
-                            &applied_func,
-                            &pos_args,
-                            &kw_args,
-                            &ret_ty,
-                            span,
+                        let mut ctx = CallContext {
+                            subst: &mut subst,
+                            type_errors: &mut type_errors,
+                            class_registry,
                             typevar_registry,
-                        );
+                            span,
+                        };
+                        unify_with_adhoc_fun(&mut ctx, &applied_func, &pos_args, &kw_args, &ret_ty);
                     }
                 }
             }
