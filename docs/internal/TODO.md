@@ -15,7 +15,8 @@ Known issues with HM type inference that need fixing:
 ### High Priority
 
 - [x] Pattern matching type inference edge cases
-- [ ] None pattern exhaustiveness bug (case None: not recognized in unions)
+- [x] None pattern exhaustiveness bug (case None: not recognized in unions)
+- [ ] Missing built-in method stubs (str.upper, int.bit_length, list.append, dict.keys, etc.)
 - [ ] Variance unification corner cases in complex generic hierarchies
 - [ ] Generic type inference with multiple constraints
 - [ ] Protocol satisfaction checking with variance

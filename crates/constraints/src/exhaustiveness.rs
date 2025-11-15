@@ -136,6 +136,12 @@ fn types_equal_or_subtype(type1: &Type, type2: &Type) -> bool {
                     return c1 == c2 || c2 == &base_type;
                 }
             }
+
+            if let TypeCtor::Literal(lit) = c2 {
+                if let Some(base_type) = lit_to_base_type(lit) {
+                    return c1 == c2 || c1 == &base_type;
+                }
+            }
             c1 == c2
         }
         (_, Type::Con(TypeCtor::Any)) => true,
@@ -741,6 +747,106 @@ mod tests {
         assert!(
             matches!(coverage[0], Type::Con(TypeCtor::Float)),
             "case float() should cover float type"
+        );
+    }
+
+    /// Helper to create a None literal pattern
+    fn none_pattern() -> Pattern {
+        Pattern::MatchValue(AstNode::Literal { value: LiteralValue::None, line: 1, col: 1, end_line: 1, end_col: 1 })
+    }
+
+    /// Helper to create a None identifier pattern (matching on the None identifier)
+    fn none_identifier_pattern() -> Pattern {
+        Pattern::MatchValue(AstNode::Identifier { name: "None".to_string(), line: 1, col: 1, end_line: 1, end_col: 1 })
+    }
+
+    #[test]
+    fn test_none_pattern_exhaustiveness_int_none() {
+        let subject = Type::union(vec![Type::int(), Type::none()]);
+        let patterns = vec![
+            none_pattern(),
+            Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] },
+        ];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        assert!(
+            matches!(result, ExhaustivenessResult::Exhaustive),
+            "case None: and case int() should be exhaustive for int | None"
+        );
+    }
+
+    #[test]
+    fn test_none_identifier_pattern_exhaustiveness() {
+        let subject = Type::union(vec![Type::int(), Type::none()]);
+        let patterns = vec![
+            none_identifier_pattern(),
+            Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] },
+        ];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        assert!(
+            matches!(result, ExhaustivenessResult::Exhaustive),
+            "case None: (as identifier) should be exhaustive for int | None"
+        );
+    }
+
+    #[test]
+    fn test_none_pattern_exhaustiveness_str_none() {
+        let subject = Type::union(vec![Type::string(), Type::none()]);
+        let patterns = vec![
+            Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] },
+            none_pattern(),
+        ];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        assert!(
+            matches!(result, ExhaustivenessResult::Exhaustive),
+            "case str() and case None: should be exhaustive for str | None"
+        );
+    }
+
+    #[test]
+    fn test_none_pattern_exhaustiveness_three_way() {
+        let subject = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let patterns = vec![
+            none_pattern(),
+            Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] },
+            Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] },
+        ];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        assert!(
+            matches!(result, ExhaustivenessResult::Exhaustive),
+            "case None:, case int(), case str() should be exhaustive for int | str | None"
+        );
+    }
+
+    #[test]
+    fn test_none_pattern_missing_is_non_exhaustive() {
+        let subject = Type::union(vec![Type::int(), Type::none()]);
+        let patterns = vec![Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] }];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        match result {
+            ExhaustivenessResult::NonExhaustive { uncovered } => {
+                assert!(!uncovered.is_empty(), "Should have uncovered None case");
+                assert!(
+                    uncovered.iter().any(|t| matches!(t, Type::Con(TypeCtor::NoneType))),
+                    "Uncovered should contain NoneType"
+                );
+            }
+            ExhaustivenessResult::Exhaustive => {
+                panic!("Expected non-exhaustive: case int() alone should not cover int | None")
+            }
+        }
+    }
+
+    #[test]
+    fn test_types_equal_or_subtype_literal_none_vs_nonetype() {
+        let literal_none = Type::literal_none();
+        let none_type = Type::none();
+        assert!(
+            types_equal_or_subtype(&literal_none, &none_type),
+            "Literal[None] should be subtype of NoneType"
+        );
+        assert!(
+            types_equal_or_subtype(&none_type, &literal_none),
+            "NoneType should match Literal[None] (symmetric)"
         );
     }
 }
