@@ -4,15 +4,15 @@ Current milestone tasks and technical debt tracking. All integration tests are t
 
 See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
-## Current Release: v0.2.0
+## Current Release: v0.2.1
 
-**Theme**: Cache granularity & selective invalidation
+Cache granularity & selective invalidation tests & validation
 
 ### Merge Tasks
 
-- [ ] ImportDependencyTracker integration tests
+- [x] ImportDependencyTracker integration tests
 - [ ] Scope-level content hashing validation
-- [ ] Cache regression tests
+- [x] Cache regression tests
 
 ### Documentation
 
