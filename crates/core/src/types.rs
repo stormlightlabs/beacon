@@ -718,6 +718,11 @@ impl Type {
     }
 
     /// Create a union type, flattening nested unions, removing duplications, and sorting for canonical form
+    ///
+    /// This method also performs subtype elimination: if type A is a subtype of type B, then Union[A, B] simplifies to B.
+    /// For example:
+    /// - Union[Never, int] → int (Never is subtype of everything)
+    /// - Union[int, Any] → Any (int is subtype of Any)
     pub fn union(mut types: Vec<Type>) -> Self {
         if types.len() == 1 {
             return types.pop().unwrap();
@@ -734,7 +739,27 @@ impl Type {
         flattened.sort();
         flattened.dedup();
 
-        if flattened.len() == 1 { flattened.pop().unwrap() } else { Type::Union(flattened) }
+        let mut simplified = Vec::new();
+        for i in 0..flattened.len() {
+            let mut is_redundant = false;
+            for j in 0..flattened.len() {
+                if i != j && flattened[i].is_subtype_of(&flattened[j]) {
+                    is_redundant = true;
+                    break;
+                }
+            }
+            if !is_redundant {
+                simplified.push(flattened[i].clone());
+            }
+        }
+
+        if simplified.is_empty() {
+            Type::Con(TypeCtor::Never)
+        } else if simplified.len() == 1 {
+            simplified.pop().unwrap()
+        } else {
+            Type::Union(simplified)
+        }
     }
 
     /// Create an intersection type, flattening nested intersections, removing duplications, and sorting for canonical form
@@ -2497,5 +2522,89 @@ mod tests {
         let list_int = Type::list(Type::int());
         let result = list_int.unapply_class();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_union_simplification_eliminates_never() {
+        let union = Type::union(vec![Type::never(), Type::int()]);
+        assert_eq!(union, Type::int());
+
+        let union = Type::union(vec![Type::int(), Type::never(), Type::string()]);
+        assert_eq!(union, Type::union(vec![Type::int(), Type::string()]));
+    }
+
+    #[test]
+    fn test_union_simplification_eliminates_subtypes_with_any() {
+        let union = Type::union(vec![Type::int(), Type::any()]);
+        assert_eq!(union, Type::any());
+
+        let union = Type::union(vec![Type::string(), Type::int(), Type::any()]);
+        assert_eq!(union, Type::any());
+    }
+
+    #[test]
+    fn test_union_simplification_preserves_non_subtype_relations() {
+        let union = Type::union(vec![Type::int(), Type::string()]);
+        match union {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+            }
+            _ => panic!("Expected Union type"),
+        }
+    }
+
+    #[test]
+    fn test_union_simplification_with_duplicates() {
+        let union = Type::union(vec![Type::int(), Type::int(), Type::string(), Type::string()]);
+        match union {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+            }
+            _ => panic!("Expected Union type"),
+        }
+    }
+
+    #[test]
+    fn test_union_simplification_flattens_nested() {
+        let inner1 = Type::union(vec![Type::int(), Type::string()]);
+        let inner2 = Type::union(vec![Type::bool(), Type::float()]);
+        let union = Type::union(vec![inner1, inner2]);
+
+        match union {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 4);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+                assert!(types.contains(&Type::bool()));
+                assert!(types.contains(&Type::float()));
+            }
+            _ => panic!("Expected Union type"),
+        }
+    }
+
+    #[test]
+    fn test_union_simplification_complex_case() {
+        let inner1 = Type::union(vec![Type::int(), Type::never()]);
+        let inner2 = Type::union(vec![Type::string(), Type::int()]);
+        let union = Type::union(vec![inner1, inner2]);
+
+        match union {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                assert!(types.contains(&Type::int()));
+                assert!(types.contains(&Type::string()));
+            }
+            _ => panic!("Expected Union type"),
+        }
+    }
+
+    #[test]
+    fn test_union_single_type_after_simplification() {
+        let union = Type::union(vec![Type::never(), Type::int()]);
+        assert_eq!(union, Type::int());
     }
 }

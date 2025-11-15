@@ -166,9 +166,24 @@ impl Unifier {
                 }
                 Ok(subst)
             }
-            (Type::ForAll(_, _), _) | (_, Type::ForAll(_, _)) => {
-                Err(TypeError::UnificationError("polymorphic type".to_string(), "monomorphic type".to_string()).into())
+            (Type::ForAll(quantified1, body1), Type::ForAll(quantified2, body2)) => {
+                if quantified1.len() != quantified2.len() {
+                    return Err(TypeError::UnificationError(
+                        format!("ForAll with {} type parameters", quantified1.len()),
+                        format!("ForAll with {} type parameters", quantified2.len()),
+                    )
+                    .into());
+                }
+
+                let mut renaming = Subst::empty();
+                for (tv1, tv2) in quantified1.iter().zip(quantified2.iter()) {
+                    renaming.insert(tv1.clone(), Type::Var(tv2.clone()));
+                }
+
+                let renamed_body1 = renaming.apply(body1);
+                Self::unify_impl(&renamed_body1, body2)
             }
+            (Type::ForAll(_, body), t) | (t, Type::ForAll(_, body)) => Self::unify_impl(body, t),
             (Type::Con(TypeCtor::TypeVariable(_)), _) | (_, Type::Con(TypeCtor::TypeVariable(_))) => Ok(Subst::empty()),
             _ => Err(TypeError::UnificationError(t1.to_string(), t2.to_string()).into()),
         }
@@ -963,5 +978,76 @@ mod tests {
 
         let subst = Unifier::unify(&gen_var, &gen_str).unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::string()));
+    }
+
+    #[test]
+    fn test_forall_alpha_equivalence() {
+        let tv1 = TypeVar::new(100);
+        let tv2 = TypeVar::new(200);
+
+        let forall1 = Type::ForAll(
+            vec![tv1.clone()],
+            Box::new(Type::fun_unnamed(vec![Type::Var(tv1.clone())], Type::Var(tv1))),
+        );
+
+        let forall2 = Type::ForAll(
+            vec![tv2.clone()],
+            Box::new(Type::fun_unnamed(vec![Type::Var(tv2.clone())], Type::Var(tv2))),
+        );
+
+        let result = Unifier::unify(&forall1, &forall2);
+        assert!(result.is_ok(), "ForAll types with alpha-equivalent bodies should unify");
+    }
+
+    #[test]
+    fn test_forall_with_monomorphic() {
+        let tv = TypeVar::new(300);
+        let forall_type = Type::ForAll(vec![tv.clone()], Box::new(Type::list(Type::Var(tv.clone()))));
+
+        let mono_type = Type::list(Type::int());
+
+        let result = Unifier::unify(&forall_type, &mono_type);
+        assert!(result.is_ok(), "ForAll should unify with compatible monomorphic type");
+
+        let subst = result.unwrap();
+        assert_eq!(subst.get(&tv), Some(&Type::int()));
+    }
+
+    #[test]
+    fn test_forall_different_param_count() {
+        let tv1 = TypeVar::new(400);
+        let tv2 = TypeVar::new(401);
+        let tv3 = TypeVar::new(402);
+
+        let forall1 = Type::ForAll(
+            vec![tv1.clone()],
+            Box::new(Type::fun_unnamed(vec![Type::Var(tv1)], Type::int())),
+        );
+
+        let forall2 = Type::ForAll(
+            vec![tv2.clone(), tv3.clone()],
+            Box::new(Type::fun_unnamed(vec![Type::Var(tv2)], Type::Var(tv3))),
+        );
+
+        let result = Unifier::unify(&forall1, &forall2);
+        assert!(
+            result.is_err(),
+            "ForAll with different parameter counts should not unify"
+        );
+    }
+
+    #[test]
+    fn test_forall_nested_in_list() {
+        let tv = TypeVar::new(500);
+        let forall_type = Type::ForAll(
+            vec![tv.clone()],
+            Box::new(Type::fun_unnamed(vec![Type::Var(tv.clone())], Type::Var(tv))),
+        );
+
+        let list_forall = Type::list(forall_type);
+        let list_mono = Type::list(Type::fun_unnamed(vec![Type::int()], Type::int()));
+
+        let result = Unifier::unify(&list_forall, &list_mono);
+        assert!(result.is_ok(), "Nested ForAll in type constructor should unify");
     }
 }
