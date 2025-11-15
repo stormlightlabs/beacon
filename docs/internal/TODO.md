@@ -1,219 +1,220 @@
-# Beacon LSP Implementation Plan
+# Beacon Current Work & Tech Debt
 
-Implementation details and mod-specific tasks.
+Current milestone tasks and technical debt tracking. All integration tests are tracked in [e2e_tests.md](./e2e_tests.md).
 
-All integration tests (parser, config, analyzer, HM, linter, completion, formatting, LSP) are tracked in [e2e_test](./e2e_tests.md)
+See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
+
+## Current Release: v0.2.0
+
+**Theme**: Cache granularity & selective invalidation
+
+### Merge Tasks
+
+- [ ] ImportDependencyTracker integration tests
+- [ ] Scope-level content hashing validation
+- [ ] Cache regression tests
+
+### Documentation
+
+- [ ] Document cache architecture and invalidation strategy
+- [ ] Add performance benchmarks for cache improvements
+- [ ] Update user-facing docs for cache behavior
+
+## Type Checker Bugs & Enhancements
+
+### Type Checker Bugs
+
+**Priority**: v0.3.0 focus
+
+Known issues with HM type inference that need fixing:
+
+### High Priority
+
+- [ ] Audit all skipped/ignored type checker tests
+- [ ] Pattern matching type inference edge cases
+- [ ] Variance unification corner cases in complex generic hierarchies
+- [ ] Generic type inference with multiple constraints
+- [ ] Protocol satisfaction checking with variance
+- [ ] Constant expression evaluator edge cases
+
+### Medium Priority
+
+- [ ] Type narrowing in match statements with guards
+- [ ] Union type simplification (remove redundant types)
+- [ ] Recursive type handling improvements
+- [ ] Better error recovery for partial type inference failures
+
+### Low Priority
+
+- [ ] Improve type display formatting in diagnostics
+- [ ] Better handling of TypeVar bounds and constraints
+- [ ] Protocol inheritance and composition edge cases
+
+### Test Coverage
+
+- [ ] Add regression tests for all fixed bugs
+- [ ] Improve test coverage for generic types
+- [ ] Add stress tests for deeply nested generics
+- [ ] Test type inference with multiple inheritance
+
+### Typeshed Integration
+
+**Priority**: v0.5.0 focus
+
+- [ ] Design stub fetching and caching architecture
+- [ ] Implement [typeshed-stdlib-mirror](https://github.com/stormlightlabs/typeshed-stdlib-mirror) integration
+- [ ] Version-aware stub selection (3.8, 3.9, 3.10, 3.11, 3.12+)
+- [ ] Stub loader with merge strategy (custom stubs override typeshed)
+- [ ] Incremental stub updates without breaking analysis
+- [ ] Stub cache invalidation on Python version change
+- [ ] Documentation for stub sources and update process
+- [ ] Tests for version-specific stub behavior
+
+## Linter Tech Debt
+
+**Priority**: v0.8.0 focus
+
+### BEA022: UnusedIndirectAssignment
+
+Issues with augmented assignments and nested scope tracking:
+
+- [ ] Fix: Augmented assignments (`x += 1`) not tracked as assignments
+- [ ] Fix: Nested function scope tracking for complex cases
+- [ ] Unskip: `test_global_with_augmented_assignment`
+- [ ] Unskip: `test_global_and_nonlocal_in_same_function`
+
+### BEA023: ForwardAnnotationSyntaxError
+
+Complex annotation parsing issues:
+
+- [ ] Fix: Complex nested generic types produce false positives
+- [ ] Fix: String quote handling in annotations
+- [ ] Fix: Callable syntax validation incomplete
+- [ ] Fix: Identifier validation too basic (only checks numeric start)
+- [ ] Unskip: `test_annotation_nested_generics`
+- [ ] Unskip: `test_annotation_complex_nested_types`
+
+### Autofix Infrastructure
+
+- [ ] Design autofix API for lint rules
+- [ ] Implement autofix for simple rules (UnusedImport, RedundantPass)
+- [ ] Add autofix tests
+- [ ] Document autofix capabilities
+
+### Per-Rule Configuration
+
+- [ ] Design rule configuration schema
+- [ ] Implement per-rule enable/disable
+- [ ] Implement per-rule severity settings
+- [ ] Add configuration tests
+- [ ] Document rule configuration
 
 ## Snippet Engine
 
-**Files:** `crates/server/src/snippets/mod.rs`, `crates/server/src/snippets/library.rs`, `crates/server/src/snippets/context.rs`, `crates/server/src/features/snippet_completion.rs`
+**Priority**: v0.11.0 focus
 
-### Snippet Infrastructure
+### Core Infrastructure
 
-- [ ] Create snippet module structure (`crates/server/src/snippets/`)
-- [ ] Define `Snippet` struct (trigger, body, description, placeholders, scope)
-- [ ] Implement snippet parser for LSP snippet syntax ($1, ${2:default}, $0)
-- [ ] Build snippet registry (load, query, filter snippets)
-- [ ] Define snippet categories (control-flow, types, testing, async, etc.)
+- [ ] Design snippet definition schema (JSON/YAML)
+- [ ] Implement snippet registry and loader
+- [ ] Context matcher for scope-aware filtering
+- [ ] Placeholder resolver using HM type inference
+- [ ] LSP CompletionItem integration with insertTextFormat=Snippet
 
-### Built-in Snippet Library
+### Built-in Snippets
 
-- [ ] Control flow snippets:
-    - [ ] `if`, `elif`, `else` with proper indentation
-    - [ ] `for` loop with enumerate/range patterns
-    - [ ] `while` loop with condition
-    - [ ] `match`/`case` statement (Python 3.10+)
-- [ ] Comprehension snippets:
-    - [ ] List comprehension with filter
-    - [ ] Dict comprehension
-    - [ ] Set comprehension
-    - [ ] Generator expression
-- [ ] Context manager snippets:
-    - [ ] `with open()` for file operations
-    - [ ] Custom context manager class
-    - [ ] `@contextmanager` decorator pattern
-    - [ ] Multiple context managers
-- [ ] Exception handling snippets:
-    - [ ] `try`/`except`/`finally` block
-    - [ ] `try`/`except` with specific exception types
-    - [ ] Exception re-raising with context
-    - [ ] Custom exception class definition
-- [ ] Class definition snippets:
-    - [ ] Basic class with `__init__`
-    - [ ] `@dataclass` definition
-    - [ ] `@dataclass` with default values and types
-    - [ ] Property getter/setter pattern
-    - [ ] Abstract base class with `@abstractmethod`
-    - [ ] Protocol definition (structural typing)
-- [ ] Function snippets:
-    - [ ] Function with type annotations
-    - [ ] Function with `*args` and `**kwargs`
-    - [ ] Generator function with `yield`
-    - [ ] Async function with proper signature
-    - [ ] Lambda with type hint
-- [ ] Decorator snippets:
-    - [ ] Simple decorator function
-    - [ ] Decorator with arguments
-    - [ ] Class decorator
-    - [ ] `@property`, `@staticmethod`, `@classmethod`
-    - [ ] Functools decorators (`@lru_cache`, `@wraps`)
-- [ ] Type annotation snippets:
-    - [ ] `Optional[T]` type
-    - [ ] `Union[T1, T2]` type
-    - [ ] `List[T]`, `Dict[K, V]`, `Set[T]`, `Tuple[T, ...]`
-    - [ ] `Callable[[Args], Return]`
-    - [ ] Generic type variable definition
-    - [ ] TypedDict definition
-- [ ] Async/await snippets:
-    - [ ] `async def` function
-    - [ ] `await` expression with error handling
-    - [ ] `async with` context manager
-    - [ ] `async for` loop
-    - [ ] `asyncio.gather` pattern
-- [ ] Testing snippets:
-    - [ ] pytest test function
-    - [ ] pytest fixture
-    - [ ] `@pytest.mark.parametrize`
-    - [ ] Mock/patch pattern
-    - [ ] Async test function
-- [ ] Import snippets:
-    - [ ] Conditional import (try/except ImportError)
-    - [ ] `if TYPE_CHECKING:` block
-    - [ ] Common stdlib imports (pathlib, typing, collections)
-- [ ] File I/O snippets:
-    - [ ] Read file with pathlib
-    - [ ] Write file with context manager
-    - [ ] JSON load/dump
-    - [ ] CSV reader/writer
+- [ ] Control flow: if/elif/else, for, while, match
+- [ ] Exception handling: try/except/finally, with statements
+- [ ] Function templates with type annotations
+- [ ] Class templates (regular, dataclass, Protocol, TypedDict)
+- [ ] Decorator templates (@property, @classmethod, @staticmethod, @overload)
+- [ ] Type guard patterns and TypeIs/TypeGuard
+- [ ] Common patterns: list comprehensions, dict comprehensions, generator expressions
 
-- [ ] Register snippet completion provider
-- [ ] Implement `textDocument/completion` handler for snippets
-- [ ] Set `CompletionItem.kind` to `Snippet`
-- [ ] Populate `CompletionItem.insertText` with snippet body
-- [ ] Set `CompletionItem.insertTextFormat` to `Snippet`
-- [ ] Add snippet documentation to `CompletionItem.documentation`
-- [ ] Implement snippet ranking/sorting in completion list
-- [ ] Support client snippet capabilities detection
-- [ ] Handle clients without snippet support (fallback to plain text)
+### Advanced Features
 
-### Context-Aware Filtering
-
-- [ ] Detect cursor position scope (module, class, function, block)
-- [ ] Filter snippets by scope:
-    - [ ] Module-level snippets (imports, class definitions)
-    - [ ] Class-level snippets (methods, properties)
-    - [ ] Function-level snippets (control flow, expressions)
-- [ ] Parse surrounding code for context hints
-- [ ] Check available imports and suggest relevant snippets
-- [ ] Detect incomplete patterns (e.g., `with` without colon)
-- [ ] Integration with type inference:
-    - [ ] Suggest typed snippets based on inferred types
-    - [ ] Fill placeholder defaults with type information
-- [ ] Respect indentation level for snippet insertion
-
-### Snippet Placeholders & Navigation
-
-- [ ] Parse placeholder syntax ($1, ${2:default}, ${3|choice1,choice2|})
-- [ ] Implement tab stop ordering ($0 for final position)
-- [ ] Support nested placeholders
-- [ ] Variable substitution:
-    - [ ] `$TM_FILENAME` - current file name
-    - [ ] `$TM_SELECTED_TEXT` - selected text
-    - [ ] `$CLIPBOARD` - clipboard content
-    - [ ] Custom variables based on context
-- [ ] Transform placeholders with regex (${1/pattern/replacement/})
-- [ ] Choice placeholders (dropdown selection)
-
-### User-Defined Snippets
-
-- [ ] Snippet definition format (JSON or TOML)
-- [ ] Load snippets from workspace config (`.beacon/snippets/`)
-- [ ] Load snippets from user config (`~/.config/beacon/snippets/`)
-- [ ] Snippet validation on load (syntax, scope, triggers)
-- [ ] Snippet priority system (user > workspace > built-in)
-- [ ] Hot-reload snippets on config change
-- [ ] Snippet conflict detection (duplicate triggers)
-- [ ] Import dependency specification for snippets
-
-### Smart Snippet Features
-
-- [ ] Auto-import insertion for snippet dependencies
-- [ ] Snippet body formatting (apply PEP8 rules)
-- [ ] Conditional snippet parts based on context
-- [ ] Snippet chaining (one snippet triggers another)
+- [ ] Dynamic placeholder generation based on inferred types
 - [ ] Multi-cursor snippet expansion
-- [ ] Snippet macros for dynamic content generation
-- [ ] Snippet templates with file-level metadata
+- [ ] User-defined snippet support (custom snippets.json)
+- [ ] Context-aware filtering (scope type, imports, surrounding code)
+- [ ] Snippet variable expansion ($0, ${1:default}, $TM_SELECTED_TEXT)
+
+### Testing & Integration
+
+- [ ] Unit tests for snippet registry and matching
+- [ ] Integration tests with VS Code
+- [ ] Integration tests with Neovim/nvim-cmp
+- [ ] Documentation and examples
+- [ ] Performance benchmarks for snippet filtering
+
+## Static Analysis Tech Debt
+
+**Priority**: v0.6.0 focus
+
+### Cross-File Analysis
+
+- [ ] Extend ImportDependencyTracker to track symbol-level dependencies
+- [ ] Build workspace symbol table with module resolution
+- [ ] Cross-file reachability analysis
+- [ ] Transitive type propagation across module boundaries
+- [ ] Inconsistent export detection (`__all__` mismatches)
+- [ ] Conflicting stub definitions across files
+
+### Symbol Table
+
+- [ ] Symbol reference tracking for unused detection improvements
+- [ ] Better handling of star imports (`from foo import *`)
+- [ ] Qualified name resolution across modules
+
+## Infrastructure Tech Debt
+
+### Logging
+
+See [Logging](#logging) section below for detailed logging standards.
+
+#### Local Dev
+
+- [x] Add detailed `debug!` logs for parsing, AST construction, type inference, symbol resolution
+- [x] Add `info!` logs for file analysis start/finish, workspace detection, initialization
+- [x] Log all protocol events (`textDocument/*`, `workspace/*`) using `debug!` and `trace!`
+- [ ] Detailed symbol resolution tracing (partial coverage)
+- [ ] Per-module diagnostic generation logging
+
+#### LSP Client
+
+- [ ] Use `client.log_message` for background diagnostic information
+- [ ] Use `client.show_message` only for visible user warnings or fatal issues
+- [ ] Keep protocol logs separate from user-facing notifications
+- [ ] Respect client capabilities: only emit verbose logs if client requests `trace.server` or developer mode
+
+#### Release
+
+- [ ] Default to `RUST_LOG=warn` and disable `trace`/`debug` logging
+- [ ] Strip log lines containing file paths, source code, or symbol names
+- [ ] Keep only essential logs (initialization, version, fatal errors)
+- [ ] Provide runtime flag (`LSP_LOG_LEVEL`) for fine-grained control
 
 ### Configuration
 
-- [ ] Add `beacon.snippets.enabled` setting
-- [ ] Add `beacon.snippets.userSnippetsPath` setting
-- [ ] Add `beacon.snippets.categories` setting (enable/disable categories)
-- [ ] Add `beacon.snippets.showDocumentation` setting
-- [ ] Add `beacon.snippets.autoImport` setting
-- [ ] Add `beacon.snippets.formatOnInsert` setting
-- [ ] Add `beacon.snippets.triggerCharacters` setting
-- [ ] Snippet ranking configuration (frequency, recency, alphabetical)
+- [x] Configuration options (`mode`, `pythonVersion`, `stubPaths`, `decoratorStubs`)
+- [x] Config hot-reload without restart
+- [x] Type checking modes (strict/balanced/loose) - implemented but not enforced
+- [ ] Formatting configuration validation
+- [ ] Per-rule linter configuration (see Linter Tech Debt)
 
-### Testing & Validation
+### Performance
 
-See `docs/internal/e2e_tests.md` for comprehensive snippet integration test tasks.
+- [ ] Parallelization for large projects (v0.13.0)
+- [ ] StubCache LRU eviction tuning
+- [ ] Memory profiling for large codebases
+- [ ] CPU profiling and hotspot fixes
 
-### Documentation & Discovery
+### Testing
 
-- [ ] Document all built-in snippets with examples
-- [ ] Create snippet authoring guide for users
-- [ ] Snippet browsing command (list all available snippets)
-- [ ] Snippet search by keyword/description
-- [ ] Snippet usage analytics (track most-used snippets)
-- [ ] Example snippet library in documentation
-
-## PEP8 Formatting
-
-**Files:** `crates/server/src/formatting/mod.rs`, `crates/server/src/formatting/rules.rs`, `crates/server/src/formatting/config.rs`, `crates/server/src/features/formatting.rs`
-
-### Testing & Validation
-
-See `docs/internal/e2e_tests.md` for formatter integration test tasks including performance benchmarks, compatibility testing, and error handling.
-
-### Optimization
-
-- [ ] Parallel formatting for multiple files
-- [ ] Lazy token stream evaluation
-- [ ] Format buffer pooling (reduce allocations)
-
-### Static Analysis & Linting
-
-**Files:** `crates/server/src/analysis/linter.rs`, `crates/server/src/analysis/rules/mod.rs`, `crates/server/src/features/diagnostics.rs`
-
-See [Linter Rules](#linter-rules) section below for BEA code implementation status.
-
-### Infrastructure
-
-- [ ] Rule configuration (per-rule enable/disable, severity)
-- [ ] Symbol table integration for unused detection
-
-### Cross-File Diagnostics
-
-**Files:** `crates/server/src/workspace.rs`, `crates/server/src/features/diagnostics.rs`
-
-- [ ] Inconsistent symbol exports (`__all__` mismatches)
-- [ ] Conflicting stub definitions
-
-## Linter Rules
-
-- [ ] BEA022: UnusedIndirectAssignment - Detects global/nonlocal declarations without assignments
-    - Fix Augmented assignments (`x += 1`) not tracked as assignments
-    - Fix Nested function scope tracking needs refinement for complex cases
-    - See ignored tests: `test_global_with_augmented_assignment`, `test_global_and_nonlocal_in_same_function`
-
-- [ ] BEA023: ForwardAnnotationSyntaxError - Validates type annotation syntax
-    - See ignored tests: `test_annotation_nested_generics`, `test_annotation_complex_nested_types`, etc.
-        - [ ] Complex nested generic types may produce false positives
-        - [ ] String quote handling in annotations needs refinement
-        - [ ] Callable syntax validation incomplete
-        - [ ] Identifier validation is basic (only checks numeric start)
+- [ ] Split analyzer and LSP e2e tests per e2e_tests.md
+- [ ] Add performance regression tests
+- [ ] Fuzzing for parser and analyzer
+- [ ] Stress testing with large codebases
 
 ## Logging
 
