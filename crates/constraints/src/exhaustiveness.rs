@@ -56,7 +56,9 @@ pub enum ReachabilityResult {
 }
 
 /// Check if a set of patterns exhaustively covers a subject type
-pub fn check_exhaustiveness(subject_type: &Type, patterns: &[Pattern]) -> ExhaustivenessResult {
+pub fn check_exhaustiveness(
+    subject_type: &Type, patterns: &[Pattern], class_registry: &beacon_core::ClassRegistry,
+) -> ExhaustivenessResult {
     tracing::debug!(
         "Checking exhaustiveness for subject type: {} with {} patterns",
         subject_type,
@@ -72,7 +74,7 @@ pub fn check_exhaustiveness(subject_type: &Type, patterns: &[Pattern]) -> Exhaus
 
     let mut uncovered = initial_uncovered;
     for (idx, pattern) in patterns.iter().enumerate() {
-        let covered = compute_coverage(pattern, subject_type);
+        let covered = compute_coverage(pattern, subject_type, class_registry);
         tracing::trace!("Pattern {}: {:?} covers {} types", idx, pattern, covered.len());
         uncovered = subtract_coverage(uncovered, covered);
 
@@ -134,6 +136,12 @@ fn types_equal_or_subtype(type1: &Type, type2: &Type) -> bool {
                     return c1 == c2 || c2 == &base_type;
                 }
             }
+
+            if let TypeCtor::Literal(lit) = c2 {
+                if let Some(base_type) = lit_to_base_type(lit) {
+                    return c1 == c2 || c1 == &base_type;
+                }
+            }
             c1 == c2
         }
         (_, Type::Con(TypeCtor::Any)) => true,
@@ -168,7 +176,7 @@ pub fn check_reachability(pattern: &Pattern, previous_patterns: &[Pattern]) -> R
 }
 
 /// Compute the coverage of a pattern for a given subject type for both exhaustiveness and reachability checking.
-fn compute_coverage(pattern: &Pattern, subject_type: &Type) -> Vec<Type> {
+fn compute_coverage(pattern: &Pattern, subject_type: &Type, class_registry: &beacon_core::ClassRegistry) -> Vec<Type> {
     match pattern {
         Pattern::MatchValue(literal) => {
             let literal_type = match literal {
@@ -179,13 +187,19 @@ fn compute_coverage(pattern: &Pattern, subject_type: &Type) -> Vec<Type> {
                     LiteralValue::Boolean(b) => Type::literal_bool(*b),
                     LiteralValue::None => Type::literal_none(),
                 },
+                AstNode::Identifier { name, .. } => match name.as_str() {
+                    "None" => Type::literal_none(),
+                    "True" => Type::literal_bool(true),
+                    "False" => Type::literal_bool(false),
+                    _ => return vec![],
+                },
                 _ => return vec![],
             };
 
             if types_overlap(&literal_type, subject_type) { vec![literal_type] } else { vec![] }
         }
         Pattern::MatchAs { pattern: None, .. } => vec![subject_type.clone()],
-        Pattern::MatchAs { pattern: Some(sub), .. } => compute_coverage(sub, subject_type),
+        Pattern::MatchAs { pattern: Some(sub), .. } => compute_coverage(sub, subject_type, class_registry),
         Pattern::MatchSequence(_patterns) => filter_types(subject_type, |ty| match ty {
             Type::App(ctor, _) => {
                 matches!(ctor.as_ref(), Type::Con(TypeCtor::List) | Type::Con(TypeCtor::Tuple))
@@ -201,16 +215,19 @@ fn compute_coverage(pattern: &Pattern, subject_type: &Type) -> Vec<Type> {
         }),
         Pattern::MatchClass { cls, .. } => filter_types(subject_type, |ty| match (cls.as_str(), ty) {
             ("int", Type::Con(TypeCtor::Int)) => true,
+            ("int", Type::Con(TypeCtor::Bool)) => true,
             ("str", Type::Con(TypeCtor::String)) => true,
             ("bool", Type::Con(TypeCtor::Bool)) => true,
             ("float", Type::Con(TypeCtor::Float)) => true,
-            (_, Type::Con(TypeCtor::Class(name))) => name == cls,
+            (pattern_class, Type::Con(TypeCtor::Class(subject_class))) => {
+                pattern_class == subject_class || class_registry.is_subclass_of(subject_class, pattern_class)
+            }
             _ => false,
         }),
         Pattern::MatchOr(alternatives) => {
             let mut coverage = Vec::new();
             for alt in alternatives {
-                coverage.extend(compute_coverage(alt, subject_type));
+                coverage.extend(compute_coverage(alt, subject_type, class_registry));
             }
             coverage.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
             coverage.dedup();
@@ -228,7 +245,9 @@ fn pattern_subsumes(pattern1: &Pattern, pattern2: &Pattern) -> bool {
         (_, Pattern::MatchAs { pattern: None, .. }) => false,
         (Pattern::MatchValue(lit1), Pattern::MatchValue(lit2)) => literals_equal(lit1, lit2),
         (Pattern::MatchClass { cls: cls1, patterns: pats1 }, Pattern::MatchClass { cls: cls2, patterns: pats2 }) => {
-            cls1 == cls2
+            let class_subsumes = if cls1 == cls2 { true } else { cls1 == "int" && cls2 == "bool" };
+
+            class_subsumes
                 && pats1.len() == pats2.len()
                 && pats1.iter().zip(pats2.iter()).all(|(p1, p2)| pattern_subsumes(p1, p2))
         }
@@ -349,7 +368,7 @@ mod tests {
     fn test_exhaustiveness_bool_complete() {
         let subject = Type::bool();
         let patterns = vec![bool_pattern(true), bool_pattern(false)];
-        let result = check_exhaustiveness(&subject, &patterns);
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         assert!(matches!(result, ExhaustivenessResult::Exhaustive));
     }
 
@@ -357,7 +376,7 @@ mod tests {
     fn test_exhaustiveness_bool_incomplete() {
         let subject = Type::bool();
         let patterns = vec![bool_pattern(true)];
-        let result = check_exhaustiveness(&subject, &patterns);
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
 
         match result {
             ExhaustivenessResult::NonExhaustive { uncovered } => {
@@ -373,7 +392,7 @@ mod tests {
     fn test_exhaustiveness_catch_all() {
         let subject = Type::bool();
         let patterns = vec![catch_all("x")];
-        let result = check_exhaustiveness(&subject, &patterns);
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         assert!(matches!(result, ExhaustivenessResult::Exhaustive));
     }
 
@@ -391,7 +410,7 @@ mod tests {
             catch_all("rest"),
         ];
 
-        let result = check_exhaustiveness(&subject, &patterns);
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         assert!(
             matches!(result, ExhaustivenessResult::Exhaustive),
             "Literal + catch-all should be exhaustive for union"
@@ -418,7 +437,7 @@ mod tests {
             }),
         ];
 
-        match check_exhaustiveness(&subject, &patterns) {
+        match check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new()) {
             ExhaustivenessResult::NonExhaustive { uncovered } => {
                 assert!(!uncovered.is_empty())
             }
@@ -546,7 +565,7 @@ mod tests {
     fn test_compute_coverage_literal() {
         let subject = Type::int();
         let pattern = int_pattern(42);
-        let coverage = compute_coverage(&pattern, &subject);
+        let coverage = compute_coverage(&pattern, &subject, &beacon_core::ClassRegistry::new());
         assert_eq!(coverage.len(), 1);
         assert!(
             matches!(coverage[0], Type::Con(beacon_core::TypeCtor::Literal(_))),
@@ -558,7 +577,7 @@ mod tests {
     fn test_compute_coverage_catch_all() {
         let subject = Type::union(vec![Type::int(), Type::string()]);
         let pattern = catch_all("x");
-        let coverage = compute_coverage(&pattern, &subject);
+        let coverage = compute_coverage(&pattern, &subject, &beacon_core::ClassRegistry::new());
         assert_eq!(coverage.len(), 1);
         assert!(matches!(coverage[0], Type::Union(_)));
     }
@@ -567,7 +586,7 @@ mod tests {
     fn test_literal_bool_exhaustive() {
         let subject = Type::bool();
         let patterns = vec![bool_pattern(true), bool_pattern(false)];
-        let result = check_exhaustiveness(&subject, &patterns);
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         assert!(
             matches!(result, ExhaustivenessResult::Exhaustive),
             "Both True and False should be exhaustive for bool"
@@ -578,7 +597,7 @@ mod tests {
     fn test_literal_bool_only_true() {
         let subject = Type::bool();
         let patterns = vec![bool_pattern(true)];
-        let result = check_exhaustiveness(&subject, &patterns);
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         match result {
             ExhaustivenessResult::NonExhaustive { .. } => {}
             ExhaustivenessResult::Exhaustive => {
@@ -591,7 +610,7 @@ mod tests {
     fn test_literal_bool_only_false() {
         let subject = Type::bool();
         let patterns = vec![bool_pattern(false)];
-        let result = check_exhaustiveness(&subject, &patterns);
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         match result {
             ExhaustivenessResult::NonExhaustive { .. } => {}
             ExhaustivenessResult::Exhaustive => {
@@ -604,8 +623,8 @@ mod tests {
     fn test_literal_int_different_values() {
         let subject = Type::int();
         let patterns = vec![int_pattern(1), int_pattern(2)];
-        let coverage1 = compute_coverage(&patterns[0], &subject);
-        let coverage2 = compute_coverage(&patterns[1], &subject);
+        let coverage1 = compute_coverage(&patterns[0], &subject, &beacon_core::ClassRegistry::new());
+        let coverage2 = compute_coverage(&patterns[1], &subject, &beacon_core::ClassRegistry::new());
 
         assert_eq!(coverage1.len(), 1);
         assert_eq!(coverage2.len(), 1);
@@ -663,7 +682,7 @@ mod tests {
     fn test_compute_coverage_sequence() {
         let subject = Type::union(vec![Type::list(Type::int()), Type::string()]);
         let pattern = Pattern::MatchSequence(vec![]);
-        let coverage = compute_coverage(&pattern, &subject);
+        let coverage = compute_coverage(&pattern, &subject, &beacon_core::ClassRegistry::new());
         assert_eq!(coverage.len(), 1);
         assert!(matches!(coverage[0], Type::App(_, _)));
     }
@@ -676,7 +695,7 @@ mod tests {
             Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] },
         ]);
         let patterns = vec![pattern];
-        let result = check_exhaustiveness(&subject, &patterns);
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         assert!(
             matches!(result, ExhaustivenessResult::Exhaustive),
             "str() | int() should be exhaustive for int | str"
@@ -687,7 +706,7 @@ mod tests {
     fn test_compute_coverage_class_int() {
         let subject = Type::union(vec![Type::int(), Type::string()]);
         let pattern = Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] };
-        let coverage = compute_coverage(&pattern, &subject);
+        let coverage = compute_coverage(&pattern, &subject, &beacon_core::ClassRegistry::new());
         assert_eq!(coverage.len(), 1);
         assert!(
             matches!(coverage[0], Type::Con(TypeCtor::Int)),
@@ -699,7 +718,7 @@ mod tests {
     fn test_compute_coverage_class_str() {
         let subject = Type::union(vec![Type::int(), Type::string()]);
         let pattern = Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] };
-        let coverage = compute_coverage(&pattern, &subject);
+        let coverage = compute_coverage(&pattern, &subject, &beacon_core::ClassRegistry::new());
         assert_eq!(coverage.len(), 1);
         assert!(
             matches!(coverage[0], Type::Con(TypeCtor::String)),
@@ -711,7 +730,7 @@ mod tests {
     fn test_compute_coverage_class_bool() {
         let subject = Type::union(vec![Type::bool(), Type::string()]);
         let pattern = Pattern::MatchClass { cls: "bool".to_string(), patterns: vec![] };
-        let coverage = compute_coverage(&pattern, &subject);
+        let coverage = compute_coverage(&pattern, &subject, &beacon_core::ClassRegistry::new());
         assert_eq!(coverage.len(), 1);
         assert!(
             matches!(coverage[0], Type::Con(TypeCtor::Bool)),
@@ -723,11 +742,111 @@ mod tests {
     fn test_compute_coverage_class_float() {
         let subject = Type::union(vec![Type::float(), Type::string()]);
         let pattern = Pattern::MatchClass { cls: "float".to_string(), patterns: vec![] };
-        let coverage = compute_coverage(&pattern, &subject);
+        let coverage = compute_coverage(&pattern, &subject, &beacon_core::ClassRegistry::new());
         assert_eq!(coverage.len(), 1);
         assert!(
             matches!(coverage[0], Type::Con(TypeCtor::Float)),
             "case float() should cover float type"
+        );
+    }
+
+    /// Helper to create a None literal pattern
+    fn none_pattern() -> Pattern {
+        Pattern::MatchValue(AstNode::Literal { value: LiteralValue::None, line: 1, col: 1, end_line: 1, end_col: 1 })
+    }
+
+    /// Helper to create a None identifier pattern (matching on the None identifier)
+    fn none_identifier_pattern() -> Pattern {
+        Pattern::MatchValue(AstNode::Identifier { name: "None".to_string(), line: 1, col: 1, end_line: 1, end_col: 1 })
+    }
+
+    #[test]
+    fn test_none_pattern_exhaustiveness_int_none() {
+        let subject = Type::union(vec![Type::int(), Type::none()]);
+        let patterns = vec![
+            none_pattern(),
+            Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] },
+        ];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        assert!(
+            matches!(result, ExhaustivenessResult::Exhaustive),
+            "case None: and case int() should be exhaustive for int | None"
+        );
+    }
+
+    #[test]
+    fn test_none_identifier_pattern_exhaustiveness() {
+        let subject = Type::union(vec![Type::int(), Type::none()]);
+        let patterns = vec![
+            none_identifier_pattern(),
+            Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] },
+        ];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        assert!(
+            matches!(result, ExhaustivenessResult::Exhaustive),
+            "case None: (as identifier) should be exhaustive for int | None"
+        );
+    }
+
+    #[test]
+    fn test_none_pattern_exhaustiveness_str_none() {
+        let subject = Type::union(vec![Type::string(), Type::none()]);
+        let patterns = vec![
+            Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] },
+            none_pattern(),
+        ];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        assert!(
+            matches!(result, ExhaustivenessResult::Exhaustive),
+            "case str() and case None: should be exhaustive for str | None"
+        );
+    }
+
+    #[test]
+    fn test_none_pattern_exhaustiveness_three_way() {
+        let subject = Type::union(vec![Type::int(), Type::string(), Type::none()]);
+        let patterns = vec![
+            none_pattern(),
+            Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] },
+            Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] },
+        ];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        assert!(
+            matches!(result, ExhaustivenessResult::Exhaustive),
+            "case None:, case int(), case str() should be exhaustive for int | str | None"
+        );
+    }
+
+    #[test]
+    fn test_none_pattern_missing_is_non_exhaustive() {
+        let subject = Type::union(vec![Type::int(), Type::none()]);
+        let patterns = vec![Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] }];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        match result {
+            ExhaustivenessResult::NonExhaustive { uncovered } => {
+                assert!(!uncovered.is_empty(), "Should have uncovered None case");
+                assert!(
+                    uncovered.iter().any(|t| matches!(t, Type::Con(TypeCtor::NoneType))),
+                    "Uncovered should contain NoneType"
+                );
+            }
+            ExhaustivenessResult::Exhaustive => {
+                panic!("Expected non-exhaustive: case int() alone should not cover int | None")
+            }
+        }
+    }
+
+    #[test]
+    fn test_types_equal_or_subtype_literal_none_vs_nonetype() {
+        let literal_none = Type::literal_none();
+        let none_type = Type::none();
+        assert!(
+            types_equal_or_subtype(&literal_none, &none_type),
+            "Literal[None] should be subtype of NoneType"
+        );
+        assert!(
+            types_equal_or_subtype(&none_type, &literal_none),
+            "NoneType should match Literal[None] (symmetric)"
         );
     }
 }

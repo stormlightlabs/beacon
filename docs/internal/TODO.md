@@ -4,49 +4,48 @@ Current milestone tasks and technical debt tracking. All integration tests are t
 
 See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
-## Current Release: v0.2.1
-
-Cache granularity & selective invalidation tests & validation
-
-### Merge Tasks
-
-- [x] ImportDependencyTracker integration tests
-- [x] Scope-level content hashing validation
-- [x] Cache regression tests
-
-### Documentation
-
-- [x] Document cache architecture and invalidation strategy
-- [x] Update user-facing docs for cache behavior
-
 ## Type Checker Bugs & Enhancements
-
-### Type Checker Bugs
 
 **Priority**: v0.3.0 focus
 
 Known issues with HM type inference that need fixing:
 
-### High Priority
+### Fixes/Edge Cases
 
-- [ ] Audit all skipped/ignored type checker tests
-- [ ] Pattern matching type inference edge cases
+- [x] Pattern matching type inference edge cases
+- [x] None pattern exhaustiveness bug (case None: not recognized in unions)
+
+#### Core Type System Enhancement
+
+- [x] Union type simplification (remove redundant types)
+- [x] Recursive type handling improvements (ForAll unification, recursive classes)
+
+#### Variance & Protocols
+
 - [ ] Variance unification corner cases in complex generic hierarchies
 - [ ] Generic type inference with multiple constraints
 - [ ] Protocol satisfaction checking with variance
-- [ ] Constant expression evaluator edge cases
 
-### Medium Priority
+#### Pattern Matching & Narrowing
 
 - [ ] Type narrowing in match statements with guards
-- [ ] Union type simplification (remove redundant types)
-- [ ] Recursive type handling improvements
+- [ ] Constant expression evaluator edge cases
+
+#### TypeVar Bounds & Constraints
+
+- [ ] Create `TypeVarConstraintRegistry` in `beacon-core` to map TypeVar IDs to bounds/constraints
+- [ ] Pass registry through constraint generation context and unification
+- [ ] Update `extract_variance_from_typevar_call` in `analyzer/src/walker/visitors.rs` and `analyzer/src/loader.rs` to extract:
+    - [ ] `bound` keyword argument (parse type annotation)
+    - [ ] Positional arguments after name (constraint types)
+- [ ] Modify `Unifier::unify_var` in `core/src/unify.rs` to check bounds before creating substitution
+- [ ] Update constraint solver to validate constraints when instantiating TypeVars
+- [ ] Add tests for all bound/constraint scenarios
+
+### Ergonomics
+
 - [ ] Better error recovery for partial type inference failures
-
-### Low Priority
-
 - [ ] Improve type display formatting in diagnostics
-- [ ] Better handling of TypeVar bounds and constraints
 - [ ] Protocol inheritance and composition edge cases
 
 ### Test Coverage
@@ -56,13 +55,12 @@ Known issues with HM type inference that need fixing:
 - [ ] Add stress tests for deeply nested generics
 - [ ] Test type inference with multiple inheritance
 
-### Typeshed Integration
+## Typeshed Integration
 
 **Priority**: v0.5.0 focus
 
-- [ ] Design stub fetching and caching architecture
 - [ ] Implement [typeshed-stdlib-mirror](https://github.com/stormlightlabs/typeshed-stdlib-mirror) integration
-- [ ] Version-aware stub selection (3.8, 3.9, 3.10, 3.11, 3.12+)
+    - [ ] Version-aware stub selection (3.8, 3.9, 3.10, 3.11, 3.12+)
 - [ ] Stub loader with merge strategy (custom stubs override typeshed)
 - [ ] Incremental stub updates without breaking analysis
 - [ ] Stub cache invalidation on Python version change

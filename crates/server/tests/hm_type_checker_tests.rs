@@ -60,6 +60,7 @@ const COVARIANT: &str = include_str!("hm_fixtures/variance/covariant.py");
 const CONTRAVARIANT: &str = include_str!("hm_fixtures/variance/contravariant.py");
 const INVARIANT: &str = include_str!("hm_fixtures/variance/invariant.py");
 const TYPEVAR_ANNOTATIONS: &str = include_str!("hm_fixtures/variance/typevar_annotations.py");
+const UNION_SIMPLIFICATION: &str = include_str!("hm_fixtures/union_simplification.py");
 
 /// Helper struct to manage test fixture loading and type checking
 struct HmTestHarness {
@@ -560,4 +561,27 @@ result = identity(42)
 
     let nonexistent = harness.get_symbol_type(&result, "nonexistent_symbol");
     assert!(nonexistent.is_none(), "Should return None for non-existent symbol");
+}
+
+#[test]
+fn test_union_simplification() {
+    let mut harness = HmTestHarness::new();
+    let result = harness.check_fixture("union_simplification", UNION_SIMPLIFICATION);
+
+    let errors = harness.get_errors(&result);
+    assert!(
+        errors.is_empty(),
+        "Should have no type errors in union simplification fixture, got: {errors:?}"
+    );
+
+    let test_union_with_never_type = harness.get_symbol_type(&result, "test_union_with_never");
+    if let Some(Type::Fun(params, _)) = test_union_with_never_type {
+        assert!(params.len() == 1, "Function should have 1 parameter");
+    }
+
+    assert!(harness.get_symbol_type(&result, "test_union_with_any").is_some());
+    assert!(harness.get_symbol_type(&result, "test_nested_unions").is_some());
+    assert!(harness.get_symbol_type(&result, "test_duplicate_types").is_some());
+    assert!(harness.get_symbol_type(&result, "test_optional_int").is_some());
+    assert!(harness.get_symbol_type(&result, "test_complex_nested").is_some());
 }
