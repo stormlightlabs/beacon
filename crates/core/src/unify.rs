@@ -61,6 +61,39 @@ impl Unifier {
         }
     }
 
+    /// Extract the root type constructor and count parameters from a type application chain.
+    ///
+    /// For example:
+    /// - `Dict[K, V]` = `App(App(Dict, K), V)` → `(Dict, 2)`
+    /// - `List[T]` = `App(List, T)` → `(List, 1)`
+    /// - `Generator[Y, S, R]` = `App(App(App(Gen, Y), S), R)` → `(Generator, 3)`
+    fn extract_type_ctor_and_param_count(ty: &Type) -> Option<(&TypeCtor, usize)> {
+        let mut current = ty;
+        let mut param_count = 0;
+
+        while let Type::App(ctor, _) = current {
+            param_count += 1;
+            current = ctor.as_ref();
+        }
+
+        if let Type::Con(tc) = current { Some((tc, param_count)) } else { None }
+    }
+
+    /// Get the variance for a specific parameter index in a type application chain.
+    ///
+    /// Multi-parameter types like `Dict[K, V]` are represented as nested applications:
+    /// `App(App(Dict, K), V)` where K is at parameter 0 and V is at parameter 1.
+    ///
+    /// This function determines which parameter position we're at based on the nesting depth.
+    fn get_variance_for_app(f: &Type) -> Variance {
+        if let Some((root_ctor, total_params)) = Self::extract_type_ctor_and_param_count(f) {
+            let param_index = total_params.saturating_sub(1);
+            root_ctor.variance(param_index)
+        } else {
+            Variance::Invariant
+        }
+    }
+
     fn unify_impl(t1: &Type, t2: &Type) -> Result<Subst> {
         match (t1, t2) {
             (Type::Con(TypeCtor::Any), _) | (_, Type::Con(TypeCtor::Any)) => Ok(Subst::empty()),
@@ -73,10 +106,7 @@ impl Unifier {
                 let applied_a1 = s1.apply(a1);
                 let applied_a2 = s1.apply(a2);
 
-                let variance = match f1.as_ref() {
-                    Type::Con(tc) => tc.variance(0),
-                    _ => Variance::Invariant,
-                };
+                let variance = Self::get_variance_for_app(f1);
 
                 match variance {
                     Variance::Invariant => {
@@ -1049,5 +1079,152 @@ mod tests {
 
         let result = Unifier::unify(&list_forall, &list_mono);
         assert!(result.is_ok(), "Nested ForAll in type constructor should unify");
+    }
+
+    #[test]
+    fn test_extract_type_ctor_and_param_count_single_param() {
+        let list_int = Type::list(Type::int());
+        let result = Unifier::extract_type_ctor_and_param_count(&list_int);
+        assert!(result.is_some());
+        let (ctor, count) = result.unwrap();
+        assert_eq!(*ctor, TypeCtor::List);
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_extract_type_ctor_and_param_count_two_params() {
+        let dict_str_int = Type::dict(Type::string(), Type::int());
+        let result = Unifier::extract_type_ctor_and_param_count(&dict_str_int);
+        assert!(result.is_some());
+        let (ctor, count) = result.unwrap();
+        assert_eq!(*ctor, TypeCtor::Dict);
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_extract_type_ctor_and_param_count_three_params() {
+        let gen_type = Type::generator(Type::int(), Type::string(), Type::bool());
+        let result = Unifier::extract_type_ctor_and_param_count(&gen_type);
+        assert!(result.is_some());
+        let (ctor, count) = result.unwrap();
+        assert_eq!(*ctor, TypeCtor::Generator);
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_variance_multi_param_dict_key_invariant() {
+        let tv1 = TypeVar::new(600);
+        let dict_var_int = Type::dict(Type::Var(tv1.clone()), Type::int());
+        let dict_str_int = Type::dict(Type::string(), Type::int());
+
+        let result = Unifier::unify(&dict_var_int, &dict_str_int);
+        assert!(result.is_ok());
+        let subst = result.unwrap();
+        assert_eq!(subst.get(&tv1), Some(&Type::string()));
+    }
+
+    #[test]
+    fn test_variance_multi_param_dict_value_invariant() {
+        let tv = TypeVar::new(602);
+        let dict_str_var = Type::dict(Type::string(), Type::Var(tv.clone()));
+        let dict_str_int = Type::dict(Type::string(), Type::int());
+
+        let result = Unifier::unify(&dict_str_var, &dict_str_int);
+        assert!(result.is_ok());
+        let subst = result.unwrap();
+        assert_eq!(subst.get(&tv), Some(&Type::int()));
+    }
+
+    #[test]
+    fn test_variance_multi_param_dict_both_invariant() {
+        let dog = Type::Con(TypeCtor::Class("Dog".to_string()));
+        let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
+
+        let dict_dog_dog = Type::dict(dog.clone(), dog.clone());
+        let dict_animal_animal = Type::dict(animal.clone(), animal.clone());
+
+        let result = Unifier::unify(&dict_dog_dog, &dict_animal_animal);
+        assert!(result.is_err(), "Dict is invariant in both parameters");
+    }
+
+    #[test]
+    fn test_variance_generator_all_three_params() {
+        let tv_yield = TypeVar::new(700);
+        let tv_send = TypeVar::new(701);
+        let tv_return = TypeVar::new(702);
+
+        let gen_var = Type::generator(
+            Type::Var(tv_yield.clone()),
+            Type::Var(tv_send.clone()),
+            Type::Var(tv_return.clone()),
+        );
+        let gen_concrete = Type::generator(Type::int(), Type::string(), Type::bool());
+
+        let result = Unifier::unify(&gen_var, &gen_concrete);
+        assert!(result.is_ok());
+        let subst = result.unwrap();
+        assert_eq!(subst.get(&tv_yield), Some(&Type::int()));
+        assert_eq!(subst.get(&tv_send), Some(&Type::string()));
+        assert_eq!(subst.get(&tv_return), Some(&Type::bool()));
+    }
+
+    #[test]
+    fn test_variance_async_generator_both_params() {
+        let tv_yield = TypeVar::new(800);
+        let tv_send = TypeVar::new(801);
+
+        let gen_var = Type::async_generator(Type::Var(tv_yield.clone()), Type::Var(tv_send.clone()));
+        let gen_concrete = Type::async_generator(Type::int(), Type::string());
+
+        let result = Unifier::unify(&gen_var, &gen_concrete);
+        assert!(result.is_ok());
+        let subst = result.unwrap();
+        assert_eq!(subst.get(&tv_yield), Some(&Type::int()));
+        assert_eq!(subst.get(&tv_send), Some(&Type::string()));
+    }
+
+    #[test]
+    fn test_variance_nested_generic_hierarchy() {
+        let dog = Type::Con(TypeCtor::Class("Dog".to_string()));
+        let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
+
+        let producer_ctor = Type::Con(TypeCtor::Class("Producer".to_string()));
+        let consumer_ctor = Type::Con(TypeCtor::Class("Consumer".to_string()));
+
+        let consumer_dog = Type::App(Box::new(consumer_ctor.clone()), Box::new(dog.clone()));
+        let producer_consumer_dog = Type::App(Box::new(producer_ctor.clone()), Box::new(consumer_dog));
+
+        let consumer_animal = Type::App(Box::new(consumer_ctor), Box::new(animal));
+        let producer_consumer_animal = Type::App(Box::new(producer_ctor), Box::new(consumer_animal));
+
+        let result = Unifier::unify(&producer_consumer_dog, &producer_consumer_dog);
+        assert!(result.is_ok());
+
+        let result = Unifier::unify(&producer_consumer_animal, &producer_consumer_animal);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_variance_deeply_nested_list() {
+        let tv = TypeVar::new(900);
+        let list_list_list_var = Type::list(Type::list(Type::list(Type::Var(tv.clone()))));
+        let list_list_list_int = Type::list(Type::list(Type::list(Type::int())));
+
+        let result = Unifier::unify(&list_list_list_var, &list_list_list_int);
+        assert!(result.is_ok());
+        let subst = result.unwrap();
+        assert_eq!(subst.get(&tv), Some(&Type::int()));
+    }
+
+    #[test]
+    fn test_variance_dict_with_nested_generics() {
+        let tv = TypeVar::new(901);
+        let dict_str_list_var = Type::dict(Type::string(), Type::list(Type::Var(tv.clone())));
+        let dict_str_list_int = Type::dict(Type::string(), Type::list(Type::int()));
+
+        let result = Unifier::unify(&dict_str_list_var, &dict_str_list_int);
+        assert!(result.is_ok());
+        let subst = result.unwrap();
+        assert_eq!(subst.get(&tv), Some(&Type::int()));
     }
 }

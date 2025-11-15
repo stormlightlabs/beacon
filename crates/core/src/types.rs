@@ -902,6 +902,29 @@ impl Type {
         }
     }
 
+    /// Get the variance for a specific parameter position in a type application chain.
+    ///
+    /// Multi-parameter types like `Dict[K, V]` are represented as nested applications:
+    /// `App(App(Dict, K), V)` where K is at parameter 0 and V is at parameter 1.
+    ///
+    /// This function determines which parameter position we're at based on the nesting depth.
+    fn get_app_variance(ty: &Type) -> Variance {
+        let mut current = ty;
+        let mut param_count: usize = 0;
+
+        while let Type::App(ctor, _) = current {
+            param_count += 1;
+            current = ctor.as_ref();
+        }
+
+        if let Type::Con(tc) = current {
+            let param_index = param_count.saturating_sub(1);
+            tc.variance(param_index)
+        } else {
+            Variance::Invariant
+        }
+    }
+
     /// Simplify a type by applying normalization rules
     ///
     /// Performs post-processing simplifications that may arise after substitution:
@@ -1133,10 +1156,7 @@ impl Type {
                 return false;
             }
 
-            let variance = match self_ctor.as_ref() {
-                Type::Con(tc) => tc.variance(0),
-                _ => Variance::Invariant,
-            };
+            let variance = Self::get_app_variance(self_ctor.as_ref());
 
             return match variance {
                 Variance::Covariant => self_arg.is_subtype_of(other_arg),
@@ -2606,5 +2626,64 @@ mod tests {
     fn test_union_single_type_after_simplification() {
         let union = Type::union(vec![Type::never(), Type::int()]);
         assert_eq!(union, Type::int());
+    }
+
+    #[test]
+    fn test_subtype_dict_invariant_both_params() {
+        let dict_str_int = Type::dict(Type::string(), Type::int());
+        let dict_str_str = Type::dict(Type::string(), Type::string());
+        let dict_int_int = Type::dict(Type::int(), Type::int());
+
+        assert!(dict_str_int.is_subtype_of(&dict_str_int));
+
+        assert!(!dict_str_int.is_subtype_of(&dict_str_str));
+
+        assert!(!dict_str_int.is_subtype_of(&dict_int_int));
+    }
+
+    #[test]
+    fn test_subtype_generator_with_same_types() {
+        let gen_type = Type::generator(Type::int(), Type::string(), Type::bool());
+        assert!(gen_type.is_subtype_of(&gen_type));
+    }
+
+    #[test]
+    fn test_subtype_generator_different_params() {
+        let gen1 = Type::generator(Type::int(), Type::string(), Type::bool());
+        let gen2 = Type::generator(Type::string(), Type::string(), Type::bool());
+
+        assert!(!gen1.is_subtype_of(&gen2));
+        assert!(!gen2.is_subtype_of(&gen1));
+    }
+
+    #[test]
+    fn test_get_app_variance_single_param() {
+        let list_int = Type::list(Type::int());
+        let variance = Type::get_app_variance(&list_int);
+        assert_eq!(variance, Variance::Invariant);
+    }
+
+    #[test]
+    fn test_get_app_variance_dict_first_param() {
+        let dict_str_int = Type::dict(Type::string(), Type::int());
+        let variance = Type::get_app_variance(&dict_str_int);
+        assert_eq!(variance, Variance::Invariant);
+    }
+
+    #[test]
+    fn test_get_app_variance_generator_params() {
+        let gen_type = Type::generator(Type::int(), Type::string(), Type::bool());
+
+        let variance = Type::get_app_variance(&gen_type);
+        assert_eq!(variance, Variance::Covariant);
+    }
+
+    #[test]
+    fn test_subtype_nested_list_hierarchy() {
+        let nested_list = Type::list(Type::list(Type::list(Type::int())));
+        assert!(nested_list.is_subtype_of(&nested_list));
+
+        let nested_list_str = Type::list(Type::list(Type::list(Type::string())));
+        assert!(!nested_list.is_subtype_of(&nested_list_str));
     }
 }
