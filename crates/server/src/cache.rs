@@ -1282,4 +1282,172 @@ mod tests {
         assert!(manager.scope_cache.get(&key1).is_none());
         assert!(manager.scope_cache.get(&key2).is_some());
     }
+
+    #[test]
+    fn test_type_cache_lru_eviction() {
+        let cache = TypeCache::new(2);
+        let uri = Url::parse("file:///test.py").unwrap();
+
+        let int_type = Type::Con(TypeCtor::Int);
+        let string_type = Type::Con(TypeCtor::String);
+        let float_type = Type::Con(TypeCtor::Float);
+
+        cache.insert(uri.clone(), 1, 1, int_type.clone());
+        cache.insert(uri.clone(), 2, 1, string_type.clone());
+
+        cache.get(&uri, 1, 1);
+
+        cache.insert(uri.clone(), 3, 1, float_type);
+
+        assert!(cache.get(&uri, 1, 1).is_some());
+        assert!(cache.get(&uri, 2, 1).is_none());
+        assert!(cache.get(&uri, 3, 1).is_some());
+    }
+
+    #[test]
+    fn test_import_tracker_empty_cleanup() {
+        let mut tracker = ImportDependencyTracker::new();
+        let module = Url::parse("file:///module.py").unwrap();
+        let importer = Url::parse("file:///user.py").unwrap();
+
+        tracker.add_import(&module, "func", &importer);
+        assert_eq!(tracker.get_symbol_importers(&module, "func").len(), 1);
+
+        tracker.clear_imports_from(&importer);
+
+        let importers = tracker.get_symbol_importers(&module, "func");
+        assert_eq!(importers.len(), 0);
+
+        tracker.add_import(&module, "func", &importer);
+        assert_eq!(tracker.get_symbol_importers(&module, "func").len(), 1);
+    }
+
+    #[test]
+    fn test_import_tracker_cleanup_for_multiple_symbols() {
+        let mut tracker = ImportDependencyTracker::new();
+        let module = Url::parse("file:///module.py").unwrap();
+        let importer1 = Url::parse("file:///user1.py").unwrap();
+        let importer2 = Url::parse("file:///user2.py").unwrap();
+
+        tracker.add_import(&module, "func_a", &importer1);
+        tracker.add_import(&module, "func_a", &importer2);
+        tracker.add_import(&module, "func_b", &importer1);
+
+        tracker.clear_imports_from(&importer1);
+
+        assert_eq!(tracker.get_symbol_importers(&module, "func_a").len(), 1);
+        assert!(tracker.get_symbol_importers(&module, "func_a").contains(&importer2));
+        assert_eq!(tracker.get_symbol_importers(&module, "func_b").len(), 0);
+    }
+
+    #[test]
+    fn test_clear_scope_cache() {
+        let cache = ScopeCache::new(10);
+        let uri = Url::parse("file:///test.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        let key = ScopeCacheKey::new(uri, scope_id, "x = 1");
+        let result = CachedScopeResult {
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+            dependencies: vec![],
+        };
+
+        cache.insert(key.clone(), result);
+        assert!(cache.get(&key).is_some());
+
+        cache.clear();
+        assert!(cache.get(&key).is_none());
+        assert_eq!(cache.stats().size, 0);
+    }
+
+    #[test]
+    fn test_clear_analysis_cache() {
+        let cache = AnalysisCache::new(10);
+        let uri = Url::parse("file:///test.py").unwrap();
+
+        let result = CachedAnalysisResult {
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+            type_errors: vec![],
+            static_analysis: None,
+        };
+
+        cache.insert(uri.clone(), 1, result);
+        assert!(cache.get(&uri, 1).is_some());
+
+        cache.clear();
+        assert!(cache.get(&uri, 1).is_none());
+        assert_eq!(cache.stats().size, 0);
+    }
+
+    #[test]
+    fn test_cache_manager_default() {
+        let manager1 = CacheManager::default();
+        let manager2 = CacheManager::new();
+        assert_eq!(manager1.stats().capacity, manager2.stats().capacity);
+    }
+
+    #[test]
+    fn test_import_tracker_default() {
+        let tracker1 = ImportDependencyTracker::default();
+        let tracker2 = ImportDependencyTracker::new();
+
+        let module = Url::parse("file:///module.py").unwrap();
+        let importers1 = tracker1.get_symbol_importers(&module, "test");
+        let importers2 = tracker2.get_symbol_importers(&module, "test");
+
+        assert_eq!(importers1.len(), importers2.len());
+    }
+
+    #[test]
+    fn test_introspection_cache_lru_eviction() {
+        let temp_dir = tempdir().unwrap();
+        let cache = IntrospectionCache::new(Some(temp_dir.path()));
+
+        for i in 0..1001 {
+            cache.insert(
+                format!("module{i}"),
+                "func".to_string(),
+                IntrospectionResult { signature: format!("sig{i}"), docstring: format!("doc{i}") },
+            );
+        }
+
+        let stats = cache.stats();
+        assert_eq!(stats.size, 1000);
+    }
+
+    #[test]
+    fn test_scope_cache_stats_after_clear() {
+        let cache = ScopeCache::new(10);
+        let uri = Url::parse("file:///test.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        let key = ScopeCacheKey::new(uri, scope_id, "x = 1");
+        let result = CachedScopeResult {
+            type_map: FxHashMap::default(),
+            position_map: FxHashMap::default(),
+            dependencies: vec![],
+        };
+
+        cache.insert(key.clone(), result);
+        cache.get(&key);
+
+        cache.clear();
+
+        let stats = cache.stats();
+        assert_eq!(stats.size, 0);
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.misses, 0);
+        assert_eq!(stats.hit_rate, 0.0);
+    }
+
+    #[test]
+    fn test_cache_manager_workspace_with_custom_capacity() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CacheManager::with_workspace(75, Some(temp_dir.path()));
+
+        assert_eq!(manager.stats().capacity, 75);
+        assert_eq!(manager.scope_stats().capacity, 150);
+    }
 }
