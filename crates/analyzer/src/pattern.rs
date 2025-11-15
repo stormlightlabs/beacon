@@ -365,18 +365,19 @@ fn validate_literal_pattern_type(
 /// Validate that a class pattern can match the subject type
 ///
 /// Class patterns like `case int():` or `case str():` match instances of those types.
-/// Built-in types are represented as `Type::Con(TypeCtor::Int)` not `Type::Con(TypeCtor::Class("int"))`.
-/// TODO: use registry lookup for inheritance checking
+/// Built-in types are represented as `Type::Con(TypeCtor::Int)` not `Type::Con(TypeCtor::Class("int"))`
 fn validate_class_pattern_type(
-    cls: &str, subject_type: &Type, _class_registry: &ClassRegistry,
+    cls: &str, subject_type: &Type, class_registry: &ClassRegistry,
 ) -> std::result::Result<(), TypeError> {
-    if class_pattern_matches_type(cls, subject_type) {
+    if class_pattern_matches_type(cls, subject_type, class_registry) {
         return Ok(());
     }
 
     match subject_type {
         Type::Union(variants) => {
-            let any_compatible = variants.iter().any(|variant| class_pattern_matches_type(cls, variant));
+            let any_compatible = variants
+                .iter()
+                .any(|variant| class_pattern_matches_type(cls, variant, class_registry));
             if any_compatible {
                 Ok(())
             } else {
@@ -397,13 +398,21 @@ fn validate_class_pattern_type(
 /// Check if a class pattern matches a given type
 ///
 /// Handles both built-in types (int, str, bool, float) and user-defined classes.
-fn class_pattern_matches_type(cls: &str, ty: &Type) -> bool {
+///
+/// Python-specific semantics:
+/// - bool is a subtype of int, so `case int():` matches bool values
+/// - However, `case bool():` only matches bool, not all ints
+/// - User-defined classes support inheritance checking via the class registry
+fn class_pattern_matches_type(cls: &str, ty: &Type, class_registry: &ClassRegistry) -> bool {
     match (cls, ty) {
-        ("int", Type::Con(TypeCtor::Int)) => true,
-        ("str", Type::Con(TypeCtor::String)) => true,
-        ("bool", Type::Con(TypeCtor::Bool)) => true,
-        ("float", Type::Con(TypeCtor::Float)) => true,
-        (pattern_class, Type::Con(TypeCtor::Class(subject_class))) => pattern_class == subject_class,
+        ("int", Type::Con(TypeCtor::Int))
+        | ("int", Type::Con(TypeCtor::Bool))
+        | ("str", Type::Con(TypeCtor::String))
+        | ("bool", Type::Con(TypeCtor::Bool))
+        | ("float", Type::Con(TypeCtor::Float)) => true,
+        (pattern_class, Type::Con(TypeCtor::Class(subject_class))) => {
+            pattern_class == subject_class || class_registry.is_subclass_of(subject_class, pattern_class)
+        }
         _ => false,
     }
 }

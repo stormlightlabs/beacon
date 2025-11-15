@@ -40,7 +40,13 @@ pub fn narrow_type_by_pattern(ty: &Type, pattern: &beacon_parser::Pattern) -> Ty
             _ => ty.clone(),
         },
         Pattern::MatchClass { cls, .. } => {
-            let target_type = Type::Con(TypeCtor::Class(cls.clone()));
+            let target_type = match cls.as_str() {
+                "int" => Type::int(),
+                "str" => Type::string(),
+                "bool" => Type::bool(),
+                "float" => Type::float(),
+                _ => Type::Con(TypeCtor::Class(cls.clone())),
+            };
 
             match ty {
                 Type::Union(variants) => {
@@ -129,7 +135,7 @@ mod tests {
         let sub_pattern = Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] };
         let pattern = Pattern::MatchAs { pattern: Some(Box::new(sub_pattern)), name: Some("x".to_string()) };
         let result = narrow_type_by_pattern(&union_type, &pattern);
-        let expected = Type::Con(TypeCtor::Class("int".to_string()));
+        let expected = Type::int();
         assert_eq!(result, expected);
     }
 

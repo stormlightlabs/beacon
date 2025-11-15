@@ -4,21 +4,6 @@ Current milestone tasks and technical debt tracking. All integration tests are t
 
 See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
-## Current Release: v0.2.1
-
-Cache granularity & selective invalidation tests & validation
-
-### Merge Tasks
-
-- [x] ImportDependencyTracker integration tests
-- [x] Scope-level content hashing validation
-- [x] Cache regression tests
-
-### Documentation
-
-- [x] Document cache architecture and invalidation strategy
-- [x] Update user-facing docs for cache behavior
-
 ## Type Checker Bugs & Enhancements
 
 ### Type Checker Bugs
@@ -29,8 +14,8 @@ Known issues with HM type inference that need fixing:
 
 ### High Priority
 
-- [ ] Audit all skipped/ignored type checker tests
-- [ ] Pattern matching type inference edge cases
+- [x] Pattern matching type inference edge cases
+- [ ] None pattern exhaustiveness bug (case None: not recognized in unions)
 - [ ] Variance unification corner cases in complex generic hierarchies
 - [ ] Generic type inference with multiple constraints
 - [ ] Protocol satisfaction checking with variance

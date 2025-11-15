@@ -30,9 +30,18 @@ pub fn is_dict_type(ty: &Type) -> bool {
 }
 
 /// Check if a type is compatible with a class pattern
+///
+/// Python-specific semantics:
+/// - bool is a subtype of int, so int() pattern matches bool values
+/// - However, bool() pattern only matches bool, not all ints
 pub fn type_compatible_with_class(ty: &Type, cls: &str) -> bool {
-    match ty {
-        Type::Con(TypeCtor::Class(name)) => name == cls,
+    match (cls, ty) {
+        ("int", Type::Con(TypeCtor::Int))
+        | ("int", Type::Con(TypeCtor::Bool))
+        | ("str", Type::Con(TypeCtor::String))
+        | ("bool", Type::Con(TypeCtor::Bool))
+        | ("float", Type::Con(TypeCtor::Float)) => true,
+        (pattern_class, Type::Con(TypeCtor::Class(subject_class))) => pattern_class == subject_class,
         _ => false,
     }
 }

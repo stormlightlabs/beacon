@@ -60,19 +60,19 @@ fn validate_literal_pattern_type(literal: &AstNode, subject_type: &Type) -> Resu
 /// Validate that a class pattern can match the subject type
 ///
 /// Class patterns like `case int():` or `case str():` match instances of those types.
-/// Built-in types are represented as `Type::Con(TypeCtor::Int)` not `Type::Con(TypeCtor::Class("int"))`.
+/// Built-in types are represented as `Type::Con(TypeCtor::Int)` not `Type::Con(TypeCtor::Class("int"))`
 fn validate_class_pattern_type(
-    cls: &str, subject_type: &Type, _class_registry: &ClassRegistry,
+    cls: &str, subject_type: &Type, class_registry: &ClassRegistry,
 ) -> Result<(), TypeError> {
-    // Check if this class pattern matches the subject type
-    if class_pattern_matches_type(cls, subject_type) {
+    if class_pattern_matches_type(cls, subject_type, class_registry) {
         return Ok(());
     }
 
     match subject_type {
         Type::Union(variants) => {
-            // For union types, check if the class pattern can match any variant
-            let any_compatible = variants.iter().any(|variant| class_pattern_matches_type(cls, variant));
+            let any_compatible = variants
+                .iter()
+                .any(|variant| class_pattern_matches_type(cls, variant, class_registry));
             if any_compatible {
                 Ok(())
             } else {
@@ -93,13 +93,21 @@ fn validate_class_pattern_type(
 /// Check if a class pattern matches a given type
 ///
 /// Handles both built-in types (int, str, bool, float) and user-defined classes.
-fn class_pattern_matches_type(cls: &str, ty: &Type) -> bool {
+///
+/// Python-specific semantics:
+/// - bool is a subtype of int, so `case int():` matches bool values
+/// - However, `case bool():` only matches bool, not all ints
+/// - User-defined classes support inheritance checking via the class registry
+fn class_pattern_matches_type(cls: &str, ty: &Type, class_registry: &ClassRegistry) -> bool {
     match (cls, ty) {
-        ("int", Type::Con(TypeCtor::Int)) => true,
-        ("str", Type::Con(TypeCtor::String)) => true,
-        ("bool", Type::Con(TypeCtor::Bool)) => true,
-        ("float", Type::Con(TypeCtor::Float)) => true,
-        (pattern_class, Type::Con(TypeCtor::Class(subject_class))) => pattern_class == subject_class,
+        ("int", Type::Con(TypeCtor::Int))
+        | ("int", Type::Con(TypeCtor::Bool))
+        | ("str", Type::Con(TypeCtor::String))
+        | ("bool", Type::Con(TypeCtor::Bool))
+        | ("float", Type::Con(TypeCtor::Float)) => true,
+        (pattern_class, Type::Con(TypeCtor::Class(subject_class))) => {
+            pattern_class == subject_class || class_registry.is_subclass_of(subject_class, pattern_class)
+        }
         _ => false,
     }
 }
@@ -218,41 +226,66 @@ fn extract_tuple_arity(ty: &Type) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use beacon_core::ClassMetadata;
     use beacon_parser::Pattern;
 
     #[test]
     fn test_class_pattern_matches_int() {
+        let class_registry = ClassRegistry::new();
         let int_type = Type::int();
         assert!(
-            class_pattern_matches_type("int", &int_type),
+            class_pattern_matches_type("int", &int_type, &class_registry),
             "case int() should match int type"
         );
     }
 
     #[test]
     fn test_class_pattern_matches_str() {
+        let class_registry = ClassRegistry::new();
         let str_type = Type::string();
         assert!(
-            class_pattern_matches_type("str", &str_type),
+            class_pattern_matches_type("str", &str_type, &class_registry),
             "case str() should match str type"
         );
     }
 
     #[test]
     fn test_class_pattern_matches_bool() {
+        let class_registry = ClassRegistry::new();
         let bool_type = Type::bool();
         assert!(
-            class_pattern_matches_type("bool", &bool_type),
+            class_pattern_matches_type("bool", &bool_type, &class_registry),
             "case bool() should match bool type"
         );
     }
 
     #[test]
     fn test_class_pattern_matches_float() {
+        let class_registry = ClassRegistry::new();
         let float_type = Type::float();
         assert!(
-            class_pattern_matches_type("float", &float_type),
+            class_pattern_matches_type("float", &float_type, &class_registry),
             "case float() should match float type"
+        );
+    }
+
+    #[test]
+    fn test_class_pattern_int_matches_bool() {
+        let class_registry = ClassRegistry::new();
+        let bool_type = Type::bool();
+        assert!(
+            class_pattern_matches_type("int", &bool_type, &class_registry),
+            "case int() should match bool type (bool is subtype of int)"
+        );
+    }
+
+    #[test]
+    fn test_class_pattern_bool_does_not_match_int() {
+        let class_registry = ClassRegistry::new();
+        let int_type = Type::int();
+        assert!(
+            !class_pattern_matches_type("bool", &int_type, &class_registry),
+            "case bool() should NOT match general int type"
         );
     }
 
@@ -314,5 +347,31 @@ mod tests {
 
         let result = validate_pattern_type_compatibility(&pattern, &union_type, &class_registry);
         assert!(result.is_ok(), "case int() should match int | None union");
+    }
+
+    #[test]
+    fn test_class_pattern_inheritance() {
+        let mut class_registry = ClassRegistry::new();
+        let mut animal = ClassMetadata::new("Animal".to_string());
+        animal.add_field("name".to_string(), Type::string());
+        class_registry.register_class("Animal".to_string(), animal);
+
+        let mut dog = ClassMetadata::new("Dog".to_string());
+        dog.add_base_class("Animal".to_string());
+        dog.add_field("breed".to_string(), Type::string());
+        class_registry.register_class("Dog".to_string(), dog);
+
+        let dog_type = Type::Con(TypeCtor::Class("Dog".to_string()));
+
+        assert!(
+            class_pattern_matches_type("Animal", &dog_type, &class_registry),
+            "case Animal() should match Dog type (Dog inherits from Animal)"
+        );
+
+        let animal_type = Type::Con(TypeCtor::Class("Animal".to_string()));
+        assert!(
+            !class_pattern_matches_type("Dog", &animal_type, &class_registry),
+            "case Dog() should NOT match Animal type (inheritance only works one way)"
+        );
     }
 }

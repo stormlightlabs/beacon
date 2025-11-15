@@ -1034,7 +1034,7 @@ pub fn solve_constraints(
                 }
             }
             Constraint::PatternExhaustive(subject_ty, patterns, span) => {
-                let result = check_exhaustiveness(&subject_ty, &patterns);
+                let result = check_exhaustiveness(&subject_ty, &patterns, class_registry);
                 match result {
                     ExhaustivenessResult::Exhaustive => {}
                     ExhaustivenessResult::NonExhaustive { uncovered } => {
