@@ -14,6 +14,7 @@ struct CallContext<'a> {
     subst: &'a mut Subst,
     type_errors: &'a mut Vec<TypeErrorInfo>,
     class_registry: &'a ClassRegistry,
+    typevar_registry: &'a beacon_core::TypeVarConstraintRegistry,
     span: Span,
 }
 
@@ -50,7 +51,10 @@ fn type_to_method_signature(name: &str, ty: &Type) -> Option<MethodSignature> {
 ///
 /// This method checks structural conformance by verifying that the type has all required methods with compatible signatures.
 /// Uses full variance checking: contravariant parameters, covariant returns.
-fn check_user_defined_protocol(ty: &Type, protocol_name: &str, class_registry: &ClassRegistry) -> bool {
+fn check_user_defined_protocol(
+    ty: &Type, protocol_name: &str, class_registry: &ClassRegistry,
+    typevar_registry: &beacon_core::TypeVarConstraintRegistry,
+) -> bool {
     let protocol_meta = match class_registry.get_class(protocol_name) {
         Some(meta) if meta.is_protocol => meta,
         _ => return false,
@@ -95,7 +99,7 @@ fn check_user_defined_protocol(ty: &Type, protocol_name: &str, class_registry: &
 
                     for (req_param, prov_param) in required.params.iter().zip(&provided_sig.params) {
                         let contravariant_ok = req_param.is_subtype_of(prov_param)
-                            || types_compatible(prov_param, req_param, class_registry);
+                            || types_compatible(prov_param, req_param, class_registry, typevar_registry);
                         if !contravariant_ok {
                             all_methods_ok = false;
                             break;
@@ -107,7 +111,12 @@ fn check_user_defined_protocol(ty: &Type, protocol_name: &str, class_registry: &
                     }
 
                     let covariant_ok = provided_sig.return_type.is_subtype_of(&required.return_type)
-                        || types_compatible(&provided_sig.return_type, &required.return_type, class_registry);
+                        || types_compatible(
+                            &provided_sig.return_type,
+                            &required.return_type,
+                            class_registry,
+                            typevar_registry,
+                        );
                     if !covariant_ok {
                         all_methods_ok = false;
                         break;
@@ -268,7 +277,10 @@ fn get_attribute_type(ty: &Type, attr_name: &str, class_registry: &ClassRegistry
     }
 }
 
-fn classes_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegistry) -> bool {
+fn classes_compatible(
+    actual: &Type, expected: &Type, class_registry: &ClassRegistry,
+    typevar_registry: &beacon_core::TypeVarConstraintRegistry,
+) -> bool {
     if matches!(expected, Type::Con(TypeCtor::Any)) || matches!(actual, Type::Con(TypeCtor::Any)) {
         return true;
     }
@@ -292,13 +304,14 @@ fn classes_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegi
 
                         let compatible = match variance {
                             beacon_core::Variance::Covariant => {
-                                types_compatible(actual_arg, expected_arg, class_registry)
+                                types_compatible(actual_arg, expected_arg, class_registry, typevar_registry)
                             }
                             beacon_core::Variance::Contravariant => {
-                                types_compatible(expected_arg, actual_arg, class_registry)
+                                types_compatible(expected_arg, actual_arg, class_registry, typevar_registry)
                             }
                             beacon_core::Variance::Invariant => {
-                                actual_arg == expected_arg || Unifier::unify(actual_arg, expected_arg).is_ok()
+                                actual_arg == expected_arg
+                                    || Unifier::unify(actual_arg, expected_arg, typevar_registry).is_ok()
                             }
                         };
 
@@ -313,7 +326,7 @@ fn classes_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegi
 
         if let Some(metadata) = class_registry.get_class(&expected_name) {
             if metadata.is_protocol {
-                return check_user_defined_protocol(actual, &expected_name, class_registry);
+                return check_user_defined_protocol(actual, &expected_name, class_registry, typevar_registry);
             }
         }
     }
@@ -328,7 +341,10 @@ fn class_info(ty: &Type) -> Option<(String, Vec<Type>)> {
     }
 }
 
-fn iterable_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegistry) -> bool {
+fn iterable_compatible(
+    actual: &Type, expected: &Type, class_registry: &ClassRegistry,
+    typevar_registry: &beacon_core::TypeVarConstraintRegistry,
+) -> bool {
     if let Some((yield_ty, _send_ty, _return_ty)) = actual.extract_generator_params() {
         if let Some((expected_ctor, expected_args)) = expected.unapply() {
             let expects_iterable = matches!(expected_ctor, TypeCtor::Iterable)
@@ -336,7 +352,7 @@ fn iterable_compatible(actual: &Type, expected: &Type, class_registry: &ClassReg
 
             if expects_iterable {
                 if let Some(elem_ty) = expected_args.first() {
-                    return types_compatible(yield_ty, elem_ty, class_registry);
+                    return types_compatible(yield_ty, elem_ty, class_registry, typevar_registry);
                 }
                 return true;
             }
@@ -361,7 +377,7 @@ fn iterable_compatible(actual: &Type, expected: &Type, class_registry: &ClassReg
                 && actual_args
                     .iter()
                     .zip(expected_args.iter())
-                    .all(|(a, e)| types_compatible(a, e, class_registry))
+                    .all(|(a, e)| types_compatible(a, e, class_registry, typevar_registry))
         } else {
             false
         }
@@ -375,7 +391,10 @@ fn iterable_compatible(actual: &Type, expected: &Type, class_registry: &ClassReg
 /// For function subtyping: Callable[P1, R1] <: Callable[P2, R2] requires:
 /// - Parameters are contravariant: P2 <: P1 (note the flip!)
 /// - Return type is covariant: R1 <: R2
-fn function_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegistry) -> bool {
+fn function_compatible(
+    actual: &Type, expected: &Type, class_registry: &ClassRegistry,
+    typevar_registry: &beacon_core::TypeVarConstraintRegistry,
+) -> bool {
     match (actual, expected) {
         (Type::Fun(params_a, ret_a), Type::Fun(params_e, ret_e)) => {
             if params_a.len() != params_e.len() {
@@ -385,9 +404,9 @@ fn function_compatible(actual: &Type, expected: &Type, class_registry: &ClassReg
             let params_ok = params_a
                 .iter()
                 .zip(params_e.iter())
-                .all(|((_, a), (_, e))| types_compatible(e, a, class_registry));
+                .all(|((_, a), (_, e))| types_compatible(e, a, class_registry, typevar_registry));
 
-            let ret_ok = types_compatible(ret_a, ret_e, class_registry);
+            let ret_ok = types_compatible(ret_a, ret_e, class_registry, typevar_registry);
 
             params_ok && ret_ok
         }
@@ -395,7 +414,10 @@ fn function_compatible(actual: &Type, expected: &Type, class_registry: &ClassReg
     }
 }
 
-fn types_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegistry) -> bool {
+fn types_compatible(
+    actual: &Type, expected: &Type, class_registry: &ClassRegistry,
+    typevar_registry: &beacon_core::TypeVarConstraintRegistry,
+) -> bool {
     if actual == expected {
         return true;
     }
@@ -410,44 +432,46 @@ fn types_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegist
         return true;
     }
 
-    if function_compatible(actual, expected, class_registry) {
+    if function_compatible(actual, expected, class_registry, typevar_registry) {
         return true;
     }
 
-    if classes_compatible(actual, expected, class_registry) {
+    if classes_compatible(actual, expected, class_registry, typevar_registry) {
         return true;
     }
 
-    if iterable_compatible(actual, expected, class_registry) {
+    if iterable_compatible(actual, expected, class_registry, typevar_registry) {
         return true;
     }
 
     false
 }
 
-fn generator_iterable_subst(actual: &Type, expected: &Type) -> Option<Subst> {
+fn generator_iterable_subst(
+    actual: &Type, expected: &Type, typevar_registry: &beacon_core::TypeVarConstraintRegistry,
+) -> Option<Subst> {
     if let (Type::Fun(actual_params, actual_ret), Type::Fun(expected_params, expected_ret)) = (actual, expected) {
         if actual_params.len() == expected_params.len() {
             let mut combined = Subst::empty();
             for (param_actual, param_expected) in actual_params.iter().zip(expected_params.iter()) {
-                if let Some(sub) = generator_iterable_subst(&param_actual.1, &param_expected.1) {
+                if let Some(sub) = generator_iterable_subst(&param_actual.1, &param_expected.1, typevar_registry) {
                     combined = sub.compose(combined);
                 }
             }
 
-            if let Some(ret_subst) = generator_iterable_subst(actual_ret, expected_ret) {
+            if let Some(ret_subst) = generator_iterable_subst(actual_ret, expected_ret, typevar_registry) {
                 return Some(ret_subst.compose(combined));
             }
 
             return if combined.is_empty() { None } else { Some(combined) };
         }
 
-        return generator_iterable_subst(actual_ret, expected_ret);
+        return generator_iterable_subst(actual_ret, expected_ret, typevar_registry);
     }
 
     if let Type::Union(variants) = actual {
         for variant in variants {
-            if let Some(sub) = generator_iterable_subst(variant, expected) {
+            if let Some(sub) = generator_iterable_subst(variant, expected, typevar_registry) {
                 return Some(sub);
             }
         }
@@ -456,7 +480,7 @@ fn generator_iterable_subst(actual: &Type, expected: &Type) -> Option<Subst> {
 
     if let Type::Union(variants) = expected {
         for variant in variants {
-            if let Some(sub) = generator_iterable_subst(actual, variant) {
+            if let Some(sub) = generator_iterable_subst(actual, variant, typevar_registry) {
                 return Some(sub);
             }
         }
@@ -471,7 +495,7 @@ fn generator_iterable_subst(actual: &Type, expected: &Type) -> Option<Subst> {
         return None;
     }
     let elem_ty = expected_args.first()?;
-    Unifier::unify(yield_ty, elem_ty).ok()
+    Unifier::unify(yield_ty, elem_ty, typevar_registry).ok()
 }
 
 /// Merge positional and keyword arguments according to function parameters
@@ -578,18 +602,24 @@ fn handle_call_args(
                     let provided_ty = ctx.subst.apply(provided_ty);
                     let expected_ty = ctx.subst.apply(expected_param_ty);
 
-                    if function_compatible(&provided_ty, &expected_ty, ctx.class_registry) {
+                    if function_compatible(&provided_ty, &expected_ty, ctx.class_registry, ctx.typevar_registry) {
                         continue;
                     }
 
-                    match Unifier::unify(&provided_ty, &expected_ty) {
+                    match Unifier::unify(&provided_ty, &expected_ty, ctx.typevar_registry) {
                         Ok(s) => {
                             *ctx.subst = s.compose(ctx.subst.clone());
                         }
                         Err(BeaconError::TypeError(_)) => {
-                            if let Some(s) = generator_iterable_subst(&provided_ty, &expected_ty) {
+                            if let Some(s) = generator_iterable_subst(&provided_ty, &expected_ty, ctx.typevar_registry)
+                            {
                                 *ctx.subst = s.compose(ctx.subst.clone());
-                            } else if !types_compatible(&provided_ty, &expected_ty, ctx.class_registry) {
+                            } else if !types_compatible(
+                                &provided_ty,
+                                &expected_ty,
+                                ctx.class_registry,
+                                ctx.typevar_registry,
+                            ) {
                                 ctx.type_errors.push(TypeErrorInfo::new(
                                     TypeError::ArgumentTypeMismatch {
                                         param_name: param_name.clone(),
@@ -619,17 +649,21 @@ fn handle_call_args(
 
 fn unify_return_type(
     subst: &mut Subst, type_errors: &mut Vec<TypeErrorInfo>, call_ret_ty: &Type, target_ty: &Type, span: Span,
+    typevar_registry: &beacon_core::TypeVarConstraintRegistry,
 ) {
-    match Unifier::unify(&subst.apply(call_ret_ty), &subst.apply(target_ty)) {
+    match Unifier::unify(&subst.apply(call_ret_ty), &subst.apply(target_ty), typevar_registry) {
         Ok(s) => *subst = s.compose(subst.clone()),
         Err(BeaconError::TypeError(type_err)) => type_errors.push(TypeErrorInfo::new(type_err, span)),
         Err(_) => (),
     }
 }
 
+/// FIXME: address this with a context struct
+#[allow(clippy::too_many_arguments)]
 fn unify_with_adhoc_fun(
     subst: &mut Subst, type_errors: &mut Vec<TypeErrorInfo>, callable: &Type, pos_args: &[(Type, Span)],
     kw_args: &[(String, Type, Span)], ret_ty: &Type, span: Span,
+    typevar_registry: &beacon_core::TypeVarConstraintRegistry,
 ) {
     let all_args: Vec<Type> = pos_args
         .iter()
@@ -639,7 +673,7 @@ fn unify_with_adhoc_fun(
 
     let expected_fn_ty = Type::fun_unnamed(all_args, ret_ty.clone());
 
-    match Unifier::unify(&subst.apply(callable), &subst.apply(&expected_fn_ty)) {
+    match Unifier::unify(&subst.apply(callable), &subst.apply(&expected_fn_ty), typevar_registry) {
         Ok(s) => {
             *subst = s.compose(subst.clone());
         }
@@ -671,6 +705,7 @@ fn resolve_bound_method_type<'a>(
 /// Errors are accumulated rather than failing fast to provide comprehensive feedback.
 pub fn solve_constraints(
     constraint_set: ConstraintSet, class_registry: &ClassRegistry,
+    typevar_registry: &beacon_core::TypeVarConstraintRegistry,
 ) -> Result<(Subst, Vec<TypeErrorInfo>)> {
     let mut subst = Subst::empty();
     let mut type_errors = Vec::new();
@@ -694,7 +729,7 @@ pub fn solve_constraints(
                 };
 
                 if needs_variance_check {
-                    if !types_compatible(&applied_t1, &applied_t2, class_registry) {
+                    if !types_compatible(&applied_t1, &applied_t2, class_registry, typevar_registry) {
                         let (class_name, _) = class_info(&applied_t1).unwrap();
                         type_errors.push(TypeErrorInfo::new(
                             TypeError::VarianceError {
@@ -712,13 +747,13 @@ pub fn solve_constraints(
                     if !(involves_union
                         && (applied_t1.is_subtype_of(&applied_t2) || applied_t2.is_subtype_of(&applied_t1)))
                     {
-                        match Unifier::unify(&applied_t1, &applied_t2) {
+                        match Unifier::unify(&applied_t1, &applied_t2, typevar_registry) {
                             Ok(s) => {
                                 subst = s.compose(subst);
                             }
                             Err(BeaconError::TypeError(type_err)) => {
-                                if !types_compatible(&applied_t1, &applied_t2, class_registry)
-                                    && !types_compatible(&applied_t2, &applied_t1, class_registry)
+                                if !types_compatible(&applied_t1, &applied_t2, class_registry, typevar_registry)
+                                    && !types_compatible(&applied_t2, &applied_t1, class_registry, typevar_registry)
                                 {
                                     type_errors.push(TypeErrorInfo::new(type_err, span));
                                 }
@@ -734,13 +769,25 @@ pub fn solve_constraints(
                 if let Type::Con(TypeCtor::Class(class_name)) = &applied_func {
                     if let Some(metadata) = class_registry.get_class(class_name) {
                         if let Some(Type::Fun(params, _)) = metadata.new_type.as_ref().or(metadata.init_type.as_ref()) {
-                            let mut ctx =
-                                CallContext { subst: &mut subst, type_errors: &mut type_errors, class_registry, span };
+                            let mut ctx = CallContext {
+                                subst: &mut subst,
+                                type_errors: &mut type_errors,
+                                class_registry,
+                                typevar_registry,
+                                span,
+                            };
                             handle_call_args(&mut ctx, &pos_args, &kw_args, params, true);
                         }
 
                         let class_result_ty = instantiate_class_type(metadata, class_name, &subst);
-                        unify_return_type(&mut subst, &mut type_errors, &ret_ty, &class_result_ty, span);
+                        unify_return_type(
+                            &mut subst,
+                            &mut type_errors,
+                            &ret_ty,
+                            &class_result_ty,
+                            span,
+                            typevar_registry,
+                        );
                     }
                 } else if let Type::BoundMethod(receiver, method_name, method) = &applied_func {
                     let resolved_method = resolve_bound_method_type(
@@ -753,11 +800,23 @@ pub fn solve_constraints(
                     );
 
                     if let Type::Fun(params, method_ret) = resolved_method {
-                        let mut ctx =
-                            CallContext { subst: &mut subst, type_errors: &mut type_errors, class_registry, span };
+                        let mut ctx = CallContext {
+                            subst: &mut subst,
+                            type_errors: &mut type_errors,
+                            class_registry,
+                            typevar_registry,
+                            span,
+                        };
 
                         handle_call_args(&mut ctx, &pos_args, &kw_args, params, true);
-                        unify_return_type(&mut subst, &mut type_errors, &ret_ty, method_ret, span);
+                        unify_return_type(
+                            &mut subst,
+                            &mut type_errors,
+                            &ret_ty,
+                            method_ret,
+                            span,
+                            typevar_registry,
+                        );
                     } else {
                         unify_with_adhoc_fun(
                             &mut subst,
@@ -767,16 +826,22 @@ pub fn solve_constraints(
                             &kw_args,
                             &ret_ty,
                             span,
+                            typevar_registry,
                         );
                     }
                 } else {
                     let applied_func = subst.apply(&func_ty);
                     if let Type::Fun(params, fn_ret) = &applied_func {
-                        let mut ctx =
-                            CallContext { subst: &mut subst, type_errors: &mut type_errors, class_registry, span };
+                        let mut ctx = CallContext {
+                            subst: &mut subst,
+                            type_errors: &mut type_errors,
+                            class_registry,
+                            typevar_registry,
+                            span,
+                        };
                         handle_call_args(&mut ctx, &pos_args, &kw_args, params, false);
 
-                        unify_return_type(&mut subst, &mut type_errors, &ret_ty, fn_ret, span);
+                        unify_return_type(&mut subst, &mut type_errors, &ret_ty, fn_ret, span, typevar_registry);
                     } else {
                         unify_with_adhoc_fun(
                             &mut subst,
@@ -786,6 +851,7 @@ pub fn solve_constraints(
                             &kw_args,
                             &ret_ty,
                             span,
+                            typevar_registry,
                         );
                     }
                 }
@@ -821,7 +887,7 @@ pub fn solve_constraints(
                             Type::union(attr_types)
                         };
 
-                        match Unifier::unify(&subst.apply(&attr_ty), &attr_union) {
+                        match Unifier::unify(&subst.apply(&attr_ty), &attr_union, typevar_registry) {
                             Ok(s) => {
                                 subst = s.compose(subst);
                             }
@@ -849,7 +915,7 @@ pub fn solve_constraints(
                                 resolved_attr_ty.clone()
                             };
 
-                            match Unifier::unify(&subst.apply(&attr_ty), &final_type) {
+                            match Unifier::unify(&subst.apply(&attr_ty), &final_type, typevar_registry) {
                                 Ok(s) => {
                                     subst = s.compose(subst);
                                 }
@@ -876,7 +942,7 @@ pub fn solve_constraints(
                             TypeCtor::Set => Some("set"),
                             TypeCtor::Tuple => Some("tuple"),
                             TypeCtor::Any => {
-                                if let Ok(s) = Unifier::unify(&subst.apply(&attr_ty), &Type::any()) {
+                                if let Ok(s) = Unifier::unify(&subst.apply(&attr_ty), &Type::any(), typevar_registry) {
                                     subst = s.compose(subst);
                                 }
                                 None
@@ -896,7 +962,7 @@ pub fn solve_constraints(
                                     resolved_attr_ty.clone()
                                 };
 
-                                match Unifier::unify(&subst.apply(&attr_ty), &final_type) {
+                                match Unifier::unify(&subst.apply(&attr_ty), &final_type, typevar_registry) {
                                     Ok(s) => {
                                         subst = s.compose(subst);
                                     }
@@ -954,7 +1020,7 @@ pub fn solve_constraints(
                                 resolved_ty.clone()
                             };
 
-                            match Unifier::unify(&subst.apply(&attr_ty), &final_type) {
+                            match Unifier::unify(&subst.apply(&attr_ty), &final_type, typevar_registry) {
                                 Ok(s) => {
                                     subst = s.compose(subst);
                                 }
@@ -987,7 +1053,7 @@ pub fn solve_constraints(
 
                 let satisfies = match &protocol_name {
                     ProtocolName::UserDefined(proto_name) => {
-                        check_user_defined_protocol(&applied_obj, proto_name, class_registry)
+                        check_user_defined_protocol(&applied_obj, proto_name, class_registry, typevar_registry)
                     }
                     _ => {
                         check_builtin_protocol_on_class(&applied_obj, &protocol_name, class_registry)
@@ -1008,7 +1074,7 @@ pub fn solve_constraints(
                     };
 
                     let applied_extracted = subst.apply(&extracted_elem);
-                    match Unifier::unify(&subst.apply(&elem_ty), &applied_extracted) {
+                    match Unifier::unify(&subst.apply(&elem_ty), &applied_extracted, typevar_registry) {
                         Ok(s) => {
                             subst = s.compose(subst);
                         }
@@ -1072,7 +1138,7 @@ pub fn solve_constraints(
                     Type::union(incoming_types.clone())
                 };
 
-                match Unifier::unify(&subst.apply(&result_type), &subst.apply(&union_type)) {
+                match Unifier::unify(&subst.apply(&result_type), &subst.apply(&union_type), typevar_registry) {
                     Ok(s) => {
                         subst = s.compose(subst);
                     }
@@ -1095,7 +1161,7 @@ mod tests {
     use super::*;
     use crate::Span;
     use crate::predicate::TypePredicate;
-    use beacon_core::{ClassMetadata, MethodType, TypeVar};
+    use beacon_core::{ClassMetadata, MethodType, TypeVar, TypeVarConstraintRegistry};
     use beacon_parser::{AstNode, LiteralValue, Pattern};
 
     /// Helper to create a test span
@@ -1134,7 +1200,12 @@ mod tests {
         protocol_meta.is_protocol = true;
         registry.register_class("EmptyProtocol".to_string(), protocol_meta);
 
-        let result = check_user_defined_protocol(&Type::int(), "EmptyProtocol", &registry);
+        let result = check_user_defined_protocol(
+            &Type::int(),
+            "EmptyProtocol",
+            &registry,
+            &beacon_core::TypeVarConstraintRegistry::new(),
+        );
         assert!(
             result,
             "Protocol with no required methods should be satisfied by any type"
@@ -1152,7 +1223,12 @@ mod tests {
         );
         registry.register_class("TestProtocol".to_string(), protocol_meta);
 
-        let result = check_user_defined_protocol(&Type::any(), "TestProtocol", &registry);
+        let result = check_user_defined_protocol(
+            &Type::any(),
+            "TestProtocol",
+            &registry,
+            &beacon_core::TypeVarConstraintRegistry::new(),
+        );
         assert!(result, "Any type should satisfy any protocol");
     }
 
@@ -1160,7 +1236,7 @@ mod tests {
     fn test_solve_equal_constraint_success() {
         let constraints = ConstraintSet { constraints: vec![Constraint::Equal(Type::int(), Type::int(), test_span())] };
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1173,7 +1249,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::Equal(Type::int(), Type::string(), test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1186,7 +1262,7 @@ mod tests {
         let t2 = Type::int();
         let constraints = ConstraintSet { constraints: vec![Constraint::Equal(t1, t2, test_span())] };
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -1206,7 +1282,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -1223,7 +1299,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::Call(func_ty, arg_types, vec![], ret_ty, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -1240,7 +1316,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::Call(func_ty, arg_types, vec![], ret_ty, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1260,7 +1336,7 @@ mod tests {
         let constraints =
             ConstraintSet { constraints: vec![Constraint::Call(class_ty, arg_types, vec![], ret_ty, test_span())] };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1286,7 +1362,7 @@ mod tests {
         let constraints =
             ConstraintSet { constraints: vec![Constraint::Call(bound_method, arg_types, vec![], ret_ty, test_span())] };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_subst, errors) = result.unwrap();
@@ -1305,7 +1381,7 @@ mod tests {
         let constraints =
             ConstraintSet { constraints: vec![Constraint::HasAttr(obj_ty, "attr".to_string(), attr_ty, test_span())] };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1329,7 +1405,7 @@ mod tests {
             )],
         };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1356,7 +1432,7 @@ mod tests {
         let constraints =
             ConstraintSet { constraints: vec![Constraint::HasAttr(obj_ty, "upper".to_string(), attr_ty, test_span())] };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1377,7 +1453,7 @@ mod tests {
             )],
         };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1398,7 +1474,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1419,7 +1495,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1444,7 +1520,7 @@ mod tests {
             )],
         };
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1467,7 +1543,7 @@ mod tests {
             )],
         };
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1487,7 +1563,7 @@ mod tests {
             )],
         };
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1506,7 +1582,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::MatchPattern(subject_ty, pattern, bindings, test_span())] };
         let registry = ClassRegistry::new();
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1536,7 +1612,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::PatternExhaustive(subject_ty, patterns, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1558,7 +1634,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::PatternExhaustive(subject_ty, patterns, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1591,7 +1667,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::PatternReachable(pattern, previous, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1613,7 +1689,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::PatternReachable(pattern, previous, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1631,7 +1707,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
         let (_, errors) = result.unwrap();
         assert_eq!(errors.len(), 2, "Both errors should be accumulated");
@@ -1649,7 +1725,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -1667,7 +1743,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::HasAttr(obj_ty, "attr".to_string(), attr_ty, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_subst, errors) = result.unwrap();
@@ -1683,7 +1759,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::Call(func_ty, arg_types, vec![], ret_ty, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_subst, errors) = result.unwrap();
@@ -1711,7 +1787,7 @@ mod tests {
             )],
         };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -1728,7 +1804,7 @@ mod tests {
     fn test_empty_constraint_set() {
         let constraints = ConstraintSet { constraints: vec![] };
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -1752,7 +1828,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -1784,7 +1860,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -1806,7 +1882,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::Call(func_ty, arg_types, vec![], ret_ty, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1845,7 +1921,7 @@ mod tests {
             )],
         };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -1881,7 +1957,7 @@ mod tests {
             )],
         };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -1912,7 +1988,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -1945,7 +2021,7 @@ mod tests {
             )],
         };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -2005,7 +2081,7 @@ mod tests {
             )],
         };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -2041,7 +2117,7 @@ mod tests {
             )],
         };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -2111,7 +2187,7 @@ mod tests {
             )],
         };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -2150,7 +2226,7 @@ mod tests {
         let constraints =
             ConstraintSet { constraints: vec![Constraint::HasAttr(obj_ty, "value".to_string(), attr_ty, test_span())] };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -2184,7 +2260,7 @@ mod tests {
         let constraints =
             ConstraintSet { constraints: vec![Constraint::HasAttr(obj_ty, "add".to_string(), attr_ty, test_span())] };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -2228,7 +2304,7 @@ mod tests {
             )],
         };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -2279,7 +2355,7 @@ mod tests {
             )],
         };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -2322,7 +2398,7 @@ mod tests {
             )],
         };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -2388,7 +2464,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::Narrowing(var_name, pred, narrowed_type, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -2411,7 +2487,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -2437,7 +2513,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -2470,7 +2546,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -2572,7 +2648,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::Narrowing(var_name, pred, narrowed_type, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -2778,7 +2854,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::Narrowing(var_name, pred, narrowed_type, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -2801,7 +2877,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::Narrowing(var_name, pred, narrowed_type, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -2821,7 +2897,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::Narrowing(var_name, pred, narrowed_type, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -2838,7 +2914,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::Narrowing(exc_var, pred, exception_type, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -2858,7 +2934,7 @@ mod tests {
             ConstraintSet { constraints: vec![Constraint::Narrowing(target_var, pred, file_type, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -2912,7 +2988,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -2933,7 +3009,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -2957,7 +3033,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -2981,7 +3057,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -3009,7 +3085,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -3033,7 +3109,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -3072,7 +3148,7 @@ mod tests {
             )],
         };
 
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (subst, errors) = result.unwrap();
@@ -3103,7 +3179,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -3134,7 +3210,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -3163,7 +3239,7 @@ mod tests {
         };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (final_subst, errors) = result.unwrap();
@@ -3182,7 +3258,7 @@ mod tests {
         let none_ty = Type::none();
         let constraints = ConstraintSet { constraints: vec![Constraint::Equal(optional_int, none_ty, test_span())] };
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -3201,7 +3277,7 @@ mod tests {
         let constraints = ConstraintSet { constraints: vec![Constraint::Equal(union_ty, str_ty, test_span())] };
 
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -3218,7 +3294,7 @@ mod tests {
         let optional_str = Type::optional(Type::string());
         let constraints = ConstraintSet { constraints: vec![Constraint::Equal(none_ty, optional_str, test_span())] };
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -3235,7 +3311,7 @@ mod tests {
         let union_ty = Type::union(vec![Type::int(), Type::string()]);
         let constraints = ConstraintSet { constraints: vec![Constraint::Equal(int_ty, union_ty, test_span())] };
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -3252,7 +3328,7 @@ mod tests {
         let str_ty = Type::string();
         let constraints = ConstraintSet { constraints: vec![Constraint::Equal(int_ty, str_ty, test_span())] };
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -3268,7 +3344,7 @@ mod tests {
         let float_ty = Type::float();
         let constraints = ConstraintSet { constraints: vec![Constraint::Equal(union_ty, float_ty, test_span())] };
         let registry = ClassRegistry::new();
-        let result = solve_constraints(constraints, &registry);
+        let result = solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
 
         let (_, errors) = result.unwrap();
@@ -3281,6 +3357,7 @@ mod tests {
     #[test]
     fn test_classes_compatible_with_inheritance() {
         let mut registry = ClassRegistry::new();
+        let tv_registry = TypeVarConstraintRegistry::new();
         let base_meta = ClassMetadata::new("Base".to_string());
         registry.register_class("Base".to_string(), base_meta);
 
@@ -3292,7 +3369,7 @@ mod tests {
         let base_ty = Type::Con(TypeCtor::Class("Base".to_string()));
 
         assert!(
-            classes_compatible(&derived_ty, &base_ty, &registry),
+            classes_compatible(&derived_ty, &base_ty, &registry, &tv_registry),
             "Derived class should be compatible with Base class"
         );
     }
@@ -3300,6 +3377,7 @@ mod tests {
     #[test]
     fn test_classes_compatible_with_protocol() {
         let mut registry = ClassRegistry::new();
+        let tv_registry = TypeVarConstraintRegistry::new();
         let mut protocol_meta = ClassMetadata::new("MyProtocol".to_string());
         protocol_meta.is_protocol = true;
         protocol_meta.methods.insert(
@@ -3319,7 +3397,7 @@ mod tests {
         let protocol_ty = Type::Con(TypeCtor::Class("MyProtocol".to_string()));
 
         assert!(
-            classes_compatible(&impl_ty, &protocol_ty, &registry),
+            classes_compatible(&impl_ty, &protocol_ty, &registry, &tv_registry),
             "Class implementing protocol methods should be compatible with protocol"
         );
     }
@@ -3327,21 +3405,23 @@ mod tests {
     #[test]
     fn test_types_compatible_any() {
         let registry = ClassRegistry::new();
+        let tv_registry = TypeVarConstraintRegistry::new();
         let any_ty = Type::any();
         let int_ty = Type::int();
 
         assert!(
-            types_compatible(&int_ty, &any_ty, &registry),
+            types_compatible(&int_ty, &any_ty, &registry, &tv_registry),
             "Any type should be compatible with int"
         );
         assert!(
-            types_compatible(&any_ty, &int_ty, &registry),
+            types_compatible(&any_ty, &int_ty, &registry, &tv_registry),
             "int should be compatible with Any type"
         );
     }
 
     #[test]
     fn test_types_compatible_handles_inheritance() {
+        let tv_registry = TypeVarConstraintRegistry::new();
         let mut registry = ClassRegistry::new();
         let mut data_provider_meta = ClassMetadata::new("DataProvider".to_string());
         data_provider_meta.is_protocol = true;
@@ -3361,13 +3441,14 @@ mod tests {
         );
 
         assert!(
-            types_compatible(&in_memory_ty, &data_provider_ty, &registry),
+            types_compatible(&in_memory_ty, &data_provider_ty, &registry, &tv_registry),
             "InMemoryProvider should be compatible with DataProvider[object]"
         );
     }
 
     #[test]
     fn test_user_defined_covariant_variance() {
+        let tv_registry = TypeVarConstraintRegistry::new();
         let mut registry = ClassRegistry::new();
         let mut producer_meta = ClassMetadata::new("Producer".to_string());
         producer_meta.add_base_class("Generic[T_Co]".to_string());
@@ -3397,17 +3478,18 @@ mod tests {
         );
 
         assert!(
-            types_compatible(&producer_dog, &producer_animal, &registry),
+            types_compatible(&producer_dog, &producer_animal, &registry, &tv_registry),
             "Producer[Dog] should be assignable to Producer[Animal] with covariant T_Co"
         );
         assert!(
-            !types_compatible(&producer_animal, &producer_dog, &registry),
+            !types_compatible(&producer_animal, &producer_dog, &registry, &tv_registry),
             "Producer[Animal] should NOT be assignable to Producer[Dog]"
         );
     }
 
     #[test]
     fn test_user_defined_contravariant_variance() {
+        let tv_registry = TypeVarConstraintRegistry::new();
         let mut registry = ClassRegistry::new();
         let mut consumer_meta = ClassMetadata::new("Consumer".to_string());
         consumer_meta.add_base_class("Generic[T_Contra]".to_string());
@@ -3437,17 +3519,18 @@ mod tests {
         );
 
         assert!(
-            types_compatible(&consumer_animal, &consumer_dog, &registry),
+            types_compatible(&consumer_animal, &consumer_dog, &registry, &tv_registry),
             "Consumer[Animal] should be assignable to Consumer[Dog] with contravariant T_Contra"
         );
         assert!(
-            !types_compatible(&consumer_dog, &consumer_animal, &registry),
+            !types_compatible(&consumer_dog, &consumer_animal, &registry, &tv_registry),
             "Consumer[Dog] should NOT be assignable to Consumer[Animal]"
         );
     }
 
     #[test]
     fn test_user_defined_invariant_variance() {
+        let tv_registry = TypeVarConstraintRegistry::new();
         let mut registry = ClassRegistry::new();
         let mut box_meta = ClassMetadata::new("Box".to_string());
         box_meta.add_base_class("Generic[T_Inv]".to_string());
@@ -3477,11 +3560,11 @@ mod tests {
         );
 
         assert!(
-            !types_compatible(&box_dog, &box_animal, &registry),
+            !types_compatible(&box_dog, &box_animal, &registry, &tv_registry),
             "Box[Dog] should NOT be assignable to Box[Animal] with invariant T_Inv"
         );
         assert!(
-            !types_compatible(&box_animal, &box_dog, &registry),
+            !types_compatible(&box_animal, &box_dog, &registry, &tv_registry),
             "Box[Animal] should NOT be assignable to Box[Dog] with invariant T_Inv"
         );
 
@@ -3490,7 +3573,7 @@ mod tests {
             Box::new(dog_ty.clone()),
         );
         assert!(
-            types_compatible(&box_dog, &box_dog2, &registry),
+            types_compatible(&box_dog, &box_dog2, &registry, &tv_registry),
             "Box[Dog] should be assignable to Box[Dog] (same type)"
         );
     }

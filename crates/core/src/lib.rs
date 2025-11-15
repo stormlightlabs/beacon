@@ -15,6 +15,7 @@ pub mod protocols;
 pub mod subst;
 pub mod suppressor;
 pub mod types;
+pub mod typevar_registry;
 pub mod unify;
 
 pub use annotation_parser::*;
@@ -25,6 +26,7 @@ pub use protocols::*;
 pub use subst::*;
 pub use suppressor::*;
 pub use types::*;
+pub use typevar_registry::*;
 pub use unify::*;
 
 /// Trait for expressions that can be tested for expansiveness

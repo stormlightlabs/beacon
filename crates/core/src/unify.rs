@@ -30,7 +30,7 @@
 //!
 //! The occurs check prevents infinite types by rejecting unifications like `'a ~ list['a]`.
 
-use crate::{Result, Subst, Type, TypeCtor, TypeError, TypeVar, Variance};
+use crate::{Result, Subst, Type, TypeCtor, TypeError, TypeVar, TypeVarConstraintRegistry, Variance};
 
 use rustc_hash::FxHashSet;
 
@@ -39,8 +39,11 @@ pub struct Unifier;
 
 impl Unifier {
     /// Unify two types, returning a substitution that makes them equal
-    pub fn unify(t1: &Type, t2: &Type) -> Result<Subst> {
-        Self::unify_impl(t1, t2)
+    ///
+    /// The TypeVarConstraintRegistry is used to validate that any TypeVar substitutions
+    /// respect bounds and constraints defined for those TypeVars.
+    pub fn unify(t1: &Type, t2: &Type, registry: &TypeVarConstraintRegistry) -> Result<Subst> {
+        Self::unify_impl(t1, t2, registry)
     }
 
     /// Extract a human-readable name from a type constructor for error messages
@@ -94,14 +97,14 @@ impl Unifier {
         }
     }
 
-    fn unify_impl(t1: &Type, t2: &Type) -> Result<Subst> {
+    fn unify_impl(t1: &Type, t2: &Type, registry: &TypeVarConstraintRegistry) -> Result<Subst> {
         match (t1, t2) {
             (Type::Con(TypeCtor::Any), _) | (_, Type::Con(TypeCtor::Any)) => Ok(Subst::empty()),
             (Type::Var(tv1), Type::Var(tv2)) if tv1 == tv2 => Ok(Subst::empty()),
-            (Type::Var(tv), t) | (t, Type::Var(tv)) => Self::unify_var(tv, t),
+            (Type::Var(tv), t) | (t, Type::Var(tv)) => Self::unify_var(tv, t, registry),
             (Type::Con(tc1), Type::Con(tc2)) if tc1 == tc2 => Ok(Subst::empty()),
             (Type::App(f1, a1), Type::App(f2, a2)) => {
-                let s1 = Self::unify_impl(f1, f2)?;
+                let s1 = Self::unify_impl(f1, f2, registry)?;
 
                 let applied_a1 = s1.apply(a1);
                 let applied_a2 = s1.apply(a2);
@@ -111,7 +114,7 @@ impl Unifier {
                 match variance {
                     Variance::Invariant => {
                         if applied_a1 != applied_a2 {
-                            match Self::unify_impl(&applied_a1, &applied_a2) {
+                            match Self::unify_impl(&applied_a1, &applied_a2, registry) {
                                 Ok(s2) => Ok(s2.compose(s1)),
                                 Err(_)
                                     if !matches!(applied_a1, Type::Var(_)) && !matches!(applied_a2, Type::Var(_)) =>
@@ -131,11 +134,11 @@ impl Unifier {
                         }
                     }
                     Variance::Covariant => {
-                        let s2 = Self::unify_impl(&applied_a1, &applied_a2)?;
+                        let s2 = Self::unify_impl(&applied_a1, &applied_a2, registry)?;
                         Ok(s2.compose(s1))
                     }
                     Variance::Contravariant => {
-                        let s2 = Self::unify_impl(&applied_a2, &applied_a1)?;
+                        let s2 = Self::unify_impl(&applied_a2, &applied_a1, registry)?;
                         Ok(s2.compose(s1))
                     }
                 }
@@ -151,34 +154,34 @@ impl Unifier {
 
                 let mut subst = Subst::empty();
                 for ((_, ty1), (_, ty2)) in args1.iter().zip(args2.iter()) {
-                    let s = Self::unify_impl(&subst.apply(ty1), &subst.apply(ty2))?;
+                    let s = Self::unify_impl(&subst.apply(ty1), &subst.apply(ty2), registry)?;
                     subst = s.compose(subst);
                 }
 
-                let s = Self::unify_impl(&subst.apply(ret1), &subst.apply(ret2))?;
+                let s = Self::unify_impl(&subst.apply(ret1), &subst.apply(ret2), registry)?;
                 Ok(s.compose(subst))
             }
-            (Type::Union(types1), Type::Union(types2)) => Self::unify_unions(types1, types2),
-            (Type::Union(types), t) | (t, Type::Union(types)) => Self::unify_union_with_type(types, t),
+            (Type::Union(types1), Type::Union(types2)) => Self::unify_unions(types1, types2, registry),
+            (Type::Union(types), t) | (t, Type::Union(types)) => Self::unify_union_with_type(types, t, registry),
             (Type::Record(fields1, row1), Type::Record(fields2, row2)) => {
-                Self::unify_records(fields1, row1, fields2, row2)
+                Self::unify_records(fields1, row1, fields2, row2, registry)
             }
             (Type::BoundMethod(receiver1, _, method1), Type::BoundMethod(receiver2, _, method2)) => {
-                let s1 = Self::unify_impl(receiver1, receiver2)?;
-                let s2 = Self::unify_impl(&s1.apply(method1), &s1.apply(method2))?;
+                let s1 = Self::unify_impl(receiver1, receiver2, registry)?;
+                let s2 = Self::unify_impl(&s1.apply(method1), &s1.apply(method2), registry)?;
                 Ok(s2.compose(s1))
             }
-            (Type::BoundMethod(_, _, method), fun @ Type::Fun(_, _)) => Self::unify_impl(method, fun),
-            (fun @ Type::Fun(_, _), Type::BoundMethod(_, _, method)) => Self::unify_impl(fun, method),
+            (Type::BoundMethod(_, _, method), fun @ Type::Fun(_, _)) => Self::unify_impl(method, fun, registry),
+            (fun @ Type::Fun(_, _), Type::BoundMethod(_, _, method)) => Self::unify_impl(fun, method, registry),
             (Type::BoundMethod(_, _, method), other)
                 if !matches!(other, Type::BoundMethod(_, _, _) | Type::Fun(_, _)) =>
             {
-                Self::unify_impl(method, other)
+                Self::unify_impl(method, other, registry)
             }
             (other, Type::BoundMethod(_, _, method))
                 if !matches!(other, Type::BoundMethod(_, _, _) | Type::Fun(_, _)) =>
             {
-                Self::unify_impl(other, method)
+                Self::unify_impl(other, method, registry)
             }
             (Type::Tuple(types1), Type::Tuple(types2)) => {
                 if types1.len() != types2.len() {
@@ -191,7 +194,7 @@ impl Unifier {
 
                 let mut subst = Subst::empty();
                 for (t1, t2) in types1.iter().zip(types2.iter()) {
-                    let s = Self::unify_impl(&subst.apply(t1), &subst.apply(t2))?;
+                    let s = Self::unify_impl(&subst.apply(t1), &subst.apply(t2), registry)?;
                     subst = s.compose(subst);
                 }
                 Ok(subst)
@@ -211,24 +214,28 @@ impl Unifier {
                 }
 
                 let renamed_body1 = renaming.apply(body1);
-                Self::unify_impl(&renamed_body1, body2)
+                Self::unify_impl(&renamed_body1, body2, registry)
             }
-            (Type::ForAll(_, body), t) | (t, Type::ForAll(_, body)) => Self::unify_impl(body, t),
+            (Type::ForAll(_, body), t) | (t, Type::ForAll(_, body)) => Self::unify_impl(body, t, registry),
             (Type::Con(TypeCtor::TypeVariable(_)), _) | (_, Type::Con(TypeCtor::TypeVariable(_))) => Ok(Subst::empty()),
             _ => Err(TypeError::UnificationError(t1.to_string(), t2.to_string()).into()),
         }
     }
 
-    /// Unify a type variable with a type (performs occurs check)
-    fn unify_var(tv: &TypeVar, t: &Type) -> Result<Subst> {
+    /// Unify a type variable with a type (performs occurs check and validates bounds/constraints)
+    fn unify_var(tv: &TypeVar, t: &Type, registry: &TypeVarConstraintRegistry) -> Result<Subst> {
         match t {
             Type::Var(tv2) if tv == tv2 => Ok(Subst::empty()),
             _ => {
                 if Self::occurs_check(tv, t) {
-                    Err(TypeError::OccursCheckFailed(tv.clone(), t.to_string()).into())
-                } else {
-                    Ok(Subst::singleton(tv.clone(), t.clone()))
+                    return Err(TypeError::OccursCheckFailed(tv.clone(), t.to_string()).into());
                 }
+
+                if let Err(msg) = registry.validate(tv.id, t) {
+                    return Err(TypeError::UnificationError(format!("TypeVar {tv}"), format!("{t} ({msg})")).into());
+                }
+
+                Ok(Subst::singleton(tv.clone(), t.clone()))
             }
         }
     }
@@ -266,7 +273,7 @@ impl Unifier {
     ///
     /// TODO: Subset relationships
     /// TODO: Find bijections
-    fn unify_unions(types1: &[Type], types2: &[Type]) -> Result<Subst> {
+    fn unify_unions(types1: &[Type], types2: &[Type], registry: &TypeVarConstraintRegistry) -> Result<Subst> {
         if types1.len() != types2.len() {
             return Err(TypeError::UnificationError(
                 format!("union with {} alternatives", types1.len()),
@@ -282,7 +289,7 @@ impl Unifier {
 
         let mut subst = Subst::empty();
         for (t1, t2) in sorted1.iter().zip(sorted2.iter()) {
-            let s = Self::unify_impl(&subst.apply(t1), &subst.apply(t2))?;
+            let s = Self::unify_impl(&subst.apply(t1), &subst.apply(t2), registry)?;
             subst = s.compose(subst);
         }
 
@@ -308,11 +315,11 @@ impl Unifier {
     /// - `Union[Var('t), None]` ~ `int` → `['t ↦ int]`
     /// - `Union[int, str]` ~ `int` → empty substitution (picks int branch)
     /// - `Union[Calculator, None]` ~ `None` → empty substitution (picks None branch)
-    fn unify_union_with_type(union_types: &[Type], t: &Type) -> Result<Subst> {
+    fn unify_union_with_type(union_types: &[Type], t: &Type, registry: &TypeVarConstraintRegistry) -> Result<Subst> {
         let mut errors = Vec::new();
 
         for union_member in union_types {
-            match Self::unify_impl(union_member, t) {
+            match Self::unify_impl(union_member, t, registry) {
                 Ok(subst) => {
                     return Ok(subst);
                 }
@@ -335,6 +342,7 @@ impl Unifier {
     /// Unify record types (simplified row polymorphism)
     fn unify_records(
         fields1: &[(String, Type)], row1: &Option<TypeVar>, fields2: &[(String, Type)], row2: &Option<TypeVar>,
+        registry: &TypeVarConstraintRegistry,
     ) -> Result<Subst> {
         let mut subst = Subst::empty();
         let map1: std::collections::HashMap<_, _> = fields1.iter().map(|(k, v)| (k, v)).collect();
@@ -342,7 +350,7 @@ impl Unifier {
         let mut unified_fields = FxHashSet::default();
         for (name, type1) in &map1 {
             if let Some(type2) = map2.get(name) {
-                let s = Self::unify_impl(&subst.apply(type1), &subst.apply(type2))?;
+                let s = Self::unify_impl(&subst.apply(type1), &subst.apply(type2), registry)?;
                 subst = s.compose(subst);
                 unified_fields.insert(name);
             }
@@ -376,7 +384,7 @@ impl Unifier {
                 Ok(s.compose(subst))
             }
             (_, _, Some(rv1), Some(rv2)) => {
-                let s = Self::unify_var(rv1, &Type::Var(rv2.clone()))?;
+                let s = Self::unify_var(rv1, &Type::Var(rv2.clone()), registry)?;
                 Ok(s.compose(subst))
             }
             _ => Err(TypeError::UnificationError(
@@ -394,7 +402,7 @@ impl Unifier {
     }
 
     /// Unify a list of types (all must unify to the same type)
-    pub fn unify_many(types: &[Type]) -> Result<(Type, Subst)> {
+    pub fn unify_many(types: &[Type], registry: &TypeVarConstraintRegistry) -> Result<(Type, Subst)> {
         if types.is_empty() {
             return Err(
                 TypeError::UnificationError("empty type list".to_string(), "non-empty type list".to_string()).into(),
@@ -409,7 +417,7 @@ impl Unifier {
         let mut subst = Subst::empty();
 
         for t in &types[1..] {
-            let s = Self::unify_impl(&subst.apply(&result_type), &subst.apply(t))?;
+            let s = Self::unify_impl(&subst.apply(&result_type), &subst.apply(t), registry)?;
             subst = s.compose(subst);
             result_type = subst.apply(&result_type);
         }
@@ -427,7 +435,7 @@ mod tests {
     fn test_unify_same_types() {
         let t1 = Type::int();
         let t2 = Type::int();
-        let subst = Unifier::unify(&t1, &t2).unwrap();
+        let subst = Unifier::unify(&t1, &t2, &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
     }
 
@@ -435,7 +443,7 @@ mod tests {
     fn test_unify_type_variable() {
         let tv = TypeVar::new(0);
         let t = Type::int();
-        let subst = Unifier::unify(&Type::Var(tv.clone()), &t).unwrap();
+        let subst = Unifier::unify(&Type::Var(tv.clone()), &t, &TypeVarConstraintRegistry::new()).unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::int()));
         assert_eq!(subst.apply(&Type::Var(tv)), Type::int());
     }
@@ -444,7 +452,7 @@ mod tests {
     fn test_unify_function_types() {
         let t1 = Type::fun_unnamed(vec![Type::int()], Type::string());
         let t2 = Type::fun_unnamed(vec![Type::int()], Type::string());
-        let subst = Unifier::unify(&t1, &t2).unwrap();
+        let subst = Unifier::unify(&t1, &t2, &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
     }
 
@@ -455,7 +463,7 @@ mod tests {
         let t1 = Type::fun_unnamed(vec![Type::Var(tv1.clone())], Type::Var(tv2.clone()));
         let t2 = Type::fun_unnamed(vec![Type::int()], Type::string());
 
-        let subst = Unifier::unify(&t1, &t2).unwrap();
+        let subst = Unifier::unify(&t1, &t2, &TypeVarConstraintRegistry::new()).unwrap();
 
         assert_eq!(subst.get(&tv1), Some(&Type::int()));
         assert_eq!(subst.get(&tv2), Some(&Type::string()));
@@ -466,7 +474,7 @@ mod tests {
         let tv = TypeVar::new(0);
         let t1 = Type::list(Type::Var(tv.clone()));
         let t2 = Type::list(Type::int());
-        let subst = Unifier::unify(&t1, &t2).unwrap();
+        let subst = Unifier::unify(&t1, &t2, &TypeVarConstraintRegistry::new()).unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::int()));
     }
 
@@ -474,7 +482,11 @@ mod tests {
     fn test_occurs_check_basic() {
         let tv = TypeVar::new(0);
         let recursive_type = Type::list(Type::Var(tv.clone()));
-        let result = Unifier::unify(&Type::Var(tv.clone()), &recursive_type);
+        let result = Unifier::unify(
+            &Type::Var(tv.clone()),
+            &recursive_type,
+            &TypeVarConstraintRegistry::new(),
+        );
         assert!(result.is_err());
     }
 
@@ -482,7 +494,7 @@ mod tests {
     fn test_occurs_check_in_nested_app() {
         let tv = TypeVar::new(0);
         let nested = Type::list(Type::list(Type::Var(tv.clone())));
-        let result = Unifier::unify(&Type::Var(tv.clone()), &nested);
+        let result = Unifier::unify(&Type::Var(tv.clone()), &nested, &TypeVarConstraintRegistry::new());
         assert!(result.is_err());
     }
 
@@ -490,7 +502,7 @@ mod tests {
     fn test_occurs_check_in_function_args() {
         let tv = TypeVar::new(0);
         let fun_type = Type::fun_unnamed(vec![Type::Var(tv.clone())], Type::int());
-        let result = Unifier::unify(&Type::Var(tv.clone()), &fun_type);
+        let result = Unifier::unify(&Type::Var(tv.clone()), &fun_type, &TypeVarConstraintRegistry::new());
         assert!(result.is_err());
     }
 
@@ -498,7 +510,7 @@ mod tests {
     fn test_occurs_check_in_function_return() {
         let tv = TypeVar::new(0);
         let fun_type = Type::fun_unnamed(vec![Type::int()], Type::Var(tv.clone()));
-        let result = Unifier::unify(&Type::Var(tv.clone()), &fun_type);
+        let result = Unifier::unify(&Type::Var(tv.clone()), &fun_type, &TypeVarConstraintRegistry::new());
         assert!(result.is_err());
     }
 
@@ -506,7 +518,7 @@ mod tests {
     fn test_occurs_check_in_union() {
         let tv = TypeVar::new(0);
         let union = Type::union(vec![Type::int(), Type::Var(tv.clone())]);
-        let result = Unifier::unify(&Type::Var(tv.clone()), &union);
+        let result = Unifier::unify(&Type::Var(tv.clone()), &union, &TypeVarConstraintRegistry::new());
         assert!(result.is_err());
     }
 
@@ -514,7 +526,7 @@ mod tests {
     fn test_occurs_check_in_record_fields() {
         let tv = TypeVar::new(0);
         let record = Type::Record(vec![("x".to_string(), Type::Var(tv.clone()))], None);
-        let result = Unifier::unify(&Type::Var(tv.clone()), &record);
+        let result = Unifier::unify(&Type::Var(tv.clone()), &record, &TypeVarConstraintRegistry::new());
         assert!(result.is_err());
     }
 
@@ -522,7 +534,7 @@ mod tests {
     fn test_occurs_check_in_record_row_var() {
         let tv = TypeVar::new(0);
         let record = Type::Record(vec![("x".to_string(), Type::int())], Some(tv.clone()));
-        let result = Unifier::unify(&Type::Var(tv.clone()), &record);
+        let result = Unifier::unify(&Type::Var(tv.clone()), &record, &TypeVarConstraintRegistry::new());
         assert!(result.is_err());
     }
 
@@ -531,7 +543,7 @@ mod tests {
         let tv1 = TypeVar::new(0);
         let tv2 = TypeVar::new(1);
         let list_type = Type::list(Type::Var(tv2.clone()));
-        let result = Unifier::unify(&Type::Var(tv1.clone()), &list_type);
+        let result = Unifier::unify(&Type::Var(tv1.clone()), &list_type, &TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
         let subst = result.unwrap();
         assert_eq!(subst.get(&tv1), Some(&Type::list(Type::Var(tv2))));
@@ -541,7 +553,7 @@ mod tests {
     fn test_unify_union_types() {
         let union1 = Type::union(vec![Type::int(), Type::string()]);
         let union2 = Type::union(vec![Type::string(), Type::int()]);
-        let subst = Unifier::unify(&union1, &union2).unwrap();
+        let subst = Unifier::unify(&union1, &union2, &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
     }
 
@@ -550,7 +562,7 @@ mod tests {
         let union = Type::union(vec![Type::int(), Type::string()]);
         let t = Type::int();
 
-        let subst = Unifier::unify(&union, &t).unwrap();
+        let subst = Unifier::unify(&union, &t, &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
     }
 
@@ -559,7 +571,7 @@ mod tests {
         let record1 = Type::Record(vec![("x".to_string(), Type::int())], None);
         let record2 = Type::Record(vec![("x".to_string(), Type::int())], None);
 
-        let subst = Unifier::unify(&record1, &record2).unwrap();
+        let subst = Unifier::unify(&record1, &record2, &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
     }
 
@@ -572,7 +584,7 @@ mod tests {
             None,
         );
 
-        let subst = Unifier::unify(&record1, &record2).unwrap();
+        let subst = Unifier::unify(&record1, &record2, &TypeVarConstraintRegistry::new()).unwrap();
 
         if let Some(Type::Record(fields, _)) = subst.get(&row_var) {
             assert_eq!(fields.len(), 1);
@@ -589,7 +601,7 @@ mod tests {
         let tv2 = TypeVar::new(1);
         let types = vec![Type::Var(tv1.clone()), Type::int(), Type::Var(tv2.clone())];
 
-        let (unified_type, subst) = Unifier::unify_many(&types).unwrap();
+        let (unified_type, subst) = Unifier::unify_many(&types, &TypeVarConstraintRegistry::new()).unwrap();
 
         assert_eq!(unified_type, Type::int());
         assert_eq!(subst.get(&tv1), Some(&Type::int()));
@@ -598,62 +610,77 @@ mod tests {
 
     #[test]
     fn test_any_unifies_with_everything() {
-        let subst = Unifier::unify(&Type::any(), &Type::int()).unwrap();
+        let subst = Unifier::unify(&Type::any(), &Type::int(), &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
 
-        let subst = Unifier::unify(&Type::string(), &Type::any()).unwrap();
+        let subst = Unifier::unify(&Type::string(), &Type::any(), &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
 
         let tv = TypeVar::new(0);
-        let subst = Unifier::unify(&Type::any(), &Type::Var(tv.clone())).unwrap();
+        let subst = Unifier::unify(&Type::any(), &Type::Var(tv.clone()), &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
 
-        let subst = Unifier::unify(&Type::any(), &Type::list(Type::int())).unwrap();
+        let subst = Unifier::unify(
+            &Type::any(),
+            &Type::list(Type::int()),
+            &TypeVarConstraintRegistry::new(),
+        )
+        .unwrap();
         assert!(subst.is_empty());
 
-        let subst = Unifier::unify(&Type::fun_unnamed(vec![Type::int()], Type::string()), &Type::any()).unwrap();
+        let subst = Unifier::unify(
+            &Type::fun_unnamed(vec![Type::int()], Type::string()),
+            &Type::any(),
+            &TypeVarConstraintRegistry::new(),
+        )
+        .unwrap();
         assert!(subst.is_empty());
     }
 
     #[test]
     fn test_top_unifies_only_with_itself() {
-        let subst = Unifier::unify(&Type::top(), &Type::top()).unwrap();
+        let subst = Unifier::unify(&Type::top(), &Type::top(), &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
 
-        assert!(Unifier::unify(&Type::top(), &Type::int()).is_err());
-        assert!(Unifier::unify(&Type::string(), &Type::top()).is_err());
+        assert!(Unifier::unify(&Type::top(), &Type::int(), &TypeVarConstraintRegistry::new()).is_err());
+        assert!(Unifier::unify(&Type::string(), &Type::top(), &TypeVarConstraintRegistry::new()).is_err());
 
         let tv = TypeVar::new(0);
-        let subst = Unifier::unify(&Type::top(), &Type::Var(tv.clone())).unwrap();
+        let subst = Unifier::unify(&Type::top(), &Type::Var(tv.clone()), &TypeVarConstraintRegistry::new()).unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::top()));
     }
 
     #[test]
     fn test_never_unifies_only_with_itself() {
-        let subst = Unifier::unify(&Type::never(), &Type::never()).unwrap();
+        let subst = Unifier::unify(&Type::never(), &Type::never(), &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
 
-        assert!(Unifier::unify(&Type::never(), &Type::int()).is_err());
-        assert!(Unifier::unify(&Type::bool(), &Type::never()).is_err());
+        assert!(Unifier::unify(&Type::never(), &Type::int(), &TypeVarConstraintRegistry::new()).is_err());
+        assert!(Unifier::unify(&Type::bool(), &Type::never(), &TypeVarConstraintRegistry::new()).is_err());
 
         let tv = TypeVar::new(0);
-        let subst = Unifier::unify(&Type::never(), &Type::Var(tv.clone())).unwrap();
+        let subst = Unifier::unify(
+            &Type::never(),
+            &Type::Var(tv.clone()),
+            &TypeVarConstraintRegistry::new(),
+        )
+        .unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::never()));
     }
 
     #[test]
     fn test_top_any_never_distinct_unification() {
-        let subst = Unifier::unify(&Type::top(), &Type::any()).unwrap();
+        let subst = Unifier::unify(&Type::top(), &Type::any(), &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
-        let subst = Unifier::unify(&Type::any(), &Type::top()).unwrap();
+        let subst = Unifier::unify(&Type::any(), &Type::top(), &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
 
-        assert!(Unifier::unify(&Type::top(), &Type::never()).is_err());
-        assert!(Unifier::unify(&Type::never(), &Type::top()).is_err());
+        assert!(Unifier::unify(&Type::top(), &Type::never(), &TypeVarConstraintRegistry::new()).is_err());
+        assert!(Unifier::unify(&Type::never(), &Type::top(), &TypeVarConstraintRegistry::new()).is_err());
 
-        let subst = Unifier::unify(&Type::any(), &Type::never()).unwrap();
+        let subst = Unifier::unify(&Type::any(), &Type::never(), &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
-        let subst = Unifier::unify(&Type::never(), &Type::any()).unwrap();
+        let subst = Unifier::unify(&Type::never(), &Type::any(), &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
     }
 
@@ -661,12 +688,12 @@ mod tests {
     fn test_any_in_complex_types() {
         let f1 = Type::fun_unnamed(vec![Type::any()], Type::int());
         let f2 = Type::fun_unnamed(vec![Type::string()], Type::int());
-        let subst = Unifier::unify(&f1, &f2).unwrap();
+        let subst = Unifier::unify(&f1, &f2, &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
 
         let list_any = Type::list(Type::any());
         let list_int = Type::list(Type::int());
-        let subst = Unifier::unify(&list_any, &list_int).unwrap();
+        let subst = Unifier::unify(&list_any, &list_int, &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
     }
 
@@ -679,7 +706,7 @@ mod tests {
             None,
         );
 
-        let subst = Unifier::unify(&record1, &record2).unwrap();
+        let subst = Unifier::unify(&record1, &record2, &TypeVarConstraintRegistry::new()).unwrap();
 
         match subst.get(&row_var).expect("Row variable should be bound") {
             Type::Record(fields, None) => {
@@ -705,7 +732,7 @@ mod tests {
             None,
         );
 
-        let subst = Unifier::unify(&record, &record).unwrap();
+        let subst = Unifier::unify(&record, &record, &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
 
         let result = subst.apply(&record);
@@ -720,7 +747,7 @@ mod tests {
         let record1 = Type::Record(vec![("x".to_string(), Type::int())], Some(row_var1.clone()));
         let record2 = Type::Record(vec![("x".to_string(), Type::int())], Some(row_var2.clone()));
 
-        let subst = Unifier::unify(&record1, &record2).unwrap();
+        let subst = Unifier::unify(&record1, &record2, &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.contains_var(&row_var1) || subst.contains_var(&row_var2) || subst.is_empty());
     }
 
@@ -758,7 +785,7 @@ mod tests {
         let union = Type::union(vec![Type::Var(tv.clone()), Type::none()]);
         let concrete = Type::int();
 
-        let subst = Unifier::unify(&union, &concrete).unwrap();
+        let subst = Unifier::unify(&union, &concrete, &TypeVarConstraintRegistry::new()).unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::int()));
 
         let union_after = subst.apply(&union);
@@ -777,12 +804,12 @@ mod tests {
         let union = Type::union(vec![Type::int(), Type::string()]);
         let concrete = Type::int();
 
-        let subst = Unifier::unify(&union, &concrete).unwrap();
+        let subst = Unifier::unify(&union, &concrete, &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
 
         let union2 = Type::union(vec![Type::int(), Type::none()]);
         let none = Type::none();
-        let subst2 = Unifier::unify(&union2, &none).unwrap();
+        let subst2 = Unifier::unify(&union2, &none, &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst2.is_empty());
     }
 
@@ -790,7 +817,7 @@ mod tests {
     fn test_union_fails_when_no_member_matches() {
         let union = Type::union(vec![Type::int(), Type::string()]);
         let concrete = Type::bool();
-        let result = Unifier::unify(&union, &concrete);
+        let result = Unifier::unify(&union, &concrete, &TypeVarConstraintRegistry::new());
         assert!(result.is_err());
     }
 
@@ -800,13 +827,13 @@ mod tests {
         let optional_t = Type::union(vec![Type::Var(tv.clone()), Type::none()]);
 
         let concrete = Type::string();
-        let subst = Unifier::unify(&optional_t, &concrete).unwrap();
+        let subst = Unifier::unify(&optional_t, &concrete, &TypeVarConstraintRegistry::new()).unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::string()));
 
         let tv2 = TypeVar::new(310);
         let optional_t2 = Type::union(vec![Type::Var(tv2.clone()), Type::none()]);
         let none = Type::none();
-        let subst2 = Unifier::unify(&optional_t2, &none).unwrap();
+        let subst2 = Unifier::unify(&optional_t2, &none, &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst2.is_empty() || subst2.get(&tv2) == Some(&Type::none()));
     }
 
@@ -817,22 +844,23 @@ mod tests {
         let union = Type::union(vec![Type::Var(tv1.clone()), Type::Var(tv2.clone())]);
         let concrete = Type::int();
 
-        let subst = Unifier::unify(&union, &concrete).unwrap();
+        let subst = Unifier::unify(&union, &concrete, &TypeVarConstraintRegistry::new()).unwrap();
         assert_eq!(subst.get(&tv1), Some(&Type::int()));
         assert!(!subst.contains_var(&tv2));
     }
 
     #[test]
     fn test_union_type_var_flow() {
+        let tv_registry = TypeVarConstraintRegistry::new();
         let tv_union_member = TypeVar::new(34);
         let tv_result = TypeVar::new(35);
         let union = Type::union(vec![Type::Var(tv_union_member.clone()), Type::none()]);
-        let subst1 = Unifier::unify(&Type::Var(tv_result.clone()), &union).unwrap();
+        let subst1 = Unifier::unify(&Type::Var(tv_result.clone()), &union, &TypeVarConstraintRegistry::new()).unwrap();
 
         assert_eq!(subst1.get(&tv_result), Some(&union));
 
         let union_type = subst1.get(&tv_result).unwrap();
-        let subst2 = Unifier::unify(union_type, &Type::int()).unwrap();
+        let subst2 = Unifier::unify(union_type, &Type::int(), &tv_registry).unwrap();
         assert_eq!(subst2.get(&tv_union_member), Some(&Type::int()));
 
         let final_subst = subst2.compose(subst1);
@@ -855,7 +883,7 @@ mod tests {
         let union = Type::union(vec![list_t, Type::none()]);
         let list_int = Type::list(Type::int());
 
-        let subst = Unifier::unify(&union, &list_int).unwrap();
+        let subst = Unifier::unify(&union, &list_int, &TypeVarConstraintRegistry::new()).unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::int()));
     }
 
@@ -864,7 +892,7 @@ mod tests {
         let union = Type::union(vec![Type::int(), Type::string()]);
         let concrete = Type::bool();
 
-        match Unifier::unify(&union, &concrete) {
+        match Unifier::unify(&union, &concrete, &TypeVarConstraintRegistry::new()) {
             Err(e) => {
                 let msg = format!("{e}");
                 assert!(msg.contains("union") || msg.contains("Union"));
@@ -877,7 +905,7 @@ mod tests {
     fn test_heterogeneous_tuple_unify_same() {
         let tuple1 = Type::tuple_heterogeneous(vec![Type::int(), Type::string(), Type::bool()]);
         let tuple2 = Type::tuple_heterogeneous(vec![Type::int(), Type::string(), Type::bool()]);
-        let subst = Unifier::unify(&tuple1, &tuple2).unwrap();
+        let subst = Unifier::unify(&tuple1, &tuple2, &TypeVarConstraintRegistry::new()).unwrap();
         assert!(subst.is_empty());
     }
 
@@ -887,7 +915,7 @@ mod tests {
         let tv2 = TypeVar::new(1);
         let tuple1 = Type::tuple_heterogeneous(vec![Type::Var(tv1.clone()), Type::Var(tv2.clone())]);
         let tuple2 = Type::tuple_heterogeneous(vec![Type::int(), Type::string()]);
-        let subst = Unifier::unify(&tuple1, &tuple2).unwrap();
+        let subst = Unifier::unify(&tuple1, &tuple2, &TypeVarConstraintRegistry::new()).unwrap();
         assert_eq!(subst.get(&tv1), Some(&Type::int()));
         assert_eq!(subst.get(&tv2), Some(&Type::string()));
     }
@@ -896,7 +924,7 @@ mod tests {
     fn test_heterogeneous_tuple_length_mismatch() {
         let tuple1 = Type::tuple_heterogeneous(vec![Type::int(), Type::string()]);
         let tuple2 = Type::tuple_heterogeneous(vec![Type::int(), Type::string(), Type::bool()]);
-        let result = Unifier::unify(&tuple1, &tuple2);
+        let result = Unifier::unify(&tuple1, &tuple2, &TypeVarConstraintRegistry::new());
         assert!(result.is_err());
     }
 
@@ -904,7 +932,7 @@ mod tests {
     fn test_heterogeneous_tuple_element_type_mismatch() {
         let tuple1 = Type::tuple_heterogeneous(vec![Type::int(), Type::string()]);
         let tuple2 = Type::tuple_heterogeneous(vec![Type::int(), Type::bool()]);
-        let result = Unifier::unify(&tuple1, &tuple2);
+        let result = Unifier::unify(&tuple1, &tuple2, &TypeVarConstraintRegistry::new());
         assert!(result.is_err());
     }
 
@@ -912,7 +940,11 @@ mod tests {
     fn test_heterogeneous_tuple_occurs_check() {
         let tv = TypeVar::new(0);
         let tuple_with_var = Type::tuple_heterogeneous(vec![Type::Var(tv.clone()), Type::int()]);
-        let result = Unifier::unify(&Type::Var(tv.clone()), &tuple_with_var);
+        let result = Unifier::unify(
+            &Type::Var(tv.clone()),
+            &tuple_with_var,
+            &TypeVarConstraintRegistry::new(),
+        );
         assert!(result.is_err(), "Occurs check should prevent recursive type");
     }
 
@@ -924,7 +956,7 @@ mod tests {
         let outer_tuple1 = Type::tuple_heterogeneous(vec![inner_tuple.clone(), Type::Var(tv2.clone())]);
         let inner_concrete = Type::tuple_heterogeneous(vec![Type::string(), Type::int()]);
         let outer_tuple2 = Type::tuple_heterogeneous(vec![inner_concrete, Type::bool()]);
-        let subst = Unifier::unify(&outer_tuple1, &outer_tuple2).unwrap();
+        let subst = Unifier::unify(&outer_tuple1, &outer_tuple2, &TypeVarConstraintRegistry::new()).unwrap();
         assert_eq!(subst.get(&tv1), Some(&Type::string()));
         assert_eq!(subst.get(&tv2), Some(&Type::bool()));
     }
@@ -934,7 +966,7 @@ mod tests {
         let list_dog = Type::list(Type::Con(TypeCtor::Class("Dog".to_string())));
         let list_animal = Type::list(Type::Con(TypeCtor::Class("Animal".to_string())));
 
-        let result = Unifier::unify(&list_dog, &list_animal);
+        let result = Unifier::unify(&list_dog, &list_animal, &TypeVarConstraintRegistry::new());
         assert!(result.is_err(), "Invariant lists with different types should not unify");
 
         if let Err(e) = result {
@@ -952,7 +984,7 @@ mod tests {
         let tuple_var = Type::App(Box::new(Type::Con(TypeCtor::Tuple)), Box::new(Type::Var(tv.clone())));
         let tuple_int = Type::App(Box::new(Type::Con(TypeCtor::Tuple)), Box::new(Type::int()));
 
-        let subst = Unifier::unify(&tuple_var, &tuple_int).unwrap();
+        let subst = Unifier::unify(&tuple_var, &tuple_int, &TypeVarConstraintRegistry::new()).unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::int()));
     }
 
@@ -967,7 +999,7 @@ mod tests {
             Box::new(Type::float()),
         );
 
-        let result = Unifier::unify(&dict_str_int, &dict_str_float);
+        let result = Unifier::unify(&dict_str_int, &dict_str_float, &TypeVarConstraintRegistry::new());
         assert!(result.is_err(), "Invariant dict types should not unify");
     }
 
@@ -976,7 +1008,7 @@ mod tests {
         let tv = TypeVar::new(0);
         let list_var = Type::list(Type::Var(tv.clone()));
         let list_int = Type::list(Type::int());
-        let subst = Unifier::unify(&list_var, &list_int).unwrap();
+        let subst = Unifier::unify(&list_var, &list_int, &TypeVarConstraintRegistry::new()).unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::int()));
     }
 
@@ -1006,7 +1038,7 @@ mod tests {
             Box::new(Type::string()),
         );
 
-        let subst = Unifier::unify(&gen_var, &gen_str).unwrap();
+        let subst = Unifier::unify(&gen_var, &gen_str, &TypeVarConstraintRegistry::new()).unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::string()));
     }
 
@@ -1025,7 +1057,7 @@ mod tests {
             Box::new(Type::fun_unnamed(vec![Type::Var(tv2.clone())], Type::Var(tv2))),
         );
 
-        let result = Unifier::unify(&forall1, &forall2);
+        let result = Unifier::unify(&forall1, &forall2, &TypeVarConstraintRegistry::new());
         assert!(result.is_ok(), "ForAll types with alpha-equivalent bodies should unify");
     }
 
@@ -1036,7 +1068,7 @@ mod tests {
 
         let mono_type = Type::list(Type::int());
 
-        let result = Unifier::unify(&forall_type, &mono_type);
+        let result = Unifier::unify(&forall_type, &mono_type, &TypeVarConstraintRegistry::new());
         assert!(result.is_ok(), "ForAll should unify with compatible monomorphic type");
 
         let subst = result.unwrap();
@@ -1059,7 +1091,7 @@ mod tests {
             Box::new(Type::fun_unnamed(vec![Type::Var(tv2)], Type::Var(tv3))),
         );
 
-        let result = Unifier::unify(&forall1, &forall2);
+        let result = Unifier::unify(&forall1, &forall2, &TypeVarConstraintRegistry::new());
         assert!(
             result.is_err(),
             "ForAll with different parameter counts should not unify"
@@ -1077,7 +1109,7 @@ mod tests {
         let list_forall = Type::list(forall_type);
         let list_mono = Type::list(Type::fun_unnamed(vec![Type::int()], Type::int()));
 
-        let result = Unifier::unify(&list_forall, &list_mono);
+        let result = Unifier::unify(&list_forall, &list_mono, &TypeVarConstraintRegistry::new());
         assert!(result.is_ok(), "Nested ForAll in type constructor should unify");
     }
 
@@ -1117,7 +1149,7 @@ mod tests {
         let dict_var_int = Type::dict(Type::Var(tv1.clone()), Type::int());
         let dict_str_int = Type::dict(Type::string(), Type::int());
 
-        let result = Unifier::unify(&dict_var_int, &dict_str_int);
+        let result = Unifier::unify(&dict_var_int, &dict_str_int, &TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
         let subst = result.unwrap();
         assert_eq!(subst.get(&tv1), Some(&Type::string()));
@@ -1129,7 +1161,7 @@ mod tests {
         let dict_str_var = Type::dict(Type::string(), Type::Var(tv.clone()));
         let dict_str_int = Type::dict(Type::string(), Type::int());
 
-        let result = Unifier::unify(&dict_str_var, &dict_str_int);
+        let result = Unifier::unify(&dict_str_var, &dict_str_int, &TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
         let subst = result.unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::int()));
@@ -1143,7 +1175,7 @@ mod tests {
         let dict_dog_dog = Type::dict(dog.clone(), dog.clone());
         let dict_animal_animal = Type::dict(animal.clone(), animal.clone());
 
-        let result = Unifier::unify(&dict_dog_dog, &dict_animal_animal);
+        let result = Unifier::unify(&dict_dog_dog, &dict_animal_animal, &TypeVarConstraintRegistry::new());
         assert!(result.is_err(), "Dict is invariant in both parameters");
     }
 
@@ -1160,7 +1192,7 @@ mod tests {
         );
         let gen_concrete = Type::generator(Type::int(), Type::string(), Type::bool());
 
-        let result = Unifier::unify(&gen_var, &gen_concrete);
+        let result = Unifier::unify(&gen_var, &gen_concrete, &TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
         let subst = result.unwrap();
         assert_eq!(subst.get(&tv_yield), Some(&Type::int()));
@@ -1176,7 +1208,7 @@ mod tests {
         let gen_var = Type::async_generator(Type::Var(tv_yield.clone()), Type::Var(tv_send.clone()));
         let gen_concrete = Type::async_generator(Type::int(), Type::string());
 
-        let result = Unifier::unify(&gen_var, &gen_concrete);
+        let result = Unifier::unify(&gen_var, &gen_concrete, &TypeVarConstraintRegistry::new());
         assert!(result.is_ok());
         let subst = result.unwrap();
         assert_eq!(subst.get(&tv_yield), Some(&Type::int()));
@@ -1197,10 +1229,18 @@ mod tests {
         let consumer_animal = Type::App(Box::new(consumer_ctor), Box::new(animal));
         let producer_consumer_animal = Type::App(Box::new(producer_ctor), Box::new(consumer_animal));
 
-        let result = Unifier::unify(&producer_consumer_dog, &producer_consumer_dog);
+        let result = Unifier::unify(
+            &producer_consumer_dog,
+            &producer_consumer_dog,
+            &TypeVarConstraintRegistry::new(),
+        );
         assert!(result.is_ok());
 
-        let result = Unifier::unify(&producer_consumer_animal, &producer_consumer_animal);
+        let result = Unifier::unify(
+            &producer_consumer_animal,
+            &producer_consumer_animal,
+            &TypeVarConstraintRegistry::new(),
+        );
         assert!(result.is_ok());
     }
 
@@ -1210,7 +1250,11 @@ mod tests {
         let list_list_list_var = Type::list(Type::list(Type::list(Type::Var(tv.clone()))));
         let list_list_list_int = Type::list(Type::list(Type::list(Type::int())));
 
-        let result = Unifier::unify(&list_list_list_var, &list_list_list_int);
+        let result = Unifier::unify(
+            &list_list_list_var,
+            &list_list_list_int,
+            &TypeVarConstraintRegistry::new(),
+        );
         assert!(result.is_ok());
         let subst = result.unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::int()));
@@ -1222,7 +1266,11 @@ mod tests {
         let dict_str_list_var = Type::dict(Type::string(), Type::list(Type::Var(tv.clone())));
         let dict_str_list_int = Type::dict(Type::string(), Type::list(Type::int()));
 
-        let result = Unifier::unify(&dict_str_list_var, &dict_str_list_int);
+        let result = Unifier::unify(
+            &dict_str_list_var,
+            &dict_str_list_int,
+            &TypeVarConstraintRegistry::new(),
+        );
         assert!(result.is_ok());
         let subst = result.unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::int()));

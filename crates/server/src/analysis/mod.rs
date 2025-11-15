@@ -220,6 +220,7 @@ impl Analyzer {
             class_registry,
             node_to_scope,
             scope_dependencies,
+            typevar_registry,
         ) = walker::generate_constraints(&self.stub_cache, &ast, &symbol_table, &source)?;
 
         tracing::debug!(
@@ -229,7 +230,7 @@ impl Analyzer {
         );
 
         let (substitution, mut type_errors) =
-            beacon_constraint::solver::solve_constraints(constraints, &class_registry)?;
+            beacon_constraint::solver::solve_constraints(constraints, &class_registry, &typevar_registry)?;
 
         let suppression_map = SuppressionMap::from_source(&source);
         type_errors.retain(|error| !suppression_map.is_suppressed(error.span.line, None));

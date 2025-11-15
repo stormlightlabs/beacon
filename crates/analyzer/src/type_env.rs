@@ -358,8 +358,11 @@ impl TypeEnvironment {
     }
 
     /// Unify two types and return the resulting substitution
+    ///
+    /// Note: This uses an empty TypeVarConstraintRegistry, so it won't validate bounds/constraints.
+    /// For proper TypeVar validation, use the constraint solver with the registry from the context.
     pub fn unify(&self, t1: &Type, t2: &Type) -> beacon_core::Result<Subst> {
-        Unifier::unify(t1, t2)
+        Unifier::unify(t1, t2, &beacon_core::TypeVarConstraintRegistry::new())
     }
 
     /// Set the generator parameters (yield_type, send_type, return_type) for the current scope.
