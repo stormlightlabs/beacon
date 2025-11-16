@@ -341,7 +341,7 @@ impl ProtocolChecker {
             }
             (Type::Con(TypeCtor::String), ProtocolName::Sized) => true,
             (Type::Con(TypeCtor::Any), _) => true,
-            (Type::Con(TypeCtor::Protocol(Some(name))), ProtocolName::UserDefined(proto_name)) => name == proto_name,
+            (Type::Con(TypeCtor::Protocol(Some(name), _)), ProtocolName::UserDefined(proto_name)) => name == proto_name,
             _ => false,
         }
     }
@@ -687,8 +687,8 @@ mod tests {
 
     #[test]
     fn test_protocol_satisfies_intersection() {
-        let iterable_proto = Type::Con(TypeCtor::Protocol(Some("Iterable".to_string())));
-        let sized_proto = Type::Con(TypeCtor::Protocol(Some("Sized".to_string())));
+        let iterable_proto = Type::Con(TypeCtor::Protocol(Some("Iterable".to_string()), vec![]));
+        let sized_proto = Type::Con(TypeCtor::Protocol(Some("Sized".to_string()), vec![]));
         let both = Type::intersection(vec![iterable_proto, sized_proto]);
 
         assert!(ProtocolChecker::satisfies(
@@ -706,7 +706,7 @@ mod tests {
     #[test]
     fn test_protocol_satisfies_intersection_with_concrete_types() {
         let list_type = Type::list(Type::int());
-        let sized_proto = Type::Con(TypeCtor::Protocol(Some("Sized".to_string())));
+        let sized_proto = Type::Con(TypeCtor::Protocol(Some("Sized".to_string()), vec![]));
         let intersection = Type::intersection(vec![list_type, sized_proto]);
 
         assert!(ProtocolChecker::satisfies(&intersection, &ProtocolName::Iterable));
@@ -797,8 +797,8 @@ mod tests {
 
     #[test]
     fn test_async_protocol_with_intersection() {
-        let async_iter_proto = Type::Con(TypeCtor::Protocol(Some("AsyncIterator".to_string())));
-        let sized_proto = Type::Con(TypeCtor::Protocol(Some("Sized".to_string())));
+        let async_iter_proto = Type::Con(TypeCtor::Protocol(Some("AsyncIterator".to_string()), vec![]));
+        let sized_proto = Type::Con(TypeCtor::Protocol(Some("Sized".to_string()), vec![]));
         let both = Type::intersection(vec![async_iter_proto, sized_proto]);
 
         assert!(ProtocolChecker::satisfies(

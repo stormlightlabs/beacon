@@ -415,13 +415,13 @@ impl Parser {
                         type_params.push(self.parse_type()?);
                     }
                     self.expect(Token::RBracket)?;
-                    let mut result = Type::Con(TypeCtor::Protocol(None));
+                    let mut result = Type::Con(TypeCtor::Protocol(None, vec![]));
                     for param in type_params {
                         result = Type::App(Box::new(result), Box::new(param));
                     }
                     result
                 } else {
-                    Type::Con(TypeCtor::Protocol(None))
+                    Type::Con(TypeCtor::Protocol(None, vec![]))
                 }
             }
             "Generator" => {
@@ -781,7 +781,7 @@ mod tests {
         let parser = AnnotationParser::new();
         let ty = parser.parse("Protocol").unwrap();
         match ty {
-            Type::Con(TypeCtor::Protocol(name)) => {
+            Type::Con(TypeCtor::Protocol(name, _)) => {
                 assert!(name.is_none());
             }
             _ => panic!("Expected Protocol type"),
@@ -791,7 +791,7 @@ mod tests {
         match ty {
             Type::App(protocol, param) => {
                 match *protocol {
-                    Type::Con(TypeCtor::Protocol(name)) => assert!(name.is_none()),
+                    Type::Con(TypeCtor::Protocol(name, _)) => assert!(name.is_none()),
                     _ => panic!("Expected Protocol constructor"),
                 }
                 assert_eq!(*param, Type::Con(TypeCtor::TypeVariable("T".to_string())));
