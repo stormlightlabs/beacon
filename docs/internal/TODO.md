@@ -30,7 +30,10 @@ Known issues with HM type inference that need fixing:
 
 - [x] Type narrowing in match statements with guards
 - [x] Pattern exhaustiveness/reachability checker should account for guards (patterns with guards do not contribute to exhaustiveness coverage)
-- [ ] Constant expression evaluator edge cases
+- [x] Constant expression evaluator edge cases
+    - [ ] Comparison operations (==, !=, <, <=, >, >=, is, is not, in, not in) for guard analysis
+    - [ ] Dict and Set literal evaluation
+    - [ ] ParenthesizedExpression handling
 
 #### TypeVar Bounds & Constraints
 

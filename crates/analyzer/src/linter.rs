@@ -546,6 +546,8 @@ impl<'a> Linter<'a> {
                         ConstValue::Float(f) => f.to_string(),
                         ConstValue::Boolean(b) => b.to_string(),
                         ConstValue::None => "None".to_string(),
+                        ConstValue::Tuple(_) => "<tuple>".to_string(),
+                        ConstValue::List(_) => "<list>".to_string(),
                     };
 
                     self.diagnostics.push(DiagnosticMessage {
