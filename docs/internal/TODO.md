@@ -28,7 +28,8 @@ Known issues with HM type inference that need fixing:
 
 #### Pattern Matching & Narrowing
 
-- [ ] Type narrowing in match statements with guards
+- [x] Type narrowing in match statements with guards
+- [ ] Pattern exhaustiveness/reachability checker should account for guards (currently treats `case x if guard:` as covering all cases)
 - [ ] Constant expression evaluator edge cases
 
 #### TypeVar Bounds & Constraints

@@ -1,13 +1,12 @@
-// Re-export from submodules for internal use
 use super::class::{
     extract_class_metadata, extract_enum_members, has_enum_base, is_dataclass_decorator, is_special_class_decorator,
     synthesize_dataclass_init,
 };
 use super::function::{FunctionKind, analyze_return_paths, detect_function_kind};
 use super::guards::{detect_inverse_type_guard, detect_type_guard, extract_type_guard_info, extract_type_predicate};
+use super::loader::{self, StubCache};
 use super::utils::{get_node_position, is_docstring, is_main_guard, type_name_to_type};
 
-use super::loader::{self, StubCache};
 use crate::pattern::extract_pattern_bindings;
 use crate::type_env::TypeEnvironment;
 use crate::walker::{ExprContext, visit_node_with_context, visit_node_with_env};
@@ -19,6 +18,54 @@ use beacon_parser::AstNode;
 use std::sync::Arc;
 
 pub type TStubCache = Arc<std::sync::RwLock<StubCache>>;
+
+/// Extract variable names from a guard expression
+///
+/// Recursively walks the AST to find all identifiers that could be narrowed by the guard condition.
+/// This includes the primary subject of type checks as well as variables in compound expressions.
+fn extract_guard_variables(guard: &AstNode) -> Vec<String> {
+    let mut vars = Vec::new();
+    extract_guard_variables_recursive(guard, &mut vars);
+    vars.sort();
+    vars.dedup();
+    vars
+}
+
+/// Recursive helper for extracting variables from guard expressions
+fn extract_guard_variables_recursive(node: &AstNode, vars: &mut Vec<String>) {
+    match node {
+        AstNode::Identifier { name, .. } => {
+            vars.push(name.clone());
+        }
+        AstNode::Compare { left, comparators, .. } => {
+            extract_guard_variables_recursive(left, vars);
+            for comp in comparators {
+                extract_guard_variables_recursive(comp, vars);
+            }
+        }
+        AstNode::Call { function, args, .. } => {
+            extract_guard_variables_recursive(function, vars);
+            for arg in args {
+                extract_guard_variables_recursive(arg, vars);
+            }
+        }
+        AstNode::UnaryOp { operand, .. } => {
+            extract_guard_variables_recursive(operand, vars);
+        }
+        AstNode::BinaryOp { left, right, .. } => {
+            extract_guard_variables_recursive(left, vars);
+            extract_guard_variables_recursive(right, vars);
+        }
+        AstNode::Attribute { object, .. } => {
+            extract_guard_variables_recursive(object, vars);
+        }
+        AstNode::Subscript { value, slice, .. } => {
+            extract_guard_variables_recursive(value, vars);
+            extract_guard_variables_recursive(slice, vars);
+        }
+        _ => {}
+    }
+}
 
 /// Extract type parameters from Generic[T1, T2, ...] or Protocol[T1, T2, ...] base class notation by
 /// parsing strings like "Generic[T_co]", "Protocol[T_co]", "Generic[T_co, T_contra]" and looks up the
@@ -476,6 +523,31 @@ pub fn visit_match(
 
                 if let Some(ref guard) = case.guard {
                     visit_node_with_env(guard, &mut case_env, ctx, stub_cache)?;
+
+                    // Extract type predicates from guard and apply narrowing
+                    if let Some(guard_predicate) = extract_type_predicate(guard, &case_env) {
+                        // Find variables in the guard that can be narrowed
+                        let guard_vars = extract_guard_variables(guard);
+
+                        for var_name in guard_vars {
+                            if let Some(current_type) = case_env.lookup(&var_name) {
+                                let narrowed_type = guard_predicate.apply(&current_type);
+
+                                // Only apply narrowing if the type actually changed
+                                if narrowed_type != current_type {
+                                    ctx.constraints.push(Constraint::Narrowing(
+                                        var_name.clone(),
+                                        guard_predicate.clone(),
+                                        narrowed_type.clone(),
+                                        case_span,
+                                    ));
+
+                                    ctx.control_flow.narrow(var_name.clone(), narrowed_type.clone());
+                                    case_env.bind(var_name, beacon_core::TypeScheme::mono(narrowed_type));
+                                }
+                            }
+                        }
+                    }
                 }
 
                 for stmt in &case.body {
@@ -1330,5 +1402,148 @@ pub fn visit_collections(
             }
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use beacon_parser::LiteralValue;
+
+    #[test]
+    fn test_extract_guard_variables_identifier() {
+        let guard = AstNode::Identifier { name: "x".to_string(), line: 1, col: 0, end_line: 1, end_col: 1 };
+
+        let vars = extract_guard_variables(&guard);
+        assert_eq!(vars, vec!["x"]);
+    }
+
+    #[test]
+    fn test_extract_guard_variables_compare() {
+        let guard = AstNode::Compare {
+            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 0, end_line: 1, end_col: 1 }),
+            ops: vec![beacon_parser::CompareOperator::IsNot],
+            comparators: vec![AstNode::Literal { value: LiteralValue::None, line: 1, col: 5, end_line: 1, end_col: 9 }],
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 9,
+        };
+
+        let vars = extract_guard_variables(&guard);
+        assert_eq!(vars, vec!["x"]);
+    }
+
+    #[test]
+    fn test_extract_guard_variables_isinstance() {
+        let guard = AstNode::Call {
+            function: Box::new(AstNode::Identifier {
+                name: "isinstance".to_string(),
+                line: 1,
+                col: 0,
+                end_line: 1,
+                end_col: 10,
+            }),
+            args: vec![
+                AstNode::Identifier { name: "x".to_string(), line: 1, col: 11, end_line: 1, end_col: 12 },
+                AstNode::Identifier { name: "int".to_string(), line: 1, col: 14, end_line: 1, end_col: 17 },
+            ],
+            keywords: vec![],
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 18,
+        };
+
+        let vars = extract_guard_variables(&guard);
+        // Should extract both 'isinstance' and 'x', but 'int' is a type name
+        // After dedup and sort, we get both
+        assert!(vars.contains(&"x".to_string()));
+    }
+
+    #[test]
+    fn test_extract_guard_variables_binary_op() {
+        let guard = AstNode::BinaryOp {
+            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 0, end_line: 1, end_col: 1 }),
+            op: beacon_parser::BinaryOperator::Add,
+            right: Box::new(AstNode::Identifier { name: "y".to_string(), line: 1, col: 4, end_line: 1, end_col: 5 }),
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 5,
+        };
+
+        let vars = extract_guard_variables(&guard);
+        assert_eq!(vars, vec!["x", "y"]);
+    }
+
+    #[test]
+    fn test_extract_guard_variables_attribute() {
+        let guard = AstNode::Attribute {
+            object: Box::new(AstNode::Identifier { name: "obj".to_string(), line: 1, col: 0, end_line: 1, end_col: 3 }),
+            attribute: "field".to_string(),
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 9,
+        };
+
+        let vars = extract_guard_variables(&guard);
+        assert_eq!(vars, vec!["obj"]);
+    }
+
+    #[test]
+    fn test_extract_guard_variables_unary_op() {
+        let guard = AstNode::UnaryOp {
+            op: beacon_parser::UnaryOperator::Not,
+            operand: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 4, end_line: 1, end_col: 5 }),
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 5,
+        };
+
+        let vars = extract_guard_variables(&guard);
+        assert_eq!(vars, vec!["x"]);
+    }
+
+    #[test]
+    fn test_extract_guard_variables_deduplication() {
+        // x + x should return ["x"] once
+        let guard = AstNode::BinaryOp {
+            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 0, end_line: 1, end_col: 1 }),
+            op: beacon_parser::BinaryOperator::Add,
+            right: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 4, end_line: 1, end_col: 5 }),
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 5,
+        };
+
+        let vars = extract_guard_variables(&guard);
+        assert_eq!(vars, vec!["x"]);
+    }
+
+    #[test]
+    fn test_extract_guard_variables_subscript() {
+        let guard = AstNode::Subscript {
+            value: Box::new(AstNode::Identifier { name: "arr".to_string(), line: 1, col: 0, end_line: 1, end_col: 3 }),
+            slice: Box::new(AstNode::Identifier { name: "idx".to_string(), line: 1, col: 4, end_line: 1, end_col: 7 }),
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 8,
+        };
+
+        let vars = extract_guard_variables(&guard);
+        assert_eq!(vars, vec!["arr", "idx"]);
+    }
+
+    #[test]
+    fn test_extract_guard_variables_literal_no_vars() {
+        let guard = AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 0, end_line: 1, end_col: 2 };
+
+        let vars = extract_guard_variables(&guard);
+        assert!(vars.is_empty());
     }
 }
