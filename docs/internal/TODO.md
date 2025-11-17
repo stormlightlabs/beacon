@@ -31,7 +31,7 @@ Known issues with HM type inference that need fixing:
 - [x] Type narrowing in match statements with guards
 - [x] Pattern exhaustiveness/reachability checker should account for guards (patterns with guards do not contribute to exhaustiveness coverage)
 - [x] Constant expression evaluator edge cases
-    - [ ] Comparison operations (==, !=, <, <=, >, >=, is, is not, in, not in) for guard analysis
+    - [x] Comparison operations (==, !=, <, <=, >, >=, is, is not, in, not in) for guard analysis
     - [ ] Dict and Set literal evaluation
     - [ ] ParenthesizedExpression handling
 
@@ -54,7 +54,6 @@ Known issues with HM type inference that need fixing:
 
 ### Test Coverage
 
-- [ ] Add regression tests for all fixed bugs
 - [ ] Improve test coverage for generic types
 - [ ] Add stress tests for deeply nested generics
 - [ ] Test type inference with multiple inheritance

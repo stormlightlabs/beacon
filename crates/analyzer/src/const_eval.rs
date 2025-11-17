@@ -1,4 +1,4 @@
-use beacon_parser::{AstNode, BinaryOperator, LiteralValue, UnaryOperator};
+use beacon_parser::{AstNode, BinaryOperator, CompareOperator, LiteralValue, UnaryOperator};
 use std::hash::{Hash, Hasher};
 
 /// Constant value that can be evaluated from AST nodes.
@@ -57,6 +57,7 @@ impl Hash for ConstValue {
 /// - Literals (strings, integers, floats, booleans, None)
 /// - Unary operations (+x, -x, not x, ~x)
 /// - Binary arithmetic operations (+, -, *, /, //, %, **)
+/// - Comparison operations (==, !=, <, <=, >, >=, is, is not, in, not in)
 /// - String concatenation and repetition
 /// - Tuple and list literals
 pub fn evaluate_const_expr(node: &AstNode) -> Option<ConstValue> {
@@ -70,6 +71,7 @@ pub fn evaluate_const_expr(node: &AstNode) -> Option<ConstValue> {
         },
         AstNode::UnaryOp { op, operand, .. } => evaluate_unary_op(op, operand),
         AstNode::BinaryOp { left, op, right, .. } => evaluate_binary_op(left, op, right),
+        AstNode::Compare { left, ops, comparators, .. } => evaluate_compare(left, ops, comparators),
         AstNode::Tuple { elements, .. } => {
             let values: Option<Vec<_>> = elements.iter().map(evaluate_const_expr).collect();
             values.map(ConstValue::Tuple)
@@ -193,6 +195,127 @@ fn evaluate_binary_op(left: &AstNode, op: &BinaryOperator, right: &AstNode) -> O
         (ConstValue::Boolean(l), &BinaryOperator::Or, ConstValue::Boolean(r)) => Some(ConstValue::Boolean(l || r)),
 
         _ => None,
+    }
+}
+
+/// Evaluates a comparison expression (potentially chained like `a < b < c`).
+///
+/// Python allows comparison chains like `1 < 2 < 3`, which is equivalent to `1 < 2 and 2 < 3`.
+/// Returns a boolean ConstValue representing the result of all comparisons.
+fn evaluate_compare(left: &AstNode, ops: &[CompareOperator], comparators: &[AstNode]) -> Option<ConstValue> {
+    if ops.len() != comparators.len() {
+        return None;
+    }
+
+    let mut current = evaluate_const_expr(left)?;
+
+    for (op, comparator) in ops.iter().zip(comparators.iter()) {
+        let right = evaluate_const_expr(comparator)?;
+        let result = evaluate_single_compare(&current, op, &right)?;
+
+        if !result {
+            return Some(ConstValue::Boolean(false));
+        }
+
+        current = right;
+    }
+
+    Some(ConstValue::Boolean(true))
+}
+
+/// Performs a single comparison between two constant values.
+fn evaluate_single_compare(left: &ConstValue, op: &CompareOperator, right: &ConstValue) -> Option<bool> {
+    match op {
+        CompareOperator::Eq => Some(values_equal(left, right)),
+        CompareOperator::NotEq => Some(!values_equal(left, right)),
+        CompareOperator::Lt => compare_values(left, right).map(|ord| ord == std::cmp::Ordering::Less),
+        CompareOperator::LtE => compare_values(left, right).map(|ord| ord != std::cmp::Ordering::Greater),
+        CompareOperator::Gt => compare_values(left, right).map(|ord| ord == std::cmp::Ordering::Greater),
+        CompareOperator::GtE => compare_values(left, right).map(|ord| ord != std::cmp::Ordering::Less),
+        CompareOperator::Is => Some(values_identical(left, right)),
+        CompareOperator::IsNot => Some(!values_identical(left, right)),
+        CompareOperator::In => Some(value_in_container(left, right)),
+        CompareOperator::NotIn => Some(!value_in_container(left, right)),
+    }
+}
+
+/// Checks if two values are equal (Python `==` semantics).
+fn values_equal(left: &ConstValue, right: &ConstValue) -> bool {
+    match (left, right) {
+        (ConstValue::Integer(l), ConstValue::Integer(r)) => l == r,
+        (ConstValue::Float(l), ConstValue::Float(r)) => l == r,
+        (ConstValue::String(l), ConstValue::String(r)) => l == r,
+        (ConstValue::Boolean(l), ConstValue::Boolean(r)) => l == r,
+        (ConstValue::None, ConstValue::None) => true,
+        (ConstValue::Tuple(l), ConstValue::Tuple(r)) => l == r,
+        (ConstValue::List(l), ConstValue::List(r)) => l == r,
+        (ConstValue::Integer(l), ConstValue::Float(r)) => (*l as f64) == *r,
+        (ConstValue::Float(l), ConstValue::Integer(r)) => *l == (*r as f64),
+        (ConstValue::Boolean(true), ConstValue::Integer(1)) => true,
+        (ConstValue::Boolean(false), ConstValue::Integer(0)) => true,
+        (ConstValue::Integer(1), ConstValue::Boolean(true)) => true,
+        (ConstValue::Integer(0), ConstValue::Boolean(false)) => true,
+        (ConstValue::Boolean(b), ConstValue::Float(f)) => (*b as i64 as f64) == *f,
+        (ConstValue::Float(f), ConstValue::Boolean(b)) => *f == (*b as i64 as f64),
+        _ => false,
+    }
+}
+
+/// Checks if two values are identical (Python `is` semantics).
+///
+/// For constant values, `is` behaves like `==` for None, True, False.
+/// For other values, we use equality as an approximation since we're dealing with constants.
+fn values_identical(left: &ConstValue, right: &ConstValue) -> bool {
+    match (left, right) {
+        (ConstValue::None, ConstValue::None) => true,
+        (ConstValue::Boolean(l), ConstValue::Boolean(r)) => l == r,
+        (ConstValue::Integer(l), ConstValue::Integer(r)) if *l >= -5 && *l <= 256 && *r >= -5 && *r <= 256 => l == r,
+        _ => false,
+    }
+}
+
+/// Compares two values for ordering (for <, <=, >, >=).
+fn compare_values(left: &ConstValue, right: &ConstValue) -> Option<std::cmp::Ordering> {
+    match (left, right) {
+        (ConstValue::Integer(l), ConstValue::Integer(r)) => Some(l.cmp(r)),
+        (ConstValue::Float(l), ConstValue::Float(r)) => l.partial_cmp(r),
+        (ConstValue::String(l), ConstValue::String(r)) => Some(l.cmp(r)),
+        (ConstValue::Integer(l), ConstValue::Float(r)) => (*l as f64).partial_cmp(r),
+        (ConstValue::Float(l), ConstValue::Integer(r)) => l.partial_cmp(&(*r as f64)),
+        (ConstValue::Boolean(l), ConstValue::Boolean(r)) => Some(l.cmp(r)),
+        (ConstValue::Boolean(l), ConstValue::Integer(r)) => Some((*l as i64).cmp(r)),
+        (ConstValue::Integer(l), ConstValue::Boolean(r)) => Some(l.cmp(&(*r as i64))),
+        (ConstValue::Tuple(l), ConstValue::Tuple(r)) => compare_sequences(l, r),
+        (ConstValue::List(l), ConstValue::List(r)) => compare_sequences(l, r),
+        _ => None,
+    }
+}
+
+/// Compares two sequences lexicographically.
+fn compare_sequences(left: &[ConstValue], right: &[ConstValue]) -> Option<std::cmp::Ordering> {
+    for (l, r) in left.iter().zip(right.iter()) {
+        match compare_values(l, r)? {
+            std::cmp::Ordering::Equal => continue,
+            ordering => return Some(ordering),
+        }
+    }
+    Some(left.len().cmp(&right.len()))
+}
+
+/// Checks if a value is contained in a container (for `in` operator).
+fn value_in_container(value: &ConstValue, container: &ConstValue) -> bool {
+    match container {
+        ConstValue::Tuple(elements) | ConstValue::List(elements) => {
+            elements.iter().any(|elem| values_equal(value, elem))
+        }
+        ConstValue::String(s) => {
+            if let ConstValue::String(needle) = value {
+                s.contains(needle.as_str())
+            } else {
+                false
+            }
+        }
+        _ => false,
     }
 }
 
@@ -1227,5 +1350,1126 @@ mod tests {
         set.insert(tuple1);
         set.insert(tuple2);
         assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn test_compare_eq_integers() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Eq],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Eq],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(3),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(false)));
+    }
+
+    #[test]
+    fn test_compare_not_eq() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::NotEq],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(3),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::NotEq],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(false)));
+    }
+
+    #[test]
+    fn test_compare_less_than() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(3),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Lt],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Lt],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(3),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(false)));
+    }
+
+    #[test]
+    fn test_compare_less_than_or_equal() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::LtE],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(3),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::LtE],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(7),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::LtE],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(false)));
+    }
+
+    #[test]
+    fn test_compare_greater_than() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(10),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Gt],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(3),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Gt],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(false)));
+    }
+
+    #[test]
+    fn test_compare_greater_than_or_equal() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::GtE],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(7),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::GtE],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(3),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::GtE],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(false)));
+    }
+
+    #[test]
+    fn test_compare_mixed_numeric() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Eq],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Float(5.0),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(3),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Lt],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Float(5.5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Float(10.5),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Gt],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+    }
+
+    #[test]
+    fn test_compare_boolean_integer() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Boolean(true),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Eq],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(1),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Boolean(false),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Eq],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(0),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Boolean(true),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Lt],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(2),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+    }
+
+    #[test]
+    fn test_compare_strings() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::String { value: "abc".to_string(), prefix: String::new() },
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Eq],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::String { value: "abc".to_string(), prefix: String::new() },
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::String { value: "abc".to_string(), prefix: String::new() },
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Lt],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::String { value: "xyz".to_string(), prefix: String::new() },
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+    }
+
+    #[test]
+    fn test_compare_is_operator() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal { value: LiteralValue::None, line: 1, col: 1, end_line: 1, end_col: 2 }),
+            ops: vec![CompareOperator::Is],
+            comparators: vec![AstNode::Literal { value: LiteralValue::None, line: 1, col: 6, end_line: 1, end_col: 7 }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Boolean(true),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Is],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Boolean(true),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Is],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(1000),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Is],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(1000),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(false)));
+    }
+
+    #[test]
+    fn test_compare_is_not_operator() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::IsNot],
+            comparators: vec![AstNode::Literal { value: LiteralValue::None, line: 1, col: 6, end_line: 1, end_col: 7 }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Boolean(true),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::IsNot],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Boolean(false),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+    }
+
+    #[test]
+    fn test_compare_in_operator() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(2),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::In],
+            comparators: vec![AstNode::List {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::In],
+            comparators: vec![AstNode::List {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(false)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::String { value: "ab".to_string(), prefix: String::new() },
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::In],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::String { value: "abcd".to_string(), prefix: String::new() },
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::String { value: "xyz".to_string(), prefix: String::new() },
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::In],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::String { value: "abcd".to_string(), prefix: String::new() },
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(false)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(2),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::In],
+            comparators: vec![AstNode::Tuple {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                is_parenthesized: true,
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+    }
+
+    #[test]
+    fn test_compare_not_in_operator() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::NotIn],
+            comparators: vec![AstNode::List {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(2),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::NotIn],
+            comparators: vec![AstNode::List {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(false)));
+    }
+
+    #[test]
+    fn test_compare_chained() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(1),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Lt, CompareOperator::Lt],
+            comparators: vec![
+                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 5, end_line: 1, end_col: 6 },
+                AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 9, end_line: 1, end_col: 10 },
+            ],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 10,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(1),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Lt, CompareOperator::Lt],
+            comparators: vec![
+                AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 5, end_line: 1, end_col: 6 },
+                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 9, end_line: 1, end_col: 10 },
+            ],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 10,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(false)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Eq, CompareOperator::NotEq],
+            comparators: vec![
+                AstNode::Literal { value: LiteralValue::Integer(5), line: 1, col: 5, end_line: 1, end_col: 6 },
+                AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 9, end_line: 1, end_col: 10 },
+            ],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 10,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+    }
+
+    #[test]
+    fn test_compare_tuple_equality() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Tuple {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                is_parenthesized: true,
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Eq],
+            comparators: vec![AstNode::Tuple {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                is_parenthesized: true,
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Tuple {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                is_parenthesized: true,
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Eq],
+            comparators: vec![AstNode::Tuple {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                is_parenthesized: true,
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(false)));
+    }
+
+    #[test]
+    fn test_compare_tuple_ordering() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Tuple {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                is_parenthesized: true,
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Lt],
+            comparators: vec![AstNode::Tuple {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                is_parenthesized: true,
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Tuple {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                is_parenthesized: true,
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Lt],
+            comparators: vec![AstNode::Tuple {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                is_parenthesized: true,
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+    }
+
+    #[test]
+    fn test_compare_list_ordering() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::List {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Lt],
+            comparators: vec![AstNode::List {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+    }
+
+    #[test]
+    fn test_compare_type_mismatch() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::String { value: "test".to_string(), prefix: String::new() },
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Lt],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), None);
+
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::String { value: "test".to_string(), prefix: String::new() },
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Eq],
+            comparators: vec![AstNode::Literal {
+                value: LiteralValue::Integer(5),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 7,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(false)));
     }
 }
