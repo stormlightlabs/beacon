@@ -240,8 +240,8 @@ pub enum TypeCtor {
     TypeVariable(String),
     /// Generic base class (parameters stored via Type::App)
     Generic,
-    /// Protocol (parameters stored via Type::App, name for named protocols)
-    Protocol(Option<String>),
+    /// Protocol (parameters stored via Type::App, name for named protocols, variance for type params)
+    Protocol(Option<String>, Vec<Variance>),
     Class(String),
     Module(String),
     /// Literal singleton type (Literal[True], Literal[42], etc.)
@@ -276,7 +276,7 @@ impl fmt::Display for TypeCtor {
             TypeCtor::Never => write!(f, "Never"),
             TypeCtor::TypeVariable(name) => write!(f, "{name}"),
             TypeCtor::Generic => write!(f, "Generic"),
-            TypeCtor::Protocol(name) => {
+            TypeCtor::Protocol(name, _variances) => {
                 if let Some(protocol_name) = name {
                     write!(f, "Protocol<{protocol_name}>")
                 } else {
@@ -326,7 +326,7 @@ impl TypeCtor {
             TypeCtor::AsyncGenerator => Kind::arity(2),
             // * -> * -> * -> * (Coroutine[YieldType, SendType, ReturnType])
             TypeCtor::Coroutine => Kind::arity(3),
-            TypeCtor::Generic | TypeCtor::Protocol(_) => Kind::Star,
+            TypeCtor::Generic | TypeCtor::Protocol(_, _) => Kind::Star,
             TypeCtor::Class(_) | TypeCtor::Module(_) => Kind::Star,
         }
     }
@@ -341,6 +341,7 @@ impl TypeCtor {
     /// - Mutable containers (list, dict, set) are invariant
     /// - Callable parameters are contravariant, returns are covariant
     /// - Iterators/Iterables are covariant (read-only)
+    /// - Protocols use the variance specified in their type parameters
     pub fn variance(&self, param_index: usize) -> Variance {
         match self {
             TypeCtor::Tuple | TypeCtor::Iterator | TypeCtor::Iterable => Variance::Covariant,
@@ -370,6 +371,7 @@ impl TypeCtor {
                 2 => Variance::Covariant,
                 _ => Variance::Invariant,
             },
+            TypeCtor::Protocol(_name, variances) => variances.get(param_index).copied().unwrap_or(Variance::Invariant),
             _ => Variance::Invariant,
         }
     }
@@ -393,7 +395,7 @@ impl TypeCtor {
                 | TypeCtor::Never
                 | TypeCtor::TypeVariable(_)
                 | TypeCtor::Generic
-                | TypeCtor::Protocol(_)
+                | TypeCtor::Protocol(_, _)
                 | TypeCtor::Literal(_)
                 | TypeCtor::Generator
                 | TypeCtor::AsyncGenerator
@@ -763,18 +765,6 @@ impl Type {
     }
 
     /// Create an intersection type, flattening nested intersections, removing duplications, and sorting for canonical form
-    ///
-    /// Intersection types represent values that satisfy multiple type constraints simultaneously.
-    /// For protocols, `Intersection[Protocol1, Protocol2]` means a type must satisfy both protocols.
-    ///
-    /// # Examples
-    /// ```
-    /// use beacon_core::Type;
-    ///
-    /// let proto1 = Type::Con(beacon_core::TypeCtor::Protocol(Some("Iterable".to_string())));
-    /// let proto2 = Type::Con(beacon_core::TypeCtor::Protocol(Some("Sized".to_string())));
-    /// let both = Type::intersection(vec![proto1, proto2]); // Must be both Iterable and Sized
-    /// ```
     pub fn intersection(mut types: Vec<Type>) -> Self {
         if types.len() == 1 {
             return types.pop().unwrap();
@@ -824,17 +814,6 @@ impl Type {
     }
 
     /// Remove a type from a union
-    ///
-    /// Returns a new type with the specified type removed from the union.
-    /// If removing the type leaves a single type, returns that type unwrapped.
-    /// If the type is not a union, returns self unchanged.
-    ///
-    /// # Examples
-    /// ```
-    /// use beacon_core::Type;
-    /// let opt_int = Type::optional(Type::int()); // Union[int, None]
-    /// let just_int = opt_int.remove_from_union(&Type::none()); // int
-    /// ```
     pub fn remove_from_union(&self, to_remove: &Type) -> Type {
         match self {
             Type::Union(types) => {
@@ -899,6 +878,116 @@ impl Type {
                 }
             }
             _ => None,
+        }
+    }
+
+    /// Extract the protocol name and type arguments from a parameterized protocol type
+    pub fn unapply_protocol(&self) -> Option<(&str, Vec<Type>)> {
+        match self {
+            Type::App(constructor, arg) => {
+                if let Type::Con(TypeCtor::Protocol(Some(name), _)) = constructor.as_ref() {
+                    Some((name.as_str(), vec![arg.as_ref().clone()]))
+                } else if let Type::App(inner_constructor, first_arg) = constructor.as_ref() {
+                    if let Type::Con(TypeCtor::Protocol(Some(name), _)) = inner_constructor.as_ref() {
+                        Some((name.as_str(), vec![first_arg.as_ref().clone(), arg.as_ref().clone()]))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Enrich a Protocol type with variance information from ClassMetadata
+    ///
+    /// This method recursively traverses a type and replaces Protocol TypeCtors that have empty
+    /// variance vectors with ones populated from the ClassMetadata.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Before: Protocol(Some("MyProto"), vec![])
+    /// // After:  Protocol(Some("MyProto"), vec![Variance::Covariant])
+    /// ```
+    pub fn enrich_protocol_variance(self, class_registry: &crate::class_metadata::ClassRegistry) -> Self {
+        match self {
+            Type::Con(TypeCtor::Protocol(Some(name), variances)) if variances.is_empty() => {
+                if let Some(metadata) = class_registry.get_class(&name) {
+                    let enriched_variances: Vec<Variance> =
+                        metadata.type_param_vars.iter().map(|tv| tv.variance).collect();
+                    Type::Con(TypeCtor::Protocol(Some(name), enriched_variances))
+                } else {
+                    Type::Con(TypeCtor::Protocol(Some(name), variances))
+                }
+            }
+            Type::App(ctor, arg) => Type::App(
+                Box::new(ctor.enrich_protocol_variance(class_registry)),
+                Box::new(arg.enrich_protocol_variance(class_registry)),
+            ),
+            Type::Fun(params, ret) => Type::Fun(
+                params
+                    .into_iter()
+                    .map(|(name, ty)| (name, ty.enrich_protocol_variance(class_registry)))
+                    .collect(),
+                Box::new(ret.enrich_protocol_variance(class_registry)),
+            ),
+            Type::ForAll(tvs, body) => Type::ForAll(tvs, Box::new(body.enrich_protocol_variance(class_registry))),
+            Type::Union(types) => Type::Union(
+                types
+                    .into_iter()
+                    .map(|ty| ty.enrich_protocol_variance(class_registry))
+                    .collect(),
+            ),
+            Type::Intersection(types) => Type::Intersection(
+                types
+                    .into_iter()
+                    .map(|ty| ty.enrich_protocol_variance(class_registry))
+                    .collect(),
+            ),
+            Type::Record(fields, row_var) => Type::Record(
+                fields
+                    .into_iter()
+                    .map(|(name, ty)| (name, ty.enrich_protocol_variance(class_registry)))
+                    .collect(),
+                row_var,
+            ),
+            Type::BoundMethod(receiver, method_name, method) => Type::BoundMethod(
+                Box::new(receiver.enrich_protocol_variance(class_registry)),
+                method_name,
+                Box::new(method.enrich_protocol_variance(class_registry)),
+            ),
+            Type::Tuple(types) => Type::Tuple(
+                types
+                    .into_iter()
+                    .map(|ty| ty.enrich_protocol_variance(class_registry))
+                    .collect(),
+            ),
+            other => other,
+        }
+    }
+
+    /// Get the variance for a specific parameter position in a type application chain.
+    ///
+    /// Multi-parameter types like `Dict[K, V]` are represented as nested applications:
+    /// `App(App(Dict, K), V)` where K is at parameter 0 and V is at parameter 1.
+    ///
+    /// This function determines which parameter position we're at based on the nesting depth.
+    fn get_app_variance(ty: &Type) -> Variance {
+        let mut current = ty;
+        let mut param_count: usize = 0;
+
+        while let Type::App(ctor, _) = current {
+            param_count += 1;
+            current = ctor.as_ref();
+        }
+
+        if let Type::Con(tc) = current {
+            let param_index = param_count.saturating_sub(1);
+            tc.variance(param_index)
+        } else {
+            Variance::Invariant
         }
     }
 
@@ -1133,10 +1222,7 @@ impl Type {
                 return false;
             }
 
-            let variance = match self_ctor.as_ref() {
-                Type::Con(tc) => tc.variance(0),
-                _ => Variance::Invariant,
-            };
+            let variance = Self::get_app_variance(self_ctor.as_ref());
 
             return match variance {
                 Variance::Covariant => self_arg.is_subtype_of(other_arg),
@@ -1331,6 +1417,8 @@ impl fmt::Display for OverloadSet {
 
 #[cfg(test)]
 mod tests {
+    use crate::{ClassMetadata, ClassRegistry};
+
     use super::*;
 
     #[test]
@@ -1422,7 +1510,7 @@ mod tests {
         let ty = Type::fun_unnamed(vec![Type::Var(tv1.clone())], Type::Var(tv1.clone()));
 
         let mut env_vars = FxHashMap::default();
-        env_vars.insert(tv2, ()); // tv2 is bound in environment
+        env_vars.insert(tv2, ());
 
         let scheme = TypeScheme::generalize(ty.clone(), &env_vars);
         assert_eq!(scheme.quantified_vars.len(), 1);
@@ -1878,7 +1966,7 @@ mod tests {
         let ty = Type::fun_unnamed(vec![Type::Var(tv_a.clone())], Type::Var(tv_b.clone()));
 
         let mut env_vars = FxHashMap::default();
-        env_vars.insert(tv_a, ()); // 'a is bound in environment
+        env_vars.insert(tv_a, ());
 
         let scheme = TypeScheme::generalize(ty, &env_vars);
 
@@ -2242,8 +2330,8 @@ mod tests {
     /// Intersection[A, B] is more specific than either A or B, so it's a subtype of both
     #[test]
     fn test_subtype_intersection_to_single_type() {
-        let proto1 = Type::Con(TypeCtor::Protocol(Some("Iterable".to_string())));
-        let proto2 = Type::Con(TypeCtor::Protocol(Some("Sized".to_string())));
+        let proto1 = Type::Con(TypeCtor::Protocol(Some("Iterable".to_string()), vec![]));
+        let proto2 = Type::Con(TypeCtor::Protocol(Some("Sized".to_string()), vec![]));
         let intersection = Type::intersection(vec![proto1.clone(), proto2.clone()]);
 
         assert!(intersection.is_subtype_of(&proto1));
@@ -2254,8 +2342,8 @@ mod tests {
 
     #[test]
     fn test_subtype_intersection_with_protocols() {
-        let proto1 = Type::Con(TypeCtor::Protocol(Some("Iterable".to_string())));
-        let proto2 = Type::Con(TypeCtor::Protocol(Some("Sized".to_string())));
+        let proto1 = Type::Con(TypeCtor::Protocol(Some("Iterable".to_string()), vec![]));
+        let proto2 = Type::Con(TypeCtor::Protocol(Some("Sized".to_string()), vec![]));
         let both = Type::intersection(vec![proto1.clone(), proto2.clone()]);
 
         assert!(both.is_subtype_of(&proto1));
@@ -2525,6 +2613,70 @@ mod tests {
     }
 
     #[test]
+    fn test_unapply_protocol_single_param() {
+        let protocol_str = Type::App(
+            Box::new(Type::Con(TypeCtor::Protocol(
+                Some("ReadOnly".to_string()),
+                vec![Variance::Covariant],
+            ))),
+            Box::new(Type::string()),
+        );
+
+        let result = protocol_str.unapply_protocol();
+        assert!(result.is_some());
+        let (protocol_name, args) = result.unwrap();
+        assert_eq!(protocol_name, "ReadOnly");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0], Type::string());
+    }
+
+    #[test]
+    fn test_unapply_protocol_two_params() {
+        let protocol_two_param = Type::App(
+            Box::new(Type::App(
+                Box::new(Type::Con(TypeCtor::Protocol(
+                    Some("TwoParam".to_string()),
+                    vec![Variance::Covariant, Variance::Contravariant],
+                ))),
+                Box::new(Type::int()),
+            )),
+            Box::new(Type::string()),
+        );
+
+        let result = protocol_two_param.unapply_protocol();
+        assert!(result.is_some());
+        let (protocol_name, args) = result.unwrap();
+        assert_eq!(protocol_name, "TwoParam");
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], Type::int());
+        assert_eq!(args[1], Type::string());
+    }
+
+    #[test]
+    fn test_unapply_protocol_non_protocol() {
+        let class_int = Type::App(
+            Box::new(Type::Con(TypeCtor::Class("MyClass".to_string()))),
+            Box::new(Type::int()),
+        );
+        let result = class_int.unapply_protocol();
+        assert!(result.is_none());
+
+        let list_int = Type::list(Type::int());
+        let result2 = list_int.unapply_protocol();
+        assert!(result2.is_none());
+    }
+
+    #[test]
+    fn test_unapply_protocol_unnamed() {
+        let protocol_unnamed = Type::App(
+            Box::new(Type::Con(TypeCtor::Protocol(None, vec![]))),
+            Box::new(Type::int()),
+        );
+        let result = protocol_unnamed.unapply_protocol();
+        assert!(result.is_none());
+    }
+
+    #[test]
     fn test_union_simplification_eliminates_never() {
         let union = Type::union(vec![Type::never(), Type::int()]);
         assert_eq!(union, Type::int());
@@ -2606,5 +2758,199 @@ mod tests {
     fn test_union_single_type_after_simplification() {
         let union = Type::union(vec![Type::never(), Type::int()]);
         assert_eq!(union, Type::int());
+    }
+
+    #[test]
+    fn test_subtype_dict_invariant_both_params() {
+        let dict_str_int = Type::dict(Type::string(), Type::int());
+        let dict_str_str = Type::dict(Type::string(), Type::string());
+        let dict_int_int = Type::dict(Type::int(), Type::int());
+
+        assert!(dict_str_int.is_subtype_of(&dict_str_int));
+
+        assert!(!dict_str_int.is_subtype_of(&dict_str_str));
+
+        assert!(!dict_str_int.is_subtype_of(&dict_int_int));
+    }
+
+    #[test]
+    fn test_subtype_generator_with_same_types() {
+        let gen_type = Type::generator(Type::int(), Type::string(), Type::bool());
+        assert!(gen_type.is_subtype_of(&gen_type));
+    }
+
+    #[test]
+    fn test_subtype_generator_different_params() {
+        let gen1 = Type::generator(Type::int(), Type::string(), Type::bool());
+        let gen2 = Type::generator(Type::string(), Type::string(), Type::bool());
+
+        assert!(!gen1.is_subtype_of(&gen2));
+        assert!(!gen2.is_subtype_of(&gen1));
+    }
+
+    #[test]
+    fn test_get_app_variance_single_param() {
+        let list_int = Type::list(Type::int());
+        let variance = Type::get_app_variance(&list_int);
+        assert_eq!(variance, Variance::Invariant);
+    }
+
+    #[test]
+    fn test_get_app_variance_dict_first_param() {
+        let dict_str_int = Type::dict(Type::string(), Type::int());
+        let variance = Type::get_app_variance(&dict_str_int);
+        assert_eq!(variance, Variance::Invariant);
+    }
+
+    #[test]
+    fn test_get_app_variance_generator_params() {
+        let gen_type = Type::generator(Type::int(), Type::string(), Type::bool());
+
+        let variance = Type::get_app_variance(&gen_type);
+        assert_eq!(variance, Variance::Covariant);
+    }
+
+    #[test]
+    fn test_subtype_nested_list_hierarchy() {
+        let nested_list = Type::list(Type::list(Type::list(Type::int())));
+        assert!(nested_list.is_subtype_of(&nested_list));
+
+        let nested_list_str = Type::list(Type::list(Type::list(Type::string())));
+        assert!(!nested_list.is_subtype_of(&nested_list_str));
+    }
+
+    #[test]
+    fn test_protocol_variance_covariant() {
+        let mut registry = ClassRegistry::new();
+        let mut metadata = ClassMetadata::new("ReadOnly".to_string());
+        metadata.set_protocol(true);
+        metadata.set_type_param_vars(vec![TypeVar::with_variance(
+            0,
+            Some("T_co".to_string()),
+            Variance::Covariant,
+        )]);
+        registry.register_class("ReadOnly".to_string(), metadata);
+
+        let readonly_proto = Type::Con(TypeCtor::Protocol(Some("ReadOnly".to_string()), vec![]));
+        let readonly_int = Type::App(Box::new(readonly_proto.clone()), Box::new(Type::int()));
+
+        let enriched = readonly_int.enrich_protocol_variance(&registry);
+
+        match enriched {
+            Type::App(ctor, _) => {
+                if let Type::Con(TypeCtor::Protocol(_, variances)) = *ctor {
+                    assert_eq!(variances.len(), 1);
+                    assert_eq!(variances[0], Variance::Covariant);
+                } else {
+                    panic!("Expected Protocol constructor");
+                }
+            }
+            _ => panic!("Expected App type"),
+        }
+    }
+
+    #[test]
+    fn test_protocol_variance_contravariant() {
+        let mut registry = ClassRegistry::new();
+        let mut metadata = ClassMetadata::new("Consumer".to_string());
+        metadata.set_protocol(true);
+        metadata.set_type_param_vars(vec![TypeVar::with_variance(
+            0,
+            Some("T_contra".to_string()),
+            Variance::Contravariant,
+        )]);
+        registry.register_class("Consumer".to_string(), metadata);
+
+        let protocol_type = Type::Con(TypeCtor::Protocol(Some("Consumer".to_string()), vec![]));
+        let consumer = Type::App(Box::new(protocol_type), Box::new(Type::int()));
+
+        let enriched = consumer.enrich_protocol_variance(&registry);
+
+        match enriched {
+            Type::App(ctor, _) => {
+                if let Type::Con(TypeCtor::Protocol(_, variances)) = *ctor {
+                    assert_eq!(variances.len(), 1);
+                    assert_eq!(variances[0], Variance::Contravariant);
+                } else {
+                    panic!("Expected Protocol constructor");
+                }
+            }
+            _ => panic!("Expected App type"),
+        }
+    }
+
+    #[test]
+    fn test_protocol_multi_param_variance() {
+        let mut registry = ClassRegistry::new();
+        let mut metadata = ClassMetadata::new("BiVariant".to_string());
+        metadata.set_protocol(true);
+        metadata.set_type_param_vars(vec![
+            TypeVar::with_variance(0, Some("T_co".to_string()), Variance::Covariant),
+            TypeVar::with_variance(1, Some("U_contra".to_string()), Variance::Contravariant),
+        ]);
+        registry.register_class("BiVariant".to_string(), metadata);
+
+        let protocol_type = Type::Con(TypeCtor::Protocol(Some("BiVariant".to_string()), vec![]));
+        let bivariant = Type::App(
+            Box::new(Type::App(Box::new(protocol_type), Box::new(Type::int()))),
+            Box::new(Type::string()),
+        );
+
+        let enriched = bivariant.enrich_protocol_variance(&registry);
+
+        if let Type::App(outer_app, _) = enriched {
+            if let Type::App(inner_ctor, _) = *outer_app {
+                if let Type::Con(TypeCtor::Protocol(_, variances)) = *inner_ctor {
+                    assert_eq!(variances.len(), 2);
+                    assert_eq!(variances[0], Variance::Covariant);
+                    assert_eq!(variances[1], Variance::Contravariant);
+                } else {
+                    panic!("Expected Protocol constructor");
+                }
+            } else {
+                panic!("Expected nested App");
+            }
+        } else {
+            panic!("Expected App type");
+        }
+    }
+
+    #[test]
+    fn test_protocol_variance_enrichment_in_union() {
+        let mut registry = ClassRegistry::new();
+        let mut metadata = ClassMetadata::new("MyProto".to_string());
+        metadata.set_protocol(true);
+        metadata.set_type_param_vars(vec![TypeVar::with_variance(
+            0,
+            Some("T".to_string()),
+            Variance::Covariant,
+        )]);
+        registry.register_class("MyProto".to_string(), metadata);
+
+        let proto = Type::Con(TypeCtor::Protocol(Some("MyProto".to_string()), vec![]));
+        let proto_int = Type::App(Box::new(proto.clone()), Box::new(Type::int()));
+        let proto_str = Type::App(Box::new(proto.clone()), Box::new(Type::string()));
+        let union = Type::union(vec![proto_int, proto_str]);
+
+        let enriched = union.enrich_protocol_variance(&registry);
+
+        match enriched {
+            Type::Union(types) => {
+                assert_eq!(types.len(), 2);
+                for ty in types {
+                    if let Type::App(ctor, _) = ty {
+                        if let Type::Con(TypeCtor::Protocol(_, variances)) = *ctor {
+                            assert_eq!(variances.len(), 1);
+                            assert_eq!(variances[0], Variance::Covariant);
+                        } else {
+                            panic!("Expected Protocol in union");
+                        }
+                    } else {
+                        panic!("Expected App in union");
+                    }
+                }
+            }
+            _ => panic!("Expected Union type"),
+        }
     }
 }

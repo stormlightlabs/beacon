@@ -65,7 +65,6 @@ impl CodeActionsProvider {
 
     /// Generate quick fixes for a diagnostic
     ///
-    /// Returns a list of available code actions for the given diagnostic.
     /// For some diagnostics (like PM002), multiple actions may be available.
     fn quick_fix_for_diagnostic(&self, uri: &Url, diagnostic: &lsp_types::Diagnostic) -> Vec<CodeAction> {
         let code = diagnostic.code.as_ref().and_then(|c| c.as_str());
@@ -305,8 +304,8 @@ impl CodeActionsProvider {
             Type::Con(TypeCtor::Bool) => "bool".to_string(),
             Type::Con(TypeCtor::NoneType) => "None".to_string(),
             Type::Con(TypeCtor::Class(name)) => name.clone(),
-            Type::Con(TypeCtor::Protocol(Some(name))) => name.clone(),
-            Type::Con(TypeCtor::Protocol(None)) => "Protocol".to_string(),
+            Type::Con(TypeCtor::Protocol(Some(name), _)) => name.clone(),
+            Type::Con(TypeCtor::Protocol(None, _)) => "Protocol".to_string(),
             Type::Con(TypeCtor::TypeVariable(name)) => name.clone(),
             Type::Con(TypeCtor::Any) => "Any".to_string(),
             Type::Var(tv) => format!("TypeVar('{tv}')"),

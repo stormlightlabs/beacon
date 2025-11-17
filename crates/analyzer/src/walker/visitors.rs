@@ -20,16 +20,22 @@ use std::sync::Arc;
 
 pub type TStubCache = Arc<std::sync::RwLock<StubCache>>;
 
-/// Extract type parameters from Generic[T1, T2, ...] base class notation.
-///
-/// Parses strings like "Generic[T_Co]", "Generic[T_Co, T_Contra]" and looks up
-/// the TypeVar instances in the environment to get their variance information.
+/// Extract type parameters from Generic[T1, T2, ...] or Protocol[T1, T2, ...] base class notation by
+/// parsing strings like "Generic[T_co]", "Protocol[T_co]", "Generic[T_co, T_contra]" and looks up the
+/// [TypeVar] instances in the environment to get their variance information.
 fn extract_generic_type_params(base: &str, env: &mut TypeEnvironment) -> Option<Vec<TypeVar>> {
-    if !base.starts_with("Generic[") || !base.ends_with(']') {
+    let (is_generic, is_protocol) = (base.starts_with("Generic["), base.starts_with("Protocol["));
+
+    if !is_generic && !is_protocol {
         return None;
     }
 
-    let content = &base[8..base.len() - 1];
+    if !base.ends_with(']') {
+        return None;
+    }
+
+    let prefix_len = if is_generic { 8 } else { 9 };
+    let content = &base[prefix_len..base.len() - 1];
     let type_param_names: Vec<&str> = content.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
 
     let mut type_params = Vec::new();
@@ -42,15 +48,33 @@ fn extract_generic_type_params(base: &str, env: &mut TypeEnvironment) -> Option<
     if type_params.is_empty() { None } else { Some(type_params) }
 }
 
-/// Extract variance from TypeVar keyword arguments.
+/// Metadata extracted from a TypeVar call
+#[derive(Debug)]
+struct TypeVarMetadata {
+    variance: Variance,
+    bound: Option<Type>,
+    constraints: Vec<Type>,
+}
+
+/// Extract variance, bounds, and constraints from TypeVar calls.
 ///
-/// Parses `covariant=True` and `contravariant=True` from TypeVar calls:
+/// Parses:
+/// - Variance: `covariant=True` and `contravariant=True`
+/// - Bound: `bound=Animal` keyword argument
+/// - Constraints: Positional arguments after the name: `TypeVar('T', int, str)`
+///
+/// Examples:
+/// - `TypeVar('T')` → Variance::Invariant, no bound, no constraints
 /// - `TypeVar('T_Co', covariant=True)` → Variance::Covariant
-/// - `TypeVar('T_Contra', contravariant=True)` → Variance::Contravariant
-/// - `TypeVar('T')` → Variance::Invariant (default)
-fn extract_variance_from_typevar_call(keywords: &[(String, AstNode)]) -> Variance {
+/// - `TypeVar('T', bound=Animal)` → bound=Animal
+/// - `TypeVar('T', int, str)` → constraints=[int, str]
+fn extract_typevar_metadata(
+    args: &[AstNode], keywords: &[(String, AstNode)], env: &mut TypeEnvironment, ctx: &mut ConstraintGenContext,
+    stub_cache: Option<&TStubCache>,
+) -> Result<TypeVarMetadata> {
     let mut covariant = false;
     let mut contravariant = false;
+    let mut bound = None;
 
     for (key, value) in keywords {
         match key.as_str() {
@@ -60,15 +84,29 @@ fn extract_variance_from_typevar_call(keywords: &[(String, AstNode)]) -> Varianc
             "contravariant" => {
                 contravariant = is_true_literal(value);
             }
+            "bound" => {
+                let bound_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
+                bound = Some(bound_ty);
+            }
             _ => {}
         }
     }
 
-    match (covariant, contravariant) {
+    let variance = match (covariant, contravariant) {
         (true, false) => Variance::Covariant,
         (false, true) => Variance::Contravariant,
         _ => Variance::Invariant,
+    };
+
+    let mut constraints = Vec::new();
+    if args.len() > 1 {
+        for constraint_node in &args[1..] {
+            let constraint_ty = visit_node_with_env(constraint_node, env, ctx, stub_cache)?;
+            constraints.push(constraint_ty);
+        }
     }
+
+    Ok(TypeVarMetadata { variance, bound, constraints })
 }
 
 /// Check if an AST node is a True literal
@@ -84,15 +122,35 @@ pub fn visit_class_def(
 ) -> Result<Type> {
     match class_def {
         AstNode::ClassDef { name, body, decorators, bases, line, col, end_line, end_col, .. } => {
-            let class_type = Type::Con(TypeCtor::Class(name.clone()));
+            let is_protocol = bases.iter().any(|base| {
+                base == "Protocol"
+                    || base.starts_with("Protocol[")
+                    || base.contains(".Protocol")
+                    || base == "typing.Protocol"
+                    || base.starts_with("typing.Protocol[")
+            });
+
+            let class_type = if is_protocol {
+                Type::Con(TypeCtor::Protocol(Some(name.clone()), vec![]))
+            } else {
+                Type::Con(TypeCtor::Class(name.clone()))
+            };
+
             let mut metadata = extract_class_metadata(name, body, env);
 
             for base in bases {
                 metadata.add_base_class(base.clone());
 
                 if let Some(type_params) = extract_generic_type_params(base, env) {
-                    metadata.type_param_vars.extend(type_params);
+                    metadata.type_param_vars.extend(type_params.clone());
+                    metadata
+                        .type_params
+                        .extend(type_params.iter().filter_map(|tv| tv.hint.clone()));
                 }
+            }
+
+            if is_protocol {
+                metadata.set_protocol(true);
             }
 
             let has_dataclass = is_dataclass_decorator(decorators);
@@ -716,13 +774,21 @@ pub fn visit_assignments(
 ) -> Result<Type> {
     match node {
         AstNode::Assignment { target, value, line, col, .. } => {
-            if let AstNode::Call { function, keywords, .. } = value.as_ref() {
+            if let AstNode::Call { function, args, keywords, .. } = value.as_ref() {
                 let function_name = function.function_to_string();
                 if function_name == "TypeVar" || function_name.ends_with(".TypeVar") {
-                    let variance = extract_variance_from_typevar_call(keywords);
+                    let metadata = extract_typevar_metadata(args, keywords, env, ctx, stub_cache)?;
+
                     let type_var =
-                        TypeVar::with_variance(env.fresh_var().id, target.target_to_string().into(), variance);
-                    let type_var_ty = Type::Var(type_var);
+                        TypeVar::with_variance(env.fresh_var().id, Some(target.target_to_string()), metadata.variance);
+                    let type_var_ty = Type::Var(type_var.clone());
+
+                    if let Some(bound) = metadata.bound {
+                        ctx.typevar_registry.set_bound(type_var.id, bound);
+                    }
+                    if !metadata.constraints.is_empty() {
+                        ctx.typevar_registry.set_constraints(type_var.id, metadata.constraints);
+                    }
 
                     for name in target.extract_target_names() {
                         env.bind(name, TypeScheme::mono(type_var_ty.clone()));

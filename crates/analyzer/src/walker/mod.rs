@@ -51,6 +51,7 @@ pub fn generate_constraints(
         ctx.class_registry,
         ctx.node_to_scope,
         ctx.scope_dependencies,
+        ctx.typevar_registry,
     ))
 }
 

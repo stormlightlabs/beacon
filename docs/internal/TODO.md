@@ -22,9 +22,9 @@ Known issues with HM type inference that need fixing:
 
 #### Variance & Protocols
 
-- [ ] Variance unification corner cases in complex generic hierarchies
-- [ ] Generic type inference with multiple constraints
-- [ ] Protocol satisfaction checking with variance
+- [x] Variance unification corner cases in complex generic hierarchies
+- [x] Generic type inference with multiple constraints
+- [x] Protocol satisfaction checking with variance
 
 #### Pattern Matching & Narrowing
 

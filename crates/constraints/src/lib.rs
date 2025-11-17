@@ -157,6 +157,7 @@ pub struct ConstraintResult(
     pub ClassRegistry,
     pub FxHashMap<usize, ScopeId>,
     pub FxHashMap<ScopeId, FxHashSet<ScopeId>>,
+    pub beacon_core::TypeVarConstraintRegistry,
 );
 
 /// A single narrowing scope in the control flow stack
@@ -408,6 +409,8 @@ pub struct ConstraintGenContext<'a> {
     pub node_to_scope: FxHashMap<usize, ScopeId>,
     /// Tracks dependencies between scopes (scope_id -> set of scopes it depends on)
     pub scope_dependencies: FxHashMap<ScopeId, FxHashSet<ScopeId>>,
+    /// TypeVar constraint and bound registry for tracking TypeVar metadata
+    pub typevar_registry: beacon_core::TypeVarConstraintRegistry,
     /// Reference to the symbol table for scope lookups
     symbol_table: Option<&'a beacon_parser::SymbolTable>,
     /// Source code for calculating byte offsets from line/col positions
@@ -514,6 +517,7 @@ impl<'a> Default for ConstraintGenContext<'a> {
             scope_stack: Vec::new(),
             node_to_scope: FxHashMap::default(),
             scope_dependencies: FxHashMap::default(),
+            typevar_registry: beacon_core::TypeVarConstraintRegistry::new(),
             symbol_table: None,
             source: None,
         }
