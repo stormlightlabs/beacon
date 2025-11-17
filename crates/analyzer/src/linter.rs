@@ -548,6 +548,8 @@ impl<'a> Linter<'a> {
                         ConstValue::None => "None".to_string(),
                         ConstValue::Tuple(_) => "<tuple>".to_string(),
                         ConstValue::List(_) => "<list>".to_string(),
+                        ConstValue::Dict(_) => "<dict>".to_string(),
+                        ConstValue::Set(_) => "<set>".to_string(),
                     };
 
                     self.diagnostics.push(DiagnosticMessage {

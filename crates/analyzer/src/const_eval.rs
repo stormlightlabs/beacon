@@ -11,6 +11,8 @@ pub enum ConstValue {
     None,
     Tuple(Vec<ConstValue>),
     List(Vec<ConstValue>),
+    Dict(Vec<(ConstValue, ConstValue)>),
+    Set(Vec<ConstValue>),
 }
 
 impl Eq for ConstValue {}
@@ -47,6 +49,14 @@ impl Hash for ConstValue {
                 5u8.hash(state);
                 elements.hash(state);
             }
+            ConstValue::Dict(items) => {
+                6u8.hash(state);
+                items.hash(state);
+            }
+            ConstValue::Set(elements) => {
+                7u8.hash(state);
+                elements.hash(state);
+            }
         }
     }
 }
@@ -59,7 +69,7 @@ impl Hash for ConstValue {
 /// - Binary arithmetic operations (+, -, *, /, //, %, **)
 /// - Comparison operations (==, !=, <, <=, >, >=, is, is not, in, not in)
 /// - String concatenation and repetition
-/// - Tuple and list literals
+/// - Tuple, list, dict, and set literals
 pub fn evaluate_const_expr(node: &AstNode) -> Option<ConstValue> {
     match node {
         AstNode::Literal { value, .. } => match value {
@@ -79,6 +89,19 @@ pub fn evaluate_const_expr(node: &AstNode) -> Option<ConstValue> {
         AstNode::List { elements, .. } => {
             let values: Option<Vec<_>> = elements.iter().map(evaluate_const_expr).collect();
             values.map(ConstValue::List)
+        }
+        AstNode::Dict { keys, values, .. } => {
+            let key_values: Option<Vec<_>> = keys.iter().map(evaluate_const_expr).collect();
+            let value_values: Option<Vec<_>> = values.iter().map(evaluate_const_expr).collect();
+            Some(ConstValue::Dict(key_values?.into_iter().zip(value_values?).collect()))
+        }
+        AstNode::Set { elements, .. } => {
+            let values: Option<Vec<_>> = elements.iter().map(evaluate_const_expr).collect();
+            values.map(|mut v| {
+                let mut seen = std::collections::HashSet::new();
+                v.retain(|item| seen.insert(item.clone()));
+                ConstValue::Set(v)
+            })
         }
         _ => None,
     }
@@ -106,6 +129,10 @@ fn evaluate_unary_op(op: &UnaryOperator, operand: &AstNode) -> Option<ConstValue
         (&UnaryOperator::Not, ConstValue::Tuple(_)) => Some(ConstValue::Boolean(false)),
         (&UnaryOperator::Not, ConstValue::List(ref elements)) if elements.is_empty() => Some(ConstValue::Boolean(true)),
         (&UnaryOperator::Not, ConstValue::List(_)) => Some(ConstValue::Boolean(false)),
+        (&UnaryOperator::Not, ConstValue::Dict(ref items)) if items.is_empty() => Some(ConstValue::Boolean(true)),
+        (&UnaryOperator::Not, ConstValue::Dict(_)) => Some(ConstValue::Boolean(false)),
+        (&UnaryOperator::Not, ConstValue::Set(ref elements)) if elements.is_empty() => Some(ConstValue::Boolean(true)),
+        (&UnaryOperator::Not, ConstValue::Set(_)) => Some(ConstValue::Boolean(false)),
         (&UnaryOperator::Invert, ConstValue::Integer(i)) => Some(ConstValue::Integer(!i)),
         _ => None,
     }
@@ -249,6 +276,19 @@ fn values_equal(left: &ConstValue, right: &ConstValue) -> bool {
         (ConstValue::None, ConstValue::None) => true,
         (ConstValue::Tuple(l), ConstValue::Tuple(r)) => l == r,
         (ConstValue::List(l), ConstValue::List(r)) => l == r,
+        (ConstValue::Dict(l), ConstValue::Dict(r)) => {
+            if l.len() != r.len() {
+                return false;
+            }
+            l.iter()
+                .all(|(k, v)| r.iter().any(|(rk, rv)| values_equal(k, rk) && values_equal(v, rv)))
+        }
+        (ConstValue::Set(l), ConstValue::Set(r)) => {
+            if l.len() != r.len() {
+                return false;
+            }
+            l.iter().all(|item| r.iter().any(|ritem| values_equal(item, ritem)))
+        }
         (ConstValue::Integer(l), ConstValue::Float(r)) => (*l as f64) == *r,
         (ConstValue::Float(l), ConstValue::Integer(r)) => *l == (*r as f64),
         (ConstValue::Boolean(true), ConstValue::Integer(1)) => true,
@@ -305,9 +345,10 @@ fn compare_sequences(left: &[ConstValue], right: &[ConstValue]) -> Option<std::c
 /// Checks if a value is contained in a container (for `in` operator).
 fn value_in_container(value: &ConstValue, container: &ConstValue) -> bool {
     match container {
-        ConstValue::Tuple(elements) | ConstValue::List(elements) => {
+        ConstValue::Tuple(elements) | ConstValue::List(elements) | ConstValue::Set(elements) => {
             elements.iter().any(|elem| values_equal(value, elem))
         }
+        ConstValue::Dict(items) => items.iter().any(|(key, _)| values_equal(value, key)),
         ConstValue::String(s) => {
             if let ConstValue::String(needle) = value {
                 s.contains(needle.as_str())
@@ -2471,5 +2512,592 @@ mod tests {
             end_col: 7,
         };
         assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(false)));
+    }
+
+    #[test]
+    fn test_dict_literal_empty() {
+        let node = AstNode::Dict { keys: vec![], values: vec![], line: 1, col: 1, end_line: 1, end_col: 2 };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Dict(vec![])));
+    }
+
+    #[test]
+    fn test_dict_literal_simple() {
+        let node = AstNode::Dict {
+            keys: vec![
+                AstNode::Literal {
+                    value: LiteralValue::String { value: "a".to_string(), prefix: String::new() },
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                },
+                AstNode::Literal {
+                    value: LiteralValue::String { value: "b".to_string(), prefix: String::new() },
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                },
+            ],
+            values: vec![
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+            ],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 2,
+        };
+        let result = evaluate_const_expr(&node);
+        assert_eq!(
+            result,
+            Some(ConstValue::Dict(vec![
+                (ConstValue::String("a".to_string()), ConstValue::Integer(1)),
+                (ConstValue::String("b".to_string()), ConstValue::Integer(2)),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_dict_literal_mixed_types() {
+        let node = AstNode::Dict {
+            keys: vec![
+                AstNode::Literal {
+                    value: LiteralValue::String { value: "str_key".to_string(), prefix: String::new() },
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                },
+                AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 1, end_line: 1, end_col: 2 },
+                AstNode::Literal { value: LiteralValue::Boolean(true), line: 1, col: 1, end_line: 1, end_col: 2 },
+            ],
+            values: vec![
+                AstNode::Literal {
+                    value: LiteralValue::Float(std::f64::consts::PI),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                },
+                AstNode::Literal {
+                    value: LiteralValue::String { value: "value".to_string(), prefix: String::new() },
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                },
+                AstNode::Literal { value: LiteralValue::None, line: 1, col: 1, end_line: 1, end_col: 2 },
+            ],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 2,
+        };
+        let result = evaluate_const_expr(&node);
+        assert_eq!(
+            result,
+            Some(ConstValue::Dict(vec![
+                (
+                    ConstValue::String("str_key".to_string()),
+                    ConstValue::Float(std::f64::consts::PI)
+                ),
+                (ConstValue::Integer(42), ConstValue::String("value".to_string())),
+                (ConstValue::Boolean(true), ConstValue::None),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_dict_literal_with_expressions() {
+        let node = AstNode::Dict {
+            keys: vec![
+                AstNode::UnaryOp {
+                    op: UnaryOperator::Minus,
+                    operand: Box::new(AstNode::Literal {
+                        value: LiteralValue::Integer(1),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                },
+                AstNode::BinaryOp {
+                    left: Box::new(AstNode::Literal {
+                        value: LiteralValue::Integer(2),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
+                    op: BinaryOperator::Add,
+                    right: Box::new(AstNode::Literal {
+                        value: LiteralValue::Integer(3),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                },
+            ],
+            values: vec![
+                AstNode::Literal {
+                    value: LiteralValue::String { value: "neg".to_string(), prefix: String::new() },
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                },
+                AstNode::Literal {
+                    value: LiteralValue::String { value: "sum".to_string(), prefix: String::new() },
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                },
+            ],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 2,
+        };
+        let result = evaluate_const_expr(&node);
+        assert_eq!(
+            result,
+            Some(ConstValue::Dict(vec![
+                (ConstValue::Integer(-1), ConstValue::String("neg".to_string())),
+                (ConstValue::Integer(5), ConstValue::String("sum".to_string())),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_dict_equality_order_independent() {
+        let dict1 = ConstValue::Dict(vec![
+            (ConstValue::String("a".to_string()), ConstValue::Integer(1)),
+            (ConstValue::String("b".to_string()), ConstValue::Integer(2)),
+        ]);
+        let dict2 = ConstValue::Dict(vec![
+            (ConstValue::String("b".to_string()), ConstValue::Integer(2)),
+            (ConstValue::String("a".to_string()), ConstValue::Integer(1)),
+        ]);
+        assert!(values_equal(&dict1, &dict2));
+        assert!(values_equal(&dict2, &dict1));
+    }
+
+    #[test]
+    fn test_dict_inequality() {
+        let dict1 = ConstValue::Dict(vec![(ConstValue::String("a".to_string()), ConstValue::Integer(1))]);
+        let dict2 = ConstValue::Dict(vec![(ConstValue::String("a".to_string()), ConstValue::Integer(2))]);
+        assert!(!values_equal(&dict1, &dict2));
+
+        let dict3 = ConstValue::Dict(vec![(ConstValue::String("a".to_string()), ConstValue::Integer(1))]);
+        let dict4 = ConstValue::Dict(vec![(ConstValue::String("b".to_string()), ConstValue::Integer(1))]);
+        assert!(!values_equal(&dict3, &dict4));
+    }
+
+    #[test]
+    fn test_dict_in_operator() {
+        let dict = ConstValue::Dict(vec![
+            (ConstValue::String("a".to_string()), ConstValue::Integer(1)),
+            (ConstValue::String("b".to_string()), ConstValue::Integer(2)),
+        ]);
+        assert!(value_in_container(&ConstValue::String("a".to_string()), &dict));
+        assert!(value_in_container(&ConstValue::String("b".to_string()), &dict));
+        assert!(!value_in_container(&ConstValue::String("c".to_string()), &dict));
+        assert!(!value_in_container(&ConstValue::Integer(1), &dict));
+    }
+
+    #[test]
+    fn test_dict_not_operator() {
+        let empty_dict = AstNode::UnaryOp {
+            op: UnaryOperator::Not,
+            operand: Box::new(AstNode::Dict { keys: vec![], values: vec![], line: 1, col: 1, end_line: 1, end_col: 2 }),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 2,
+        };
+        assert_eq!(evaluate_const_expr(&empty_dict), Some(ConstValue::Boolean(true)));
+
+        let non_empty_dict = AstNode::UnaryOp {
+            op: UnaryOperator::Not,
+            operand: Box::new(AstNode::Dict {
+                keys: vec![AstNode::Literal {
+                    value: LiteralValue::String { value: "a".to_string(), prefix: String::new() },
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }],
+                values: vec![AstNode::Literal {
+                    value: LiteralValue::Integer(1),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }],
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 2,
+        };
+        assert_eq!(evaluate_const_expr(&non_empty_dict), Some(ConstValue::Boolean(false)));
+    }
+
+    #[test]
+    fn test_set_literal_empty() {
+        // NOTE: {} is an empty dict, not set. Empty set must be set() in Python
+        let node = AstNode::Set { elements: vec![], line: 1, col: 1, end_line: 1, end_col: 2 };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Set(vec![])));
+    }
+
+    #[test]
+    fn test_set_literal_simple() {
+        let node = AstNode::Set {
+            elements: vec![
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 1, end_line: 1, end_col: 2 },
+            ],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 2,
+        };
+        let result = evaluate_const_expr(&node);
+        assert_eq!(
+            result,
+            Some(ConstValue::Set(vec![
+                ConstValue::Integer(1),
+                ConstValue::Integer(2),
+                ConstValue::Integer(3),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_set_literal_deduplication() {
+        let node = AstNode::Set {
+            elements: vec![
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 1, end_line: 1, end_col: 2 },
+                AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+            ],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 2,
+        };
+
+        let result = evaluate_const_expr(&node);
+        assert_eq!(
+            result,
+            Some(ConstValue::Set(vec![
+                ConstValue::Integer(1),
+                ConstValue::Integer(2),
+                ConstValue::Integer(3),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_set_literal_mixed_types() {
+        let node = AstNode::Set {
+            elements: vec![
+                AstNode::Literal {
+                    value: LiteralValue::String { value: "hello".to_string(), prefix: String::new() },
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                },
+                AstNode::Literal { value: LiteralValue::Integer(42), line: 1, col: 1, end_line: 1, end_col: 2 },
+                AstNode::Literal {
+                    value: LiteralValue::Float(std::f64::consts::PI),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                },
+                AstNode::Literal { value: LiteralValue::Boolean(true), line: 1, col: 1, end_line: 1, end_col: 2 },
+            ],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 2,
+        };
+        let result = evaluate_const_expr(&node);
+        assert_eq!(
+            result,
+            Some(ConstValue::Set(vec![
+                ConstValue::String("hello".to_string()),
+                ConstValue::Integer(42),
+                ConstValue::Float(std::f64::consts::PI),
+                ConstValue::Boolean(true),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_set_literal_with_expressions() {
+        let node = AstNode::Set {
+            elements: vec![
+                AstNode::UnaryOp {
+                    op: UnaryOperator::Minus,
+                    operand: Box::new(AstNode::Literal {
+                        value: LiteralValue::Integer(5),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                },
+                AstNode::BinaryOp {
+                    left: Box::new(AstNode::Literal {
+                        value: LiteralValue::Integer(2),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
+                    op: BinaryOperator::Mult,
+                    right: Box::new(AstNode::Literal {
+                        value: LiteralValue::Integer(3),
+                        line: 1,
+                        col: 1,
+                        end_line: 1,
+                        end_col: 2,
+                    }),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                },
+            ],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 2,
+        };
+        let result = evaluate_const_expr(&node);
+        assert_eq!(
+            result,
+            Some(ConstValue::Set(vec![ConstValue::Integer(-5), ConstValue::Integer(6),]))
+        );
+    }
+
+    #[test]
+    fn test_set_equality_order_independent() {
+        let set1 = ConstValue::Set(vec![
+            ConstValue::Integer(1),
+            ConstValue::Integer(2),
+            ConstValue::Integer(3),
+        ]);
+        let set2 = ConstValue::Set(vec![
+            ConstValue::Integer(3),
+            ConstValue::Integer(1),
+            ConstValue::Integer(2),
+        ]);
+        assert!(values_equal(&set1, &set2));
+        assert!(values_equal(&set2, &set1));
+    }
+
+    #[test]
+    fn test_set_inequality() {
+        let set1 = ConstValue::Set(vec![ConstValue::Integer(1), ConstValue::Integer(2)]);
+        let set2 = ConstValue::Set(vec![ConstValue::Integer(1), ConstValue::Integer(3)]);
+        assert!(!values_equal(&set1, &set2));
+
+        let set3 = ConstValue::Set(vec![ConstValue::Integer(1)]);
+        let set4 = ConstValue::Set(vec![ConstValue::Integer(1), ConstValue::Integer(2)]);
+        assert!(!values_equal(&set3, &set4));
+    }
+
+    #[test]
+    fn test_set_in_operator() {
+        let set = ConstValue::Set(vec![
+            ConstValue::Integer(1),
+            ConstValue::Integer(2),
+            ConstValue::Integer(3),
+        ]);
+        assert!(value_in_container(&ConstValue::Integer(1), &set));
+        assert!(value_in_container(&ConstValue::Integer(2), &set));
+        assert!(value_in_container(&ConstValue::Integer(3), &set));
+        assert!(!value_in_container(&ConstValue::Integer(4), &set));
+    }
+
+    #[test]
+    fn test_set_not_operator() {
+        let empty_set = AstNode::UnaryOp {
+            op: UnaryOperator::Not,
+            operand: Box::new(AstNode::Set { elements: vec![], line: 1, col: 1, end_line: 1, end_col: 2 }),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 2,
+        };
+        assert_eq!(evaluate_const_expr(&empty_set), Some(ConstValue::Boolean(true)));
+
+        let non_empty_set = AstNode::UnaryOp {
+            op: UnaryOperator::Not,
+            operand: Box::new(AstNode::Set {
+                elements: vec![AstNode::Literal {
+                    value: LiteralValue::Integer(1),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }],
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 2,
+        };
+        assert_eq!(evaluate_const_expr(&non_empty_set), Some(ConstValue::Boolean(false)));
+    }
+
+    #[test]
+    fn test_set_comparison_in_match() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Set {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Eq],
+            comparators: vec![AstNode::Set {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 2,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+    }
+
+    #[test]
+    fn test_dict_comparison_in_match() {
+        let node = AstNode::Compare {
+            left: Box::new(AstNode::Dict {
+                keys: vec![AstNode::Literal {
+                    value: LiteralValue::String { value: "a".to_string(), prefix: String::new() },
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }],
+                values: vec![AstNode::Literal {
+                    value: LiteralValue::Integer(1),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }],
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }),
+            ops: vec![CompareOperator::Eq],
+            comparators: vec![AstNode::Dict {
+                keys: vec![AstNode::Literal {
+                    value: LiteralValue::String { value: "a".to_string(), prefix: String::new() },
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }],
+                values: vec![AstNode::Literal {
+                    value: LiteralValue::Integer(1),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }],
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 2,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+    }
+
+    #[test]
+    fn test_nested_dict_and_set() {
+        let node = AstNode::Dict {
+            keys: vec![AstNode::Tuple {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 1, end_line: 1, end_col: 2 },
+                ],
+                is_parenthesized: true,
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }],
+            values: vec![AstNode::Literal {
+                value: LiteralValue::String { value: "tuple_key".to_string(), prefix: String::new() },
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 2,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 2,
+        };
+        let result = evaluate_const_expr(&node);
+        assert_eq!(
+            result,
+            Some(ConstValue::Dict(vec![(
+                ConstValue::Tuple(vec![ConstValue::Integer(1), ConstValue::Integer(2)]),
+                ConstValue::String("tuple_key".to_string())
+            ),]))
+        );
     }
 }
