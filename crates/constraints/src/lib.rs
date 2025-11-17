@@ -128,7 +128,9 @@ pub enum Constraint {
     MatchPattern(Type, beacon_parser::Pattern, Vec<(String, Type)>, Span),
     /// Exhaustiveness constraint: patterns must cover all possible values of subject type
     /// Stores subject type and all case patterns for checking
-    PatternExhaustive(Type, Vec<beacon_parser::Pattern>, Span),
+    /// Each pattern is paired with a boolean indicating whether it has a guard.
+    /// Patterns with guards do not contribute to exhaustiveness coverage.
+    PatternExhaustive(Type, Vec<(beacon_parser::Pattern, bool)>, Span),
     /// Reachability constraint: pattern must be reachable (not subsumed by previous patterns)
     /// Stores the pattern and all previous patterns in the match statement
     PatternReachable(beacon_parser::Pattern, Vec<beacon_parser::Pattern>, Span),

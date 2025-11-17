@@ -457,7 +457,8 @@ pub fn visit_match(
     match node {
         AstNode::Match { subject, cases, line, col, end_line, end_col, .. } => {
             let subject_ty = visit_node_with_env(subject, env, ctx, stub_cache)?;
-            let all_patterns: Vec<beacon_parser::Pattern> = cases.iter().map(|c| c.pattern.clone()).collect();
+            let all_patterns: Vec<(beacon_parser::Pattern, bool)> =
+                cases.iter().map(|c| (c.pattern.clone(), c.guard.is_some())).collect();
             let span = Span::with_end(*line, *col, *end_line, *end_col);
 
             ctx.constraints
@@ -524,16 +525,13 @@ pub fn visit_match(
                 if let Some(ref guard) = case.guard {
                     visit_node_with_env(guard, &mut case_env, ctx, stub_cache)?;
 
-                    // Extract type predicates from guard and apply narrowing
                     if let Some(guard_predicate) = extract_type_predicate(guard, &case_env) {
-                        // Find variables in the guard that can be narrowed
                         let guard_vars = extract_guard_variables(guard);
 
                         for var_name in guard_vars {
                             if let Some(current_type) = case_env.lookup(&var_name) {
                                 let narrowed_type = guard_predicate.apply(&current_type);
 
-                                // Only apply narrowing if the type actually changed
                                 if narrowed_type != current_type {
                                     ctx.constraints.push(Constraint::Narrowing(
                                         var_name.clone(),
@@ -1456,8 +1454,6 @@ mod tests {
         };
 
         let vars = extract_guard_variables(&guard);
-        // Should extract both 'isinstance' and 'x', but 'int' is a type name
-        // After dedup and sort, we get both
         assert!(vars.contains(&"x".to_string()));
     }
 
@@ -1509,7 +1505,6 @@ mod tests {
 
     #[test]
     fn test_extract_guard_variables_deduplication() {
-        // x + x should return ["x"] once
         let guard = AstNode::BinaryOp {
             left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 0, end_line: 1, end_col: 1 }),
             op: beacon_parser::BinaryOperator::Add,
