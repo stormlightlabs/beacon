@@ -765,18 +765,6 @@ impl Type {
     }
 
     /// Create an intersection type, flattening nested intersections, removing duplications, and sorting for canonical form
-    ///
-    /// Intersection types represent values that satisfy multiple type constraints simultaneously.
-    /// For protocols, `Intersection[Protocol1, Protocol2]` means a type must satisfy both protocols.
-    ///
-    /// # Examples
-    /// ```
-    /// use beacon_core::Type;
-    ///
-    /// let proto1 = Type::Con(beacon_core::TypeCtor::Protocol(Some("Iterable".to_string()), vec![]));
-    /// let proto2 = Type::Con(beacon_core::TypeCtor::Protocol(Some("Sized".to_string()), vec![]));
-    /// let both = Type::intersection(vec![proto1, proto2]); // Must be both Iterable and Sized
-    /// ```
     pub fn intersection(mut types: Vec<Type>) -> Self {
         if types.len() == 1 {
             return types.pop().unwrap();
@@ -826,17 +814,6 @@ impl Type {
     }
 
     /// Remove a type from a union
-    ///
-    /// Returns a new type with the specified type removed from the union.
-    /// If removing the type leaves a single type, returns that type unwrapped.
-    /// If the type is not a union, returns self unchanged.
-    ///
-    /// # Examples
-    /// ```
-    /// use beacon_core::Type;
-    /// let opt_int = Type::optional(Type::int()); // Union[int, None]
-    /// let just_int = opt_int.remove_from_union(&Type::none()); // int
-    /// ```
     pub fn remove_from_union(&self, to_remove: &Type) -> Type {
         match self {
             Type::Union(types) => {
@@ -892,6 +869,26 @@ impl Type {
                     Some((name.as_str(), vec![arg.as_ref().clone()]))
                 } else if let Type::App(inner_constructor, first_arg) = constructor.as_ref() {
                     if let Type::Con(TypeCtor::Class(name)) = inner_constructor.as_ref() {
+                        Some((name.as_str(), vec![first_arg.as_ref().clone(), arg.as_ref().clone()]))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract the protocol name and type arguments from a parameterized protocol type
+    pub fn unapply_protocol(&self) -> Option<(&str, Vec<Type>)> {
+        match self {
+            Type::App(constructor, arg) => {
+                if let Type::Con(TypeCtor::Protocol(Some(name), _)) = constructor.as_ref() {
+                    Some((name.as_str(), vec![arg.as_ref().clone()]))
+                } else if let Type::App(inner_constructor, first_arg) = constructor.as_ref() {
+                    if let Type::Con(TypeCtor::Protocol(Some(name), _)) = inner_constructor.as_ref() {
                         Some((name.as_str(), vec![first_arg.as_ref().clone(), arg.as_ref().clone()]))
                     } else {
                         None
@@ -1513,7 +1510,7 @@ mod tests {
         let ty = Type::fun_unnamed(vec![Type::Var(tv1.clone())], Type::Var(tv1.clone()));
 
         let mut env_vars = FxHashMap::default();
-        env_vars.insert(tv2, ()); // tv2 is bound in environment
+        env_vars.insert(tv2, ());
 
         let scheme = TypeScheme::generalize(ty.clone(), &env_vars);
         assert_eq!(scheme.quantified_vars.len(), 1);
@@ -1969,7 +1966,7 @@ mod tests {
         let ty = Type::fun_unnamed(vec![Type::Var(tv_a.clone())], Type::Var(tv_b.clone()));
 
         let mut env_vars = FxHashMap::default();
-        env_vars.insert(tv_a, ()); // 'a is bound in environment
+        env_vars.insert(tv_a, ());
 
         let scheme = TypeScheme::generalize(ty, &env_vars);
 
@@ -2612,6 +2609,70 @@ mod tests {
     fn test_unapply_class_non_class() {
         let list_int = Type::list(Type::int());
         let result = list_int.unapply_class();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_unapply_protocol_single_param() {
+        let protocol_str = Type::App(
+            Box::new(Type::Con(TypeCtor::Protocol(
+                Some("ReadOnly".to_string()),
+                vec![Variance::Covariant],
+            ))),
+            Box::new(Type::string()),
+        );
+
+        let result = protocol_str.unapply_protocol();
+        assert!(result.is_some());
+        let (protocol_name, args) = result.unwrap();
+        assert_eq!(protocol_name, "ReadOnly");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0], Type::string());
+    }
+
+    #[test]
+    fn test_unapply_protocol_two_params() {
+        let protocol_two_param = Type::App(
+            Box::new(Type::App(
+                Box::new(Type::Con(TypeCtor::Protocol(
+                    Some("TwoParam".to_string()),
+                    vec![Variance::Covariant, Variance::Contravariant],
+                ))),
+                Box::new(Type::int()),
+            )),
+            Box::new(Type::string()),
+        );
+
+        let result = protocol_two_param.unapply_protocol();
+        assert!(result.is_some());
+        let (protocol_name, args) = result.unwrap();
+        assert_eq!(protocol_name, "TwoParam");
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0], Type::int());
+        assert_eq!(args[1], Type::string());
+    }
+
+    #[test]
+    fn test_unapply_protocol_non_protocol() {
+        let class_int = Type::App(
+            Box::new(Type::Con(TypeCtor::Class("MyClass".to_string()))),
+            Box::new(Type::int()),
+        );
+        let result = class_int.unapply_protocol();
+        assert!(result.is_none());
+
+        let list_int = Type::list(Type::int());
+        let result2 = list_int.unapply_protocol();
+        assert!(result2.is_none());
+    }
+
+    #[test]
+    fn test_unapply_protocol_unnamed() {
+        let protocol_unnamed = Type::App(
+            Box::new(Type::Con(TypeCtor::Protocol(None, vec![]))),
+            Box::new(Type::int()),
+        );
+        let result = protocol_unnamed.unapply_protocol();
         assert!(result.is_none());
     }
 

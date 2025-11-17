@@ -9,7 +9,7 @@
 //! - Class definitions → Class types
 //! - Type variable scopes
 
-use beacon_core::{AnnotationParser, Subst, Type, TypeScheme, TypeVar, TypeVarGen, Unifier};
+use beacon_core::{AnnotationParser, Subst, Type, TypeCtor, TypeScheme, TypeVar, TypeVarGen, Unifier};
 use beacon_parser::{AstNode, Parameter, SymbolTable};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -238,7 +238,61 @@ impl TypeEnvironment {
 
     /// Parse a type annotation, returning Any if parsing fails
     pub fn parse_annotation_or_any(&self, annotation: &str) -> Type {
-        self.annotation_parser.parse_or_any(annotation)
+        let parsed = self.annotation_parser.parse_or_any(annotation);
+        self.convert_class_to_protocol_if_needed(parsed)
+    }
+
+    /// Recursively convert Class type constructors to Protocol/TypeVariable type constructors
+    /// if the class name is bound in the environment as a Protocol or TypeVar
+    fn convert_class_to_protocol_if_needed(&self, ty: Type) -> Type {
+        match ty {
+            Type::App(base, arg) => {
+                let converted_base = self.convert_class_to_protocol_if_needed(*base);
+                let converted_arg = self.convert_class_to_protocol_if_needed(*arg);
+                Type::App(Box::new(converted_base), Box::new(converted_arg))
+            }
+            Type::Con(TypeCtor::Class(ref name)) => {
+                if let Some(scheme) = self.bindings.get(name) {
+                    match &scheme.ty {
+                        Type::Con(TypeCtor::Protocol(proto_name, variances)) => {
+                            return Type::Con(TypeCtor::Protocol(proto_name.clone(), variances.clone()));
+                        }
+                        Type::Var(_) => {
+                            return Type::Con(TypeCtor::TypeVariable(name.clone()));
+                        }
+                        _ => {}
+                    }
+                }
+                ty
+            }
+            Type::Union(types) => Type::Union(
+                types
+                    .into_iter()
+                    .map(|t| self.convert_class_to_protocol_if_needed(t))
+                    .collect(),
+            ),
+            Type::Intersection(types) => Type::Intersection(
+                types
+                    .into_iter()
+                    .map(|t| self.convert_class_to_protocol_if_needed(t))
+                    .collect(),
+            ),
+            Type::Fun(params, ret) => {
+                let converted_params = params
+                    .into_iter()
+                    .map(|(name, ty)| (name, self.convert_class_to_protocol_if_needed(ty)))
+                    .collect();
+                let converted_ret = Box::new(self.convert_class_to_protocol_if_needed(*ret));
+                Type::Fun(converted_params, converted_ret)
+            }
+            Type::Tuple(types) => Type::Tuple(
+                types
+                    .into_iter()
+                    .map(|t| self.convert_class_to_protocol_if_needed(t))
+                    .collect(),
+            ),
+            _ => ty,
+        }
     }
 
     /// Extract type from function parameters

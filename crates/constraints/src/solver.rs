@@ -285,6 +285,18 @@ fn classes_compatible(
         return true;
     }
 
+    if let Some((protocol_name, expected_args)) = expected.unapply_protocol() {
+        if !expected_args.is_empty() {
+            let result =
+                check_protocol_with_variance(actual, protocol_name, &expected_args, class_registry, typevar_registry);
+            return result;
+        } else if let Some(metadata) = class_registry.get_class(protocol_name) {
+            if metadata.is_protocol {
+                return check_user_defined_protocol(actual, protocol_name, class_registry, typevar_registry);
+            }
+        }
+    }
+
     if let Some((expected_name, expected_args)) = class_info(expected) {
         if let Some((actual_name, actual_args)) = class_info(actual) {
             if class_registry.is_subclass_of(&actual_name, &expected_name) {
@@ -326,7 +338,17 @@ fn classes_compatible(
 
         if let Some(metadata) = class_registry.get_class(&expected_name) {
             if metadata.is_protocol {
-                return check_user_defined_protocol(actual, &expected_name, class_registry, typevar_registry);
+                if !expected_args.is_empty() {
+                    return check_protocol_with_variance(
+                        actual,
+                        &expected_name,
+                        &expected_args,
+                        class_registry,
+                        typevar_registry,
+                    );
+                } else {
+                    return check_user_defined_protocol(actual, &expected_name, class_registry, typevar_registry);
+                }
             }
         }
     }
@@ -414,6 +436,326 @@ fn function_compatible(
     }
 }
 
+/// Check if a concrete type satisfies a protocol with specific type arguments, respecting variance.
+fn check_protocol_with_variance(
+    actual: &Type, protocol_name: &str, expected_type_args: &[Type], class_registry: &ClassRegistry,
+    typevar_registry: &beacon_core::TypeVarConstraintRegistry,
+) -> bool {
+    let protocol_meta = match class_registry.get_class(protocol_name) {
+        Some(meta) if meta.is_protocol => meta,
+        _ => return false,
+    };
+
+    let (actual_class_name, actual_type_args) = match actual {
+        Type::Con(TypeCtor::Class(name)) => (name.clone(), Vec::new()),
+        Type::App(_, _) => {
+            if let Some((name, args)) = actual.unapply_class() {
+                (name.to_string(), args)
+            } else {
+                return false;
+            }
+        }
+        _ => {
+            return false;
+        }
+    };
+
+    let actual_class_meta = match class_registry.get_class(&actual_class_name) {
+        Some(meta) => meta,
+        None => {
+            return false;
+        }
+    };
+
+    let protocol_methods = protocol_meta.get_protocol_methods();
+    let mut inferred_type_args = Vec::new();
+
+    for param_index in 0..protocol_meta.type_param_vars.len() {
+        let type_var = &protocol_meta.type_param_vars[param_index];
+        let default_name = format!("T{param_index}");
+        let type_var_name = type_var.hint.as_ref().unwrap_or(&default_name);
+
+        let mut inferred_type = None;
+        for (method_name, protocol_method_ty) in &protocol_methods {
+            if let Some(actual_method) = actual_class_meta.lookup_method(method_name) {
+                let actual_method_resolved = if !actual_type_args.is_empty()
+                    && !actual_class_meta.type_param_vars.is_empty()
+                {
+                    let mut subst = beacon_core::Subst::empty();
+                    for (class_tv, class_ty) in actual_class_meta.type_param_vars.iter().zip(actual_type_args.iter()) {
+                        subst.insert(class_tv.clone(), class_ty.clone());
+                    }
+                    subst.apply(actual_method)
+                } else {
+                    actual_method.clone()
+                };
+
+                if let Some(inferred) =
+                    infer_type_param_from_methods(protocol_method_ty, &actual_method_resolved, type_var_name)
+                {
+                    inferred_type = Some(inferred);
+                    break;
+                }
+            }
+        }
+
+        let inferred = inferred_type.unwrap_or_else(Type::any);
+        inferred_type_args.push(inferred);
+    }
+
+    if inferred_type_args.len() != expected_type_args.len() {
+        return false;
+    }
+
+    let mut protocol_subst_map = std::collections::HashMap::new();
+    for (param, inferred_arg) in protocol_meta.type_params.iter().zip(inferred_type_args.iter()) {
+        protocol_subst_map.insert(param.clone(), inferred_arg.clone());
+    }
+
+    for (method_name, protocol_method_ty) in &protocol_methods {
+        let actual_method = match actual_class_meta.lookup_method(method_name) {
+            Some(m) => m,
+            None => {
+                return false;
+            }
+        };
+
+        let expected_method =
+            beacon_core::ClassMetadata::substitute_type_params(protocol_method_ty, &protocol_subst_map);
+
+        let actual_method_resolved = if !actual_type_args.is_empty() && !actual_class_meta.type_param_vars.is_empty() {
+            let mut actual_subst = beacon_core::Subst::empty();
+            for (class_tv, class_ty) in actual_class_meta.type_param_vars.iter().zip(actual_type_args.iter()) {
+                actual_subst.insert(class_tv.clone(), class_ty.clone());
+            }
+            actual_subst.apply(actual_method)
+        } else {
+            actual_method.clone()
+        };
+
+        let sig_compatible = method_signatures_compatible(
+            &expected_method,
+            &actual_method_resolved,
+            class_registry,
+            typevar_registry,
+        );
+        if !sig_compatible {
+            return false;
+        }
+    }
+
+    for (i, (inferred_arg, expected_arg)) in inferred_type_args.iter().zip(expected_type_args.iter()).enumerate() {
+        let variance = protocol_meta
+            .type_param_vars
+            .get(i)
+            .map(|tv| tv.variance)
+            .unwrap_or(beacon_core::Variance::Invariant);
+
+        let compatible = match variance {
+            beacon_core::Variance::Covariant => {
+                let types_compat = types_compatible(inferred_arg, expected_arg, class_registry, typevar_registry);
+                let is_subtype = inferred_arg.is_subtype_of(expected_arg);
+                let builtin_to_object = matches!(expected_arg, Type::Con(TypeCtor::Class(name)) if name == "object")
+                    && matches!(
+                        inferred_arg,
+                        Type::Con(
+                            TypeCtor::Int
+                                | TypeCtor::String
+                                | TypeCtor::Float
+                                | TypeCtor::Bool
+                                | TypeCtor::List
+                                | TypeCtor::Dict
+                                | TypeCtor::Set
+                                | TypeCtor::Tuple
+                        )
+                    );
+                types_compat || is_subtype || builtin_to_object
+            }
+            beacon_core::Variance::Contravariant => {
+                let types_compat = types_compatible(expected_arg, inferred_arg, class_registry, typevar_registry);
+                let is_subtype = expected_arg.is_subtype_of(inferred_arg);
+                let object_is_supertype = matches!(inferred_arg, Type::Con(TypeCtor::Class(name)) if name == "object")
+                    && matches!(
+                        expected_arg,
+                        Type::Con(
+                            TypeCtor::Int
+                                | TypeCtor::String
+                                | TypeCtor::Float
+                                | TypeCtor::Bool
+                                | TypeCtor::List
+                                | TypeCtor::Dict
+                                | TypeCtor::Set
+                                | TypeCtor::Tuple
+                        )
+                    );
+                types_compat || is_subtype || object_is_supertype
+            }
+            beacon_core::Variance::Invariant => {
+                inferred_arg == expected_arg
+                    || beacon_core::Unifier::unify(inferred_arg, expected_arg, typevar_registry).is_ok()
+            }
+        };
+
+        if !compatible {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Check if two method signatures are compatible
+fn method_signatures_compatible(
+    expected: &Type, actual: &Type, class_registry: &ClassRegistry,
+    typevar_registry: &beacon_core::TypeVarConstraintRegistry,
+) -> bool {
+    match (expected, actual) {
+        (Type::Fun(expected_params, expected_ret), Type::Fun(actual_params, actual_ret)) => {
+            if expected_params.len() != actual_params.len() {
+                return false;
+            }
+
+            for (exp_param, act_param) in expected_params.iter().skip(1).zip(actual_params.iter().skip(1)) {
+                let param_ok = act_param.1.is_subtype_of(&exp_param.1)
+                    || types_compatible(&exp_param.1, &act_param.1, class_registry, typevar_registry);
+                if !param_ok {
+                    return false;
+                }
+            }
+
+            actual_ret.is_subtype_of(expected_ret)
+                || types_compatible(actual_ret, expected_ret, class_registry, typevar_registry)
+        }
+        _ => false,
+    }
+}
+
+/// Check if a concrete type satisfies a protocol instantiation with variance.
+///
+/// This function:
+/// 1. Checks that actual structurally satisfies the protocol
+/// 2. Infers the type parameter from actual's methods
+/// 3. Checks if the inferred protocol type is compatible with expected using variance
+fn protocol_instantiation_compatible(
+    actual: &Type, expected: &Type, class_registry: &ClassRegistry,
+    typevar_registry: &beacon_core::TypeVarConstraintRegistry,
+) -> bool {
+    let (protocol_ctor, expected_type_args) = match expected.unapply() {
+        Some((ctor, args)) => (ctor, args),
+        None => return false,
+    };
+
+    let protocol_name = match protocol_ctor {
+        TypeCtor::Protocol(Some(name), _) => name,
+        _ => return false,
+    };
+
+    let protocol_meta = match class_registry.get_class(protocol_name) {
+        Some(meta) if meta.is_protocol => meta,
+        _ => return false,
+    };
+
+    let actual_class_name = match actual {
+        Type::Con(TypeCtor::Class(name)) => name,
+        Type::App(ctor, _) => {
+            if let Type::Con(TypeCtor::Class(name)) = ctor.as_ref() {
+                name
+            } else {
+                return false;
+            }
+        }
+        _ => return false,
+    };
+
+    if !check_user_defined_protocol(actual, protocol_name, class_registry, typevar_registry) {
+        return false;
+    }
+
+    if expected_type_args.is_empty() {
+        return true;
+    }
+
+    let actual_class_meta = match class_registry.get_class(actual_class_name) {
+        Some(meta) => meta,
+        None => return false,
+    };
+
+    let protocol_methods = protocol_meta.get_protocol_methods();
+    let mut inferred_type_args = Vec::new();
+
+    for param_index in 0..protocol_meta.type_param_vars.len() {
+        let type_var = &protocol_meta.type_param_vars[param_index];
+        let default_name = format!("T{param_index}");
+        let type_var_name = type_var.hint.as_ref().unwrap_or(&default_name);
+
+        let mut inferred_type = None;
+        for (method_name, protocol_method_ty) in &protocol_methods {
+            if let Some(actual_method) = actual_class_meta.lookup_method(method_name) {
+                if let Some(inferred) = infer_type_param_from_methods(protocol_method_ty, actual_method, type_var_name)
+                {
+                    inferred_type = Some(inferred);
+                    break;
+                }
+            }
+        }
+
+        inferred_type_args.push(inferred_type.unwrap_or_else(Type::any));
+    }
+
+    if inferred_type_args.len() != expected_type_args.len() {
+        return false;
+    }
+
+    let enriched_protocol = expected.clone().enrich_protocol_variance(class_registry);
+
+    let mut inferred_protocol_ty = Type::Con(TypeCtor::Protocol(
+        Some(protocol_name.clone()),
+        protocol_meta.type_param_vars.iter().map(|tv| tv.variance).collect(),
+    ));
+    for arg in inferred_type_args {
+        inferred_protocol_ty = Type::App(Box::new(inferred_protocol_ty), Box::new(arg));
+    }
+
+    inferred_protocol_ty.is_subtype_of(&enriched_protocol)
+}
+
+/// Infer a type parameter from protocol and actual method signatures.
+///
+/// Given a protocol method signature containing a type variable (e.g., `T`) and a method signature, try to infer what `T` should be.
+fn infer_type_param_from_methods(protocol_method: &Type, actual_method: &Type, type_var_name: &str) -> Option<Type> {
+    match (protocol_method, actual_method) {
+        (Type::Fun(protocol_params, protocol_ret), Type::Fun(actual_params, actual_ret)) => {
+            if contains_type_var(protocol_ret, type_var_name) {
+                return Some(actual_ret.as_ref().clone());
+            }
+
+            for (protocol_param, actual_param) in protocol_params.iter().zip(actual_params.iter()) {
+                if contains_type_var(&protocol_param.1, type_var_name) {
+                    return Some(actual_param.1.clone());
+                }
+            }
+
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Check if a type contains a type variable with the given name.
+fn contains_type_var(ty: &Type, var_name: &str) -> bool {
+    match ty {
+        Type::Con(TypeCtor::TypeVariable(name)) => name == var_name,
+        Type::App(ctor, arg) => contains_type_var(ctor, var_name) || contains_type_var(arg, var_name),
+        Type::Fun(params, ret) => {
+            params.iter().any(|(_, ty)| contains_type_var(ty, var_name)) || contains_type_var(ret, var_name)
+        }
+        Type::Union(types) | Type::Intersection(types) | Type::Tuple(types) => {
+            types.iter().any(|t| contains_type_var(t, var_name))
+        }
+        _ => false,
+    }
+}
+
 fn types_compatible(
     actual: &Type, expected: &Type, class_registry: &ClassRegistry,
     typevar_registry: &beacon_core::TypeVarConstraintRegistry,
@@ -441,6 +783,10 @@ fn types_compatible(
     }
 
     if iterable_compatible(actual, expected, class_registry, typevar_registry) {
+        return true;
+    }
+
+    if protocol_instantiation_compatible(actual, expected, class_registry, typevar_registry) {
         return true;
     }
 
@@ -688,9 +1034,17 @@ fn unify_with_adhoc_fun(
 
 /// Re-resolve a bound method type against receiver metadata.
 /// Falls back to the original method if we can't do better.
+///
+/// For generic classes and protocols with type parameters, the method type
+/// should already have substitution applied when the BoundMethod was created,
+/// so we should just use that directly.
 fn resolve_bound_method_type<'a>(
     rec: Box<Type>, name: &str, method: &'a Type, pos_args: &[(Type, Span)], subst: &Subst, reg: &'a ClassRegistry,
 ) -> &'a Type {
+    if rec.unapply_protocol().is_some() || rec.unapply_class().is_some() {
+        return method;
+    }
+
     if let Type::Con(TypeCtor::Class(class_name)) = rec.as_ref() {
         if let Some(metadata) = reg.get_class(class_name) {
             if let Some(method_type) = metadata.lookup_method_type(name) {
@@ -848,7 +1202,6 @@ pub fn solve_constraints(
             }
             Constraint::HasAttr(obj_ty, attr_name, attr_ty, span) => {
                 let applied_obj = subst.apply(&obj_ty);
-
                 if let Type::Union(variants) = &applied_obj {
                     let mut all_have_attr = true;
                     let mut attr_types = Vec::new();
@@ -891,6 +1244,27 @@ pub fn solve_constraints(
                 }
 
                 match &applied_obj {
+                    Type::Con(TypeCtor::Protocol(Some(protocol_name), variances)) if attr_name == "__getitem__" => {
+                        let type_param = Type::Var(TypeVar::new(999999));
+                        let result_ty = Type::App(
+                            Box::new(Type::Con(TypeCtor::Protocol(
+                                Some(protocol_name.clone()),
+                                variances.clone(),
+                            ))),
+                            Box::new(type_param.clone()),
+                        );
+                        let getitem_ty = Type::Fun(vec![("item".to_string(), type_param)], Box::new(result_ty));
+
+                        match Unifier::unify(&subst.apply(&attr_ty), &getitem_ty, typevar_registry) {
+                            Ok(s) => {
+                                subst = s.compose(subst);
+                            }
+                            Err(BeaconError::TypeError(type_err)) => {
+                                type_errors.push(TypeErrorInfo::new(type_err, span));
+                            }
+                            Err(_) => {}
+                        }
+                    }
                     Type::Con(TypeCtor::Class(class_name)) => {
                         if let Some(resolved_attr_ty) =
                             class_registry.lookup_attribute_with_inheritance(class_name, &attr_name)
@@ -970,9 +1344,26 @@ pub fn solve_constraints(
                         }
                     }
                     Type::App(_, _) => {
-                        let (resolved_attr_ty, is_method, _class_name_opt) = if let Some((class_name, type_args)) =
-                            applied_obj.unapply_class()
+                        let (resolved_attr_ty, is_method, _class_name_opt) = if let Some((protocol_name, type_args)) =
+                            applied_obj.unapply_protocol()
                         {
+                            if let Some(protocol_metadata) = class_registry.get_class(protocol_name) {
+                                if let Some(attr_type) = protocol_metadata.lookup_attribute(&attr_name) {
+                                    let substituted_ty = if !protocol_metadata.type_params.is_empty() {
+                                        let subst_map = protocol_metadata.create_type_substitution(&type_args);
+                                        beacon_core::ClassMetadata::substitute_type_params(attr_type, &subst_map)
+                                    } else {
+                                        attr_type.clone()
+                                    };
+                                    let is_method = class_registry.is_method(protocol_name, &attr_name);
+                                    (Some(substituted_ty), is_method, Some(protocol_name.to_string()))
+                                } else {
+                                    (None, false, None)
+                                }
+                            } else {
+                                (None, false, None)
+                            }
+                        } else if let Some((class_name, type_args)) = applied_obj.unapply_class() {
                             if let Some(class_metadata) = class_registry.get_class(class_name) {
                                 if let Some(attr_type) = class_metadata.lookup_attribute(&attr_name) {
                                     let substituted_ty = if !class_metadata.type_params.is_empty() {
