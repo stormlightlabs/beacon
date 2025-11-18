@@ -1275,4 +1275,138 @@ mod tests {
         let subst = result.unwrap();
         assert_eq!(subst.get(&tv), Some(&Type::int()));
     }
+
+    #[test]
+    fn test_typevar_bound_validation_success() {
+        let tv = TypeVar::new(0);
+        let mut registry = TypeVarConstraintRegistry::new();
+        let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
+        registry.set_bound(tv.id, animal.clone());
+
+        let result = Unifier::unify(&Type::Var(tv.clone()), &animal, &registry);
+        assert!(result.is_ok(), "Should unify TypeVar with its exact bound");
+    }
+
+    #[test]
+    fn test_typevar_bound_validation_failure() {
+        let tv = TypeVar::new(0);
+        let mut registry = TypeVarConstraintRegistry::new();
+        let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
+        registry.set_bound(tv.id, animal);
+
+        let result = Unifier::unify(&Type::Var(tv.clone()), &Type::int(), &registry);
+        assert!(
+            result.is_err(),
+            "Should fail to unify TypeVar with type that violates bound"
+        );
+    }
+
+    #[test]
+    fn test_typevar_constraints_validation_success() {
+        let tv = TypeVar::new(0);
+        let mut registry = TypeVarConstraintRegistry::new();
+        registry.set_constraints(tv.id, vec![Type::int(), Type::string()]);
+
+        let result_int = Unifier::unify(&Type::Var(tv.clone()), &Type::int(), &registry);
+        assert!(result_int.is_ok(), "Should unify TypeVar with int constraint");
+
+        let result_str = Unifier::unify(&Type::Var(tv.clone()), &Type::string(), &registry);
+        assert!(result_str.is_ok(), "Should unify TypeVar with str constraint");
+    }
+
+    #[test]
+    fn test_typevar_constraints_validation_failure() {
+        let tv = TypeVar::new(0);
+        let mut registry = TypeVarConstraintRegistry::new();
+        registry.set_constraints(tv.id, vec![Type::int(), Type::string()]);
+
+        let result = Unifier::unify(&Type::Var(tv.clone()), &Type::bool(), &registry);
+        assert!(
+            result.is_err(),
+            "Should fail to unify TypeVar with type not in constraints"
+        );
+    }
+
+    #[test]
+    fn test_typevar_bound_in_generic_context() {
+        let tv = TypeVar::new(0);
+        let mut registry = TypeVarConstraintRegistry::new();
+        let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
+        registry.set_bound(tv.id, animal.clone());
+
+        let list_tv = Type::list(Type::Var(tv.clone()));
+        let list_animal = Type::list(animal.clone());
+
+        let result = Unifier::unify(&list_tv, &list_animal, &registry);
+        assert!(
+            result.is_ok(),
+            "Should unify list[T] with list[Animal] when T: bound=Animal"
+        );
+
+        let subst = result.unwrap();
+        assert_eq!(subst.get(&tv), Some(&animal), "Should substitute T with Animal");
+    }
+
+    #[test]
+    fn test_typevar_constraints_in_generic_context() {
+        let tv = TypeVar::new(0);
+        let mut registry = TypeVarConstraintRegistry::new();
+        registry.set_constraints(tv.id, vec![Type::int(), Type::string()]);
+
+        let list_tv = Type::list(Type::Var(tv.clone()));
+        let list_int = Type::list(Type::int());
+
+        let result = Unifier::unify(&list_tv, &list_int, &registry);
+        assert!(
+            result.is_ok(),
+            "Should unify list[T] with list[int] when T constrained to int|str"
+        );
+
+        let subst = result.unwrap();
+        assert_eq!(subst.get(&tv), Some(&Type::int()), "Should substitute T with int");
+    }
+
+    #[test]
+    fn test_typevar_bound_and_constraints_both_validated() {
+        let tv = TypeVar::new(0);
+        let mut registry = TypeVarConstraintRegistry::new();
+        let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
+
+        registry.set_bound(tv.id, animal.clone());
+        registry.set_constraints(tv.id, vec![Type::int(), Type::string()]);
+
+        let result = Unifier::unify(&Type::Var(tv.clone()), &animal, &registry);
+        assert!(
+            result.is_err(),
+            "Should fail when type satisfies bound but not constraints (Animal not in [int, str])"
+        );
+
+        let result_int = Unifier::unify(&Type::Var(tv.clone()), &Type::int(), &registry);
+        assert!(
+            result_int.is_err(),
+            "Should fail when type satisfies constraints but not bound (int not subtype of Animal)"
+        );
+    }
+
+    #[test]
+    fn test_multiple_typevars_with_different_bounds() {
+        let tv1 = TypeVar::new(0);
+        let tv2 = TypeVar::new(1);
+        let mut registry = TypeVarConstraintRegistry::new();
+
+        let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
+        let vehicle = Type::Con(TypeCtor::Class("Vehicle".to_string()));
+
+        registry.set_bound(tv1.id, animal.clone());
+        registry.set_bound(tv2.id, vehicle.clone());
+
+        let result1 = Unifier::unify(&Type::Var(tv1.clone()), &animal, &registry);
+        assert!(result1.is_ok());
+
+        let result2 = Unifier::unify(&Type::Var(tv2.clone()), &vehicle, &registry);
+        assert!(result2.is_ok());
+
+        let result_cross = Unifier::unify(&Type::Var(tv1.clone()), &vehicle, &registry);
+        assert!(result_cross.is_err(), "Should fail to unify T1:Animal with Vehicle");
+    }
 }

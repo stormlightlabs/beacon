@@ -775,7 +775,7 @@ pub fn visit_imports(
                 if let Ok(cache) = cache_arc.read() {
                     if let Some(stub) = cache.get(module) {
                         if !ctx.loaded_stub_modules.contains(module) {
-                            loader::load_stub_into_registry(stub, &mut ctx.class_registry)?;
+                            loader::load_stub_into_registry(stub, &mut ctx.class_registry, &mut ctx.typevar_registry)?;
                             ctx.loaded_stub_modules.insert(module.clone());
                         }
                     }
@@ -791,7 +791,7 @@ pub fn visit_imports(
                 if let Ok(cache) = cache_arc.read() {
                     if let Some(stub) = cache.get(module) {
                         if !ctx.loaded_stub_modules.contains(module) {
-                            loader::load_stub_into_registry(stub, &mut ctx.class_registry)?;
+                            loader::load_stub_into_registry(stub, &mut ctx.class_registry, &mut ctx.typevar_registry)?;
                             ctx.loaded_stub_modules.insert(module.clone());
                         }
                     }

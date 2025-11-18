@@ -2312,7 +2312,8 @@ method = s.upper
             content: None,
         };
 
-        let result = loader::load_stub_into_registry(&stub, &mut class_registry);
+        let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
+        let result = loader::load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry);
         assert!(result.is_ok(), "Failed to load overload test stub: {:?}", result.err());
 
         let converter_meta = class_registry.get_class("Converter");
