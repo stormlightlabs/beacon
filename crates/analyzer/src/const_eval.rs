@@ -70,6 +70,7 @@ impl Hash for ConstValue {
 /// - Comparison operations (==, !=, <, <=, >, >=, is, is not, in, not in)
 /// - String concatenation and repetition
 /// - Tuple, list, dict, and set literals
+/// - Parenthesized expressions
 pub fn evaluate_const_expr(node: &AstNode) -> Option<ConstValue> {
     match node {
         AstNode::Literal { value, .. } => match value {
@@ -103,6 +104,7 @@ pub fn evaluate_const_expr(node: &AstNode) -> Option<ConstValue> {
                 ConstValue::Set(v)
             })
         }
+        AstNode::ParenthesizedExpression { expression, .. } => evaluate_const_expr(expression),
         _ => None,
     }
 }
@@ -3099,5 +3101,345 @@ mod tests {
                 ConstValue::String("tuple_key".to_string())
             ),]))
         );
+    }
+
+    #[test]
+    fn test_parenthesized_literal() {
+        let node = AstNode::ParenthesizedExpression {
+            expression: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(42),
+                line: 1,
+                col: 2,
+                end_line: 1,
+                end_col: 4,
+            }),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 5,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Integer(42)));
+    }
+
+    #[test]
+    fn test_parenthesized_unary_op() {
+        let node = AstNode::ParenthesizedExpression {
+            expression: Box::new(AstNode::UnaryOp {
+                op: UnaryOperator::Minus,
+                operand: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(10),
+                    line: 1,
+                    col: 3,
+                    end_line: 1,
+                    end_col: 5,
+                }),
+                line: 1,
+                col: 2,
+                end_line: 1,
+                end_col: 5,
+            }),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 6,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Integer(-10)));
+    }
+
+    #[test]
+    fn test_parenthesized_binary_op() {
+        let node = AstNode::ParenthesizedExpression {
+            expression: Box::new(AstNode::BinaryOp {
+                left: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(5),
+                    line: 1,
+                    col: 2,
+                    end_line: 1,
+                    end_col: 3,
+                }),
+                op: BinaryOperator::Add,
+                right: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(3),
+                    line: 1,
+                    col: 6,
+                    end_line: 1,
+                    end_col: 7,
+                }),
+                line: 1,
+                col: 2,
+                end_line: 1,
+                end_col: 7,
+            }),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 8,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Integer(8)));
+    }
+
+    #[test]
+    fn test_nested_parenthesized_expressions() {
+        let node = AstNode::ParenthesizedExpression {
+            expression: Box::new(AstNode::ParenthesizedExpression {
+                expression: Box::new(AstNode::Literal {
+                    value: LiteralValue::Float(std::f64::consts::PI),
+                    line: 1,
+                    col: 3,
+                    end_line: 1,
+                    end_col: 7,
+                }),
+                line: 1,
+                col: 2,
+                end_line: 1,
+                end_col: 8,
+            }),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 9,
+        };
+        assert_eq!(
+            evaluate_const_expr(&node),
+            Some(ConstValue::Float(std::f64::consts::PI))
+        );
+    }
+
+    #[test]
+    fn test_parenthesized_comparison() {
+        let node = AstNode::ParenthesizedExpression {
+            expression: Box::new(AstNode::Compare {
+                left: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(5),
+                    line: 1,
+                    col: 2,
+                    end_line: 1,
+                    end_col: 3,
+                }),
+                ops: vec![CompareOperator::Lt],
+                comparators: vec![AstNode::Literal {
+                    value: LiteralValue::Integer(10),
+                    line: 1,
+                    col: 6,
+                    end_line: 1,
+                    end_col: 8,
+                }],
+                line: 1,
+                col: 2,
+                end_line: 1,
+                end_col: 8,
+            }),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 9,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+    }
+
+    #[test]
+    fn test_parenthesized_tuple() {
+        let node = AstNode::ParenthesizedExpression {
+            expression: Box::new(AstNode::Tuple {
+                elements: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 2, end_line: 1, end_col: 3 },
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 5, end_line: 1, end_col: 6 },
+                ],
+                is_parenthesized: true,
+                line: 1,
+                col: 2,
+                end_line: 1,
+                end_col: 7,
+            }),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 8,
+        };
+        assert_eq!(
+            evaluate_const_expr(&node),
+            Some(ConstValue::Tuple(vec![ConstValue::Integer(1), ConstValue::Integer(2)]))
+        );
+    }
+
+    #[test]
+    fn test_parenthesized_complex_expression() {
+        let inner_add = AstNode::BinaryOp {
+            left: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(2),
+                line: 1,
+                col: 2,
+                end_line: 1,
+                end_col: 3,
+            }),
+            op: BinaryOperator::Add,
+            right: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(3),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 7,
+            }),
+            line: 1,
+            col: 2,
+            end_line: 1,
+            end_col: 7,
+        };
+
+        let node = AstNode::BinaryOp {
+            left: Box::new(AstNode::ParenthesizedExpression {
+                expression: Box::new(inner_add),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 8,
+            }),
+            op: BinaryOperator::Mult,
+            right: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(4),
+                line: 1,
+                col: 11,
+                end_line: 1,
+                end_col: 12,
+            }),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 12,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Integer(20)));
+    }
+
+    #[test]
+    fn test_parenthesized_not_operation() {
+        let node = AstNode::ParenthesizedExpression {
+            expression: Box::new(AstNode::UnaryOp {
+                op: UnaryOperator::Not,
+                operand: Box::new(AstNode::Literal {
+                    value: LiteralValue::Boolean(false),
+                    line: 1,
+                    col: 6,
+                    end_line: 1,
+                    end_col: 11,
+                }),
+                line: 1,
+                col: 2,
+                end_line: 1,
+                end_col: 11,
+            }),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 12,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
+    }
+
+    #[test]
+    fn test_parenthesized_string_concat() {
+        let node = AstNode::ParenthesizedExpression {
+            expression: Box::new(AstNode::BinaryOp {
+                left: Box::new(AstNode::Literal {
+                    value: LiteralValue::String { value: "hello".to_string(), prefix: String::new() },
+                    line: 1,
+                    col: 2,
+                    end_line: 1,
+                    end_col: 9,
+                }),
+                op: BinaryOperator::Add,
+                right: Box::new(AstNode::Literal {
+                    value: LiteralValue::String { value: " world".to_string(), prefix: String::new() },
+                    line: 1,
+                    col: 12,
+                    end_line: 1,
+                    end_col: 20,
+                }),
+                line: 1,
+                col: 2,
+                end_line: 1,
+                end_col: 20,
+            }),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 21,
+        };
+        assert_eq!(
+            evaluate_const_expr(&node),
+            Some(ConstValue::String("hello world".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parenthesized_within_list() {
+        let node = AstNode::List {
+            elements: vec![
+                AstNode::ParenthesizedExpression {
+                    expression: Box::new(AstNode::BinaryOp {
+                        left: Box::new(AstNode::Literal {
+                            value: LiteralValue::Integer(1),
+                            line: 1,
+                            col: 3,
+                            end_line: 1,
+                            end_col: 4,
+                        }),
+                        op: BinaryOperator::Add,
+                        right: Box::new(AstNode::Literal {
+                            value: LiteralValue::Integer(1),
+                            line: 1,
+                            col: 7,
+                            end_line: 1,
+                            end_col: 8,
+                        }),
+                        line: 1,
+                        col: 3,
+                        end_line: 1,
+                        end_col: 8,
+                    }),
+                    line: 1,
+                    col: 2,
+                    end_line: 1,
+                    end_col: 9,
+                },
+                AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 11, end_line: 1, end_col: 12 },
+            ],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 13,
+        };
+        assert_eq!(
+            evaluate_const_expr(&node),
+            Some(ConstValue::List(vec![ConstValue::Integer(2), ConstValue::Integer(3)]))
+        );
+    }
+
+    #[test]
+    fn test_parenthesized_chained_comparisons() {
+        let node = AstNode::ParenthesizedExpression {
+            expression: Box::new(AstNode::Compare {
+                left: Box::new(AstNode::Literal {
+                    value: LiteralValue::Integer(1),
+                    line: 1,
+                    col: 2,
+                    end_line: 1,
+                    end_col: 3,
+                }),
+                ops: vec![CompareOperator::Lt, CompareOperator::Lt],
+                comparators: vec![
+                    AstNode::Literal { value: LiteralValue::Integer(2), line: 1, col: 6, end_line: 1, end_col: 7 },
+                    AstNode::Literal { value: LiteralValue::Integer(3), line: 1, col: 10, end_line: 1, end_col: 11 },
+                ],
+                line: 1,
+                col: 2,
+                end_line: 1,
+                end_col: 11,
+            }),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 12,
+        };
+        assert_eq!(evaluate_const_expr(&node), Some(ConstValue::Boolean(true)));
     }
 }
