@@ -34,14 +34,7 @@ Known issues with HM type inference that need fixing:
 
 #### TypeVar Bounds & Constraints
 
-- [ ] Create `TypeVarConstraintRegistry` in `beacon-core` to map TypeVar IDs to bounds/constraints
-- [ ] Pass registry through constraint generation context and unification
-- [ ] Update `extract_variance_from_typevar_call` in `analyzer/src/walker/visitors.rs` and `analyzer/src/loader.rs` to extract:
-    - [ ] `bound` keyword argument (parse type annotation)
-    - [ ] Positional arguments after name (constraint types)
-- [ ] Modify `Unifier::unify_var` in `core/src/unify.rs` to check bounds before creating substitution
-- [ ] Update constraint solver to validate constraints when instantiating TypeVars
-- [ ] Add tests for all bound/constraint scenarios
+- [x] Update constraint solver to validate constraints when instantiating TypeVars
 
 ### Ergonomics
 

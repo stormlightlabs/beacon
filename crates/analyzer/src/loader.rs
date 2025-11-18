@@ -79,6 +79,10 @@ pub struct StubTypeContext {
     var_gen: TypeVarGen,
     /// Maps TypeVar names to their variance (covariant, contravariant, invariant)
     var_variance: HashMap<String, Variance>,
+    /// Maps TypeVar names to their bound types (if any)
+    var_bounds: HashMap<String, Type>,
+    /// Maps TypeVar names to their constraint types (if any)
+    var_constraints: HashMap<String, Vec<Type>>,
 }
 
 impl StubTypeContext {
@@ -86,9 +90,15 @@ impl StubTypeContext {
         Self::default()
     }
 
-    pub fn register_type_var(&mut self, name: &str, variance: Variance) {
+    pub fn register_type_var(&mut self, name: &str, variance: Variance, bound: Option<Type>, constraints: Vec<Type>) {
         self.type_vars.insert(name.to_string());
         self.var_variance.insert(name.to_string(), variance);
+        if let Some(bound_ty) = bound {
+            self.var_bounds.insert(name.to_string(), bound_ty);
+        }
+        if !constraints.is_empty() {
+            self.var_constraints.insert(name.to_string(), constraints);
+        }
     }
 
     pub fn is_type_var(&self, name: &str) -> bool {
@@ -105,6 +115,14 @@ impl StubTypeContext {
             tv
         }
     }
+
+    pub fn get_bound(&self, name: &str) -> Option<&Type> {
+        self.var_bounds.get(name)
+    }
+
+    pub fn get_constraints(&self, name: &str) -> Option<&Vec<Type>> {
+        self.var_constraints.get(name)
+    }
 }
 
 impl Default for StubTypeContext {
@@ -114,6 +132,8 @@ impl Default for StubTypeContext {
             var_map: HashMap::default(),
             var_gen: TypeVarGen::new(),
             var_variance: HashMap::default(),
+            var_bounds: HashMap::default(),
+            var_constraints: HashMap::default(),
         }
     }
 }
@@ -126,12 +146,12 @@ pub fn collect_stub_type_vars(node: &AstNode, ctx: &mut StubTypeContext) {
             }
         }
         AstNode::Assignment { target, value, .. } => {
-            if let AstNode::Call { function, keywords, .. } = value.as_ref() {
+            if let AstNode::Call { function, args, keywords, .. } = value.as_ref() {
                 let function_name = function.function_to_string();
                 if function_name == "TypeVar" || function_name.ends_with(".TypeVar") {
                     let target_str = target.target_to_string();
-                    let variance = extract_variance_from_typevar_call(keywords);
-                    ctx.register_type_var(&target_str, variance);
+                    let (variance, bound, constraints) = extract_typevar_metadata_from_stub(args, keywords, ctx);
+                    ctx.register_type_var(&target_str, variance, bound, constraints);
                 }
             }
         }
@@ -144,15 +164,24 @@ pub fn collect_stub_type_vars(node: &AstNode, ctx: &mut StubTypeContext) {
     }
 }
 
-/// Extract variance from TypeVar keyword arguments.
+/// Extract variance, bounds, and constraints from TypeVar calls in stub files.
 ///
-/// Parses `covariant=True` and `contravariant=True` from TypeVar calls:
-/// - `TypeVar('T_Co', covariant=True)` → Variance::Covariant
-/// - `TypeVar('T_Contra', contravariant=True)` → Variance::Contravariant
-/// - `TypeVar('T')` → Variance::Invariant (default)
-fn extract_variance_from_typevar_call(keywords: &[(String, AstNode)]) -> Variance {
+/// Parses:
+/// - Variance: `covariant=True` and `contravariant=True` keyword arguments
+/// - Bound: `bound=Animal` keyword argument
+/// - Constraints: Positional arguments after the name: `TypeVar('T', int, str)`
+///
+/// Examples:
+/// - `TypeVar('T')` → (Invariant, None, [])
+/// - `TypeVar('T_Co', covariant=True)` → (Covariant, None, [])
+/// - `TypeVar('T', bound=Animal)` → (Invariant, Some(Animal), [])
+/// - `TypeVar('T', int, str)` → (Invariant, None, [int, str])
+fn extract_typevar_metadata_from_stub(
+    args: &[AstNode], keywords: &[(String, AstNode)], ctx: &mut StubTypeContext,
+) -> (Variance, Option<Type>, Vec<Type>) {
     let mut covariant = false;
     let mut contravariant = false;
+    let mut bound = None;
 
     for (key, value) in keywords {
         match key.as_str() {
@@ -162,14 +191,81 @@ fn extract_variance_from_typevar_call(keywords: &[(String, AstNode)]) -> Varianc
             "contravariant" => {
                 contravariant = is_true_literal(value);
             }
+            "bound" => {
+                bound = parse_typevar_bound_from_stub(value, ctx);
+            }
             _ => {}
         }
     }
 
-    match (covariant, contravariant) {
+    let variance = match (covariant, contravariant) {
         (true, false) => Variance::Covariant,
         (false, true) => Variance::Contravariant,
         _ => Variance::Invariant,
+    };
+
+    let mut constraints = Vec::new();
+    if args.len() > 1 {
+        for constraint_node in &args[1..] {
+            if let Some(constraint_ty) = parse_typevar_constraint_from_stub(constraint_node, ctx) {
+                constraints.push(constraint_ty);
+            }
+        }
+    }
+
+    (variance, bound, constraints)
+}
+
+/// Parse a TypeVar bound from a stub AST node
+fn parse_typevar_bound_from_stub(node: &AstNode, ctx: &mut StubTypeContext) -> Option<Type> {
+    match node {
+        AstNode::Identifier { name, .. } => parse_type_annotation(name, ctx),
+        AstNode::Subscript { value, slice, .. } => {
+            let base_name = match value.as_ref() {
+                AstNode::Identifier { name, .. } => name.as_str(),
+                _ => return None,
+            };
+
+            let slice_str = node_to_annotation_string(slice);
+            let full_annotation = format!("{base_name}[{slice_str}]");
+            parse_type_annotation(&full_annotation, ctx)
+        }
+        _ => None,
+    }
+}
+
+/// Parse a TypeVar constraint from a stub AST node
+fn parse_typevar_constraint_from_stub(node: &AstNode, ctx: &mut StubTypeContext) -> Option<Type> {
+    match node {
+        AstNode::Identifier { name, .. } => parse_type_annotation(name, ctx),
+        AstNode::Subscript { value, slice, .. } => {
+            let base_name = match value.as_ref() {
+                AstNode::Identifier { name, .. } => name.as_str(),
+                _ => return None,
+            };
+
+            let slice_str = node_to_annotation_string(slice);
+            let full_annotation = format!("{base_name}[{slice_str}]");
+            parse_type_annotation(&full_annotation, ctx)
+        }
+        _ => None,
+    }
+}
+
+/// Convert an AST node to an annotation string (for complex type expressions)
+fn node_to_annotation_string(node: &AstNode) -> String {
+    match node {
+        AstNode::Identifier { name, .. } => name.clone(),
+        AstNode::Subscript { value, slice, .. } => {
+            let base = node_to_annotation_string(value);
+            let slice_str = node_to_annotation_string(slice);
+            format!("{base}[{slice_str}]")
+        }
+        AstNode::Tuple { elements, .. } => {
+            let parts: Vec<String> = elements.iter().map(node_to_annotation_string).collect();
+            parts.join(", ")
+        }
+        _ => "Any".to_string(),
     }
 }
 
@@ -295,7 +391,7 @@ pub fn extract_stub_classes_into_registry(
                 if let Some(params_str) = extract_generic_params(base) {
                     let type_params: Vec<String> = params_str.split(',').map(|s| s.trim().to_string()).collect();
                     for param in &type_params {
-                        ctx.register_type_var(param, Variance::Invariant);
+                        ctx.register_type_var(param, Variance::Invariant, None, vec![]);
                     }
 
                     let is_generic_base = base.starts_with("Generic[") && base.ends_with(']');
@@ -318,7 +414,7 @@ pub fn extract_stub_classes_into_registry(
                     params.sort();
                     metadata.set_type_params(params.clone());
                     for param in params {
-                        ctx.register_type_var(&param, Variance::Invariant);
+                        ctx.register_type_var(&param, Variance::Invariant, None, vec![]);
                     }
                 }
             }
@@ -715,7 +811,9 @@ fn convert_type_vars(ty: beacon_core::Type, ctx: &mut StubTypeContext) -> beacon
     }
 }
 
-pub fn load_stub_into_registry(stub: &StubFile, class_registry: &mut ClassRegistry) -> Result<()> {
+pub fn load_stub_into_registry(
+    stub: &StubFile, class_registry: &mut ClassRegistry, typevar_registry: &mut beacon_core::TypeVarConstraintRegistry,
+) -> Result<()> {
     let content = match &stub.content {
         Some(embedded_content) => embedded_content.clone(),
         None => std::fs::read_to_string(&stub.path).map_err(AnalysisError::from)?,
@@ -725,6 +823,18 @@ pub fn load_stub_into_registry(stub: &StubFile, class_registry: &mut ClassRegist
     let (ast, _symbol_table) = parser.parse_and_resolve(&content)?;
     let mut ctx = StubTypeContext::new();
     collect_stub_type_vars(&ast, &mut ctx);
+
+    for type_var_name in ctx.type_vars.clone() {
+        let type_var = ctx.get_or_create_type_var(&type_var_name);
+
+        if let Some(bound) = ctx.get_bound(&type_var_name) {
+            typevar_registry.set_bound(type_var.id, bound.clone());
+        }
+        if let Some(constraints) = ctx.get_constraints(&type_var_name) {
+            typevar_registry.set_constraints(type_var.id, constraints.clone());
+        }
+    }
+
     let base_map = parse_class_bases(&content);
     extract_stub_classes_into_registry(&ast, class_registry, &mut ctx, &base_map);
     Ok(())
@@ -972,7 +1082,8 @@ class list(Generic[_T]):
         };
 
         let mut class_registry = ClassRegistry::new();
-        load_stub_into_registry(&stub, &mut class_registry).unwrap();
+        let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
+        load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry).unwrap();
 
         let list_class = class_registry.get_class("list");
         assert!(list_class.is_some(), "list class should be registered");
@@ -1028,7 +1139,8 @@ class list(Generic[_T]):
         };
 
         let mut class_registry = ClassRegistry::new();
-        load_stub_into_registry(&stub, &mut class_registry).unwrap();
+        let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
+        load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry).unwrap();
 
         let list_class = class_registry.get_class("list");
         assert!(list_class.is_some(), "list class should be registered in builtins.pyi");
@@ -1061,7 +1173,8 @@ class list(Generic[_T]):
         };
 
         let mut class_registry = ClassRegistry::new();
-        load_stub_into_registry(&stub, &mut class_registry).unwrap();
+        let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
+        load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry).unwrap();
 
         let generator_class = class_registry.get_class("Generator");
         assert!(
@@ -1134,7 +1247,8 @@ class list(Generic[_T]):
         };
 
         let mut class_registry = ClassRegistry::new();
-        load_stub_into_registry(&stub, &mut class_registry).unwrap();
+        let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
+        load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry).unwrap();
 
         let provider_meta = class_registry
             .get_class("DataProvider")
@@ -1188,7 +1302,8 @@ class list(Generic[_T]):
         };
 
         let mut class_registry = ClassRegistry::new();
-        load_stub_into_registry(&stub, &mut class_registry).unwrap();
+        let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
+        load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry).unwrap();
 
         let protocol_types = vec![
             "Generator",
@@ -1208,5 +1323,167 @@ class list(Generic[_T]):
                 "{protocol_name} class should be registered in typing.pyi"
             );
         }
+    }
+
+    #[test]
+    fn test_typevar_with_bound() {
+        let stub_content = r#"
+from typing import TypeVar
+
+class Animal: ...
+
+T = TypeVar("T", bound=Animal)
+"#;
+
+        let stub = StubFile {
+            module: "test_bound".to_string(),
+            path: PathBuf::from("test_bound.pyi"),
+            exports: FxHashMap::default(),
+            is_partial: false,
+            reexports: Vec::new(),
+            all_exports: None,
+            content: Some(stub_content.to_string()),
+        };
+
+        let mut class_registry = ClassRegistry::new();
+        let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
+        load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry).unwrap();
+
+        let mut parser = beacon_parser::PythonParser::new().unwrap();
+        let (ast, _) = parser.parse_and_resolve(stub_content).unwrap();
+        let mut ctx = StubTypeContext::new();
+        collect_stub_type_vars(&ast, &mut ctx);
+
+        assert!(ctx.is_type_var("T"), "T should be registered as a TypeVar");
+
+        let bound = ctx.get_bound("T");
+        assert!(bound.is_some(), "T should have a bound");
+
+        if let Some(bound_ty) = bound {
+            assert!(
+                matches!(bound_ty, Type::Con(TypeCtor::Class(name)) if name == "Animal"),
+                "T should be bound to Animal, got {bound_ty:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_typevar_with_constraints() {
+        let stub_content = r#"
+from typing import TypeVar
+
+T = TypeVar("T", int, str)
+"#;
+
+        let stub = StubFile {
+            module: "test_constraints".to_string(),
+            path: PathBuf::from("test_constraints.pyi"),
+            exports: FxHashMap::default(),
+            is_partial: false,
+            reexports: Vec::new(),
+            all_exports: None,
+            content: Some(stub_content.to_string()),
+        };
+
+        let mut class_registry = ClassRegistry::new();
+        let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
+        load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry).unwrap();
+
+        let mut parser = beacon_parser::PythonParser::new().unwrap();
+        let (ast, _) = parser.parse_and_resolve(stub_content).unwrap();
+        let mut ctx = StubTypeContext::new();
+        collect_stub_type_vars(&ast, &mut ctx);
+
+        assert!(ctx.is_type_var("T"), "T should be registered as a TypeVar");
+
+        let constraints = ctx.get_constraints("T");
+        assert!(constraints.is_some(), "T should have constraints");
+
+        if let Some(constraint_types) = constraints {
+            assert_eq!(constraint_types.len(), 2, "T should have 2 constraints");
+            assert!(
+                constraint_types.iter().any(|t| matches!(t, Type::Con(TypeCtor::Int))),
+                "T should have int as a constraint"
+            );
+            assert!(
+                constraint_types
+                    .iter()
+                    .any(|t| matches!(t, Type::Con(TypeCtor::String))),
+                "T should have str as a constraint"
+            );
+        }
+    }
+
+    #[test]
+    fn test_typevar_with_bound_and_variance() {
+        let stub_content = r#"
+from typing import TypeVar
+
+class Animal: ...
+
+T_Co = TypeVar("T_Co", bound=Animal, covariant=True)
+"#;
+
+        let stub = StubFile {
+            module: "test_bound_variance".to_string(),
+            path: PathBuf::from("test_bound_variance.pyi"),
+            exports: FxHashMap::default(),
+            is_partial: false,
+            reexports: Vec::new(),
+            all_exports: None,
+            content: Some(stub_content.to_string()),
+        };
+
+        let mut class_registry = ClassRegistry::new();
+        let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
+        load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry).unwrap();
+
+        let mut parser = beacon_parser::PythonParser::new().unwrap();
+        let (ast, _) = parser.parse_and_resolve(stub_content).unwrap();
+        let mut ctx = StubTypeContext::new();
+        collect_stub_type_vars(&ast, &mut ctx);
+
+        assert!(ctx.is_type_var("T_Co"), "T_Co should be registered as a TypeVar");
+
+        let bound = ctx.get_bound("T_Co");
+        assert!(bound.is_some(), "T_Co should have a bound");
+
+        let type_var = ctx.get_or_create_type_var("T_Co");
+        assert_eq!(type_var.variance, Variance::Covariant, "T_Co should be covariant");
+    }
+
+    #[test]
+    fn test_typevar_registry_populated_from_stub() {
+        let stub_content = r#"
+from typing import TypeVar
+
+class Animal: ...
+
+T = TypeVar("T", bound=Animal)
+U = TypeVar("U", int, str)
+"#;
+
+        let stub = StubFile {
+            module: "test_registry".to_string(),
+            path: PathBuf::from("test_registry.pyi"),
+            exports: FxHashMap::default(),
+            is_partial: false,
+            reexports: Vec::new(),
+            all_exports: None,
+            content: Some(stub_content.to_string()),
+        };
+
+        let mut class_registry = ClassRegistry::new();
+        let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
+        load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry).unwrap();
+
+        assert!(
+            typevar_registry.bound_count() >= 1,
+            "Registry should have at least 1 bound"
+        );
+        assert!(
+            typevar_registry.constraint_count() >= 1,
+            "Registry should have at least 1 constraint"
+        );
     }
 }
