@@ -3,8 +3,6 @@ mod helpers;
 
 use anyhow::{Context, Result};
 use beacon_analyzer::{DiagnosticMessage, Linter};
-use beacon_constraint::ConstraintResult;
-use beacon_core::logging::default_log_path;
 use beacon_lsp::{
     Config,
     analysis::Analyzer,
@@ -17,11 +15,17 @@ use formatters::{format_compact, format_human, format_json, print_parse_errors, 
 use owo_colors::OwoColorize;
 use serde_json::json;
 use std::fs;
-use std::io::{self, BufRead, Read, Seek, SeekFrom};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
-use tree_sitter::Node;
 use url::Url;
+
+#[cfg(debug_assertions)]
+use {
+    beacon_constraint::ConstraintResult,
+    beacon_core::logging::default_log_path,
+    io::{BufRead, Seek},
+    std::time,
+};
 
 /// Output format for diagnostics
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -594,7 +598,7 @@ fn debug_tree_command(file: Option<PathBuf>, json: bool) -> Result<()> {
     let parsed = parser.parse(&source).with_context(|| "Failed to parse Python source")?;
 
     if json {
-        fn node_to_json(node: Node, source: &str) -> serde_json::Value {
+        fn node_to_json(node: tree_sitter::Node, source: &str) -> serde_json::Value {
             let mut children = vec![];
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
@@ -847,14 +851,14 @@ fn debug_logs_command(follow: bool, path: Option<PathBuf>, filter: Option<String
         let mut file =
             fs::File::open(&log_path).with_context(|| format!("Failed to open log file: {}", log_path.display()))?;
 
-        file.seek(SeekFrom::End(0))?;
+        file.seek(io::SeekFrom::End(0))?;
 
         let mut reader = io::BufReader::new(file);
         let mut line = String::new();
 
         loop {
             match reader.read_line(&mut line) {
-                Ok(0) => std::thread::sleep(Duration::from_millis(100)),
+                Ok(0) => std::thread::sleep(time::Duration::from_millis(100)),
                 Ok(_) => {
                     if let Some(ref regex) = filter_regex {
                         if regex.is_match(&line) {
@@ -1416,19 +1420,16 @@ fn format_typecheck_results_compact(
 /// Find the actual span to highlight in a diagnostic
 /// Returns (column, length) both 1-indexed
 fn find_diagnostic_span(line: &str, diagnostic: &DiagnosticMessage) -> (usize, usize) {
-    // Try to extract identifier from message (usually in single quotes)
     if let Some(start) = diagnostic.message.find('\'') {
         if let Some(end) = diagnostic.message[start + 1..].find('\'') {
             let identifier = &diagnostic.message[start + 1..start + 1 + end];
 
-            // Find this identifier in the source line
             if let Some(pos) = line.find(identifier) {
                 return (pos + 1, identifier.len());
             }
         }
     }
 
-    // Fallback to original column with length 1
     (diagnostic.col, 1)
 }
 
@@ -1462,7 +1463,6 @@ fn format_lint_results_human(diagnostics: &[(PathBuf, String, DiagnosticMessage)
             let line = lines[diagnostic.line - 1];
             println!("  {} {}", diagnostic.line.to_string().dimmed(), line.dimmed());
 
-            // Try to find the actual identifier to highlight
             let (highlight_col, highlight_len) = find_diagnostic_span(line, diagnostic);
 
             if highlight_col > 0 {
@@ -1616,7 +1616,6 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
                         let line = lines[diagnostic.line - 1];
                         println!("    {} {}", diagnostic.line.to_string().dimmed(), line.dimmed());
 
-                        // Try to find the actual identifier to highlight
                         let (highlight_col, highlight_len) = find_diagnostic_span(line, diagnostic);
 
                         if highlight_col > 0 {

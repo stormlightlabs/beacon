@@ -56,8 +56,11 @@ pub enum ReachabilityResult {
 }
 
 /// Check if a set of patterns exhaustively covers a subject type
+///
+/// Each pattern is paired with a boolean indicating whether it has a guard.
+/// Patterns with guards are treated conservatively: they do NOT contribute to exhaustiveness coverage, since guards can fail at runtime.
 pub fn check_exhaustiveness(
-    subject_type: &Type, patterns: &[Pattern], class_registry: &beacon_core::ClassRegistry,
+    subject_type: &Type, patterns: &[(Pattern, bool)], class_registry: &beacon_core::ClassRegistry,
 ) -> ExhaustivenessResult {
     tracing::debug!(
         "Checking exhaustiveness for subject type: {} with {} patterns",
@@ -73,7 +76,12 @@ pub fn check_exhaustiveness(
     };
 
     let mut uncovered = initial_uncovered;
-    for (idx, pattern) in patterns.iter().enumerate() {
+    for (idx, (pattern, has_guard)) in patterns.iter().enumerate() {
+        if *has_guard {
+            tracing::trace!("Pattern {}: {:?} has guard - skipping for exhaustiveness", idx, pattern);
+            continue;
+        }
+
         let covered = compute_coverage(pattern, subject_type, class_registry);
         tracing::trace!("Pattern {}: {:?} covers {} types", idx, pattern, covered.len());
         uncovered = subtract_coverage(uncovered, covered);
@@ -367,7 +375,7 @@ mod tests {
     #[test]
     fn test_exhaustiveness_bool_complete() {
         let subject = Type::bool();
-        let patterns = vec![bool_pattern(true), bool_pattern(false)];
+        let patterns = vec![(bool_pattern(true), false), (bool_pattern(false), false)];
         let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         assert!(matches!(result, ExhaustivenessResult::Exhaustive));
     }
@@ -375,7 +383,7 @@ mod tests {
     #[test]
     fn test_exhaustiveness_bool_incomplete() {
         let subject = Type::bool();
-        let patterns = vec![bool_pattern(true)];
+        let patterns = vec![(bool_pattern(true), false)];
         let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
 
         match result {
@@ -391,7 +399,7 @@ mod tests {
     #[test]
     fn test_exhaustiveness_catch_all() {
         let subject = Type::bool();
-        let patterns = vec![catch_all("x")];
+        let patterns = vec![(catch_all("x"), false)];
         let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         assert!(matches!(result, ExhaustivenessResult::Exhaustive));
     }
@@ -400,14 +408,17 @@ mod tests {
     fn test_exhaustiveness_union_complete() {
         let subject = Type::union(vec![Type::int(), Type::string()]);
         let patterns = vec![
-            Pattern::MatchValue(AstNode::Literal {
-                value: LiteralValue::Integer(0),
-                line: 1,
-                col: 1,
-                end_line: 1,
-                end_col: 1,
-            }),
-            catch_all("rest"),
+            (
+                Pattern::MatchValue(AstNode::Literal {
+                    value: LiteralValue::Integer(0),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 1,
+                }),
+                false,
+            ),
+            (catch_all("rest"), false),
         ];
 
         let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
@@ -421,20 +432,26 @@ mod tests {
     fn test_exhaustiveness_union_incomplete() {
         let subject = Type::union(vec![Type::int(), Type::string(), Type::bool()]);
         let patterns = vec![
-            Pattern::MatchValue(AstNode::Literal {
-                value: LiteralValue::Integer(0),
-                line: 1,
-                col: 1,
-                end_line: 1,
-                end_col: 1,
-            }),
-            Pattern::MatchValue(AstNode::Literal {
-                value: LiteralValue::String { value: "".to_string(), prefix: String::new() },
-                line: 1,
-                col: 1,
-                end_col: 1,
-                end_line: 1,
-            }),
+            (
+                Pattern::MatchValue(AstNode::Literal {
+                    value: LiteralValue::Integer(0),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 1,
+                }),
+                false,
+            ),
+            (
+                Pattern::MatchValue(AstNode::Literal {
+                    value: LiteralValue::String { value: "".to_string(), prefix: String::new() },
+                    line: 1,
+                    col: 1,
+                    end_col: 1,
+                    end_line: 1,
+                }),
+                false,
+            ),
         ];
 
         match check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new()) {
@@ -585,7 +602,7 @@ mod tests {
     #[test]
     fn test_literal_bool_exhaustive() {
         let subject = Type::bool();
-        let patterns = vec![bool_pattern(true), bool_pattern(false)];
+        let patterns = vec![(bool_pattern(true), false), (bool_pattern(false), false)];
         let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         assert!(
             matches!(result, ExhaustivenessResult::Exhaustive),
@@ -596,7 +613,7 @@ mod tests {
     #[test]
     fn test_literal_bool_only_true() {
         let subject = Type::bool();
-        let patterns = vec![bool_pattern(true)];
+        let patterns = vec![(bool_pattern(true), false)];
         let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         match result {
             ExhaustivenessResult::NonExhaustive { .. } => {}
@@ -609,7 +626,7 @@ mod tests {
     #[test]
     fn test_literal_bool_only_false() {
         let subject = Type::bool();
-        let patterns = vec![bool_pattern(false)];
+        let patterns = vec![(bool_pattern(false), false)];
         let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         match result {
             ExhaustivenessResult::NonExhaustive { .. } => {}
@@ -694,7 +711,7 @@ mod tests {
             Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] },
             Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] },
         ]);
-        let patterns = vec![pattern];
+        let patterns = vec![(pattern, false)];
         let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         assert!(
             matches!(result, ExhaustivenessResult::Exhaustive),
@@ -764,8 +781,8 @@ mod tests {
     fn test_none_pattern_exhaustiveness_int_none() {
         let subject = Type::union(vec![Type::int(), Type::none()]);
         let patterns = vec![
-            none_pattern(),
-            Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] },
+            (none_pattern(), false),
+            (Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] }, false),
         ];
         let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         assert!(
@@ -778,8 +795,8 @@ mod tests {
     fn test_none_identifier_pattern_exhaustiveness() {
         let subject = Type::union(vec![Type::int(), Type::none()]);
         let patterns = vec![
-            none_identifier_pattern(),
-            Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] },
+            (none_identifier_pattern(), false),
+            (Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] }, false),
         ];
         let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         assert!(
@@ -792,8 +809,8 @@ mod tests {
     fn test_none_pattern_exhaustiveness_str_none() {
         let subject = Type::union(vec![Type::string(), Type::none()]);
         let patterns = vec![
-            Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] },
-            none_pattern(),
+            (Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] }, false),
+            (none_pattern(), false),
         ];
         let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         assert!(
@@ -806,9 +823,9 @@ mod tests {
     fn test_none_pattern_exhaustiveness_three_way() {
         let subject = Type::union(vec![Type::int(), Type::string(), Type::none()]);
         let patterns = vec![
-            none_pattern(),
-            Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] },
-            Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] },
+            (none_pattern(), false),
+            (Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] }, false),
+            (Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] }, false),
         ];
         let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         assert!(
@@ -820,7 +837,7 @@ mod tests {
     #[test]
     fn test_none_pattern_missing_is_non_exhaustive() {
         let subject = Type::union(vec![Type::int(), Type::none()]);
-        let patterns = vec![Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] }];
+        let patterns = vec![(Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] }, false)];
         let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
         match result {
             ExhaustivenessResult::NonExhaustive { uncovered } => {
@@ -848,5 +865,107 @@ mod tests {
             types_equal_or_subtype(&none_type, &literal_none),
             "NoneType should match Literal[None] (symmetric)"
         );
+    }
+
+    #[test]
+    fn test_exhaustiveness_with_guard_bool_incomplete() {
+        let subject = Type::bool();
+        let patterns = vec![(catch_all("x"), true)];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        match result {
+            ExhaustivenessResult::NonExhaustive { .. } => {}
+            ExhaustivenessResult::Exhaustive => {
+                panic!("Pattern with guard should NOT be exhaustive - guard can fail at runtime")
+            }
+        }
+    }
+
+    #[test]
+    fn test_exhaustiveness_with_guard_mixed() {
+        let subject = Type::bool();
+        let patterns = vec![(bool_pattern(true), true), (bool_pattern(false), false)];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        match result {
+            ExhaustivenessResult::NonExhaustive { uncovered } => {
+                assert!(
+                    !uncovered.is_empty(),
+                    "Should have uncovered True case (guard can fail)"
+                );
+            }
+            ExhaustivenessResult::Exhaustive => {
+                panic!("Should be non-exhaustive: True case has guard that can fail")
+            }
+        }
+    }
+
+    #[test]
+    fn test_exhaustiveness_with_guard_followed_by_fallback() {
+        let subject = Type::bool();
+        let patterns = vec![(bool_pattern(true), true), (catch_all("x"), false)];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        assert!(
+            matches!(result, ExhaustivenessResult::Exhaustive),
+            "Catch-all without guard should make match exhaustive"
+        );
+    }
+
+    #[test]
+    fn test_exhaustiveness_multiple_guards_with_fallback() {
+        let subject = Type::union(vec![Type::int(), Type::string()]);
+        let patterns = vec![
+            (Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] }, true),
+            (Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] }, true),
+            (catch_all("x"), false),
+        ];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        assert!(
+            matches!(result, ExhaustivenessResult::Exhaustive),
+            "Final catch-all should make match exhaustive even with guarded patterns"
+        );
+    }
+
+    #[test]
+    fn test_exhaustiveness_all_guards_no_fallback() {
+        let subject = Type::bool();
+        let patterns = vec![(bool_pattern(true), true), (bool_pattern(false), true)];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        match result {
+            ExhaustivenessResult::NonExhaustive { .. } => {}
+            ExhaustivenessResult::Exhaustive => {
+                panic!("All patterns have guards - should be non-exhaustive")
+            }
+        }
+    }
+
+    #[test]
+    fn test_exhaustiveness_union_with_partial_guards() {
+        let subject = Type::union(vec![Type::int(), Type::string(), Type::bool()]);
+        let patterns = vec![
+            (Pattern::MatchClass { cls: "int".to_string(), patterns: vec![] }, true),
+            (Pattern::MatchClass { cls: "str".to_string(), patterns: vec![] }, false),
+            (Pattern::MatchClass { cls: "bool".to_string(), patterns: vec![] }, false),
+        ];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        match result {
+            ExhaustivenessResult::NonExhaustive { uncovered } => {
+                assert!(!uncovered.is_empty(), "Should have uncovered int case (guard can fail)");
+            }
+            ExhaustivenessResult::Exhaustive => {
+                panic!("int case has guard - should be non-exhaustive")
+            }
+        }
+    }
+
+    #[test]
+    fn test_exhaustiveness_guard_on_catch_all() {
+        let subject = Type::bool();
+        let patterns = vec![(catch_all("_"), true)];
+        let result = check_exhaustiveness(&subject, &patterns, &beacon_core::ClassRegistry::new());
+        match result {
+            ExhaustivenessResult::NonExhaustive { .. } => {}
+            ExhaustivenessResult::Exhaustive => {
+                panic!("Catch-all with guard should NOT be exhaustive")
+            }
+        }
     }
 }

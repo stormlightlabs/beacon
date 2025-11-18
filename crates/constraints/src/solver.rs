@@ -1974,20 +1974,26 @@ mod tests {
     fn test_solve_pattern_exhaustive_complete() {
         let subject_ty = Type::bool();
         let patterns = vec![
-            Pattern::MatchValue(AstNode::Literal {
-                value: LiteralValue::Boolean(true),
-                line: 1,
-                col: 1,
-                end_line: 1,
-                end_col: 5,
-            }),
-            Pattern::MatchValue(AstNode::Literal {
-                value: LiteralValue::Boolean(false),
-                line: 1,
-                col: 1,
-                end_line: 1,
-                end_col: 6,
-            }),
+            (
+                Pattern::MatchValue(AstNode::Literal {
+                    value: LiteralValue::Boolean(true),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 5,
+                }),
+                false,
+            ),
+            (
+                Pattern::MatchValue(AstNode::Literal {
+                    value: LiteralValue::Boolean(false),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 6,
+                }),
+                false,
+            ),
         ];
         let constraints =
             ConstraintSet { constraints: vec![Constraint::PatternExhaustive(subject_ty, patterns, test_span())] };
@@ -2003,13 +2009,16 @@ mod tests {
     #[test]
     fn test_solve_pattern_exhaustive_incomplete() {
         let subject_ty = Type::bool();
-        let patterns = vec![Pattern::MatchValue(AstNode::Literal {
-            value: LiteralValue::Boolean(true),
-            line: 1,
-            col: 1,
-            end_line: 1,
-            end_col: 5,
-        })];
+        let patterns = vec![(
+            Pattern::MatchValue(AstNode::Literal {
+                value: LiteralValue::Boolean(true),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 5,
+            }),
+            false,
+        )];
 
         let constraints =
             ConstraintSet { constraints: vec![Constraint::PatternExhaustive(subject_ty, patterns, test_span())] };
