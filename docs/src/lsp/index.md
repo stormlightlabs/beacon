@@ -1,6 +1,22 @@
 # Beacon Language Server
 
-Beacon’s Language Server Protocol (LSP) implementation bridges the Rust-based analyzer with editors such as Zed, VSCode/VSCodium, Neovim, and Helix. This chapter documents the system from high-level goals to feature-by-feature behaviour.
+Beacon's Language Server Protocol (LSP) implementation bridges the Rust-based analyzer with editors such as Zed, VSCode/VSCodium, Neovim, and Helix. This chapter documents the system from high-level goals to feature-by-feature behaviour.
+
+## LSP Capabilities Quick Reference
+
+Beacon implements the following LSP features:
+
+- Diagnostics: Real-time syntax, semantic, and type error reporting
+- Hover: Context-sensitive type information and documentation
+- Completion: Symbol table-based completions
+- Navigation: Go to definition, find references, document highlights
+- Symbols: Document outline and workspace fuzzy search
+- Semantic tokens and inlay hints
+- Refactoring: Rename, code actions, quick fixes
+
+See [Feature Providers](./feature_providers.md) for detailed implementation.
+
+## Documentation Overview
 
 Use the sidebar to jump into any topic, or start with the sections below:
 

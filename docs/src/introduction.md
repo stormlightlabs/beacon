@@ -3,7 +3,40 @@
 Beacon is an experimental Python type checker and developer experience platform written in Rust.
 This documentation set describes the architecture, design decisions, and research that power the project. Whether you are contributing to the [codebase](https://github.com/stormlightlabs/beacon), evaluating the language server, or exploring the type system, start here to orient yourself.
 
-## What You’ll Find
+## Core Capabilities
+
+Beacon provides a complete LSP-based, type-safe development environment for Python:
+
+### Type System
+
+- Hindley-Milner type inference with automatic generalization
+- Type narrowing through pattern matching and control flow
+- Protocol satisfaction with variance checking
+- Gradual typing compatibility
+
+### Code Intelligence
+
+- Real-time diagnostics for syntax, semantic, and type errors
+- Hover tooltips with inferred types and builtin documentation
+- Smart completions using symbol table analysis
+- Go to definition and find all references
+- Workspace and document symbol search with fuzzy matching
+
+### Refactoring & Code Actions
+
+- Symbol renaming with workspace-wide validation
+- Quick fixes for common issues (unused imports, Optional types, pattern completions)
+- Protocol method implementation assistance
+- Type annotation insertion from inferred types
+
+### Editor Integration
+
+- VS Code and Zed extensions with full feature support
+- Compatible with any LSP client (Neovim, Helix, etc.)
+- Semantic token highlighting and inlay hints
+- Fast incremental analysis with multi-layer caching
+
+## What You'll Find
 
 - **LSP Overview**: A deep dive into our Language Server Protocol implementation, including its goals, building blocks, and feature set.
 - **Type System Research**: Summaries of the academic and practical references influencing Beacon’s approach to Hindley–Milner inference, gradual typing, and structural subtyping.

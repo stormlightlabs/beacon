@@ -4,18 +4,14 @@ VSCode extension for Beacon Language Server - Hindley-Milner type inference for 
 
 ## Features
 
-This extension provides advanced type inference and analysis for Python files using the Beacon LSP server.
-Features include:
+- Hindley-Milner type inference with automatic generalization
+- Real-time diagnostics for syntax, semantic, and type errors
+- Code intelligence: hover, completions, go-to-definition, find references
+- Code actions: quick fixes, refactorings, protocol implementations
+- Symbol navigation and workspace search
+- Semantic highlighting and inlay hints
 
-- Diagnostics (syntax and semantic errors)
-- Hover information (type information)
-- Go to definition
-- Document symbols (outline view)
-- Semantic tokens (enhanced syntax highlighting)
-- Completions
-- Find references
-- Inlay hints
-- Code actions
+[Full feature documentation](https://stormlightlabs.github.io/beacon/)
 
 ## Structure
 

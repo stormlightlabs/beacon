@@ -6,6 +6,29 @@
 
 Beacon is a Rust implementation of the language server protocol & a hindley-milner type system for Python, inspired by languages like F# & OCaml and the work of [Astral](https://astral.sh) & [BASED](https://docs.basedpyright.com/latest/) pyright.
 
+## Features
+
+Beacon provides advanced type inference and static analysis for Python:
+
+- Hindley-Milner type inference with generics and constraints
+- Type narrowing through pattern matching and control flow
+- Real-time diagnostics for syntax, semantic, and type errors
+- Code intelligence: hover, completions, navigation, symbol search
+- Code actions and refactoring: quick fixes, renaming, protocol implementations
+- Semantic highlighting and inlay hints
+- Code formatting and static analysis
+
+[Full documentation](https://stormlightlabs.github.io/beacon/)
+
+## Editor Support
+
+Beacon works with any LSP-compatible editor:
+
+- [VS Code / VSCodium](./pkg/vscode/README.md)
+- [Zed](./pkg/zed/README.md)
+- Neovim (via standard LSP client)
+- Helix (via standard LSP client)
+
 ## Quick Start
 
 See the [Development Quick Start Guide](./docs/src/development.md) for installation, usage, and editor setup instructions

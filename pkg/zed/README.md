@@ -2,6 +2,17 @@
 
 Python language server extension for Zed that provides Hindley-Milner type inference.
 
+## Features
+
+- Hindley-Milner type inference with automatic generalization
+- Real-time diagnostics for syntax, semantic, and type errors
+- Code intelligence: hover, completions, go-to-definition, find references
+- Code actions: quick fixes, refactorings, protocol implementations
+- Symbol navigation and workspace search
+- Semantic highlighting and inlay hints
+
+[Full feature documentation](https://stormlightlabs.github.io/beacon/)
+
 ## Installation
 
 ### Install beacon-lsp
