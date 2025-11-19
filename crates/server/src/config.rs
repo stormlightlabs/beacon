@@ -57,20 +57,65 @@ impl Default for InlayHintsConfig {
 /// Type checking strictness mode
 ///
 /// Controls how the type checker handles annotation mismatches and inference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum TypeCheckingMode {
     /// Annotation mismatches are hard errors, strict enforcement
     Strict,
     /// Annotation mismatches are diagnostics with quick fixes, but inference still proceeds (default)
+    #[default]
     Balanced,
     /// Annotations supply upper/lower bounds but can be overridden by inference, very lenient
     Loose,
 }
 
-impl Default for TypeCheckingMode {
-    fn default() -> Self {
-        Self::Balanced
+impl TypeCheckingMode {
+    /// Validate that the mode is one of the supported values
+    pub fn validate(&self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Check if this mode requires explicit type annotations
+    pub fn requires_annotations(&self) -> bool {
+        matches!(self, Self::Strict)
+    }
+
+    /// Check if this mode allows implicit Any types
+    pub fn allows_implicit_any(&self) -> bool {
+        matches!(self, Self::Loose)
+    }
+
+    /// Get the diagnostic severity for missing annotations in this mode
+    pub fn missing_annotation_severity(&self) -> Option<DiagnosticSeverity> {
+        match self {
+            Self::Strict => Some(DiagnosticSeverity::Error),
+            Self::Balanced => Some(DiagnosticSeverity::Warning),
+            Self::Loose => None,
+        }
+    }
+}
+
+/// Type checking configuration
+///
+/// Controls type checking behavior including strictness mode and diagnostic filtering.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeCheckingConfig {
+    /// Type checking strictness mode
+    #[serde(default)]
+    pub mode: TypeCheckingMode,
+}
+
+impl TypeCheckingConfig {
+    /// Create a new type checking configuration with default values
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Validate the type checking configuration
+    pub fn validate(&self) -> Result<()> {
+        self.mode.validate()?;
+        Ok(())
     }
 }
 
@@ -126,9 +171,9 @@ pub struct DecoratorStub {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
-    /// Type checking strictness mode
+    /// Type checking configuration
     #[serde(default)]
-    pub mode: TypeCheckingMode,
+    pub type_checking: TypeCheckingConfig,
 
     /// Target Python version
     #[serde(default)]
@@ -226,7 +271,7 @@ fn default_cache_size() -> usize {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            mode: TypeCheckingMode::default(),
+            type_checking: TypeCheckingConfig::default(),
             python_version: PythonVersion::default(),
             stub_paths: vec![PathBuf::from("stubs")],
             max_any_depth: default_max_any_depth(),
@@ -260,8 +305,8 @@ impl Config {
         if let Ok(partial) = serde_json::from_value::<Config>(value) {
             let defaults = Config::default();
 
-            if partial.mode != defaults.mode {
-                self.mode = partial.mode;
+            if partial.type_checking != defaults.type_checking {
+                self.type_checking = partial.type_checking;
             }
             if partial.python_version != defaults.python_version {
                 self.python_version = partial.python_version;
@@ -313,6 +358,8 @@ impl Config {
 
     /// Validate configuration and return any errors
     pub fn validate(&self) -> Result<()> {
+        self.type_checking.validate()?;
+
         for stub_path in &self.stub_paths {
             if !stub_path.exists() {
                 tracing::warn!("Stub path does not exist: {}", stub_path.display());
@@ -427,6 +474,7 @@ fn toml_to_json(value: toml::Value) -> serde_json::Value {
             let mut map = serde_json::Map::new();
             for (key, val) in table {
                 let camel_key = match key.as_str() {
+                    "type_checking" => "typeChecking".to_string(),
                     "python_version" => "pythonVersion".to_string(),
                     "stub_paths" => "stubPaths".to_string(),
                     "max_any_depth" => "maxAnyDepth".to_string(),
@@ -474,7 +522,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert_eq!(config.mode, TypeCheckingMode::Balanced);
+        assert_eq!(config.type_checking.mode, TypeCheckingMode::Balanced);
         assert_eq!(config.python_version, PythonVersion::Py312);
         assert!(config.incremental);
         assert!(config.workspace_analysis);
@@ -490,34 +538,42 @@ mod tests {
 
     #[test]
     fn test_serialization() {
-        let config =
-            Config { mode: TypeCheckingMode::Strict, python_version: PythonVersion::Py311, ..Default::default() };
+        let config = Config {
+            type_checking: TypeCheckingConfig { mode: TypeCheckingMode::Strict },
+            python_version: PythonVersion::Py311,
+            ..Default::default()
+        };
 
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: Config = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(config.mode, deserialized.mode);
+        assert_eq!(config.type_checking.mode, deserialized.type_checking.mode);
         assert_eq!(config.python_version, deserialized.python_version);
     }
 
     #[test]
     fn test_toml_to_json_conversion() {
-        let toml_str = r#"mode = "strict"
+        let toml_str = r#"
 python_version = "3.11"
 max_any_depth = 5
-incremental = false"#;
+incremental = false
+
+[type_checking]
+mode = "strict"
+"#;
 
         let table: toml::Table = toml::from_str(toml_str).unwrap();
         let toml_value = toml::Value::Table(table);
         let json_value = toml_to_json(toml_value);
 
         let obj = json_value.as_object().unwrap();
-        assert!(obj.contains_key("mode"));
+        assert!(obj.contains_key("typeChecking"));
         assert!(obj.contains_key("pythonVersion"));
         assert!(obj.contains_key("maxAnyDepth"));
         assert!(obj.contains_key("incremental"));
 
-        assert_eq!(obj.get("mode").unwrap().as_str().unwrap(), "strict");
+        let type_checking = obj.get("typeChecking").unwrap().as_object().unwrap();
+        assert_eq!(type_checking.get("mode").unwrap().as_str().unwrap(), "strict");
         assert_eq!(obj.get("pythonVersion").unwrap().as_str().unwrap(), "3.11");
         assert_eq!(obj.get("maxAnyDepth").unwrap().as_i64().unwrap(), 5);
         assert!(!obj.get("incremental").unwrap().as_bool().unwrap());
@@ -525,16 +581,20 @@ incremental = false"#;
 
     #[test]
     fn test_load_from_toml_value() {
-        let toml_str = r#"mode = "strict"
+        let toml_str = r#"
 python_version = "3.11"
-max_any_depth = 5"#;
+max_any_depth = 5
+
+[type_checking]
+mode = "strict"
+"#;
 
         let table: toml::Table = toml::from_str(toml_str).unwrap();
         let toml_value = toml::Value::Table(table);
         let mut config = Config::default();
         config.load_from_toml_value(toml_value).unwrap();
 
-        assert_eq!(config.mode, TypeCheckingMode::Strict);
+        assert_eq!(config.type_checking.mode, TypeCheckingMode::Strict);
         assert_eq!(config.python_version, PythonVersion::Py311);
         assert_eq!(config.max_any_depth, 5);
     }
@@ -542,7 +602,9 @@ max_any_depth = 5"#;
     #[test]
     fn test_update_from_value_json() {
         let json_str = r#"{
-            "mode": "loose",
+            "typeChecking": {
+                "mode": "loose"
+            },
             "pythonVersion": "3.13",
             "maxAnyDepth": 10
         }"#;
@@ -551,7 +613,7 @@ max_any_depth = 5"#;
         let mut config = Config::default();
         config.update_from_value(json_value);
 
-        assert_eq!(config.mode, TypeCheckingMode::Loose);
+        assert_eq!(config.type_checking.mode, TypeCheckingMode::Loose);
         assert_eq!(config.python_version, PythonVersion::Py313);
         assert_eq!(config.max_any_depth, 10);
     }
@@ -578,7 +640,7 @@ max_any_depth = 5"#;
     fn test_config_discover_no_files() {
         let temp_dir = TempDir::new().unwrap();
         let config = Config::discover_and_load(temp_dir.path()).unwrap();
-        assert_eq!(config.mode, TypeCheckingMode::default());
+        assert_eq!(config.type_checking.mode, TypeCheckingMode::default());
         assert_eq!(config.python_version, PythonVersion::default());
     }
 
@@ -586,16 +648,20 @@ max_any_depth = 5"#;
     fn test_config_discover_beacon_toml() {
         let temp_dir = TempDir::new().unwrap();
         let beacon_toml_path = temp_dir.path().join("beacon.toml");
-        let toml_content = r#"mode = "strict"
+        let toml_content = r#"
 python_version = "3.10"
 max_any_depth = 7
-incremental = false"#;
+incremental = false
+
+[type_checking]
+mode = "strict"
+"#;
 
         fs::write(&beacon_toml_path, toml_content).unwrap();
 
         let config = Config::discover_and_load(temp_dir.path()).unwrap();
 
-        assert_eq!(config.mode, TypeCheckingMode::Strict);
+        assert_eq!(config.type_checking.mode, TypeCheckingMode::Strict);
         assert_eq!(config.python_version, PythonVersion::Py310);
         assert_eq!(config.max_any_depth, 7);
         assert!(!config.incremental);
@@ -605,14 +671,16 @@ incremental = false"#;
     fn test_config_discover_pyproject_toml() {
         let temp_dir = TempDir::new().unwrap();
         let pyproject_path = temp_dir.path().join("pyproject.toml");
-        let toml_content = r#"[tool.beacon]
+        let toml_content = r#"[tool.beacon.type_checking]
 mode = "loose"
+
+[tool.beacon]
 python_version = "3.13""#;
 
         fs::write(&pyproject_path, toml_content).unwrap();
 
         let config = Config::discover_and_load(temp_dir.path()).unwrap();
-        assert_eq!(config.mode, TypeCheckingMode::Loose);
+        assert_eq!(config.type_checking.mode, TypeCheckingMode::Loose);
         assert_eq!(config.python_version, PythonVersion::Py313);
     }
 
@@ -622,22 +690,29 @@ python_version = "3.13""#;
         let beacon_toml_path = temp_dir.path().join("beacon.toml");
         let pyproject_path = temp_dir.path().join("pyproject.toml");
 
-        fs::write(&beacon_toml_path, r#"mode = "strict""#).unwrap();
+        fs::write(
+            &beacon_toml_path,
+            r#"[type_checking]
+mode = "strict""#,
+        )
+        .unwrap();
         fs::write(
             &pyproject_path,
-            r#"[tool.beacon]
+            r#"[tool.beacon.type_checking]
 mode = "loose""#,
         )
         .unwrap();
 
         let config = Config::discover_and_load(temp_dir.path()).unwrap();
-        assert_eq!(config.mode, TypeCheckingMode::Strict);
+        assert_eq!(config.type_checking.mode, TypeCheckingMode::Strict);
     }
 
     #[test]
     fn test_update_from_value_preserves_defaults() {
         let json_str = r#"{
-            "mode": "strict"
+            "typeChecking": {
+                "mode": "strict"
+            }
         }"#;
 
         let json_value: serde_json::Value = serde_json::from_str(json_str).unwrap();
@@ -646,7 +721,7 @@ mode = "loose""#,
 
         config.update_from_value(json_value);
 
-        assert_eq!(config.mode, TypeCheckingMode::Strict);
+        assert_eq!(config.type_checking.mode, TypeCheckingMode::Strict);
         assert_eq!(config.python_version, original_version);
     }
 
@@ -727,7 +802,9 @@ parameter_names = true
     fn test_inlay_hints_in_beacon_toml() {
         let temp_dir = TempDir::new().unwrap();
         let beacon_toml_path = temp_dir.path().join("beacon.toml");
-        let toml_content = r#"mode = "strict"
+        let toml_content = r#"
+[type_checking]
+mode = "strict"
 
 [inlay_hints]
 enable = true
@@ -739,7 +816,7 @@ parameter_names = true
 
         let config = Config::discover_and_load(temp_dir.path()).unwrap();
 
-        assert_eq!(config.mode, TypeCheckingMode::Strict);
+        assert_eq!(config.type_checking.mode, TypeCheckingMode::Strict);
         assert!(config.inlay_hints.enable);
         assert!(!config.inlay_hints.variable_types);
         assert!(config.inlay_hints.parameter_names);
@@ -907,20 +984,23 @@ parameter_names = true
     fn test_combined_configuration_from_toml() {
         let temp_dir = TempDir::new().unwrap();
         let beacon_toml_path = temp_dir.path().join("beacon.toml");
-        let toml_content = r#"mode = "strict"
+        let toml_content = r#"
 python_version = "3.11"
 source_roots = ["/custom/src"]
 exclude_patterns = ["venv", ".venv"]
 stub_paths = ["/custom/stubs"]
 unresolved_import_severity = "error"
 circular_import_severity = "info"
+
+[type_checking]
+mode = "strict"
 "#;
 
         fs::write(&beacon_toml_path, toml_content).unwrap();
 
         let config = Config::discover_and_load(temp_dir.path()).unwrap();
 
-        assert_eq!(config.mode, TypeCheckingMode::Strict);
+        assert_eq!(config.type_checking.mode, TypeCheckingMode::Strict);
         assert_eq!(config.python_version, PythonVersion::Py311);
         assert_eq!(config.source_roots.len(), 1);
         assert_eq!(config.source_roots[0], PathBuf::from("/custom/src"));
@@ -1010,5 +1090,112 @@ trailing_commas = "always"
 
         assert_eq!(config.formatting.enabled, original_enabled);
         assert_eq!(config.formatting.line_length, 79);
+    }
+
+    #[test]
+    fn test_type_checking_mode_validation() {
+        let strict = TypeCheckingMode::Strict;
+        let balanced = TypeCheckingMode::Balanced;
+        let loose = TypeCheckingMode::Loose;
+
+        assert!(strict.validate().is_ok());
+        assert!(balanced.validate().is_ok());
+        assert!(loose.validate().is_ok());
+    }
+
+    #[test]
+    fn test_type_checking_mode_requires_annotations() {
+        assert!(TypeCheckingMode::Strict.requires_annotations());
+        assert!(!TypeCheckingMode::Balanced.requires_annotations());
+        assert!(!TypeCheckingMode::Loose.requires_annotations());
+    }
+
+    #[test]
+    fn test_type_checking_mode_allows_implicit_any() {
+        assert!(!TypeCheckingMode::Strict.allows_implicit_any());
+        assert!(!TypeCheckingMode::Balanced.allows_implicit_any());
+        assert!(TypeCheckingMode::Loose.allows_implicit_any());
+    }
+
+    #[test]
+    fn test_type_checking_mode_missing_annotation_severity() {
+        assert_eq!(
+            TypeCheckingMode::Strict.missing_annotation_severity(),
+            Some(DiagnosticSeverity::Error)
+        );
+        assert_eq!(
+            TypeCheckingMode::Balanced.missing_annotation_severity(),
+            Some(DiagnosticSeverity::Warning)
+        );
+        assert_eq!(TypeCheckingMode::Loose.missing_annotation_severity(), None);
+    }
+
+    #[test]
+    fn test_type_checking_config_validation() {
+        let config = TypeCheckingConfig { mode: TypeCheckingMode::Strict };
+        assert!(config.validate().is_ok());
+
+        let config = TypeCheckingConfig { mode: TypeCheckingMode::Balanced };
+        assert!(config.validate().is_ok());
+
+        let config = TypeCheckingConfig { mode: TypeCheckingMode::Loose };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_type_checking_config_default() {
+        let config = TypeCheckingConfig::default();
+        assert_eq!(config.mode, TypeCheckingMode::Balanced);
+    }
+
+    #[test]
+    fn test_type_checking_config_new() {
+        let config = TypeCheckingConfig::new();
+        assert_eq!(config.mode, TypeCheckingMode::Balanced);
+    }
+
+    #[test]
+    fn test_config_validates_type_checking() {
+        let config =
+            Config { type_checking: TypeCheckingConfig { mode: TypeCheckingMode::Strict }, ..Default::default() };
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_type_checking_serialization() {
+        let config = TypeCheckingConfig { mode: TypeCheckingMode::Strict };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: TypeCheckingConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.mode, deserialized.mode);
+    }
+
+    #[test]
+    fn test_type_checking_from_json() {
+        let json_str = r#"{"mode": "strict"}"#;
+        let config: TypeCheckingConfig = serde_json::from_str(json_str).unwrap();
+        assert_eq!(config.mode, TypeCheckingMode::Strict);
+
+        let json_str = r#"{"mode": "balanced"}"#;
+        let config: TypeCheckingConfig = serde_json::from_str(json_str).unwrap();
+        assert_eq!(config.mode, TypeCheckingMode::Balanced);
+
+        let json_str = r#"{"mode": "loose"}"#;
+        let config: TypeCheckingConfig = serde_json::from_str(json_str).unwrap();
+        assert_eq!(config.mode, TypeCheckingMode::Loose);
+    }
+
+    #[test]
+    fn test_type_checking_from_toml() {
+        let toml_str = r#"mode = "strict""#;
+        let config: TypeCheckingConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.mode, TypeCheckingMode::Strict);
+
+        let toml_str = r#"mode = "balanced""#;
+        let config: TypeCheckingConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.mode, TypeCheckingMode::Balanced);
+
+        let toml_str = r#"mode = "loose""#;
+        let config: TypeCheckingConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.mode, TypeCheckingMode::Loose);
     }
 }
