@@ -4,12 +4,63 @@
 
 ### Added
 
-- Comprehensive cache architecture documentation covering multi-layer caching system, content hashing validation, and invalidation strategies
+### Changed
+
+### Fixed
+
+## [0.3.0] - 2025-11-19
+
+### Added
+
+- Pattern matching type narrowing with guard support: match statements now properly narrow types in guarded cases using existing type predicate infrastructure
+    - `a15a33d`
+- TypeVar bounds and constraints validation: constraint solver now validates bounds and constraints when instantiating TypeVars
+    - `9e7fc3c`
+- Generator/AsyncGenerator/Coroutine mixed variance support: proper handling of invariant, covariant, and contravariant type parameters in async generators
+    - `74b0193`
+- Protocol inheritance checking: transitive protocol inheritance now properly validated across complex inheritance hierarchies
+    - `74b0193`
+- Comprehensive constant expression evaluator supporting all Python comparison operators (==, !=, <, <=, >, >=, is, is not, in, not in), dict/set literals, and parenthesized expressions for guard analysis
+    - `a15a33d`
+- Guard-aware pattern exhaustiveness checking: patterns with guards no longer incorrectly contribute to exhaustiveness coverage
+    - `a15a33d`
+- Stress tests for deeply nested generics and multiple inheritance scenarios
+    - `74b0193`
 
 ### Changed
 
-- Consolidated planning documents: transformed ROADMAP.md into comprehensive release plan to v1.0 (19 releases), refactored TODO.md to focus on current active milestone and tech debt
-- Added documentation with detailed cache behavior descriptions & configuration options
+- Improved type display formatting in diagnostics for better readability
+    - `74b0193`
+- Better error recovery for partial type inference failures across the type checker
+    - `74b0193`
+
+### Fixed
+
+- Pattern matching type inference edge cases with Python-specific semantics:
+    - bool now correctly treated as subtype of int in pattern matching (case int() matches bool)
+    - Inheritance checking for class patterns now uses ClassRegistry
+    - Built-in type handling in pattern narrowing corrected
+    - `dcab864`
+- None pattern exhaustiveness bug: case None is now properly recognized in union exhaustiveness checking
+    - `dcab864`
+- Union type simplification now removes redundant types correctly
+    - `dcab864`
+- Recursive type handling improvements including ForAll unification and recursive classes
+    - `dcab864`
+- Variance unification corner cases in complex generic hierarchies and multi-parameter generic types
+    - `1ba8c08`
+- Generic type inference with multiple constraints now handles TypeVar bounds correctly
+    - `1ba8c08`
+- Protocol satisfaction checking with variance: protocols now respect variance annotations during subtyping checks
+    - `1ba8c08`
+
+## [0.2.1] - 2025-11-14
+
+<!-- TODO: Fill out v0.2.1 release notes -->
+
+## [0.2.0] - 2025-11-14
+
+<!-- TODO: Fill out v0.2.0 release notes -->
 
 ## [0.1.0] - 2025-11-09
 

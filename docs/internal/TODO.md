@@ -4,52 +4,6 @@ Current milestone tasks and technical debt tracking. All integration tests are t
 
 See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
-## Type Checker Bugs & Enhancements
-
-**Priority**: v0.3.0 focus
-
-Known issues with HM type inference that need fixing:
-
-### Fixes/Edge Cases
-
-- [x] Pattern matching type inference edge cases
-- [x] None pattern exhaustiveness bug (case None: not recognized in unions)
-
-#### Core Type System Enhancement
-
-- [x] Union type simplification (remove redundant types)
-- [x] Recursive type handling improvements (ForAll unification, recursive classes)
-
-#### Variance & Protocols
-
-- [x] Variance unification corner cases in complex generic hierarchies
-- [x] Generic type inference with multiple constraints
-- [x] Protocol satisfaction checking with variance
-- [x] Generator/AsyncGenerator/Coroutine mixed variance support
-
-#### Pattern Matching & Narrowing
-
-- [x] Type narrowing in match statements with guards
-- [x] Pattern exhaustiveness/reachability checker should account for guards (patterns with guards do not contribute to exhaustiveness coverage)
-- [x] Constant expression evaluator edge cases
-
-#### TypeVar Bounds & Constraints
-
-- [x] Update constraint solver to validate constraints when instantiating TypeVars
-
-### Ergonomics
-
-- [x] Better error recovery for partial type inference failures
-- [x] Improve type display formatting in diagnostics
-- [x] Protocol inheritance and composition edge cases
-
-### Test Coverage
-
-- [x] Improve test coverage for generic types
-- [x] Add stress tests for deeply nested generics
-- [x] Test type inference with multiple inheritance
-- [x] Add tests for Generator/AsyncGenerator/Coroutine with mixed variance
-
 ## Typeshed Integration
 
 **Priority**: v0.5.0 focus

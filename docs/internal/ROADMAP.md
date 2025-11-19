@@ -15,7 +15,7 @@
 | ------- | ------------------------------------------ | ------------------------------------------- | ------- |
 | v0.1.0  | Baseline formatter + parser + analyzer     | Initial release                             | shipped |
 | v0.2.0  | Cache granularity & selective invalidation | Merge ft/cache-granularity, import tracking | ready   |
-| v0.3.0  | Type checker bug fixes                     | Fix known HM issues, improve test coverage  | planned |
+| v0.3.0  | Type checker bug fixes                     | Fix known HM issues, improve test coverage  | [Completed & cut 2025-11-19](https://github.com/stormlightlabs/beacon/releases/tag/v0.3.0) |
 | v0.4.0  | Type checking modes                        | Implement strict/balanced/loose enforcement | planned |
 | v0.5.0  | Stdlib stubs & error messages              | Expand stubs, "did you mean" suggestions    | planned |
 | v0.6.0  | Cross-file static analysis                 | Workspace-aware CFG, import/export tracking | planned |
@@ -48,20 +48,7 @@
 
 ### v0.3.0 - Type Checker Bug Fixes
 
-**Goals:**
-
-- Audit and fix known HM inference bugs
-- Fix failing/skipped type checker tests
-- Improve pattern matching type inference edge cases
-- Fix variance unification corner cases
-- Add comprehensive test coverage for generic types
-
-**Requirements:**
-
-- Zero skipped type checker tests
-- Full test suite passing
-- Regression tests for all fixed bugs
-- Document known limitations
+[Completed & cut 2025-11-19](https://github.com/stormlightlabs/beacon/releases/tag/v0.3.0)
 
 ### v0.4.0 - Type Checking Modes
 
