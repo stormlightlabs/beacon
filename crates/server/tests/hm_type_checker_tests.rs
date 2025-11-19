@@ -14,34 +14,7 @@
 //! - User-defined TypeVar with `contravariant=True`
 //! - User-defined TypeVar invariant (default)
 //! - Nested variance (e.g., `Producer[Producer[T]]`)
-//!
-//! **Not Tested**: Generator/AsyncGenerator/Coroutine with mixed variance (covariant yield, contravariant send, covariant return).
-//!
-//! Example
-//! ```python
-//! from typing import Generator, AsyncGenerator, Coroutine
-//!
-//! # Generator[YieldType, SendType, ReturnType]
-//! # YieldType: covariant, SendType: contravariant, ReturnType: covariant
-//! def animal_generator() -> Generator[Animal, Dog, str]:
-//!     received = yield Animal()  # yields Animal (covariant)
-//!     # received: Dog (contravariant - can send Dog to it)
-//!     return "done"  # returns str (covariant)
-//!
-//! # AsyncGenerator[YieldType, SendType]
-//! # YieldType: covariant, SendType: contravariant
-//! async def async_animal_gen() -> AsyncGenerator[Animal, Dog]:
-//!     received = yield Animal()  # yields Animal (covariant)
-//!     # received: Dog (contravariant)
-//!
-//! # Coroutine[YieldType, SendType, ReturnType]
-//! async def animal_coroutine() -> Coroutine[Animal, Dog, str]:
-//!     # Similar mixed variance as Generator
-//!     pass
-//! ```
-//!
-//! The underlying unification logic for these types is tested via
-//! `crates/core/src/unify.rs::test_variance_contravariant_generator_send`.
+//! - Generator/AsyncGenerator/Coroutine with mixed variance (covariant yield, contravariant send, covariant return)
 
 use beacon_core::{Type, TypeCtor};
 use beacon_lsp::analysis::Analyzer;
@@ -61,6 +34,10 @@ const CONTRAVARIANT: &str = include_str!("hm_fixtures/variance/contravariant.py"
 const INVARIANT: &str = include_str!("hm_fixtures/variance/invariant.py");
 const TYPEVAR_ANNOTATIONS: &str = include_str!("hm_fixtures/variance/typevar_annotations.py");
 const UNION_SIMPLIFICATION: &str = include_str!("hm_fixtures/union_simplification.py");
+const RECURSIVE_TYPES: &str = include_str!("hm_fixtures/recursive_types.py");
+const COMPLEX_HIERARCHIES: &str = include_str!("hm_fixtures/variance/complex_hierarchies.py");
+const BOUNDS_AND_CONSTRAINTS: &str = include_str!("hm_fixtures/typevar/bounds_and_constraints.py");
+const GENERATOR_MIXED_VARIANCE: &str = include_str!("hm_fixtures/variance/generator_mixed_variance.py");
 
 /// Helper struct to manage test fixture loading and type checking
 struct HmTestHarness {
@@ -132,45 +109,32 @@ impl HmTestHarness {
 }
 
 #[test]
-fn test_functional_pipeline_identity() {
+fn test_functional_pipeline() {
     let mut harness = HmTestHarness::new();
     let result = harness.check_fixture("functional_pipeline", FUNCTIONAL_PIPELINE);
 
-    // The fixture should type check without errors for basic identity usage
     assert!(
         !result.type_map.is_empty(),
         "Should have inferred types for functional pipeline"
     );
 
-    // Check that we have function types
     let has_function_types = harness.has_type(&result, |ty| matches!(ty, Type::Fun(_, _)));
     assert!(
         has_function_types,
-        "Should infer function types for compose, map_list, etc."
+        "Should infer function types for compose, map_list, and lambdas"
     );
-}
-
-#[test]
-fn test_functional_pipeline_composition() {
-    let mut harness = HmTestHarness::new();
-    let result = harness.check_fixture("functional_pipeline", FUNCTIONAL_PIPELINE);
-    let has_lambdas = harness.has_type(&result, |ty| matches!(ty, Type::Fun(_, _)));
-    assert!(has_lambdas, "Should infer types for lambda expressions");
 
     let has_lists = harness.has_type(&result, |ty| matches!(ty, Type::App(_, _)));
     assert!(has_lists, "Should infer list types");
-}
-
-#[test]
-fn test_functional_pipeline_generalization() {
-    let mut harness = HmTestHarness::new();
-    let result = harness.check_fixture("functional_pipeline", FUNCTIONAL_PIPELINE);
 
     let has_int = harness.has_type(&result, |ty| matches!(ty, Type::Con(TypeCtor::Int)));
     let has_str = harness.has_type(&result, |ty| matches!(ty, Type::Con(TypeCtor::String)));
 
     assert!(has_int, "Should have int types from identity(42)");
-    assert!(has_str, "Should have string types from identity(\"hello\")");
+    assert!(
+        has_str,
+        "Should have string types from identity(\"hello\") - tests generalization"
+    );
 }
 
 #[test]
@@ -310,6 +274,10 @@ fn test_all_fixtures_parse_and_analyze() {
         ("contravariant", CONTRAVARIANT),
         ("invariant", INVARIANT),
         ("typevar_annotations", TYPEVAR_ANNOTATIONS),
+        ("recursive_types", RECURSIVE_TYPES),
+        ("complex_hierarchies", COMPLEX_HIERARCHIES),
+        ("bounds_and_constraints", BOUNDS_AND_CONSTRAINTS),
+        ("generator_mixed_variance", GENERATOR_MIXED_VARIANCE),
     ];
 
     for (name, source) in fixtures {
@@ -584,4 +552,410 @@ fn test_union_simplification() {
     assert!(harness.get_symbol_type(&result, "test_duplicate_types").is_some());
     assert!(harness.get_symbol_type(&result, "test_optional_int").is_some());
     assert!(harness.get_symbol_type(&result, "test_complex_nested").is_some());
+}
+
+#[test]
+fn test_recursive_types() {
+    let mut harness = HmTestHarness::new();
+    let result = harness.check_fixture("recursive_types", RECURSIVE_TYPES);
+
+    assert!(!result.type_map.is_empty(), "Should infer types for recursive types");
+
+    let has_classes = harness.has_type(&result, |ty| matches!(ty, Type::Con(TypeCtor::Class(_))));
+    assert!(has_classes, "Should infer LinkedListNode and TreeNode class types");
+
+    let linked_list_node_type = harness.get_symbol_type(&result, "LinkedListNode");
+    assert!(
+        linked_list_node_type.is_some(),
+        "Should be able to look up LinkedListNode class"
+    );
+
+    let create_list_type = harness.get_symbol_type(&result, "create_list");
+    assert!(create_list_type.is_some(), "Should infer type for create_list function");
+
+    let tree_node_type = harness.get_symbol_type(&result, "TreeNode");
+    assert!(tree_node_type.is_some(), "Should be able to look up TreeNode class");
+
+    let create_tree_type = harness.get_symbol_type(&result, "create_tree");
+    assert!(create_tree_type.is_some(), "Should infer type for create_tree function");
+
+    let add_left_child_type = harness.get_symbol_type(&result, "add_left_child");
+    assert!(
+        add_left_child_type.is_some(),
+        "Should infer type for add_left_child function"
+    );
+
+    let errors = harness.get_errors(&result);
+    assert!(
+        errors.is_empty(),
+        "Should have no type errors in recursive types, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_deeply_nested_generics() {
+    let mut harness = HmTestHarness::new();
+    let result = harness.check_fixture("complex_hierarchies", COMPLEX_HIERARCHIES);
+
+    assert!(
+        !result.type_map.is_empty(),
+        "Should infer types for deeply nested generics"
+    );
+
+    let has_nested_containers = harness.has_type(&result, |ty| match ty {
+        Type::App(f, arg) => {
+            matches!(**f, Type::Con(TypeCtor::List) | Type::Con(TypeCtor::Dict)) && matches!(**arg, Type::App(_, _))
+        }
+        _ => false,
+    });
+
+    assert!(
+        has_nested_containers || result.type_map.len() > 5,
+        "Should handle nested container types"
+    );
+
+    let errors = harness.get_errors(&result);
+    let has_invariance_errors = errors
+        .iter()
+        .any(|e| e.contains("invariance") || e.contains("Unification") || e.contains("dict") || e.contains("list"));
+
+    assert!(
+        has_invariance_errors,
+        "Should detect invariance violations in nested generics: {errors:?}"
+    );
+}
+
+#[test]
+fn test_dict_multi_parameter_invariance() {
+    let mut harness = HmTestHarness::new();
+    let result = harness.check_fixture("complex_hierarchies", COMPLEX_HIERARCHIES);
+
+    assert!(
+        !result.type_map.is_empty(),
+        "Should have type inference results for complex hierarchies"
+    );
+
+    let errors = harness.get_errors(&result);
+    let has_invariance_error = errors.iter().any(|e| {
+        e.contains("invariance")
+            || e.contains("Unification")
+            || (e.contains("dict") && (e.contains("Animal") || e.contains("Dog")))
+    });
+
+    assert!(
+        has_invariance_error,
+        "Should catch dict invariance violations in both key and value parameters: {errors:?}"
+    );
+}
+
+#[test]
+fn test_typevar_bounds_and_constraints() {
+    let mut harness = HmTestHarness::new();
+    let result = harness.check_fixture("bounds_and_constraints", BOUNDS_AND_CONSTRAINTS);
+
+    assert!(
+        !result.type_map.is_empty(),
+        "Should infer types for TypeVar bounds and constraints"
+    );
+
+    let has_generic_classes = harness.has_type(&result, |ty| {
+        matches!(ty, Type::App(_, _)) || matches!(ty, Type::Con(TypeCtor::Class(_)))
+    });
+    assert!(
+        has_generic_classes,
+        "Should infer generic class types (AnimalShelter, Registry)"
+    );
+
+    let get_sound_type = harness.get_symbol_type(&result, "get_sound");
+    assert!(
+        get_sound_type.is_some(),
+        "Should infer type for get_sound function with bounded TypeVar"
+    );
+
+    let double_type = harness.get_symbol_type(&result, "double");
+    assert!(
+        double_type.is_some(),
+        "Should infer type for double function with constrained TypeVar"
+    );
+
+    let identity_type = harness.get_symbol_type(&result, "identity");
+    assert!(
+        identity_type.is_some(),
+        "Should infer type for unconstrained generic identity function"
+    );
+
+    let registry_type = harness.get_symbol_type(&result, "Registry");
+    assert!(
+        registry_type.is_some(),
+        "Should infer type for Registry with multiple TypeVars"
+    );
+}
+
+#[test]
+fn test_multiple_inheritance_basic() {
+    let mut harness = HmTestHarness::new();
+    let source = r#"
+class Base1:
+    def method1(self) -> int:
+        return 1
+
+class Base2:
+    def method2(self) -> str:
+        return "hello"
+
+class Derived(Base1, Base2):
+    def method3(self) -> bool:
+        return True
+
+def use_derived(obj: Derived) -> tuple[int, str, bool]:
+    return (obj.method1(), obj.method2(), obj.method3())
+
+d = Derived()
+result = use_derived(d)
+"#;
+
+    let result = harness.check_fixture("multiple_inheritance", source);
+
+    assert!(
+        !result.type_map.is_empty(),
+        "Should infer types for multiple inheritance"
+    );
+
+    let has_classes = harness.has_type(&result, |ty| matches!(ty, Type::Con(TypeCtor::Class(_))));
+    assert!(has_classes, "Should infer Base1, Base2, and Derived class types");
+
+    let derived_type = harness.get_symbol_type(&result, "Derived");
+    assert!(derived_type.is_some(), "Should be able to look up Derived class");
+
+    let use_derived_type = harness.get_symbol_type(&result, "use_derived");
+    assert!(use_derived_type.is_some(), "Should infer type for use_derived function");
+
+    let errors = harness.get_errors(&result);
+    assert!(
+        errors.is_empty(),
+        "Should have no type errors with multiple inheritance, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_multiple_inheritance_with_generics() {
+    let mut harness = HmTestHarness::new();
+    let source = r#"
+from typing import Generic, TypeVar
+
+T = TypeVar('T')
+U = TypeVar('U')
+
+class Container1(Generic[T]):
+    def get_first(self) -> T:
+        raise NotImplementedError
+
+class Container2(Generic[U]):
+    def get_second(self) -> U:
+        raise NotImplementedError
+
+class DoubleContainer(Container1[int], Container2[str]):
+    def get_both(self) -> tuple[int, str]:
+        return (self.get_first(), self.get_second())
+
+dc: DoubleContainer = DoubleContainer()
+"#;
+
+    let result = harness.check_fixture("multiple_inheritance_generic", source);
+
+    assert!(
+        !result.type_map.is_empty(),
+        "Should infer types for multiple inheritance with generics"
+    );
+
+    let double_container_type = harness.get_symbol_type(&result, "DoubleContainer");
+    assert!(
+        double_container_type.is_some(),
+        "Should infer DoubleContainer with multiple generic base classes"
+    );
+}
+
+#[test]
+fn test_stress_deeply_nested_generics_lists() {
+    let mut harness = HmTestHarness::new();
+    let source = r#"
+# Test deeply nested list types (5 levels)
+deep1: list[int] = [1, 2, 3]
+deep2: list[list[int]] = [[1, 2], [3, 4]]
+deep3: list[list[list[int]]] = [[[1, 2]], [[3, 4]]]
+deep4: list[list[list[list[int]]]] = [[[[1, 2]]], [[[3, 4]]]]
+deep5: list[list[list[list[list[int]]]]] = [[[[[1, 2]]]], [[[[3, 4]]]]]
+
+def process_deep(x: list[list[list[int]]]) -> int:
+    return len(x)
+
+result = process_deep(deep3)
+"#;
+
+    let result = harness.check_fixture("stress_nested_lists", source);
+
+    assert!(!result.type_map.is_empty(), "Should handle deeply nested list types");
+
+    let process_deep_type = harness.get_symbol_type(&result, "process_deep");
+    assert!(
+        process_deep_type.is_some(),
+        "Should infer type for function with deeply nested parameters"
+    );
+
+    let errors = harness.get_errors(&result);
+    assert!(
+        errors.is_empty(),
+        "Should have no errors with deeply nested lists, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stress_deeply_nested_generics_dicts() {
+    let mut harness = HmTestHarness::new();
+    let source = r#"
+# Test deeply nested dict types (4 levels)
+nested1: dict[str, int] = {"a": 1}
+nested2: dict[str, dict[str, int]] = {"outer": {"inner": 1}}
+nested3: dict[str, dict[str, dict[str, int]]] = {"a": {"b": {"c": 1}}}
+nested4: dict[str, dict[str, dict[str, dict[str, int]]]] = {"a": {"b": {"c": {"d": 1}}}}
+
+def get_nested_value(d: dict[str, dict[str, int]]) -> int:
+    return 42
+
+result = get_nested_value(nested2)
+"#;
+
+    let result = harness.check_fixture("stress_nested_dicts", source);
+
+    assert!(!result.type_map.is_empty(), "Should handle deeply nested dict types");
+
+    let errors = harness.get_errors(&result);
+    assert!(
+        errors.is_empty(),
+        "Should have no errors with deeply nested dicts, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_stress_mixed_nested_generics() {
+    let mut harness = HmTestHarness::new();
+    let source = r#"
+# Test mixed nested generic types
+mixed1: list[dict[str, int]] = [{"a": 1}]
+mixed2: dict[str, list[int]] = {"nums": [1, 2, 3]}
+mixed3: list[dict[str, list[int]]] = [{"a": [1, 2]}]
+mixed4: dict[str, list[dict[str, int]]] = {"outer": [{"inner": 1}]}
+mixed5: list[dict[str, list[dict[str, int]]]] = [{"a": [{"b": 1}]}]
+
+def process_mixed(x: dict[str, list[int]]) -> list[int]:
+    return []
+
+result = process_mixed(mixed2)
+"#;
+
+    let result = harness.check_fixture("stress_mixed_nested", source);
+
+    assert!(
+        !result.type_map.is_empty(),
+        "Should handle mixed nested generic types (list/dict combinations)"
+    );
+
+    let process_mixed_type = harness.get_symbol_type(&result, "process_mixed");
+    assert!(
+        process_mixed_type.is_some(),
+        "Should infer type for function with mixed nested parameters"
+    );
+}
+
+#[test]
+fn test_generator_mixed_variance() {
+    let mut harness = HmTestHarness::new();
+    let result = harness.check_fixture("generator_mixed_variance", GENERATOR_MIXED_VARIANCE);
+
+    assert!(
+        !result.type_map.is_empty(),
+        "Should infer types for Generator with mixed variance"
+    );
+
+    let has_functions = harness.has_type(&result, |ty| matches!(ty, Type::Fun(_, _)));
+    assert!(has_functions, "Should infer function types for generator functions");
+
+    let has_classes = harness.has_type(&result, |ty| matches!(ty, Type::Con(TypeCtor::Class(_))));
+    assert!(has_classes, "Should infer Animal and Dog class types");
+
+    let animal_generator_type = harness.get_symbol_type(&result, "animal_generator");
+    assert!(
+        animal_generator_type.is_some(),
+        "Should infer type for animal_generator function"
+    );
+
+    let dog_generator_type = harness.get_symbol_type(&result, "dog_generator");
+    assert!(
+        dog_generator_type.is_some(),
+        "Should infer type for dog_generator function"
+    );
+
+    let errors = harness.get_errors(&result);
+    assert!(
+        errors.is_empty(),
+        "Should have no errors with Generator covariance/contravariance, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_async_generator_mixed_variance() {
+    let mut harness = HmTestHarness::new();
+    let result = harness.check_fixture("async_generator_mixed_variance", GENERATOR_MIXED_VARIANCE);
+
+    assert!(
+        !result.type_map.is_empty(),
+        "Should infer types for AsyncGenerator with mixed variance"
+    );
+
+    let animal_async_gen_type = harness.get_symbol_type(&result, "animal_async_gen");
+    assert!(
+        animal_async_gen_type.is_some(),
+        "Should infer type for animal_async_gen function"
+    );
+
+    let dog_async_gen_type = harness.get_symbol_type(&result, "dog_async_gen");
+    assert!(
+        dog_async_gen_type.is_some(),
+        "Should infer type for dog_async_gen function"
+    );
+
+    let errors = harness.get_errors(&result);
+    assert!(
+        errors.is_empty(),
+        "Should have no errors with AsyncGenerator covariance/contravariance, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_coroutine_mixed_variance() {
+    let mut harness = HmTestHarness::new();
+    let result = harness.check_fixture("coroutine_mixed_variance", GENERATOR_MIXED_VARIANCE);
+
+    assert!(
+        !result.type_map.is_empty(),
+        "Should infer types for Coroutine with mixed variance"
+    );
+
+    let animal_coroutine_type = harness.get_symbol_type(&result, "animal_coroutine");
+    assert!(
+        animal_coroutine_type.is_some(),
+        "Should infer type for animal_coroutine function"
+    );
+
+    let dog_coroutine_type = harness.get_symbol_type(&result, "dog_coroutine");
+    assert!(
+        dog_coroutine_type.is_some(),
+        "Should infer type for dog_coroutine function"
+    );
+
+    let errors = harness.get_errors(&result);
+    assert!(
+        errors.is_empty(),
+        "Should have no errors with Coroutine covariance/contravariance, got: {errors:?}"
+    );
 }

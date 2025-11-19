@@ -25,6 +25,7 @@ Known issues with HM type inference that need fixing:
 - [x] Variance unification corner cases in complex generic hierarchies
 - [x] Generic type inference with multiple constraints
 - [x] Protocol satisfaction checking with variance
+- [x] Generator/AsyncGenerator/Coroutine mixed variance support
 
 #### Pattern Matching & Narrowing
 
@@ -38,15 +39,16 @@ Known issues with HM type inference that need fixing:
 
 ### Ergonomics
 
-- [ ] Better error recovery for partial type inference failures
-- [ ] Improve type display formatting in diagnostics
-- [ ] Protocol inheritance and composition edge cases
+- [x] Better error recovery for partial type inference failures
+- [x] Improve type display formatting in diagnostics
+- [x] Protocol inheritance and composition edge cases
 
 ### Test Coverage
 
-- [ ] Improve test coverage for generic types
-- [ ] Add stress tests for deeply nested generics
-- [ ] Test type inference with multiple inheritance
+- [x] Improve test coverage for generic types
+- [x] Add stress tests for deeply nested generics
+- [x] Test type inference with multiple inheritance
+- [x] Add tests for Generator/AsyncGenerator/Coroutine with mixed variance
 
 ## Typeshed Integration
 

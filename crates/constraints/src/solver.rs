@@ -6,7 +6,7 @@ use crate::{
 
 use beacon_core::{
     BeaconError, ClassMetadata, ClassRegistry, MethodSignature, ProtocolChecker, ProtocolName, Result, Subst, Type,
-    TypeCtor, TypeError, TypeVar, Unifier,
+    TypeCtor, TypeError, TypeVar, TypeVarConstraintRegistry, Unifier,
 };
 use std::{collections::HashSet, result};
 
@@ -55,6 +55,18 @@ fn check_user_defined_protocol(
     ty: &Type, protocol_name: &str, class_registry: &ClassRegistry,
     typevar_registry: &beacon_core::TypeVarConstraintRegistry,
 ) -> bool {
+    check_user_defined_protocol_impl(ty, protocol_name, class_registry, typevar_registry, &mut HashSet::new())
+}
+
+/// Internal implementation of protocol checking with cycle detection
+fn check_user_defined_protocol_impl(
+    ty: &Type, protocol_name: &str, class_registry: &ClassRegistry,
+    typevar_registry: &beacon_core::TypeVarConstraintRegistry, visited: &mut HashSet<String>,
+) -> bool {
+    if !visited.insert(protocol_name.to_string()) {
+        return true;
+    }
+
     let protocol_meta = match class_registry.get_class(protocol_name) {
         Some(meta) if meta.is_protocol => meta,
         _ => return false,
@@ -120,6 +132,25 @@ fn check_user_defined_protocol(
                     if !covariant_ok {
                         all_methods_ok = false;
                         break;
+                    }
+                }
+
+                if all_methods_ok {
+                    for base_name in &protocol_meta.base_classes {
+                        if let Some(base_meta) = class_registry.get_class(base_name) {
+                            if base_meta.is_protocol
+                                && !check_user_defined_protocol_impl(
+                                    ty,
+                                    base_name,
+                                    class_registry,
+                                    typevar_registry,
+                                    visited,
+                                )
+                            {
+                                all_methods_ok = false;
+                                break;
+                            }
+                        }
                     }
                 }
 
@@ -637,20 +668,24 @@ fn method_signatures_compatible(
 /// 2. Infers the type parameter from actual's methods
 /// 3. Checks if the inferred protocol type is compatible with expected using variance
 fn protocol_instantiation_compatible(
-    actual: &Type, expected: &Type, class_registry: &ClassRegistry,
-    typevar_registry: &beacon_core::TypeVarConstraintRegistry,
+    actual: &Type, expected: &Type, cls_registry: &ClassRegistry, tv_registry: &TypeVarConstraintRegistry,
 ) -> bool {
-    let (protocol_ctor, expected_type_args) = match expected.unapply() {
-        Some((ctor, args)) => (ctor, args),
-        None => return false,
+    let (protocol_name, expected_type_args) = match expected {
+        Type::Con(TypeCtor::Protocol(Some(name), _)) => (name, vec![]),
+
+        _ => {
+            let (protocol_ctor, args) = match expected.unapply() {
+                Some((ctor, args)) => (ctor, args),
+                None => return false,
+            };
+            match protocol_ctor {
+                TypeCtor::Protocol(Some(name), _) => (name, args),
+                _ => return false,
+            }
+        }
     };
 
-    let protocol_name = match protocol_ctor {
-        TypeCtor::Protocol(Some(name), _) => name,
-        _ => return false,
-    };
-
-    let protocol_meta = match class_registry.get_class(protocol_name) {
+    let protocol_meta = match cls_registry.get_class(protocol_name) {
         Some(meta) if meta.is_protocol => meta,
         _ => return false,
     };
@@ -667,7 +702,7 @@ fn protocol_instantiation_compatible(
         _ => return false,
     };
 
-    if !check_user_defined_protocol(actual, protocol_name, class_registry, typevar_registry) {
+    if !check_user_defined_protocol(actual, protocol_name, cls_registry, tv_registry) {
         return false;
     }
 
@@ -675,7 +710,7 @@ fn protocol_instantiation_compatible(
         return true;
     }
 
-    let actual_class_meta = match class_registry.get_class(actual_class_name) {
+    let actual_class_meta = match cls_registry.get_class(actual_class_name) {
         Some(meta) => meta,
         None => return false,
     };
@@ -706,7 +741,7 @@ fn protocol_instantiation_compatible(
         return false;
     }
 
-    let enriched_protocol = expected.clone().enrich_protocol_variance(class_registry);
+    let enriched_protocol = expected.clone().enrich_protocol_variance(cls_registry);
 
     let mut inferred_protocol_ty = Type::Con(TypeCtor::Protocol(
         Some(protocol_name.clone()),
@@ -788,6 +823,44 @@ fn types_compatible(
 
     if protocol_instantiation_compatible(actual, expected, class_registry, typevar_registry) {
         return true;
+    }
+
+    if generator_compatible(actual, expected, class_registry) {
+        return true;
+    }
+
+    false
+}
+
+/// Check if actual Generator/AsyncGenerator/Coroutine type is compatible with expected type considering mixed variance (covariant yield/return, contravariant send)
+fn generator_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegistry) -> bool {
+    let typevar_registry = &beacon_core::TypeVarConstraintRegistry::new();
+
+    if let (Some((actual_y, actual_s, actual_r)), Some((expected_y, expected_s, expected_r))) =
+        (actual.extract_generator_params(), expected.extract_generator_params())
+    {
+        let y_compatible = types_compatible(actual_y, expected_y, class_registry, typevar_registry);
+        let s_compatible = types_compatible(expected_s, actual_s, class_registry, typevar_registry);
+        let r_compatible = types_compatible(actual_r, expected_r, class_registry, typevar_registry);
+        return y_compatible && s_compatible && r_compatible;
+    }
+
+    if let (Some((actual_y, actual_s)), Some((expected_y, expected_s))) = (
+        actual.extract_async_generator_params(),
+        expected.extract_async_generator_params(),
+    ) {
+        let y_compatible = types_compatible(actual_y, expected_y, class_registry, typevar_registry);
+        let s_compatible = types_compatible(expected_s, actual_s, class_registry, typevar_registry);
+        return y_compatible && s_compatible;
+    }
+
+    if let (Some((actual_y, actual_s, actual_r)), Some((expected_y, expected_s, expected_r))) =
+        (actual.extract_coroutine_params(), expected.extract_coroutine_params())
+    {
+        let y_compatible = types_compatible(actual_y, expected_y, class_registry, typevar_registry);
+        let s_compatible = types_compatible(expected_s, actual_s, class_registry, typevar_registry);
+        let r_compatible = types_compatible(actual_r, expected_r, class_registry, typevar_registry);
+        return y_compatible && s_compatible && r_compatible;
     }
 
     false
@@ -969,8 +1042,8 @@ fn handle_call_args(
                                 ctx.type_errors.push(TypeErrorInfo::new(
                                     TypeError::ArgumentTypeMismatch {
                                         param_name: param_name.clone(),
-                                        expected: expected_ty.to_string(),
-                                        found: provided_ty.to_string(),
+                                        expected: expected_ty.display_for_diagnostics(),
+                                        found: provided_ty.display_for_diagnostics(),
                                     },
                                     *arg_span,
                                 ));
@@ -1056,16 +1129,75 @@ fn resolve_bound_method_type<'a>(
     method
 }
 
+/// Provide a contextual fallback type when unification fails
+///
+/// Instead of always falling back to `Any`, use context to provide a more specific type:
+/// - If one type is concrete and the other is a type variable, prefer the concrete type
+/// - For container types, preserve the container structure with Any for unknown elements
+/// - This allows partial type information to be preserved even when full inference fails
+fn contextual_fallback_type(t1: &Type, t2: &Type) -> Type {
+    match (t1, t2) {
+        (Type::Con(TypeCtor::Any), other) | (other, Type::Con(TypeCtor::Any)) => other.clone(),
+        (Type::Var(_), concrete) | (concrete, Type::Var(_)) if !matches!(concrete, Type::Var(_)) => concrete.clone(),
+        (Type::App(f1, _), Type::App(f2, _)) if extract_base_constructor(f1) == extract_base_constructor(f2) => {
+            t1.clone()
+        }
+        (Type::Union(types1), Type::Union(types2)) => {
+            let common: Vec<Type> = types1
+                .iter()
+                .filter(|t1| types2.iter().any(|t2| *t1 == t2))
+                .cloned()
+                .collect();
+
+            if !common.is_empty() { Type::union(common) } else { Type::any() }
+        }
+        _ => {
+            tracing::debug!(
+                "Type inference failed, falling back to Any for types: {} and {}",
+                t1.display_for_diagnostics(),
+                t2.display_for_diagnostics()
+            );
+            Type::any()
+        }
+    }
+}
+
+/// Try to apply a partial substitution even when unification fails
+///
+/// When unification fails, we might still have learned something useful
+/// from the successful parts of the unification attempt. This function
+/// attempts to extract and apply any partial progress.
+fn try_partial_unify(
+    t1: &Type, t2: &Type, _typevar_registry: &beacon_core::TypeVarConstraintRegistry,
+) -> Option<Subst> {
+    match (t1, t2) {
+        (Type::Var(tv), other) | (other, Type::Var(tv)) if !matches!(other, Type::Var(_)) => {
+            let fallback = contextual_fallback_type(t1, t2);
+            Some(Subst::singleton(tv.clone(), fallback))
+        }
+        _ => None,
+    }
+}
+
 /// Solve a set of constraints using beacon-core's unification algorithm
 ///
 /// Errors are accumulated rather than failing fast to provide comprehensive feedback.
+/// This implementation includes improved error recovery:
+/// - Contextual fallback types when unification fails
+/// - Partial substitution application to preserve successful inference
+/// - Enhanced tracing for debugging partial failures
 pub fn solve_constraints(
     constraint_set: ConstraintSet, class_registry: &ClassRegistry,
     typevar_registry: &beacon_core::TypeVarConstraintRegistry,
 ) -> Result<(Subst, Vec<TypeErrorInfo>)> {
+    tracing::debug!("Solving {} constraints", constraint_set.constraints.len());
     let mut subst = Subst::empty();
     let mut type_errors = Vec::new();
-    for constraint in constraint_set.constraints {
+    let total_constraints = constraint_set.constraints.len();
+
+    for (idx, constraint) in constraint_set.constraints.into_iter().enumerate() {
+        tracing::trace!("Processing constraint {}/{}", idx + 1, total_constraints);
+
         match constraint {
             Constraint::Equal(t1, t2, span) => {
                 let applied_t1 = subst.apply(&t1);
@@ -1091,8 +1223,8 @@ pub fn solve_constraints(
                             TypeError::VarianceError {
                                 position: format!("{class_name} type argument"),
                                 expected_variance: "user-defined".to_string(),
-                                got_type: applied_t1.to_string(),
-                                expected_type: applied_t2.to_string(),
+                                got_type: applied_t1.display_for_diagnostics(),
+                                expected_type: applied_t2.display_for_diagnostics(),
                             },
                             span,
                         ));
@@ -1108,10 +1240,23 @@ pub fn solve_constraints(
                                 subst = s.compose(subst);
                             }
                             Err(BeaconError::TypeError(type_err)) => {
-                                if !types_compatible(&applied_t1, &applied_t2, class_registry, typevar_registry)
-                                    && !types_compatible(&applied_t2, &applied_t1, class_registry, typevar_registry)
-                                {
+                                let are_compatible =
+                                    types_compatible(&applied_t1, &applied_t2, class_registry, typevar_registry)
+                                        || types_compatible(&applied_t2, &applied_t1, class_registry, typevar_registry);
+
+                                if !are_compatible {
                                     type_errors.push(TypeErrorInfo::new(type_err, span));
+
+                                    if let Some(partial_subst) =
+                                        try_partial_unify(&applied_t1, &applied_t2, typevar_registry)
+                                    {
+                                        tracing::debug!(
+                                            "Applied partial substitution after unification failure: {} = {}",
+                                            applied_t1.display_for_diagnostics(),
+                                            applied_t2.display_for_diagnostics()
+                                        );
+                                        subst = partial_subst.compose(subst);
+                                    }
                                 }
                             }
                             Err(_) => {}
@@ -1220,7 +1365,10 @@ pub fn solve_constraints(
 
                     if !all_have_attr {
                         type_errors.push(TypeErrorInfo::new(
-                            beacon_core::TypeError::AttributeNotFound(applied_obj.to_string(), attr_name.clone()),
+                            beacon_core::TypeError::AttributeNotFound(
+                                applied_obj.display_for_diagnostics(),
+                                attr_name.clone(),
+                            ),
                             span,
                         ));
                     } else if !attr_types.is_empty() {
@@ -1420,7 +1568,10 @@ pub fn solve_constraints(
                     Type::Var(_) => {}
                     _ => {
                         type_errors.push(TypeErrorInfo::new(
-                            beacon_core::TypeError::AttributeNotFound(applied_obj.to_string(), attr_name.clone()),
+                            beacon_core::TypeError::AttributeNotFound(
+                                applied_obj.display_for_diagnostics(),
+                                attr_name.clone(),
+                            ),
                             span,
                         ));
                     }
@@ -1485,7 +1636,11 @@ pub fn solve_constraints(
                 match result {
                     ExhaustivenessResult::Exhaustive => {}
                     ExhaustivenessResult::NonExhaustive { uncovered } => {
-                        let uncovered_str = uncovered.iter().map(|ty| ty.to_string()).collect::<Vec<_>>().join(", ");
+                        let uncovered_str = uncovered
+                            .iter()
+                            .map(|ty| ty.display_for_diagnostics())
+                            .collect::<Vec<_>>()
+                            .join(", ");
                         type_errors.push(TypeErrorInfo::new(TypeError::PatternNonExhaustive(uncovered_str), span));
                     }
                 }
@@ -1533,6 +1688,30 @@ pub fn solve_constraints(
     }
 
     let simplified_subst = simplify_substitution(subst);
+
+    tracing::debug!("Constraint solving completed: {} type errors found", type_errors.len());
+
+    if !type_errors.is_empty() {
+        tracing::debug!("Type errors summary:");
+        for (idx, error) in type_errors.iter().enumerate() {
+            tracing::debug!(
+                "  [{}] {} at {}:{}",
+                idx + 1,
+                match &error.error {
+                    TypeError::UnificationError(_, _) => "Unification error",
+                    TypeError::ArgumentTypeMismatch { .. } => "Argument type mismatch",
+                    TypeError::ArgumentCountMismatch { .. } => "Argument count mismatch",
+                    TypeError::AttributeNotFound(_, _) => "Attribute not found",
+                    TypeError::VarianceError { .. } => "Variance error",
+                    TypeError::PatternNonExhaustive(_) => "Pattern non-exhaustive",
+                    TypeError::PatternTypeMismatch { .. } => "Pattern type mismatch",
+                    _ => "Other type error",
+                },
+                error.line(),
+                error.col()
+            );
+        }
+    }
 
     Ok((simplified_subst, type_errors))
 }

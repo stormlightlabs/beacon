@@ -122,8 +122,8 @@ impl Unifier {
                                     Err(TypeError::VarianceError {
                                         position: Self::get_type_constructor_name(f1),
                                         expected_variance: "invariant".to_string(),
-                                        got_type: applied_a1.to_string(),
-                                        expected_type: applied_a2.to_string(),
+                                        got_type: applied_a1.display_for_diagnostics(),
+                                        expected_type: applied_a2.display_for_diagnostics(),
                                     }
                                     .into())
                                 }
@@ -218,7 +218,7 @@ impl Unifier {
             }
             (Type::ForAll(_, body), t) | (t, Type::ForAll(_, body)) => Self::unify_impl(body, t, registry),
             (Type::Con(TypeCtor::TypeVariable(_)), _) | (_, Type::Con(TypeCtor::TypeVariable(_))) => Ok(Subst::empty()),
-            _ => Err(TypeError::UnificationError(t1.to_string(), t2.to_string()).into()),
+            _ => Err(TypeError::UnificationError(t1.display_for_diagnostics(), t2.display_for_diagnostics()).into()),
         }
     }
 
