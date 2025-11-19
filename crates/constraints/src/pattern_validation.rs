@@ -49,8 +49,8 @@ fn validate_literal_pattern_type(literal: &AstNode, subject_type: &Type) -> Resu
 
     if !types_could_match(&pattern_type, subject_type) {
         return Err(TypeError::PatternTypeMismatch {
-            pattern_type: pattern_type.to_string(),
-            subject_type: subject_type.to_string(),
+            pattern_type: pattern_type.display_for_diagnostics(),
+            subject_type: subject_type.display_for_diagnostics(),
         });
     }
 
@@ -78,7 +78,7 @@ fn validate_class_pattern_type(
             } else {
                 Err(TypeError::PatternTypeMismatch {
                     pattern_type: format!("class {cls}"),
-                    subject_type: subject_type.to_string(),
+                    subject_type: subject_type.display_for_diagnostics(),
                 })
             }
         }
@@ -121,7 +121,7 @@ fn validate_mapping_pattern_type(subject_type: &Type) -> Result<(), TypeError> {
             } else {
                 Err(TypeError::PatternTypeMismatch {
                     pattern_type: "mapping pattern".to_string(),
-                    subject_type: subject_type.to_string(),
+                    subject_type: subject_type.display_for_diagnostics(),
                 })
             }
         }
@@ -143,7 +143,7 @@ fn validate_sequence_pattern_type(subject_type: &Type) -> Result<(), TypeError> 
             } else {
                 Err(TypeError::PatternTypeMismatch {
                     pattern_type: "sequence pattern".to_string(),
-                    subject_type: subject_type.to_string(),
+                    subject_type: subject_type.display_for_diagnostics(),
                 })
             }
         }

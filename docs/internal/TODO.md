@@ -38,8 +38,8 @@ Known issues with HM type inference that need fixing:
 
 ### Ergonomics
 
-- [ ] Better error recovery for partial type inference failures
-- [ ] Improve type display formatting in diagnostics
+- [x] Better error recovery for partial type inference failures
+- [x] Improve type display formatting in diagnostics
 - [ ] Protocol inheritance and composition edge cases
 
 ### Test Coverage
