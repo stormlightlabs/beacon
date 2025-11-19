@@ -4,9 +4,55 @@ Current milestone tasks and technical debt tracking. All integration tests are t
 
 See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
-## Typeshed Integration
+## Type Checking Modes (v0.4.0)
 
-**Priority**: v0.5.0 focus
+Implement strict/balanced/loose mode enforcement with mode-aware diagnostic filtering.
+
+### Configuration & Infrastructure
+
+- [ ] Design mode configuration schema (strict/balanced/loose)
+- [ ] Add `mode` field to workspace/file configuration with validation
+- [ ] Implement per-file mode override mechanism (e.g., `# beacon: mode=strict`)
+- [ ] Mode detection and validation in config loader
+- [ ] Integration with existing type checker context
+- [ ] LSP integration: show current mode in status/diagnostics
+
+### Strict Mode Implementation
+
+- [ ] Reject implicit Any types in function signatures
+- [ ] Require explicit return type annotations on functions
+- [ ] Require explicit parameter type annotations (no inference)
+- [ ] Error on unannotated class attributes
+- [ ] Reject bare `except:` clauses (require exception types)
+
+### Balanced Mode Implementation
+
+- [ ] Type inference with warnings on ambiguous cases
+- [ ] Warn on implicit Any from missing annotations
+- [ ] Suggest type annotations where inference is uncertain
+- [ ] Allow gradual typing (mixed annotated/unannotated code)
+
+### Loose Mode Implementation
+
+- [ ] Permissive type inference (current default behavior)
+- [ ] Minimal warnings for missing annotations
+- [ ] Allow implicit Any without errors or warnings
+- [ ] Maximum flexibility for gradual adoption
+
+### Diagnostic Filtering & Categorization
+
+- [ ] Mode-aware diagnostic severity mapping (error vs warning vs silent)
+- [ ] Filter type diagnostics based on current mode
+- [ ] Diagnostic categorization by mode level (strict-only, balanced-only, etc.)
+- [ ] Preserve existing diagnostic codes (BEA0xx) with mode context
+
+### Documentation & Testing
+
+- [ ] User guide for mode selection and trade-offs
+- [ ] Configuration examples for each mode (workspace + per-file)
+- [ ] Comprehensive mode-specific diagnostic test suite (e2e/integration)
+
+## Typeshed Integration (v0.5.0)
 
 - [ ] Implement [typeshed-stdlib-mirror](https://github.com/stormlightlabs/typeshed-stdlib-mirror) integration
     - [ ] Version-aware stub selection (3.8, 3.9, 3.10, 3.11, 3.12+)
@@ -55,9 +101,7 @@ Complex annotation parsing issues:
 - [ ] Add configuration tests
 - [ ] Document rule configuration
 
-## Snippet Engine
-
-**Priority**: v0.11.0 focus
+## Snippet Engine (v.0.11.0)
 
 ### Core Infrastructure
 
@@ -197,3 +241,5 @@ See [Logging](#logging) section below for detailed logging standards.
 
 - From 0.2.1
     - [ ] Add performance benchmarks for cache improvements
+- From 0.4.0
+    - [ ] Performance benchmarks (ensure modes don't add overhead)
