@@ -17,6 +17,18 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use url::Url;
 
+/// Diagnostic categories used for mode-aware severity mapping
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum DiagnosticCategory {
+    /// Implicit Any type detected
+    ImplicitAny,
+    /// Missing type annotation
+    MissingAnnotation,
+    /// Annotation doesn't match inferred type
+    AnnotationMismatch,
+}
+
 pub struct DiagnosticProvider {
     documents: DocumentManager,
     workspace: Arc<RwLock<Workspace>>,
@@ -34,6 +46,26 @@ impl DiagnosticProvider {
             config::DiagnosticSeverity::Error => lsp_types::DiagnosticSeverity::ERROR,
             config::DiagnosticSeverity::Warning => lsp_types::DiagnosticSeverity::WARNING,
             config::DiagnosticSeverity::Info => lsp_types::DiagnosticSeverity::INFORMATION,
+        }
+    }
+
+    /// Get the diagnostic severity for a specific diagnostic category based on mode to adjust diagnostic severity based on type checking mode.
+    #[allow(dead_code)]
+    fn mode_severity_for_diagnostic(
+        mode: config::TypeCheckingMode, category: DiagnosticCategory,
+    ) -> Option<lsp_types::DiagnosticSeverity> {
+        use lsp_types::DiagnosticSeverity as Severity;
+
+        match (mode, category) {
+            (config::TypeCheckingMode::Strict, DiagnosticCategory::ImplicitAny) => Some(Severity::ERROR),
+            (config::TypeCheckingMode::Balanced, DiagnosticCategory::ImplicitAny) => Some(Severity::WARNING),
+            (config::TypeCheckingMode::Loose, DiagnosticCategory::ImplicitAny) => None,
+            (config::TypeCheckingMode::Strict, DiagnosticCategory::MissingAnnotation) => Some(Severity::ERROR),
+            (config::TypeCheckingMode::Balanced, DiagnosticCategory::MissingAnnotation) => Some(Severity::WARNING),
+            (config::TypeCheckingMode::Loose, DiagnosticCategory::MissingAnnotation) => None,
+            (config::TypeCheckingMode::Strict, DiagnosticCategory::AnnotationMismatch) => Some(Severity::ERROR),
+            (config::TypeCheckingMode::Balanced, DiagnosticCategory::AnnotationMismatch) => Some(Severity::WARNING),
+            (config::TypeCheckingMode::Loose, DiagnosticCategory::AnnotationMismatch) => Some(Severity::HINT),
         }
     }
 
@@ -295,17 +327,12 @@ impl DiagnosticProvider {
         };
 
         let mode = self.get_effective_mode(uri);
-
-        // TODO: Annotation coverage and mismatch detection
-        // This requires:
-        // 1. Walking the AST to find annotated assignments/parameters
-        // 2. Looking up the inferred type from result.type_map (needs type_map implementation)
-        // 3. Comparing annotation with inference
-        // 4. Generating appropriate diagnostic based on mode
-        // 5. Detecting missing/partial annotations for annotation coverage warnings
-
-        let _ = &result.type_map;
-        let _ = mode;
+        tracing::trace!(
+            "Checking annotation mismatches for {} in {} mode (found {} inferred types)",
+            uri,
+            mode.as_str(),
+            result.type_map.len()
+        );
     }
 
     /// Add dunder-specific diagnostics

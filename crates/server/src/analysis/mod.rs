@@ -48,7 +48,7 @@ pub struct AnalysisResult {
 
 /// Orchestrates type analysis for documents
 pub struct Analyzer {
-    _config: Config,
+    config: Config,
     cache: CacheManager,
     _type_var_gen: TypeVarGen,
     documents: DocumentManager,
@@ -62,7 +62,7 @@ impl Analyzer {
     /// Create a new analyzer with the given configuration
     pub fn new(config: Config, documents: DocumentManager) -> Self {
         Self {
-            _config: config,
+            config,
             cache: CacheManager::new(),
             _type_var_gen: TypeVarGen::new(),
             documents,
@@ -76,13 +76,26 @@ impl Analyzer {
         let stub_cache = workspace.try_read().ok().map(|ws| ws.stub_cache());
 
         Self {
-            _config: config,
+            config,
             cache: CacheManager::new(),
             _type_var_gen: TypeVarGen::new(),
             documents,
             position_maps: FxHashMap::default(),
             stub_cache,
         }
+    }
+
+    /// Get the effective type checking mode for a document
+    pub fn get_effective_mode(&self, uri: &Url) -> crate::config::TypeCheckingMode {
+        let workspace_mode = self.config.type_checking.mode;
+        self.documents
+            .get_document(uri, |doc| doc.effective_mode(workspace_mode))
+            .unwrap_or(workspace_mode)
+    }
+
+    /// Get a reference to the analyzer's configuration
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 
     /// Extract scopes from the symbol table and get their source content
@@ -453,7 +466,11 @@ impl Analyzer {
 
     /// Update the analyzer's configuration
     pub fn update_config(&mut self, config: Config) {
-        self._config = config;
+        tracing::info!(
+            "Updating analyzer configuration with mode: {}",
+            config.type_checking.mode.as_str()
+        );
+        self.config = config;
     }
 
     /// Perform static analysis (CFG + data flow) on the AST

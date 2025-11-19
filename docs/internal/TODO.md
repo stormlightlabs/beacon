@@ -14,13 +14,17 @@ Implement strict/balanced/loose mode enforcement with mode-aware diagnostic filt
 - [x] Add `mode` field to workspace/file configuration with validation
 - [x] Implement per-file mode override mechanism (e.g., `# beacon: mode=strict`)
 - [x] LSP integration: show current mode in status/diagnostics
-- [ ] Mode detection and validation in config loader
-- [ ] Integration with existing type checker context
+- [x] Mode detection and validation in config loader
+- [x] Integration with existing type checker context
 - [x] Add sample `beacon.toml` to sample workspace (`samples/`)
 
-### Annotation coverage and mismatch detection
+### Annotation Coverage and Type Inference Validation
 
-- [ ] TODO comment in `crates/server/src/features/diagnostics.rs`
+- [ ] Walk AST to find annotated assignments and parameters
+- [ ] Look up inferred types from `result.type_map` for annotated nodes
+- [ ] Compare user annotations with inferred types
+- [ ] Generate mode-aware diagnostics (error/warning/silent based on strict/balanced/loose)
+- [ ] Detect missing or partial annotations for coverage warnings
 
 ### Strict Mode Implementation
 

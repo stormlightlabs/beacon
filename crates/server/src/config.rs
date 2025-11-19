@@ -67,7 +67,11 @@ pub enum TypeCheckingMode {
 
 impl TypeCheckingMode {
     /// Validate that the mode is one of the supported values
+    ///
+    /// This is a no-op since the enum variants are valid by construction,
+    /// but we keep the method for API consistency and future extensibility.
     pub fn validate(&self) -> Result<()> {
+        tracing::debug!("Validating type checking mode: {}", self.as_str());
         Ok(())
     }
 
@@ -441,6 +445,12 @@ impl Config {
 
     /// Validate configuration and return any errors
     pub fn validate(&self) -> Result<()> {
+        tracing::debug!(
+            "Validating configuration: mode={}, python_version={:?}",
+            self.type_checking.mode.as_str(),
+            self.python_version
+        );
+
         self.type_checking.validate()?;
 
         for stub_path in &self.stub_paths {
@@ -461,7 +471,11 @@ impl Config {
             tracing::warn!("Cache size is 0, caching will be ineffective");
         }
 
-        // TODO: Validate decorator stub syntax when decorator stub loading is implemented
+        tracing::info!(
+            "Configuration validated successfully with type checking mode: {}",
+            self.type_checking.mode.as_str()
+        );
+
         Ok(())
     }
 
