@@ -8,23 +8,19 @@ use beacon_core::{Result, errors};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 /// Diagnostic severity level for configurable diagnostics
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum DiagnosticSeverity {
     /// Informational message
     Info,
     /// Warning message
+    #[default]
     Warning,
     /// Error message
     Error,
-}
-
-impl Default for DiagnosticSeverity {
-    fn default() -> Self {
-        Self::Warning
-    }
 }
 
 /// Configuration for inlay hints display
@@ -93,6 +89,93 @@ impl TypeCheckingMode {
             Self::Loose => None,
         }
     }
+
+    /// Get the mode name as a string
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Strict => "strict",
+            Self::Balanced => "balanced",
+            Self::Loose => "loose",
+        }
+    }
+}
+
+/// Error type for parsing TypeCheckingMode
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseModeError(String);
+
+impl std::fmt::Display for ParseModeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Invalid type checking mode: '{}'. Valid modes are: strict, balanced, loose",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for ParseModeError {}
+
+impl FromStr for TypeCheckingMode {
+    type Err = ParseModeError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "strict" => Ok(Self::Strict),
+            "balanced" => Ok(Self::Balanced),
+            "loose" => Ok(Self::Loose),
+            _ => Err(ParseModeError(s.to_string())),
+        }
+    }
+}
+
+/// Parse per-file mode directive from Python source code
+///
+/// Searches for comments like:
+/// - `# beacon: mode=strict`
+/// - `# beacon: mode=balanced`
+/// - `# beacon: mode=loose`
+///
+/// The directive must appear within the first 10 lines of the file.
+pub fn parse_mode_directive(source: &str) -> Option<TypeCheckingMode> {
+    parse_mode_directive_recursive(source.lines(), 0)
+}
+
+/// Recursive helper for parsing mode directives
+fn parse_mode_directive_recursive<'a, I>(mut lines: I, line_num: usize) -> Option<TypeCheckingMode>
+where
+    I: Iterator<Item = &'a str>,
+{
+    if line_num >= 10 {
+        return None;
+    }
+
+    let line = lines.next()?;
+
+    if let Some(mode) = extract_mode_from_line(line) {
+        return Some(mode);
+    }
+
+    parse_mode_directive_recursive(lines, line_num + 1)
+}
+
+/// Extract mode directive from a single line if present
+fn extract_mode_from_line(line: &str) -> Option<TypeCheckingMode> {
+    let comment_start = line.find('#')?;
+    let comment = &line[comment_start + 1..].trim();
+
+    let directive_start = comment.to_lowercase().find("beacon:")?;
+    let directive = &comment[directive_start + 7..].trim();
+
+    let mode_start = directive.to_lowercase().find("mode=")?;
+    let mode_value = &directive[mode_start + 5..].trim();
+
+    let mode_value = mode_value
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .next()
+        .unwrap_or("");
+
+    mode_value.parse::<TypeCheckingMode>().ok()
 }
 
 /// Type checking configuration
@@ -518,6 +601,12 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use tempfile::TempDir;
+
+    struct ParseModeTestCase {
+        name: &'static str,
+        source: &'static str,
+        want: Option<TypeCheckingMode>,
+    }
 
     #[test]
     fn test_default_config() {
@@ -1197,5 +1286,240 @@ trailing_commas = "always"
         let toml_str = r#"mode = "loose""#;
         let config: TypeCheckingConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.mode, TypeCheckingMode::Loose);
+    }
+
+    #[test]
+    fn test_type_checking_mode_from_str() {
+        assert_eq!("strict".parse::<TypeCheckingMode>(), Ok(TypeCheckingMode::Strict));
+        assert_eq!("balanced".parse::<TypeCheckingMode>(), Ok(TypeCheckingMode::Balanced));
+        assert_eq!("loose".parse::<TypeCheckingMode>(), Ok(TypeCheckingMode::Loose));
+
+        assert_eq!("STRICT".parse::<TypeCheckingMode>(), Ok(TypeCheckingMode::Strict));
+        assert_eq!(
+            "  balanced  ".parse::<TypeCheckingMode>(),
+            Ok(TypeCheckingMode::Balanced)
+        );
+
+        assert!("invalid".parse::<TypeCheckingMode>().is_err());
+        assert!("".parse::<TypeCheckingMode>().is_err());
+    }
+
+    #[test]
+    fn test_parse_mode_error_display() {
+        let err = "invalid".parse::<TypeCheckingMode>().unwrap_err();
+        assert!(err.to_string().contains("invalid"));
+        assert!(err.to_string().contains("strict"));
+        assert!(err.to_string().contains("balanced"));
+        assert!(err.to_string().contains("loose"));
+    }
+
+    #[test]
+    fn test_type_checking_mode_as_str() {
+        assert_eq!(TypeCheckingMode::Strict.as_str(), "strict");
+        assert_eq!(TypeCheckingMode::Balanced.as_str(), "balanced");
+        assert_eq!(TypeCheckingMode::Loose.as_str(), "loose");
+    }
+
+    #[test]
+    fn test_parse_mode_directive() {
+        let test_cases = [
+            ParseModeTestCase {
+                name: "basic strict mode",
+                source: r#"
+# beacon: mode=strict
+def foo():
+    pass
+"#,
+                want: Some(TypeCheckingMode::Strict),
+            },
+            ParseModeTestCase {
+                name: "basic balanced mode",
+                source: r#"
+# beacon: mode=balanced
+def foo():
+    pass
+"#,
+                want: Some(TypeCheckingMode::Balanced),
+            },
+            ParseModeTestCase {
+                name: "basic loose mode",
+                source: r#"
+# beacon: mode=loose
+def foo():
+    pass
+"#,
+                want: Some(TypeCheckingMode::Loose),
+            },
+            ParseModeTestCase {
+                name: "case insensitive BEACON MODE=STRICT",
+                source: r#"
+# BEACON: MODE=STRICT
+def foo():
+    pass
+"#,
+                want: Some(TypeCheckingMode::Strict),
+            },
+            ParseModeTestCase {
+                name: "case insensitive Beacon Mode=Loose",
+                source: r#"
+# Beacon: Mode=Loose
+def foo():
+    pass
+"#,
+                want: Some(TypeCheckingMode::Loose),
+            },
+            ParseModeTestCase {
+                name: "with extra whitespace",
+                source: r#"
+#   beacon:   mode=strict
+def foo():
+    pass
+"#,
+                want: Some(TypeCheckingMode::Strict),
+            },
+            ParseModeTestCase {
+                name: "no whitespace",
+                source: r#"
+#beacon:mode=balanced
+def foo():
+    pass
+"#,
+                want: Some(TypeCheckingMode::Balanced),
+            },
+            ParseModeTestCase {
+                name: "first line",
+                source: r#"# beacon: mode=strict
+def foo():
+    pass
+"#,
+                want: Some(TypeCheckingMode::Strict),
+            },
+            ParseModeTestCase {
+                name: "within 10 lines (line 9)",
+                source: r#"
+# Line 1
+# Line 2
+# Line 3
+# Line 4
+# Line 5
+# Line 6
+# Line 7
+# Line 8
+# beacon: mode=loose
+def foo():
+    pass
+"#,
+                want: Some(TypeCheckingMode::Loose),
+            },
+            ParseModeTestCase {
+                name: "beyond 10 lines (line 11)",
+                source: r#"
+# Line 1
+# Line 2
+# Line 3
+# Line 4
+# Line 5
+# Line 6
+# Line 7
+# Line 8
+# Line 9
+# Line 10
+# beacon: mode=strict
+def foo():
+    pass
+"#,
+                want: None,
+            },
+            ParseModeTestCase {
+                name: "not found - regular comment",
+                source: r#"
+# Just a regular comment
+def foo():
+    pass
+"#,
+                want: None,
+            },
+            ParseModeTestCase {
+                name: "not found - no comments",
+                source: r#"
+def foo():
+    pass
+"#,
+                want: None,
+            },
+            ParseModeTestCase {
+                name: "invalid mode value",
+                source: r#"
+# beacon: mode=invalid
+def foo():
+    pass
+"#,
+                want: None,
+            },
+            ParseModeTestCase {
+                name: "empty mode value",
+                source: r#"
+# beacon: mode=
+def foo():
+    pass
+"#,
+                want: None,
+            },
+            ParseModeTestCase {
+                name: "with additional directives",
+                source: r#"
+# beacon: mode=strict, other=value
+def foo():
+    pass
+"#,
+                want: Some(TypeCheckingMode::Strict),
+            },
+            ParseModeTestCase {
+                name: "inline code comment",
+                source: r#"
+x = 5  # beacon: mode=strict
+def foo():
+    pass
+"#,
+                want: Some(TypeCheckingMode::Strict),
+            },
+            ParseModeTestCase {
+                name: "after docstring",
+                source: r#"""Module docstring"""
+# beacon: mode=balanced
+def foo():
+    pass
+"#,
+                want: Some(TypeCheckingMode::Balanced),
+            },
+            ParseModeTestCase {
+                name: "after shebang",
+                source: r#"#!/usr/bin/env python3
+# beacon: mode=strict
+def foo():
+    pass
+"#,
+                want: Some(TypeCheckingMode::Strict),
+            },
+            ParseModeTestCase {
+                name: "only first match",
+                source: r#"
+# beacon: mode=strict
+# beacon: mode=loose
+def foo():
+    pass
+"#,
+                want: Some(TypeCheckingMode::Strict),
+            },
+        ];
+
+        for test_case in test_cases {
+            let got = parse_mode_directive(test_case.source);
+            assert_eq!(
+                got, test_case.want,
+                "Test case '{}' failed: expected {:?}, got {:?}",
+                test_case.name, test_case.want, got
+            );
+        }
     }
 }

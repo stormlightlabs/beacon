@@ -42,6 +42,9 @@ impl DiagnosticProvider {
         tracing::debug!("Generating diagnostics for {}", uri);
         let mut diagnostics = Vec::new();
 
+        let effective_mode = self.get_effective_mode(uri);
+        tracing::debug!("Using type checking mode: {} for {}", effective_mode.as_str(), uri);
+
         let start = std::time::Instant::now();
         self.add_parse_errors(uri, &mut diagnostics);
         tracing::trace!("Parse errors: {} ({:?})", diagnostics.len(), start.elapsed());
@@ -106,8 +109,63 @@ impl DiagnosticProvider {
             start.elapsed()
         );
 
-        tracing::info!("Generated {} total diagnostics for {}", diagnostics.len(), uri);
+        tracing::info!(
+            "Generated {} total diagnostics for {} (mode: {})",
+            diagnostics.len(),
+            uri,
+            effective_mode.as_str()
+        );
+
+        if !diagnostics.is_empty() {
+            self.add_mode_info_hint(uri, effective_mode, &mut diagnostics);
+        }
+
         diagnostics
+    }
+
+    /// Get the effective type checking mode for a document
+    ///
+    /// Returns the per-file mode override if present, otherwise the workspace mode.
+    fn get_effective_mode(&self, uri: &Url) -> config::TypeCheckingMode {
+        let Ok(workspace) = self.workspace.try_read() else {
+            return config::TypeCheckingMode::default();
+        };
+        let workspace_mode = workspace.config.type_checking.mode;
+        self.documents
+            .get_document(uri, |doc| doc.effective_mode(workspace_mode))
+            .unwrap_or(workspace_mode)
+    }
+
+    /// Add an informational hint showing the current type checking mode
+    fn add_mode_info_hint(&self, uri: &Url, mode: config::TypeCheckingMode, diagnostics: &mut Vec<Diagnostic>) {
+        let is_override = self
+            .documents
+            .get_document(uri, |doc| doc.mode_override.is_some())
+            .unwrap_or(false);
+
+        let message = if is_override {
+            format!(
+                "Type checking mode: {} (per-file override) - Add '# beacon: mode=strict/balanced/loose' to change",
+                mode.as_str()
+            )
+        } else {
+            format!(
+                "Type checking mode: {} (workspace default) - Add '# beacon: mode=strict/balanced/loose' to override for this file",
+                mode.as_str()
+            )
+        };
+
+        diagnostics.push(Diagnostic {
+            range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 0, character: 0 } },
+            severity: Some(DiagnosticSeverity::HINT),
+            code: Some(lsp_types::NumberOrString::String("MODE_INFO".to_string())),
+            source: Some("beacon".to_string()),
+            message,
+            related_information: None,
+            tags: None,
+            data: None,
+            code_description: None,
+        });
     }
 
     /// Add parse errors as diagnostics
@@ -236,10 +294,9 @@ impl DiagnosticProvider {
             Err(_) => return,
         };
 
-        // TODO: Get config mode from analyzer or pass as parameter
-        let mode = config::TypeCheckingMode::Balanced;
+        let mode = self.get_effective_mode(uri);
 
-        // TODO: Annotation coverage and mismatch detection (deferred to Parking Lot)
+        // TODO: Annotation coverage and mismatch detection
         // This requires:
         // 1. Walking the AST to find annotated assignments/parameters
         // 2. Looking up the inferred type from result.type_map (needs type_map implementation)

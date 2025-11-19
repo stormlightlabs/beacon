@@ -30,6 +30,9 @@ pub struct Document {
 
     /// Parse result including tree, AST, and symbol table
     pub parse_result: Option<ParseResult>,
+
+    /// Per-file type checking mode override (from `# beacon: mode=strict` directive)
+    pub mode_override: Option<crate::config::TypeCheckingMode>,
 }
 
 impl Document {
@@ -37,7 +40,7 @@ impl Document {
     pub fn new(uri: Url, version: i32, text: String) -> Self {
         let rope = Arc::new(Rope::from_str(&text));
 
-        Self { uri, version, rope, parse_result: None }
+        Self { uri, version, rope, parse_result: None, mode_override: None }
     }
 
     /// Get the full text of the document as a String
@@ -63,14 +66,17 @@ impl Document {
         }
     }
 
-    /// Reparse the document after changes
-    ///
-    /// TODO: Use incremental reparsing when available
+    /// Reparse the document after changes and extract per-file mode directives from comments.
     pub fn reparse(&mut self, parser: &mut LspParser) -> Result<()> {
         let text = self.text();
         let result = parser.parse(&text)?;
 
         self.parse_result = Some(result);
+        self.mode_override = crate::config::parse_mode_directive(&text);
+
+        if let Some(mode) = self.mode_override {
+            tracing::debug!("Found per-file mode directive: {} for {}", mode.as_str(), self.uri);
+        }
 
         Ok(())
     }
@@ -88,6 +94,13 @@ impl Document {
     /// Get the symbol table
     pub fn symbol_table(&self) -> Option<&beacon_parser::SymbolTable> {
         self.parse_result.as_ref().map(|r| &r.symbol_table)
+    }
+
+    /// Get the effective type checking mode for this document
+    ///
+    /// Returns the per-file mode override if present, otherwise falls back to the workspace mode.
+    pub fn effective_mode(&self, workspace_mode: crate::config::TypeCheckingMode) -> crate::config::TypeCheckingMode {
+        self.mode_override.unwrap_or(workspace_mode)
     }
 }
 
@@ -281,5 +294,102 @@ mod tests {
         assert!(doc.parse_result.is_some());
         assert!(doc.ast().is_some());
         assert!(doc.symbol_table().is_some());
+    }
+
+    #[test]
+    fn test_document_mode_override_extraction() {
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"# beacon: mode=strict
+def foo():
+    pass
+"#;
+        let mut doc = Document::new(uri, 1, source.to_string());
+
+        let mut parser = LspParser::new().unwrap();
+        doc.reparse(&mut parser).unwrap();
+
+        assert_eq!(doc.mode_override, Some(crate::config::TypeCheckingMode::Strict));
+    }
+
+    #[test]
+    fn test_document_no_mode_override() {
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"def foo():
+    pass
+"#;
+        let mut doc = Document::new(uri, 1, source.to_string());
+
+        let mut parser = LspParser::new().unwrap();
+        doc.reparse(&mut parser).unwrap();
+
+        assert_eq!(doc.mode_override, None);
+    }
+
+    #[test]
+    fn test_document_effective_mode_with_override() {
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"# beacon: mode=loose
+def foo():
+    pass
+"#;
+        let mut doc = Document::new(uri, 1, source.to_string());
+
+        let mut parser = LspParser::new().unwrap();
+        doc.reparse(&mut parser).unwrap();
+
+        let workspace_mode = crate::config::TypeCheckingMode::Strict;
+        assert_eq!(
+            doc.effective_mode(workspace_mode),
+            crate::config::TypeCheckingMode::Loose
+        );
+    }
+
+    #[test]
+    fn test_document_effective_mode_without_override() {
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"def foo():
+    pass
+"#;
+        let mut doc = Document::new(uri, 1, source.to_string());
+
+        let mut parser = LspParser::new().unwrap();
+        doc.reparse(&mut parser).unwrap();
+
+        let workspace_mode = crate::config::TypeCheckingMode::Strict;
+        assert_eq!(
+            doc.effective_mode(workspace_mode),
+            crate::config::TypeCheckingMode::Strict
+        );
+    }
+
+    #[test]
+    fn test_document_mode_override_case_insensitive() {
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"# BEACON: MODE=BALANCED
+def foo():
+    pass
+"#;
+        let mut doc = Document::new(uri, 1, source.to_string());
+
+        let mut parser = LspParser::new().unwrap();
+        doc.reparse(&mut parser).unwrap();
+
+        assert_eq!(doc.mode_override, Some(crate::config::TypeCheckingMode::Balanced));
+    }
+
+    #[test]
+    fn test_document_mode_override_after_shebang() {
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"#!/usr/bin/env python3
+# beacon: mode=strict
+def foo():
+    pass
+"#;
+        let mut doc = Document::new(uri, 1, source.to_string());
+
+        let mut parser = LspParser::new().unwrap();
+        doc.reparse(&mut parser).unwrap();
+
+        assert_eq!(doc.mode_override, Some(crate::config::TypeCheckingMode::Strict));
     }
 }

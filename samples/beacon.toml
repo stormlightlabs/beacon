@@ -1,0 +1,129 @@
+# Beacon LSP Configuration
+# This file demonstrates all available configuration options for the Beacon type checker.
+# Place this file in your workspace root as 'beacon.toml' or use '[tool.beacon]' in pyproject.toml
+
+# Type Checking Configuration
+[type_checking]
+# Type checking strictness mode
+# - strict: Requires explicit type annotations, no implicit Any types
+# - balanced: Type inference with warnings on ambiguous cases (default)
+# - loose: Permissive type inference, minimal warnings
+mode = "balanced"
+
+# Python Version Target
+# Determines which Python language features are enabled
+# Supported versions: "3.9", "3.10", "3.11", "3.12", "3.13"
+python_version = "3.12"
+
+# Stub Paths
+# Additional paths to search for .pyi stub files
+# These paths are searched in order before the standard library stubs
+stub_paths = ["stubs", "typings"]
+
+# Maximum Any Depth
+# Maximum depth for Any type propagation before elevating diagnostics
+# Higher values are more permissive
+max_any_depth = 3
+
+# Analysis Settings
+
+# Enable incremental type checking
+# When enabled, only changed files and their dependencies are re-analyzed
+incremental = true
+
+# Enable workspace-wide analysis
+# When enabled, performs cross-file analysis and dependency tracking
+workspace_analysis = true
+
+# Enable caching of parse trees and type inference results
+enable_caching = true
+
+# Maximum cache size (number of documents)
+cache_size = 100
+
+# Experimental Features
+# Enable bleeding-edge features that may not be stable
+experimental = false
+
+# Source Roots
+# Additional source roots for module resolution (in addition to workspace root)
+# Auto-detected roots include workspace root, src/, and lib/
+source_roots = []
+
+# Exclude Patterns
+# Patterns to exclude from workspace scanning
+# Common patterns are automatically excluded (venv/, .venv/, __pycache__/, etc.)
+exclude_patterns = ["build/", "dist/", ".tox/", ".mypy_cache/"]
+
+# Diagnostic Severity Configuration
+
+# Diagnostic severity for unresolved imports
+# Options: "error", "warning", "info"
+unresolved_import_severity = "warning"
+
+# Diagnostic severity for circular imports
+# Options: "error", "warning", "info"
+circular_import_severity = "warning"
+
+# Inlay Hints Configuration
+[inlay_hints]
+# Master toggle for all inlay hints
+enable = true
+
+# Show inlay hints for inferred variable types
+variable_types = true
+
+# Show inlay hints for inferred function return types
+function_return_types = true
+
+# Show inlay hints for parameter names in function calls
+parameter_names = false
+
+# Formatting Configuration
+[formatting]
+# Enable code formatting
+enabled = true
+
+# Maximum line length
+line_length = 88
+
+# Indentation size (number of spaces)
+indent_size = 4
+
+# Quote style for strings
+# Options: "double", "single", "preserve"
+quote_style = "double"
+
+# Trailing commas
+# Options: "always", "never", "preserve"
+trailing_commas = "preserve"
+
+# Maximum blank lines allowed
+max_blank_lines = 2
+
+# Import sorting
+# Options: "none", "alphabetical", "isort"
+import_sorting = "alphabetical"
+
+# Use tabs instead of spaces
+use_tabs = false
+
+# Normalize docstring quotes to use quote_style
+normalize_docstring_quotes = true
+
+# Add spaces around operators
+spaces_around_operators = true
+
+# Add blank line before class definitions
+blank_line_before_class = true
+
+# Add blank line before function definitions
+blank_line_before_function = true
+
+# Per-File Mode Overrides
+# Individual files can override the type checking mode using a comment directive:
+#   # beacon: mode=strict
+#   # beacon: mode=balanced
+#   # beacon: mode=loose
+#
+# The directive must appear within the first 10 lines of the file.

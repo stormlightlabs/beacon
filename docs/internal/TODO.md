@@ -10,12 +10,17 @@ Implement strict/balanced/loose mode enforcement with mode-aware diagnostic filt
 
 ### Configuration & Infrastructure
 
-- [ ] Design mode configuration schema (strict/balanced/loose)
-- [ ] Add `mode` field to workspace/file configuration with validation
-- [ ] Implement per-file mode override mechanism (e.g., `# beacon: mode=strict`)
+- [x] Design mode configuration schema (strict/balanced/loose)
+- [x] Add `mode` field to workspace/file configuration with validation
+- [x] Implement per-file mode override mechanism (e.g., `# beacon: mode=strict`)
+- [x] LSP integration: show current mode in status/diagnostics
 - [ ] Mode detection and validation in config loader
 - [ ] Integration with existing type checker context
-- [ ] LSP integration: show current mode in status/diagnostics
+- [x] Add sample `beacon.toml` to sample workspace (`samples/`)
+
+### Annotation coverage and mismatch detection
+
+- [ ] TODO comment in `crates/server/src/features/diagnostics.rs`
 
 ### Strict Mode Implementation
 
