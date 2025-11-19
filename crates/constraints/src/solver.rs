@@ -6,7 +6,7 @@ use crate::{
 
 use beacon_core::{
     BeaconError, ClassMetadata, ClassRegistry, MethodSignature, ProtocolChecker, ProtocolName, Result, Subst, Type,
-    TypeCtor, TypeError, TypeVar, Unifier,
+    TypeCtor, TypeError, TypeVar, TypeVarConstraintRegistry, Unifier,
 };
 use std::{collections::HashSet, result};
 
@@ -55,6 +55,18 @@ fn check_user_defined_protocol(
     ty: &Type, protocol_name: &str, class_registry: &ClassRegistry,
     typevar_registry: &beacon_core::TypeVarConstraintRegistry,
 ) -> bool {
+    check_user_defined_protocol_impl(ty, protocol_name, class_registry, typevar_registry, &mut HashSet::new())
+}
+
+/// Internal implementation of protocol checking with cycle detection
+fn check_user_defined_protocol_impl(
+    ty: &Type, protocol_name: &str, class_registry: &ClassRegistry,
+    typevar_registry: &beacon_core::TypeVarConstraintRegistry, visited: &mut HashSet<String>,
+) -> bool {
+    if !visited.insert(protocol_name.to_string()) {
+        return true;
+    }
+
     let protocol_meta = match class_registry.get_class(protocol_name) {
         Some(meta) if meta.is_protocol => meta,
         _ => return false,
@@ -120,6 +132,25 @@ fn check_user_defined_protocol(
                     if !covariant_ok {
                         all_methods_ok = false;
                         break;
+                    }
+                }
+
+                if all_methods_ok {
+                    for base_name in &protocol_meta.base_classes {
+                        if let Some(base_meta) = class_registry.get_class(base_name) {
+                            if base_meta.is_protocol
+                                && !check_user_defined_protocol_impl(
+                                    ty,
+                                    base_name,
+                                    class_registry,
+                                    typevar_registry,
+                                    visited,
+                                )
+                            {
+                                all_methods_ok = false;
+                                break;
+                            }
+                        }
                     }
                 }
 
@@ -637,20 +668,24 @@ fn method_signatures_compatible(
 /// 2. Infers the type parameter from actual's methods
 /// 3. Checks if the inferred protocol type is compatible with expected using variance
 fn protocol_instantiation_compatible(
-    actual: &Type, expected: &Type, class_registry: &ClassRegistry,
-    typevar_registry: &beacon_core::TypeVarConstraintRegistry,
+    actual: &Type, expected: &Type, cls_registry: &ClassRegistry, tv_registry: &TypeVarConstraintRegistry,
 ) -> bool {
-    let (protocol_ctor, expected_type_args) = match expected.unapply() {
-        Some((ctor, args)) => (ctor, args),
-        None => return false,
+    let (protocol_name, expected_type_args) = match expected {
+        Type::Con(TypeCtor::Protocol(Some(name), _)) => (name, vec![]),
+
+        _ => {
+            let (protocol_ctor, args) = match expected.unapply() {
+                Some((ctor, args)) => (ctor, args),
+                None => return false,
+            };
+            match protocol_ctor {
+                TypeCtor::Protocol(Some(name), _) => (name, args),
+                _ => return false,
+            }
+        }
     };
 
-    let protocol_name = match protocol_ctor {
-        TypeCtor::Protocol(Some(name), _) => name,
-        _ => return false,
-    };
-
-    let protocol_meta = match class_registry.get_class(protocol_name) {
+    let protocol_meta = match cls_registry.get_class(protocol_name) {
         Some(meta) if meta.is_protocol => meta,
         _ => return false,
     };
@@ -667,7 +702,7 @@ fn protocol_instantiation_compatible(
         _ => return false,
     };
 
-    if !check_user_defined_protocol(actual, protocol_name, class_registry, typevar_registry) {
+    if !check_user_defined_protocol(actual, protocol_name, cls_registry, tv_registry) {
         return false;
     }
 
@@ -675,7 +710,7 @@ fn protocol_instantiation_compatible(
         return true;
     }
 
-    let actual_class_meta = match class_registry.get_class(actual_class_name) {
+    let actual_class_meta = match cls_registry.get_class(actual_class_name) {
         Some(meta) => meta,
         None => return false,
     };
@@ -706,7 +741,7 @@ fn protocol_instantiation_compatible(
         return false;
     }
 
-    let enriched_protocol = expected.clone().enrich_protocol_variance(class_registry);
+    let enriched_protocol = expected.clone().enrich_protocol_variance(cls_registry);
 
     let mut inferred_protocol_ty = Type::Con(TypeCtor::Protocol(
         Some(protocol_name.clone()),
