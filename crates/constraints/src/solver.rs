@@ -825,6 +825,44 @@ fn types_compatible(
         return true;
     }
 
+    if generator_compatible(actual, expected, class_registry) {
+        return true;
+    }
+
+    false
+}
+
+/// Check if actual Generator/AsyncGenerator/Coroutine type is compatible with expected type considering mixed variance (covariant yield/return, contravariant send)
+fn generator_compatible(actual: &Type, expected: &Type, class_registry: &ClassRegistry) -> bool {
+    let typevar_registry = &beacon_core::TypeVarConstraintRegistry::new();
+
+    if let (Some((actual_y, actual_s, actual_r)), Some((expected_y, expected_s, expected_r))) =
+        (actual.extract_generator_params(), expected.extract_generator_params())
+    {
+        let y_compatible = types_compatible(actual_y, expected_y, class_registry, typevar_registry);
+        let s_compatible = types_compatible(expected_s, actual_s, class_registry, typevar_registry);
+        let r_compatible = types_compatible(actual_r, expected_r, class_registry, typevar_registry);
+        return y_compatible && s_compatible && r_compatible;
+    }
+
+    if let (Some((actual_y, actual_s)), Some((expected_y, expected_s))) = (
+        actual.extract_async_generator_params(),
+        expected.extract_async_generator_params(),
+    ) {
+        let y_compatible = types_compatible(actual_y, expected_y, class_registry, typevar_registry);
+        let s_compatible = types_compatible(expected_s, actual_s, class_registry, typevar_registry);
+        return y_compatible && s_compatible;
+    }
+
+    if let (Some((actual_y, actual_s, actual_r)), Some((expected_y, expected_s, expected_r))) =
+        (actual.extract_coroutine_params(), expected.extract_coroutine_params())
+    {
+        let y_compatible = types_compatible(actual_y, expected_y, class_registry, typevar_registry);
+        let s_compatible = types_compatible(expected_s, actual_s, class_registry, typevar_registry);
+        let r_compatible = types_compatible(actual_r, expected_r, class_registry, typevar_registry);
+        return y_compatible && s_compatible && r_compatible;
+    }
+
     false
 }
 

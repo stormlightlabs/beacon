@@ -316,21 +316,45 @@ pub fn visit_function(
                     .map(|ann| env.parse_annotation_or_any(ann))
                     .unwrap_or_else(|| Type::Var(env.fresh_var()));
 
-                let yield_var = Type::Var(env.fresh_var());
-                let send_var = Type::Var(env.fresh_var());
-
                 let (ret, gen_params) = match function_kind {
                     FunctionKind::Generator => {
-                        let ret = Type::generator(yield_var.clone(), send_var.clone(), annotated_ret.clone());
-                        (ret, Some((yield_var, send_var, annotated_ret)))
+                        if let Some((yield_ty, send_ty, return_ty)) = annotated_ret.extract_generator_params() {
+                            (
+                                annotated_ret.clone(),
+                                Some((yield_ty.clone(), send_ty.clone(), return_ty.clone())),
+                            )
+                        } else {
+                            let yield_var = Type::Var(env.fresh_var());
+                            let send_var = Type::Var(env.fresh_var());
+                            let ret = Type::generator(yield_var.clone(), send_var.clone(), annotated_ret.clone());
+                            (ret, Some((yield_var, send_var, annotated_ret)))
+                        }
                     }
                     FunctionKind::AsyncGenerator => {
-                        let ret = Type::async_generator(yield_var.clone(), send_var.clone());
-                        (ret, Some((yield_var, send_var, Type::none())))
+                        if let Some((yield_ty, send_ty)) = annotated_ret.extract_async_generator_params() {
+                            (
+                                annotated_ret.clone(),
+                                Some((yield_ty.clone(), send_ty.clone(), Type::none())),
+                            )
+                        } else {
+                            let yield_var = Type::Var(env.fresh_var());
+                            let send_var = Type::Var(env.fresh_var());
+                            let ret = Type::async_generator(yield_var.clone(), send_var.clone());
+                            (ret, Some((yield_var, send_var, Type::none())))
+                        }
                     }
                     FunctionKind::Coroutine => {
-                        let ret = Type::coroutine(Type::none(), Type::none(), annotated_ret.clone());
-                        (ret, Some((Type::none(), Type::none(), annotated_ret)))
+                        if let Some((yield_ty, send_ty, return_ty)) = annotated_ret.extract_coroutine_params() {
+                            (
+                                annotated_ret.clone(),
+                                Some((yield_ty.clone(), send_ty.clone(), return_ty.clone())),
+                            )
+                        } else {
+                            let yield_var = Type::Var(env.fresh_var());
+                            let send_var = Type::Var(env.fresh_var());
+                            let ret = Type::coroutine(yield_var.clone(), send_var.clone(), annotated_ret.clone());
+                            (ret, Some((yield_var, send_var, annotated_ret)))
+                        }
                     }
                     FunctionKind::Regular => unreachable!(),
                 };
@@ -345,10 +369,11 @@ pub fn visit_function(
             }
 
             if let Some((y, s, r)) = gen_params {
-                body_env.set_generator_params(y, s, r);
+                body_env.set_generator_params(y, s, r.clone());
+                body_env.set_expected_return_type(r);
+            } else {
+                body_env.set_expected_return_type(ret_type);
             }
-
-            body_env.set_expected_return_type(ret_type);
 
             if let Some(scope_id) = ctx.find_scope_at_position(*line, *col) {
                 ctx.push_scope(scope_id);

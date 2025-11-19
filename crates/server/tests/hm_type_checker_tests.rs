@@ -896,14 +896,10 @@ fn test_generator_mixed_variance() {
     );
 
     let errors = harness.get_errors(&result);
-    let has_generator_errors = errors
-        .iter()
-        .any(|e| e.contains("Generator") || e.contains("cannot be assigned"));
-
-    // TODO: Generator mixed variance not fully implemented yet
-    if has_generator_errors {
-        eprintln!("Generator mixed variance errors (expected until full implementation): {errors:?}");
-    }
+    assert!(
+        errors.is_empty(),
+        "Should have no errors with Generator covariance/contravariance, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -929,14 +925,10 @@ fn test_async_generator_mixed_variance() {
     );
 
     let errors = harness.get_errors(&result);
-    let has_async_gen_errors = errors
-        .iter()
-        .any(|e| e.contains("AsyncGenerator") || e.contains("cannot be assigned"));
-
-    // TODO: AsyncGenerator mixed variance not fully implemented yet
-    if has_async_gen_errors {
-        eprintln!("AsyncGenerator mixed variance errors (expected until full implementation): {errors:?}");
-    }
+    assert!(
+        errors.is_empty(),
+        "Should have no errors with AsyncGenerator covariance/contravariance, got: {errors:?}"
+    );
 }
 
 #[test]
@@ -962,12 +954,8 @@ fn test_coroutine_mixed_variance() {
     );
 
     let errors = harness.get_errors(&result);
-    let has_coroutine_errors = errors
-        .iter()
-        .any(|e| e.contains("Coroutine") || e.contains("cannot be assigned"));
-
-    // TODO: Coroutine mixed variance not fully implemented
-    if has_coroutine_errors {
-        eprintln!("Coroutine mixed variance errors (expected until full implementation): {errors:?}");
-    }
+    assert!(
+        errors.is_empty(),
+        "Should have no errors with Coroutine covariance/contravariance, got: {errors:?}"
+    );
 }

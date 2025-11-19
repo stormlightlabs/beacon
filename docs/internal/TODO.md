@@ -25,12 +25,7 @@ Known issues with HM type inference that need fixing:
 - [x] Variance unification corner cases in complex generic hierarchies
 - [x] Generic type inference with multiple constraints
 - [x] Protocol satisfaction checking with variance
-- [ ] Generator/AsyncGenerator/Coroutine mixed variance support
-    - [ ] Fix function return type inference for generator functions (currently infers generator expression type instead of wrapped function type)
-    - [ ] Apply variance rules during unification for Generator[Yield, Send, Return] (covariant in Yield and Return, contravariant in Send)
-    - [ ] Apply variance rules for AsyncGenerator[Yield, Send] (covariant in Yield, contravariant in Send)
-    - [ ] Apply variance rules for Coroutine[Yield, Send, Return] (covariant in Yield and Return, contravariant in Send)
-    - [ ] Integration tests pass without errors (currently expect errors, see crates/server/tests/hm_type_checker_tests.rs)
+- [x] Generator/AsyncGenerator/Coroutine mixed variance support
 
 #### Pattern Matching & Narrowing
 
@@ -53,6 +48,7 @@ Known issues with HM type inference that need fixing:
 - [x] Improve test coverage for generic types
 - [x] Add stress tests for deeply nested generics
 - [x] Test type inference with multiple inheritance
+- [x] Add tests for Generator/AsyncGenerator/Coroutine with mixed variance
 
 ## Typeshed Integration
 

@@ -673,6 +673,20 @@ impl Type {
         }
     }
 
+    /// Extract parameters from AsyncGenerator[Y, S] type
+    pub fn extract_async_generator_params(&self) -> Option<(&Type, &Type)> {
+        match self {
+            Type::App(app1, s) => match app1.as_ref() {
+                Type::App(ctor, y) => match ctor.as_ref() {
+                    Type::Con(TypeCtor::AsyncGenerator) => Some((y, s)),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Extract parameters from Coroutine[Y, S, R] type
     pub fn extract_coroutine_params(&self) -> Option<(&Type, &Type, &Type)> {
         match self {
@@ -905,12 +919,6 @@ impl Type {
     ///
     /// This method recursively traverses a type and replaces Protocol TypeCtors that have empty
     /// variance vectors with ones populated from the ClassMetadata.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Before: Protocol(Some("MyProto"), vec![])
-    /// // After:  Protocol(Some("MyProto"), vec![Variance::Covariant])
-    /// ```
     pub fn enrich_protocol_variance(self, class_registry: &crate::class_metadata::ClassRegistry) -> Self {
         match self {
             Type::Con(TypeCtor::Protocol(Some(name), variances)) if variances.is_empty() => {
