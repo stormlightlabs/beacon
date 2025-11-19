@@ -47,7 +47,7 @@ function getBeaconConfig() {
   const config = workspace.getConfiguration("beacon");
 
   return {
-    mode: config.get("typeChecking.mode", "balanced"),
+    typeChecking: { mode: config.get("typeChecking.mode", "balanced") },
     pythonVersion: config.get("python.version", "3.12"),
     stubPaths: config.get("python.stubPaths", ["stubs"]),
     sourceRoots: config.get("workspace.sourceRoots", []),
