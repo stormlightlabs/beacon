@@ -20,11 +20,11 @@ Implement strict/balanced/loose mode enforcement with mode-aware diagnostic filt
 
 ### Annotation Coverage and Type Inference Validation
 
-- [ ] Walk AST to find annotated assignments and parameters
-- [ ] Look up inferred types from `result.type_map` for annotated nodes
-- [ ] Compare user annotations with inferred types
-- [ ] Generate mode-aware diagnostics (error/warning/silent based on strict/balanced/loose)
-- [ ] Detect missing or partial annotations for coverage warnings
+- [x] Walk AST to find annotated assignments and parameters
+- [x] Look up inferred types from `result.type_map` for annotated nodes
+- [x] Compare user annotations with inferred types
+- [x] Generate mode-aware diagnostics (error/warning/silent based on strict/balanced/loose)
+- [x] Detect missing or partial annotations for coverage warnings
 
 ### Strict Mode Implementation
 
@@ -252,3 +252,4 @@ See [Logging](#logging) section below for detailed logging standards.
     - [ ] Add performance benchmarks for cache improvements
 - From 0.4.0
     - [ ] Performance benchmarks (ensure modes don't add overhead)
+    - [ ] Implement signature validation in DiagnosticProvider

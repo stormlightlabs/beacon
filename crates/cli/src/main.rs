@@ -41,7 +41,7 @@ enum OutputFormat {
 #[derive(Parser)]
 #[command(name = "beacon-cli")]
 #[command(about = "Beacon - Language Server & Hindley-Milner type system for Python")]
-#[command(version = "0.1.0")]
+#[command(version = "0.3.0")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

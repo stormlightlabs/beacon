@@ -11,8 +11,9 @@ use crate::workspace::Workspace;
 use beacon_core::BeaconError;
 use beacon_core::TypeError;
 use beacon_core::{Type, TypeCtor};
-use beacon_parser::{AstNode, MAGIC_METHODS};
+use beacon_parser::{AstNode, MAGIC_METHODS, SymbolTable};
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use url::Url;
@@ -27,6 +28,14 @@ enum DiagnosticCategory {
     MissingAnnotation,
     /// Annotation doesn't match inferred type
     AnnotationMismatch,
+}
+
+/// Context for annotation coverage diagnostics
+struct DiagnosticContext<'a> {
+    type_map: &'a FxHashMap<usize, Type>,
+    position_map: &'a FxHashMap<(usize, usize), usize>,
+    mode: config::TypeCheckingMode,
+    diagnostics: &'a mut Vec<Diagnostic>,
 }
 
 pub struct DiagnosticProvider {
@@ -320,7 +329,7 @@ impl DiagnosticProvider {
     }
 
     /// Check annotation mismatches based on config mode
-    fn add_annotation_mismatch_warnings(&self, uri: &Url, analyzer: &mut Analyzer, _diagnostics: &mut [Diagnostic]) {
+    fn add_annotation_mismatch_warnings(&self, uri: &Url, analyzer: &mut Analyzer, diagnostics: &mut Vec<Diagnostic>) {
         let result = match analyzer.analyze(uri) {
             Ok(r) => r,
             Err(_) => return,
@@ -333,6 +342,438 @@ impl DiagnosticProvider {
             mode.as_str(),
             result.type_map.len()
         );
+
+        self.documents.get_document(uri, |doc| {
+            if let Some(ast) = doc.ast() {
+                let mut ctx = DiagnosticContext {
+                    type_map: &result.type_map,
+                    position_map: &result.position_map,
+                    mode,
+                    diagnostics,
+                };
+                self.check_annotation_coverage(ast, &mut ctx);
+            }
+        });
+    }
+
+    /// Walk AST to find annotated assignments and parameters, compare with inferred types
+    fn check_annotation_coverage(&self, node: &AstNode, ctx: &mut DiagnosticContext) {
+        match node {
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    self.check_annotation_coverage(stmt, ctx);
+                }
+            }
+            AstNode::FunctionDef { args, return_type, body, line, col, name, .. } => {
+                for param in args {
+                    self.check_parameter_annotation(param, ctx);
+                }
+
+                self.check_return_type_annotation(return_type, *line, *col, name, ctx);
+
+                for stmt in body {
+                    self.check_annotation_coverage(stmt, ctx);
+                }
+            }
+            AstNode::ClassDef { body, .. } => {
+                for stmt in body {
+                    self.check_annotation_coverage(stmt, ctx);
+                }
+            }
+            AstNode::AnnotatedAssignment { target, type_annotation, line, col, .. } => {
+                if let Some(inferred_type) = Self::get_type_for_position(ctx.type_map, ctx.position_map, *line, *col) {
+                    self.check_annotation_match(type_annotation, &inferred_type, *line, *col, target, ctx);
+                }
+            }
+            AstNode::Assignment { target, line, col, .. } => {
+                if ctx.mode != config::TypeCheckingMode::Loose {
+                    if let Some(inferred_type) =
+                        Self::get_type_for_position(ctx.type_map, ctx.position_map, *line, *col)
+                    {
+                        self.check_missing_annotation(target, &inferred_type, *line, *col, ctx);
+                    }
+                }
+            }
+            AstNode::If { body, elif_parts, else_body, .. } => {
+                for stmt in body {
+                    self.check_annotation_coverage(stmt, ctx);
+                }
+                for (_test, elif_body) in elif_parts {
+                    for stmt in elif_body {
+                        self.check_annotation_coverage(stmt, ctx);
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        self.check_annotation_coverage(stmt, ctx);
+                    }
+                }
+            }
+            AstNode::For { body, else_body, .. } | AstNode::While { body, else_body, .. } => {
+                for stmt in body {
+                    self.check_annotation_coverage(stmt, ctx);
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        self.check_annotation_coverage(stmt, ctx);
+                    }
+                }
+            }
+            AstNode::Try { body, handlers, else_body, finally_body, .. } => {
+                for stmt in body {
+                    self.check_annotation_coverage(stmt, ctx);
+                }
+                for handler in handlers {
+                    for stmt in &handler.body {
+                        self.check_annotation_coverage(stmt, ctx);
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        self.check_annotation_coverage(stmt, ctx);
+                    }
+                }
+                if let Some(finally_stmts) = finally_body {
+                    for stmt in finally_stmts {
+                        self.check_annotation_coverage(stmt, ctx);
+                    }
+                }
+            }
+            AstNode::With { body, .. } => {
+                for stmt in body {
+                    self.check_annotation_coverage(stmt, ctx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Get the type for a specific position
+    fn get_type_for_position(
+        type_map: &FxHashMap<usize, Type>, position_map: &FxHashMap<(usize, usize), usize>, line: usize, col: usize,
+    ) -> Option<Type> {
+        position_map
+            .get(&(line, col))
+            .and_then(|node_id| type_map.get(node_id))
+            .cloned()
+    }
+
+    /// Check if an annotation matches the inferred type
+    fn check_annotation_match(
+        &self, annotation: &str, inferred_type: &Type, line: usize, col: usize, target: &AstNode,
+        ctx: &mut DiagnosticContext,
+    ) {
+        let parser = beacon_core::AnnotationParser::new();
+        let annotated_type = match parser.parse(annotation) {
+            Ok(ty) => ty,
+            Err(_) => return,
+        };
+
+        if !Self::types_are_compatible(&annotated_type, inferred_type) {
+            let severity = Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::AnnotationMismatch);
+
+            if let Some(sev) = severity {
+                let position =
+                    Position { line: (line.saturating_sub(1)) as u32, character: (col.saturating_sub(1)) as u32 };
+
+                let target_name = Self::extract_target_name(target);
+                let range = Range {
+                    start: position,
+                    end: Position { line: position.line, character: position.character + target_name.len() as u32 },
+                };
+
+                ctx.diagnostics.push(Diagnostic {
+                    range,
+                    severity: Some(sev),
+                    code: Some(lsp_types::NumberOrString::String("ANN001".to_string())),
+                    source: Some("beacon".to_string()),
+                    message: format!(
+                        "Type annotation mismatch: annotated as '{annotated_type}', but inferred as '{inferred_type}'"
+                    ),
+                    related_information: None,
+                    tags: None,
+                    data: None,
+                    code_description: None,
+                });
+            }
+        }
+    }
+
+    /// Check for missing annotations on assignments
+    fn check_missing_annotation(
+        &self, target: &AstNode, inferred_type: &Type, line: usize, col: usize, ctx: &mut DiagnosticContext,
+    ) {
+        if matches!(inferred_type, Type::Con(TypeCtor::Any)) || Self::contains_type_var(inferred_type) {
+            return;
+        }
+
+        let severity = Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::MissingAnnotation);
+
+        if let Some(sev) = severity {
+            let position =
+                Position { line: (line.saturating_sub(1)) as u32, character: (col.saturating_sub(1)) as u32 };
+
+            let target_name = Self::extract_target_name(target);
+            let range = Range {
+                start: position,
+                end: Position { line: position.line, character: position.character + target_name.len() as u32 },
+            };
+
+            ctx.diagnostics.push(Diagnostic {
+                range,
+                severity: Some(sev),
+                code: Some(lsp_types::NumberOrString::String("ANN002".to_string())),
+                source: Some("beacon".to_string()),
+                message: format!("Missing type annotation (inferred as '{inferred_type}')"),
+                related_information: None,
+                tags: None,
+                data: None,
+                code_description: None,
+            });
+        }
+    }
+
+    /// Extract the variable name from an assignment target
+    fn extract_target_name(target: &AstNode) -> String {
+        match target {
+            AstNode::Identifier { name, .. } => name.clone(),
+            AstNode::Attribute { attribute, .. } => attribute.clone(),
+            _ => "variable".to_string(),
+        }
+    }
+
+    /// Check if two types are compatible (structural comparison)
+    fn types_are_compatible(annotated: &Type, inferred: &Type) -> bool {
+        use Type::*;
+
+        match (annotated, inferred) {
+            (Con(a), Con(b)) if a == b => true,
+            (Con(TypeCtor::Any), _) | (_, Con(TypeCtor::Any)) => true,
+            (App(a1, a2), App(b1, b2)) => Self::types_are_compatible(a1, b1) && Self::types_are_compatible(a2, b2),
+            (Fun(a_args, a_ret), Fun(b_args, b_ret)) => {
+                a_args.len() == b_args.len()
+                    && a_args
+                        .iter()
+                        .zip(b_args.iter())
+                        .all(|((_, a), (_, b))| Self::types_are_compatible(a, b))
+                    && Self::types_are_compatible(a_ret, b_ret)
+            }
+            (Union(a_types), Union(b_types)) => {
+                a_types
+                    .iter()
+                    .all(|a_ty| b_types.iter().any(|b_ty| Self::types_are_compatible(a_ty, b_ty)))
+                    && b_types
+                        .iter()
+                        .all(|b_ty| a_types.iter().any(|a_ty| Self::types_are_compatible(a_ty, b_ty)))
+            }
+            (Record(a_fields, _), Record(b_fields, _)) => {
+                a_fields.len() == b_fields.len()
+                    && a_fields.iter().all(|(a_name, a_ty)| {
+                        b_fields
+                            .iter()
+                            .any(|(b_name, b_ty)| a_name == b_name && Self::types_are_compatible(a_ty, b_ty))
+                    })
+            }
+            (Var(_), _) | (_, Var(_)) => true,
+            _ => false,
+        }
+    }
+
+    /// Check if a type contains type variables (incomplete inference)
+    fn contains_type_var(ty: &Type) -> bool {
+        match ty {
+            Type::Var(_) => true,
+            Type::App(t1, t2) => Self::contains_type_var(t1) || Self::contains_type_var(t2),
+            Type::Fun(args, ret) => {
+                args.iter().any(|(_, arg)| Self::contains_type_var(arg)) || Self::contains_type_var(ret)
+            }
+            Type::Union(types) => types.iter().any(Self::contains_type_var),
+            Type::Record(fields, _) => fields.iter().any(|(_, t)| Self::contains_type_var(t)),
+            _ => false,
+        }
+    }
+
+    /// Check function parameter annotation
+    fn check_parameter_annotation(&self, param: &beacon_parser::Parameter, ctx: &mut DiagnosticContext) {
+        match &param.type_annotation {
+            Some(annotation) => {
+                if let Some(inferred_type) =
+                    Self::get_type_for_position(ctx.type_map, ctx.position_map, param.line, param.col)
+                {
+                    let parser = beacon_core::AnnotationParser::new();
+                    if let Ok(annotated_type) = parser.parse(annotation) {
+                        if !Self::types_are_compatible(&annotated_type, &inferred_type) {
+                            let severity =
+                                Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::AnnotationMismatch);
+
+                            if let Some(sev) = severity {
+                                let position = Position {
+                                    line: (param.line.saturating_sub(1)) as u32,
+                                    character: (param.col.saturating_sub(1)) as u32,
+                                };
+
+                                let range = Range {
+                                    start: position,
+                                    end: Position {
+                                        line: position.line,
+                                        character: position.character + param.name.len() as u32,
+                                    },
+                                };
+
+                                ctx.diagnostics.push(Diagnostic {
+                                    range,
+                                    severity: Some(sev),
+                                    code: Some(lsp_types::NumberOrString::String("ANN003".to_string())),
+                                    source: Some("beacon".to_string()),
+                                    message: format!(
+                                        "Parameter '{}' annotation mismatch: annotated as '{}', but inferred as '{}'",
+                                        param.name, annotated_type, inferred_type
+                                    ),
+                                    related_information: None,
+                                    tags: None,
+                                    data: None,
+                                    code_description: None,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            None => {
+                if ctx.mode != config::TypeCheckingMode::Loose {
+                    if let Some(inferred_type) =
+                        Self::get_type_for_position(ctx.type_map, ctx.position_map, param.line, param.col)
+                    {
+                        if !matches!(inferred_type, Type::Con(TypeCtor::Any))
+                            && !Self::contains_type_var(&inferred_type)
+                        {
+                            let severity =
+                                Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::MissingAnnotation);
+
+                            if let Some(sev) = severity {
+                                let position = Position {
+                                    line: (param.line.saturating_sub(1)) as u32,
+                                    character: (param.col.saturating_sub(1)) as u32,
+                                };
+
+                                let range = Range {
+                                    start: position,
+                                    end: Position {
+                                        line: position.line,
+                                        character: position.character + param.name.len() as u32,
+                                    },
+                                };
+
+                                ctx.diagnostics.push(Diagnostic {
+                                    range,
+                                    severity: Some(sev),
+                                    code: Some(lsp_types::NumberOrString::String("ANN004".to_string())),
+                                    source: Some("beacon".to_string()),
+                                    message: format!(
+                                        "Parameter '{}' missing type annotation (inferred as '{}')",
+                                        param.name, inferred_type
+                                    ),
+                                    related_information: None,
+                                    tags: None,
+                                    data: None,
+                                    code_description: None,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check function return type annotation
+    fn check_return_type_annotation(
+        &self, return_type: &Option<String>, line: usize, col: usize, name: &str, ctx: &mut DiagnosticContext,
+    ) {
+        match return_type {
+            Some(annotation) => {
+                if let Some(inferred_type) = Self::get_type_for_position(ctx.type_map, ctx.position_map, line, col) {
+                    let parser = beacon_core::AnnotationParser::new();
+                    if let Ok(annotated_type) = parser.parse(annotation) {
+                        if !Self::types_are_compatible(&annotated_type, &inferred_type) {
+                            let severity =
+                                Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::AnnotationMismatch);
+
+                            if let Some(sev) = severity {
+                                let position = Position {
+                                    line: (line.saturating_sub(1)) as u32,
+                                    character: (col.saturating_sub(1)) as u32,
+                                };
+
+                                let range = Range {
+                                    start: position,
+                                    end: Position {
+                                        line: position.line,
+                                        character: position.character + name.len() as u32,
+                                    },
+                                };
+
+                                ctx.diagnostics.push(Diagnostic {
+                                    range,
+                                    severity: Some(sev),
+                                    code: Some(lsp_types::NumberOrString::String("ANN005".to_string())),
+                                    source: Some("beacon".to_string()),
+                                    message: format!(
+                                        "Function '{name}' return type mismatch: annotated as '{annotated_type}', but inferred as '{inferred_type}'"
+                                    ),
+                                    related_information: None,
+                                    tags: None,
+                                    data: None,
+                                    code_description: None,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            None => {
+                if ctx.mode != config::TypeCheckingMode::Loose {
+                    if let Some(inferred_type) = Self::get_type_for_position(ctx.type_map, ctx.position_map, line, col)
+                    {
+                        if !matches!(inferred_type, Type::Con(TypeCtor::Any) | Type::Con(TypeCtor::NoneType))
+                            && !Self::contains_type_var(&inferred_type)
+                        {
+                            let severity =
+                                Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::MissingAnnotation);
+
+                            if let Some(sev) = severity {
+                                let position = Position {
+                                    line: (line.saturating_sub(1)) as u32,
+                                    character: (col.saturating_sub(1)) as u32,
+                                };
+
+                                let range = Range {
+                                    start: position,
+                                    end: Position {
+                                        line: position.line,
+                                        character: position.character + name.len() as u32,
+                                    },
+                                };
+
+                                ctx.diagnostics.push(Diagnostic {
+                                    range,
+                                    severity: Some(sev),
+                                    code: Some(lsp_types::NumberOrString::String("ANN006".to_string())),
+                                    source: Some("beacon".to_string()),
+                                    message: format!(
+                                        "Function '{name}' missing return type annotation (inferred as '{inferred_type}')"
+                                    ),
+                                    related_information: None,
+                                    tags: None,
+                                    data: None,
+                                    code_description: None,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Add dunder-specific diagnostics
@@ -404,8 +845,7 @@ impl DiagnosticProvider {
 
     /// Check for magic methods defined outside class scope
     fn check_magic_methods_in_scope(
-        &self, node: &AstNode, symbol_table: &beacon_parser::SymbolTable, diagnostics: &mut Vec<Diagnostic>,
-        source: &str,
+        &self, node: &AstNode, symbol_table: &SymbolTable, diagnostics: &mut Vec<Diagnostic>, source: &str,
     ) {
         match node {
             AstNode::FunctionDef { name, line, col, body, .. } => {
@@ -455,8 +895,7 @@ impl DiagnosticProvider {
         }
     }
 
-    /// Basic validation for magic method signatures
-    /// TODO: Implement more comprehensive signature validation
+    /// TODO: Implement this
     fn validate_magic_method_signature(
         &self, name: &str, line: &usize, col: &usize, diagnostics: &mut Vec<Diagnostic>,
     ) {
