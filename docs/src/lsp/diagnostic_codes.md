@@ -2,7 +2,8 @@
 
 Beacon’s [Diagnostic provider](./feature_providers.md#diagnostics) combines parser feedback, Hindley–Milner type errors, annotation coverage checks, control/data-flow analysis, and workspace import resolution into a single stream of LSP diagnostics.
 
-This guide lists every diagnostic code emitted by that pipeline so you can interpret squiggles quickly and trace them back to the subsystem described in [Type Checking](./type_checking.md), [Static Analyzer](./static_analysis.md), and [Type Checking Modes](../type-checking-modes.md).
+This guide lists every diagnostic code emitted by that pipeline so you can interpret squiggles quickly and trace them back to the subsystem described
+in [Type Checking](./type_checking.md), [Static Analyzer](./static_analysis.md), and [Type Checking Modes](../type-checking-modes.md).
 
 LSP severity for imports (circular vs. unresolved) remains configurable under `[diagnostics]` as documented in [Configuration](../configuration.md#diagnostics).
 To temporarily suppress any diagnostic, use the mechanisms described in [Suppressions](../format/suppressions.md).
@@ -17,44 +18,45 @@ To temporarily suppress any diagnostic, use the mechanisms described in [Suppres
 
 Note that  per-mode rows show the icon used in strict / balanced / loose order
 
-| Code                                      | Name                          | Level                               | Category        | Description                                                                                     |
-| ----------------------------------------- | ----------------------------- | ----------------------------------- | --------------- | ----------------------------------------------------------------------------------------------- |
-| [ANY001](#any001)                         | `UnsafeAnyUsage`              | &#9888;                             | Type Safety     | Deep inference found an `Any` value, reducing type safety.                                      |
-| [ANN001](#ann001)                         | `AnnotationMismatch`          | &#10005;&nbsp;&#9888;&nbsp;&#9432;  | Annotations     | Declared annotation disagrees with the inferred type.                                           |
-| [ANN002](#ann002)                         | `MissingVariableAnnotation`   | &#10005; &#9888;                    | Annotations     | Assignment lacks an annotation in strict/balanced modes.                                        |
-| [ANN003](#ann003)                         | `ParameterAnnotationMismatch` | &#10005; &#9888; &#9432;            | Annotations     | Parameter annotation conflicts with inferred usage.                                             |
-| [ANN004](#ann004)                         | `MissingParameterAnnotation`  | &#10005; &#9888;                    | Annotations     | Parameter missing annotation when inference is precise.                                         |
-| [ANN005](#ann005)                         | `ReturnAnnotationMismatch`    | &#10005; &#9888; &#9432;            | Annotations     | Function return annotation disagrees with inference.                                            |
-| [ANN006](#ann006)                         | `MissingReturnAnnotation`     | &#10005; &#9888;                    | Annotations     | Function lacks return annotation when inference is concrete.                                    |
-| [ANN007](#ann007)                         | `ImplicitAnyParameter`        | &#10005;                            | Annotations     | Strict mode forbids implicit `Any` on parameters.                                               |
-| [ANN008](#ann008)                         | `ImplicitAnyReturn`           | &#10005;                            | Annotations     | Strict mode forbids implicit `Any` return types.                                                |
-| [DUNDER_INFO](#dunder_info)               | `EntryPointGuard`             | &#9432;                             | Dunder Patterns | Highlights `if __name__ == "__main__":` guard blocks.                                           |
-| [DUNDER001](#dunder001)                   | `MagicMethodOutOfScope`       | &#9888;                             | Dunder Patterns | Magic methods defined outside a class.                                                          |
-| [HM001](#hm001)                           | `TypeMismatch`                | &#10005;                            | Type System     | Hindley–Milner could not unify two types.                                                       |
-| [HM002](#hm002)                           | `OccursCheckFailed`           | &#10005;                            | Type System     | Recursive type variable detected (infinite type).                                               |
-| [HM003](#hm003)                           | `UndefinedTypeVar`            | &#10005;                            | Type System     | Referenced type variable was never declared.                                                    |
-| [HM004](#hm004)                           | `KindMismatch`                | &#10005;                            | Type System     | Wrong number of type arguments supplied to a generic.                                           |
-| [HM005](#hm005)                           | `InfiniteType`                | &#10005;                            | Type System     | Inference produced a non-terminating type (self-referential).                                   |
-| [HM006](#hm006)                           | `ProtocolNotSatisfied`        | &#10005;                            | Type System     | Value fails to implement the required protocol methods.                                         |
-| [HM007](#hm007)                           | `AttributeNotFound`           | &#10005;                            | Attributes      | Attribute or method does not exist on the receiver type.                                        |
-| [HM008](#hm008)                           | `ArgumentCountMismatch`       | &#10005;                            | Type System     | Call site passes too many or too few arguments.                                                 |
-| [HM009](#hm009)                           | `ArgumentTypeMismatch`        | &#10005;                            | Type System     | Argument type incompatible with the parameter type.                                             |
-| [HM010](#hm010)                           | `PatternTypeMismatch`         | &#10005;                            | Pattern Typing  | Match/case pattern cannot match the subject type.                                               |
-| [HM011](#hm011)                           | `KeywordArgumentError`        | &#10005;                            | Type System     | Unknown or duplicate keyword arguments in a call.                                               |
-| [HM012](#hm012)                           | `GenericTypeError`            | &#10005;                            | Type System     | Catch-all Hindley–Milner error (value restriction, etc.).                                       |
-| [HM013](#hm013)                           | `PatternStructureMismatch`    | &#10005;                            | Pattern Typing  | Pattern shape (mapping, class, sequence) differs from subject.                                  |
-| [HM014](#hm014)                           | `VarianceError`               | &#10005;                            | Variance        | Invariant/covariant/contravariant constraint violated.                                          |
-| [MODE_INFO](#mode_info)                   | `TypeCheckingMode`            | &#9432;                             | Mode            | Reminder showing which type-checking mode produced diagnostics.                                 |
-| [PM001](#pm001)                           | `PatternNonExhaustive`        | &#10005;                            | Patterns        | Match statement fails to cover every possible case.                                             |
-| [PM002](#pm002)                           | `PatternUnreachable`          | &#10005;                            | Patterns        | Later pattern is shadowed by an earlier one.                                                    |
-| [circular-import](#circular-import)       | `CircularImport`              | &#10005; &#9888; &#9432;            | Imports         | Module participates in an import cycle (severity comes from config).                            |
-| [missing-module](#missing-module)         | `MissingModule`               | &#10005;                            | Imports         | Referenced module is absent from the workspace/stubs.                                           |
-| [shadowed-variable](#shadowed-variable)   | `ShadowedVariable`            | &#9888;                             | Scope           | Inner scope reuses a name that already exists in an outer scope.                                |
-| [undefined-variable](#undefined-variable) | `UndefinedVariable`           | &#10005;                            | Name Resolution | Name used before being defined anywhere.                                                        |
-| [unresolved-import](#unresolved-import)   | `UnresolvedImport`            | &#10005; &#9888; &#9432;            | Imports         | Import target cannot be resolved (severity configurable).                                       |
-| [unreachable-code](#unreachable-code)     | `UnreachableCode`             | &#9888;                             | Data Flow       | Code after `return`, `raise`, or `break` never executes.                                        |
-| [unused-variable](#unused-variable)       | `UnusedVariable`              | &#9432;                             | Data Flow       | Variable assigned but never read.                                                               |
-| [use-before-def](#use-before-def)         | `UseBeforeDef`                | &#10005;                            | Data Flow       | Variable read before it is assigned in the current scope.                                       |
+| Code                                      | Name                              | Level                               | Category        | Description                                                           |
+| ----------------------------------------- | --------------------------------- | ----------------------------------- | --------------- | --------------------------------------------------------------------- |
+| [ANY001](#any001)                         | `UnsafeAnyUsage`                  | &#9888;                             | Type Safety     | Deep inference found an `Any` value, reducing type safety.            |
+| [ANN001](#ann001)                         | `AnnotationMismatch`              | &#10005;&nbsp;&#9888;&nbsp;&#9432;  | Annotations     | Declared annotation disagrees with the inferred type.                 |
+| [ANN002](#ann002)                         | `MissingVariableAnnotation`       | &#10005; &#9888;                    | Annotations     | Assignment lacks an annotation in strict/balanced modes.              |
+| [ANN003](#ann003)                         | `ParameterAnnotationMismatch`     | &#10005; &#9888; &#9432;            | Annotations     | Parameter annotation conflicts with inferred usage.                   |
+| [ANN004](#ann004)                         | `MissingParameterAnnotation`      | &#10005; &#9888;                    | Annotations     | Parameter missing annotation when inference is precise.               |
+| [ANN005](#ann005)                         | `ReturnAnnotationMismatch`        | &#10005; &#9888; &#9432;            | Annotations     | Function return annotation disagrees with inference.                  |
+| [ANN006](#ann006)                         | `MissingReturnAnnotation`         | &#10005; &#9888;                    | Annotations     | Function lacks return annotation when inference is concrete.          |
+| [ANN007](#ann007)                         | `ImplicitAnyParameter`            | &#10005;                            | Annotations     | Strict mode forbids implicit `Any` on parameters.                     |
+| [ANN008](#ann008)                         | `ImplicitAnyReturn`               | &#10005;                            | Annotations     | Strict mode forbids implicit `Any` return types.                      |
+| [ANN009](#ann009)                         | `MissingClassAttributeAnnotation` | &#10005;                            | Annotations     | Strict mode requires explicit annotations on class attributes.        |
+| [DUNDER_INFO](#dunder_info)               | `EntryPointGuard`                 | &#9432;                             | Dunder Patterns | Highlights `if __name__ == "__main__":` guard blocks.                 |
+| [DUNDER001](#dunder001)                   | `MagicMethodOutOfScope`           | &#9888;                             | Dunder Patterns | Magic methods defined outside a class.                                |
+| [HM001](#hm001)                           | `TypeMismatch`                    | &#10005;                            | Type System     | Hindley–Milner could not unify two types.                             |
+| [HM002](#hm002)                           | `OccursCheckFailed`               | &#10005;                            | Type System     | Recursive type variable detected (infinite type).                     |
+| [HM003](#hm003)                           | `UndefinedTypeVar`                | &#10005;                            | Type System     | Referenced type variable was never declared.                          |
+| [HM004](#hm004)                           | `KindMismatch`                    | &#10005;                            | Type System     | Wrong number of type arguments supplied to a generic.                 |
+| [HM005](#hm005)                           | `InfiniteType`                    | &#10005;                            | Type System     | Inference produced a non-terminating type (self-referential).         |
+| [HM006](#hm006)                           | `ProtocolNotSatisfied`            | &#10005;                            | Type System     | Value fails to implement the required protocol methods.               |
+| [HM007](#hm007)                           | `AttributeNotFound`               | &#10005;                            | Attributes      | Attribute or method does not exist on the receiver type.              |
+| [HM008](#hm008)                           | `ArgumentCountMismatch`           | &#10005;                            | Type System     | Call site passes too many or too few arguments.                       |
+| [HM009](#hm009)                           | `ArgumentTypeMismatch`            | &#10005;                            | Type System     | Argument type incompatible with the parameter type.                   |
+| [HM010](#hm010)                           | `PatternTypeMismatch`             | &#10005;                            | Pattern Typing  | Match/case pattern cannot match the subject type.                     |
+| [HM011](#hm011)                           | `KeywordArgumentError`            | &#10005;                            | Type System     | Unknown or duplicate keyword arguments in a call.                     |
+| [HM012](#hm012)                           | `GenericTypeError`                | &#10005;                            | Type System     | Catch-all Hindley–Milner error (value restriction, etc.).             |
+| [HM013](#hm013)                           | `PatternStructureMismatch`        | &#10005;                            | Pattern Typing  | Pattern shape (mapping, class, sequence) differs from subject.        |
+| [HM014](#hm014)                           | `VarianceError`                   | &#10005;                            | Variance        | Invariant/covariant/contravariant constraint violated.                |
+| [MODE_INFO](#mode_info)                   | `TypeCheckingMode`                | &#9432;                             | Mode            | Reminder showing which type-checking mode produced diagnostics.       |
+| [PM001](#pm001)                           | `PatternNonExhaustive`            | &#10005;                            | Patterns        | Match statement fails to cover every possible case.                   |
+| [PM002](#pm002)                           | `PatternUnreachable`              | &#10005;                            | Patterns        | Later pattern is shadowed by an earlier one.                          |
+| [circular-import](#circular-import)       | `CircularImport`                  | &#10005; &#9888; &#9432;            | Imports         | Module participates in an import cycle (severity comes from config).  |
+| [missing-module](#missing-module)         | `MissingModule`                   | &#10005;                            | Imports         | Referenced module is absent from the workspace/stubs.                 |
+| [shadowed-variable](#shadowed-variable)   | `ShadowedVariable`                | &#9888;                             | Scope           | Inner scope reuses a name that already exists in an outer scope.      |
+| [undefined-variable](#undefined-variable) | `UndefinedVariable`               | &#10005;                            | Name Resolution | Name used before being defined anywhere.                              |
+| [unresolved-import](#unresolved-import)   | `UnresolvedImport`                | &#10005; &#9888; &#9432;            | Imports         | Import target cannot be resolved (severity configurable).             |
+| [unreachable-code](#unreachable-code)     | `UnreachableCode`                 | &#9888;                             | Data Flow       | Code after `return`, `raise`, or `break` never executes.              |
+| [unused-variable](#unused-variable)       | `UnusedVariable`                  | &#9432;                             | Data Flow       | Variable assigned but never read.                                     |
+| [use-before-def](#use-before-def)         | `UseBeforeDef`                    | &#10005;                            | Data Flow       | Variable read before it is assigned in the current scope.             |
 
 ## Diagnostics
 
@@ -195,6 +197,24 @@ def make_id():
 Strict mode requires explicit return annotations on every function.
 Provide the exact type (`-> str`) or loosen the file mode if you intentionally rely on inference.
 See [Type Checking Modes](../type-checking-modes.md) for override syntax.
+
+### ANN009
+
+#### Example
+
+```py
+# beacon: mode=strict
+class Configuration:
+    host = "localhost"  # Missing type annotation
+    port: int = 8080  # OK: Has annotation
+```
+
+#### Guidance
+
+Strict mode requires explicit type annotations on all class attributes.
+Add the annotation (`host: str = "localhost"`) or use balanced/loose mode if gradual typing is preferred.
+Note that instance attributes (assigned in `__init__` or other methods) are not subject to this check—only class-level attributes defined directly in the class body.
+See [Type Checking Modes](../type-checking-modes.md) for mode configuration.
 
 ### DUNDER_INFO
 

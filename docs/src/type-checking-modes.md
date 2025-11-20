@@ -31,15 +31,17 @@ def calculate(x: int, y: int) -> int:
 
 ## Strict Mode
 
-Enforces complete type annotation coverage and catches all type inconsistencies.
+Enforces complete type annotation coverage with **no type inference allowed**. All function parameters and return types must have explicit type annotations.
 
 Characteristics:
 
 - All annotation mismatches are errors
-- Missing type annotations are errors
-- Implicit Any types are rejected
-- Function signatures must be fully annotated
-- Best for greenfield projects and critical components
+- **All function parameters must have explicit type annotations** (ANN007)
+- **All function return types must have explicit type annotations** (ANN008)
+- **All class attributes must have explicit type annotations** (ANN009)
+- Missing annotations are treated as implicit `Any`, which is forbidden in strict mode
+- Type inference is not allowed as a substitute for explicit annotations
+- Best for greenfield projects, type-safe libraries, and critical components
 
 Example:
 
@@ -51,13 +53,28 @@ def process(data: list[int]) -> int:
     total: int = sum(data)
     return total
 
-# ✗ Error - missing return type annotation (ANN006)
+# ✗ Error - missing return type annotation (ANN008)
+# Even though the return type could be inferred as int
 def calculate(x: int, y: int):
     return x + y
 
-# ✗ Error - missing parameter annotation (ANN004)
+# ✗ Error - parameter 'first' missing annotation (ANN007)
+# Strict mode requires explicit annotations, no inference
 def format_name(first, last: str) -> str:
     return f"{first} {last}"
+
+# ✗ Error - both parameters and return type missing (ANN007, ANN008)
+# Strict mode requires all annotations, even when types could be inferred
+def add(x, y):
+    return x + y
+
+# Class attributes also require explicit annotations in strict mode
+class Config:
+    # ✗ Error - class attribute missing annotation (ANN009)
+    host = "localhost"
+
+    # ✓ Valid - annotated class attribute
+    port: int = 8080
 ```
 
 ## Balanced Mode
@@ -129,9 +146,14 @@ Beacon validates type annotations against inferred types and reports missing ann
 | ANN001 | Annotation mismatch on assignments | Error | Warning | Hint |
 | ANN002 | Missing annotation on assignments | Error | Warning | Silent |
 | ANN003 | Parameter annotation mismatch | Error | Warning | Hint |
-| ANN004 | Missing parameter annotation | Error | Warning | Silent |
+| ANN004 | Missing parameter annotation (inferred type is concrete) | - | Warning | Silent |
 | ANN005 | Return type annotation mismatch | Error | Warning | Hint |
-| ANN006 | Missing return type annotation | Error | Warning | Silent |
+| ANN006 | Missing return type annotation (inferred type is concrete) | - | Warning | Silent |
+| ANN007 | Parameter missing annotation (implicit Any) | Error | - | - |
+| ANN008 | Return type missing annotation (implicit Any) | Error | - | - |
+| ANN009 | Class attribute missing annotation | Error | - | - |
+
+**Note:** In strict mode, all missing parameter and return type annotations are treated as implicit `Any` and reported as ANN007/ANN008 errors. Class attributes without annotations trigger ANN009 errors. In balanced mode, only parameters/returns with concrete inferred types (not Any) generate ANN004/ANN006 warnings.
 
 ### Smart Filtering
 
