@@ -640,7 +640,32 @@ impl DiagnosticProvider {
                 }
             }
             None => {
-                if ctx.mode != config::TypeCheckingMode::Loose {
+                if ctx.mode == config::TypeCheckingMode::Strict {
+                    let position = Position {
+                        line: (param.line.saturating_sub(1)) as u32,
+                        character: (param.col.saturating_sub(1)) as u32,
+                    };
+
+                    let range = Range {
+                        start: position,
+                        end: Position { line: position.line, character: position.character + param.name.len() as u32 },
+                    };
+
+                    ctx.diagnostics.push(Diagnostic {
+                        range,
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        code: Some(lsp_types::NumberOrString::String("ANN007".to_string())),
+                        source: Some("beacon".to_string()),
+                        message: format!(
+                            "Parameter '{}' has implicit Any type - explicit type annotation required in strict mode",
+                            param.name
+                        ),
+                        related_information: None,
+                        tags: None,
+                        data: None,
+                        code_description: None,
+                    });
+                } else if ctx.mode != config::TypeCheckingMode::Loose {
                     if let Some(inferred_type) =
                         Self::get_type_for_position(ctx.type_map, ctx.position_map, param.line, param.col)
                     {
@@ -732,7 +757,29 @@ impl DiagnosticProvider {
                 }
             }
             None => {
-                if ctx.mode != config::TypeCheckingMode::Loose {
+                if ctx.mode == config::TypeCheckingMode::Strict {
+                    let position =
+                        Position { line: (line.saturating_sub(1)) as u32, character: (col.saturating_sub(1)) as u32 };
+
+                    let range = Range {
+                        start: position,
+                        end: Position { line: position.line, character: position.character + name.len() as u32 },
+                    };
+
+                    ctx.diagnostics.push(Diagnostic {
+                        range,
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        code: Some(lsp_types::NumberOrString::String("ANN008".to_string())),
+                        source: Some("beacon".to_string()),
+                        message: format!(
+                            "Function '{name}' has implicit Any return type - explicit return type annotation required in strict mode"
+                        ),
+                        related_information: None,
+                        tags: None,
+                        data: None,
+                        code_description: None,
+                    });
+                } else if ctx.mode != config::TypeCheckingMode::Loose {
                     if let Some(inferred_type) = Self::get_type_for_position(ctx.type_map, ctx.position_map, line, col)
                     {
                         if !matches!(inferred_type, Type::Con(TypeCtor::Any) | Type::Con(TypeCtor::NoneType))
@@ -2275,5 +2322,211 @@ def test():
         assert_eq!(diagnostic.range.start.line, 4);
         assert_eq!(diagnostic.range.start.character, 9);
         assert_eq!(diagnostic.range.end.character, 19);
+    }
+
+    #[test]
+    fn test_strict_mode_rejects_implicit_any_in_parameters() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Strict;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def add(x, y):
+    return x + y
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let ann007_diagnostics: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string())))
+            .collect();
+
+        assert!(
+            !ann007_diagnostics.is_empty(),
+            "Expected ANN007 diagnostics for implicit Any parameters"
+        );
+        assert_eq!(
+            ann007_diagnostics.len(),
+            2,
+            "Expected 2 ANN007 diagnostics (one for each parameter)"
+        );
+
+        for diag in &ann007_diagnostics {
+            assert_eq!(diag.severity, Some(DiagnosticSeverity::ERROR));
+            assert!(diag.message.contains("implicit Any type"));
+            assert!(diag.message.contains("strict mode"));
+        }
+    }
+
+    #[test]
+    fn test_strict_mode_rejects_implicit_any_in_return_type() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Strict;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def get_data(x: int):
+    return x * 2
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let ann008_diagnostic = diagnostics
+            .iter()
+            .find(|d| d.code == Some(lsp_types::NumberOrString::String("ANN008".to_string())));
+
+        assert!(
+            ann008_diagnostic.is_some(),
+            "Expected ANN008 diagnostic for implicit Any return type"
+        );
+
+        let diag = ann008_diagnostic.unwrap();
+        assert_eq!(diag.severity, Some(DiagnosticSeverity::ERROR));
+        assert!(diag.message.contains("implicit Any return type"));
+        assert!(diag.message.contains("strict mode"));
+    }
+
+    #[test]
+    fn test_strict_mode_accepts_properly_annotated_functions() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Strict;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def add(x: int, y: int) -> int:
+    return x + y
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let implicit_any_diagnostics: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| {
+                d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string()))
+                    || d.code == Some(lsp_types::NumberOrString::String("ANN008".to_string()))
+            })
+            .collect();
+
+        assert!(
+            implicit_any_diagnostics.is_empty(),
+            "Expected no implicit Any diagnostics for properly annotated function, got: {implicit_any_diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn test_balanced_mode_does_not_reject_implicit_any() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Balanced;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def add(x, y):
+    return x + y
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let ann007_diagnostics: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string())))
+            .collect();
+
+        let ann008_diagnostics: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN008".to_string())))
+            .collect();
+
+        assert!(
+            ann007_diagnostics.is_empty(),
+            "Balanced mode should not generate ANN007 for implicit Any"
+        );
+        assert!(
+            ann008_diagnostics.is_empty(),
+            "Balanced mode should not generate ANN008 for implicit Any"
+        );
+    }
+
+    #[test]
+    fn test_loose_mode_does_not_reject_implicit_any() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Loose;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def add(x, y):
+    return x + y
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let ann007_diagnostics: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string())))
+            .collect();
+
+        let ann008_diagnostics: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN008".to_string())))
+            .collect();
+
+        assert!(
+            ann007_diagnostics.is_empty(),
+            "Loose mode should not generate ANN007 for implicit Any"
+        );
+        assert!(
+            ann008_diagnostics.is_empty(),
+            "Loose mode should not generate ANN008 for implicit Any"
+        );
     }
 }
