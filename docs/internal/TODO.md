@@ -36,10 +36,11 @@ Implement strict/balanced/loose mode enforcement with mode-aware diagnostic filt
 
 ### Balanced Mode Implementation
 
-- [ ] Type inference with warnings on ambiguous cases
-- [ ] Warn on implicit Any from missing annotations
-- [ ] Suggest type annotations where inference is uncertain
-- [ ] Allow gradual typing (mixed annotated/unannotated code)
+- [x] Type inference with warnings on ambiguous cases
+- [x] Warn on implicit Any from missing annotations
+- [x] Suggest type annotations where inference is uncertain
+- [x] Allow gradual typing (mixed annotated/unannotated code)
+- [ ] Improve type inference to populate type_map for simple function parameters and return types
 
 ### Loose Mode Implementation
 
@@ -50,16 +51,11 @@ Implement strict/balanced/loose mode enforcement with mode-aware diagnostic filt
 
 ### Diagnostic Filtering & Categorization
 
-- [ ] Mode-aware diagnostic severity mapping (error vs warning vs silent)
-- [ ] Filter type diagnostics based on current mode
-- [ ] Diagnostic categorization by mode level (strict-only, balanced-only, etc.)
-- [ ] Preserve existing diagnostic codes (BEA0xx) with mode context
-
-### Documentation & Testing
-
-- [ ] User guide for mode selection and trade-offs
-- [ ] Configuration examples for each mode (workspace + per-file)
-- [ ] Comprehensive mode-specific diagnostic test suite (e2e/integration)
+- [x] Mode-aware diagnostic severity mapping (error vs warning vs silent)
+- [x] Filter type diagnostics based on current mode
+- [x] Diagnostic categorization by mode level (strict-only, balanced-only, etc.)
+- [x] Preserve existing diagnostic codes (BEA0xx) with mode context
+- [x] New diagnostic codes: ANN011 (parameter implicit Any), ANN012 (return type implicit Any)
 
 ## Typeshed Integration (v0.5.0)
 

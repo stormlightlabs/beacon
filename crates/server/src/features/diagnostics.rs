@@ -703,12 +703,45 @@ impl DiagnosticProvider {
                         code_description: None,
                     });
                 } else if ctx.mode != config::TypeCheckingMode::Loose {
-                    if let Some(inferred_type) =
-                        Self::get_type_for_position(ctx.type_map, ctx.position_map, param.line, param.col)
-                    {
-                        if !matches!(inferred_type, Type::Con(TypeCtor::Any))
-                            && !Self::contains_type_var(&inferred_type)
-                        {
+                    let inferred_type_opt =
+                        Self::get_type_for_position(ctx.type_map, ctx.position_map, param.line, param.col);
+
+                    match inferred_type_opt {
+                        Some(Type::Con(TypeCtor::Any)) => {
+                            let severity =
+                                Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::ImplicitAny);
+
+                            if let Some(sev) = severity {
+                                let position = Position {
+                                    line: (param.line.saturating_sub(1)) as u32,
+                                    character: (param.col.saturating_sub(1)) as u32,
+                                };
+
+                                let range = Range {
+                                    start: position,
+                                    end: Position {
+                                        line: position.line,
+                                        character: position.character + param.name.len() as u32,
+                                    },
+                                };
+
+                                ctx.diagnostics.push(Diagnostic {
+                                    range,
+                                    severity: Some(sev),
+                                    code: Some(lsp_types::NumberOrString::String("ANN011".to_string())),
+                                    source: Some("beacon".to_string()),
+                                    message: format!(
+                                        "Parameter '{}' has implicit Any type - consider adding type annotation",
+                                        param.name
+                                    ),
+                                    related_information: None,
+                                    tags: None,
+                                    data: None,
+                                    code_description: None,
+                                });
+                            }
+                        }
+                        Some(inferred_type) if !Self::contains_type_var(&inferred_type) => {
                             let severity =
                                 Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::MissingAnnotation);
 
@@ -742,6 +775,41 @@ impl DiagnosticProvider {
                                 });
                             }
                         }
+                        None => {
+                            let severity =
+                                Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::ImplicitAny);
+
+                            if let Some(sev) = severity {
+                                let position = Position {
+                                    line: (param.line.saturating_sub(1)) as u32,
+                                    character: (param.col.saturating_sub(1)) as u32,
+                                };
+
+                                let range = Range {
+                                    start: position,
+                                    end: Position {
+                                        line: position.line,
+                                        character: position.character + param.name.len() as u32,
+                                    },
+                                };
+
+                                ctx.diagnostics.push(Diagnostic {
+                                    range,
+                                    severity: Some(sev),
+                                    code: Some(lsp_types::NumberOrString::String("ANN011".to_string())),
+                                    source: Some("beacon".to_string()),
+                                    message: format!(
+                                        "Parameter '{}' has implicit Any type - consider adding type annotation",
+                                        param.name
+                                    ),
+                                    related_information: None,
+                                    tags: None,
+                                    data: None,
+                                    code_description: None,
+                                });
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -817,10 +885,45 @@ impl DiagnosticProvider {
                         code_description: None,
                     });
                 } else if ctx.mode != config::TypeCheckingMode::Loose {
-                    if let Some(inferred_type) = Self::get_type_for_position(ctx.type_map, ctx.position_map, line, col)
-                    {
-                        if !matches!(inferred_type, Type::Con(TypeCtor::Any) | Type::Con(TypeCtor::NoneType))
-                            && !Self::contains_type_var(&inferred_type)
+                    let inferred_type_opt = Self::get_type_for_position(ctx.type_map, ctx.position_map, line, col);
+
+                    match inferred_type_opt {
+                        Some(Type::Con(TypeCtor::Any)) => {
+                            let severity =
+                                Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::ImplicitAny);
+
+                            if let Some(sev) = severity {
+                                let position = Position {
+                                    line: (line.saturating_sub(1)) as u32,
+                                    character: (col.saturating_sub(1)) as u32,
+                                };
+
+                                let range = Range {
+                                    start: position,
+                                    end: Position {
+                                        line: position.line,
+                                        character: position.character + name.len() as u32,
+                                    },
+                                };
+
+                                ctx.diagnostics.push(Diagnostic {
+                                    range,
+                                    severity: Some(sev),
+                                    code: Some(lsp_types::NumberOrString::String("ANN012".to_string())),
+                                    source: Some("beacon".to_string()),
+                                    message: format!(
+                                        "Function '{name}' has implicit Any return type - consider adding type annotation"
+                                    ),
+                                    related_information: None,
+                                    tags: None,
+                                    data: None,
+                                    code_description: None,
+                                });
+                            }
+                        }
+                        Some(inferred_type)
+                            if !matches!(inferred_type, Type::Con(TypeCtor::NoneType))
+                                && !Self::contains_type_var(&inferred_type) =>
                         {
                             let severity =
                                 Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::MissingAnnotation);
@@ -854,6 +957,40 @@ impl DiagnosticProvider {
                                 });
                             }
                         }
+                        None => {
+                            let severity =
+                                Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::ImplicitAny);
+
+                            if let Some(sev) = severity {
+                                let position = Position {
+                                    line: (line.saturating_sub(1)) as u32,
+                                    character: (col.saturating_sub(1)) as u32,
+                                };
+
+                                let range = Range {
+                                    start: position,
+                                    end: Position {
+                                        line: position.line,
+                                        character: position.character + name.len() as u32,
+                                    },
+                                };
+
+                                ctx.diagnostics.push(Diagnostic {
+                                    range,
+                                    severity: Some(sev),
+                                    code: Some(lsp_types::NumberOrString::String("ANN012".to_string())),
+                                    source: Some("beacon".to_string()),
+                                    message: format!(
+                                        "Function '{name}' has implicit Any return type - consider adding type annotation"
+                                    ),
+                                    related_information: None,
+                                    tags: None,
+                                    data: None,
+                                    code_description: None,
+                                });
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -3149,6 +3286,269 @@ def foo():
             .count();
 
         assert_eq!(ann010_count, 0, "Loose mode should not generate ANN010 for bare except");
+    }
+
+    #[test]
+    fn test_balanced_mode_warns_on_implicit_any_parameters() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Balanced;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def process_unknown(data, options):
+    return data
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let ann011_diagnostics: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN011".to_string())))
+            .collect();
+
+        assert!(
+            !ann011_diagnostics.is_empty(),
+            "Expected ANN011 warnings for parameters with implicit Any"
+        );
+
+        for diag in &ann011_diagnostics {
+            assert_eq!(diag.severity, Some(DiagnosticSeverity::WARNING));
+            assert!(diag.message.contains("implicit Any type"));
+            assert!(diag.message.contains("consider adding type annotation"));
+        }
+    }
+
+    #[test]
+    fn test_balanced_mode_warns_on_missing_annotations() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Balanced;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def handle_dynamic(value):
+    return value
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let annotation_warnings: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| {
+                matches!(
+                    d.code.as_ref(),
+                    Some(lsp_types::NumberOrString::String(code))
+                    if code.starts_with("ANN")
+                )
+            })
+            .collect();
+
+        assert!(
+            !annotation_warnings.is_empty(),
+            "Expected annotation warnings for unannotated function"
+        );
+
+        for diag in &annotation_warnings {
+            assert_eq!(diag.severity, Some(DiagnosticSeverity::WARNING));
+        }
+    }
+
+    #[test]
+    fn test_balanced_mode_warns_on_missing_annotation_with_inferred_type() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Balanced;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def add(x, y):
+    return x + y
+
+result = add(1, 2)
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let annotation_warnings: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| {
+                matches!(
+                    d.code.as_ref(),
+                    Some(lsp_types::NumberOrString::String(code))
+                    if code == "ANN004" || code == "ANN006" || code == "ANN011" || code == "ANN012"
+                )
+            })
+            .collect();
+
+        assert!(
+            !annotation_warnings.is_empty(),
+            "Expected annotation warnings for parameters and return type"
+        );
+
+        for diag in &annotation_warnings {
+            assert_eq!(diag.severity, Some(DiagnosticSeverity::WARNING));
+        }
+    }
+
+    #[test]
+    fn test_balanced_mode_gradual_typing_mixed_annotations() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Balanced;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def mixed_params(a: int, b, c: int) -> int:
+    return a + b + c
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let param_b_diagnostics: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| {
+                matches!(
+                    d.code.as_ref(),
+                    Some(lsp_types::NumberOrString::String(code))
+                    if (code == "ANN004" || code == "ANN011") && d.message.contains("'b'")
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            param_b_diagnostics.len(),
+            1,
+            "Expected exactly 1 annotation warning for unannotated parameter 'b'"
+        );
+
+        for diag in &param_b_diagnostics {
+            assert_eq!(diag.severity, Some(DiagnosticSeverity::WARNING));
+        }
+    }
+
+    #[test]
+    fn test_balanced_mode_annotation_mismatch_is_warning() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Balanced;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def wrong_annotation(x: str) -> str:
+    return x + 1
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let mismatch_diagnostics: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| {
+                matches!(
+                    d.code.as_ref(),
+                    Some(lsp_types::NumberOrString::String(code))
+                    if code == "ANN003" || code == "ANN005"
+                )
+            })
+            .collect();
+
+        assert!(
+            !mismatch_diagnostics.is_empty(),
+            "Expected ANN003/ANN005 warnings for annotation mismatches"
+        );
+
+        for diag in &mismatch_diagnostics {
+            assert_eq!(
+                diag.severity,
+                Some(DiagnosticSeverity::WARNING),
+                "Balanced mode should generate warnings for mismatches, not errors"
+            );
+        }
+    }
+
+    #[test]
+    fn test_balanced_mode_with_fully_annotated_function() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Balanced;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def multiply(x: int, y: int) -> int:
+    return x * y
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let missing_annotation_diagnostics: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| {
+                matches!(
+                    d.code.as_ref(),
+                    Some(lsp_types::NumberOrString::String(code))
+                    if code == "ANN004" || code == "ANN006" || code == "ANN011" || code == "ANN012"
+                )
+            })
+            .collect();
+
+        assert!(
+            missing_annotation_diagnostics.is_empty(),
+            "Fully annotated functions should not generate missing annotation warnings in balanced mode"
+        );
     }
 
     #[test]
