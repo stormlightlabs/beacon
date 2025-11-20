@@ -32,8 +32,7 @@ Implement strict/balanced/loose mode enforcement with mode-aware diagnostic filt
 - [x] Require explicit return type annotations on functions
 - [x] Require explicit parameter type annotations (no inference)
 - [x] Error on unannotated class attributes
-- [ ] Reject bare `except:` clauses
-    - [ ] Implement exception types
+- [x] Reject bare `except:` clauses
 
 ### Balanced Mode Implementation
 

@@ -30,6 +30,7 @@ Note that  per-mode rows show the icon used in strict / balanced / loose order
 | [ANN007](#ann007)                         | `ImplicitAnyParameter`            | &#10005;                            | Annotations     | Strict mode forbids implicit `Any` on parameters.                     |
 | [ANN008](#ann008)                         | `ImplicitAnyReturn`               | &#10005;                            | Annotations     | Strict mode forbids implicit `Any` return types.                      |
 | [ANN009](#ann009)                         | `MissingClassAttributeAnnotation` | &#10005;                            | Annotations     | Strict mode requires explicit annotations on class attributes.        |
+| [ANN010](#ann010)                         | `BareExceptClause`                | &#10005;                            | Annotations     | Strict mode forbids bare `except:` clauses without exception types.   |
 | [DUNDER_INFO](#dunder_info)               | `EntryPointGuard`                 | &#9432;                             | Dunder Patterns | Highlights `if __name__ == "__main__":` guard blocks.                 |
 | [DUNDER001](#dunder001)                   | `MagicMethodOutOfScope`           | &#9888;                             | Dunder Patterns | Magic methods defined outside a class.                                |
 | [HM001](#hm001)                           | `TypeMismatch`                    | &#10005;                            | Type System     | Hindley–Milner could not unify two types.                             |
@@ -214,6 +215,41 @@ class Configuration:
 Strict mode requires explicit type annotations on all class attributes.
 Add the annotation (`host: str = "localhost"`) or use balanced/loose mode if gradual typing is preferred.
 Note that instance attributes (assigned in `__init__` or other methods) are not subject to this check—only class-level attributes defined directly in the class body.
+See [Type Checking Modes](../type-checking-modes.md) for mode configuration.
+
+### ANN010
+
+#### Example
+
+```py
+# beacon: mode=strict
+def process_data():
+    try:
+        result = risky_operation()
+    except:  # ANN010: Bare except clause not allowed
+        handle_error()
+```
+
+#### Guidance
+
+Strict mode requires specific exception types in `except` clauses to prevent catching system exceptions like `KeyboardInterrupt` or `SystemExit` unintentionally.
+Replace bare `except:` with specific exception types:
+
+```py
+# Good: Specific exception type
+except ValueError:
+    ...
+
+# Good: Multiple exception types
+except (ValueError, TypeError):
+    ...
+
+# Good: Catch most exceptions but not system ones
+except Exception:
+    ...
+```
+
+Balanced and loose modes allow bare except clauses for gradual adoption.
 See [Type Checking Modes](../type-checking-modes.md) for mode configuration.
 
 ### DUNDER_INFO

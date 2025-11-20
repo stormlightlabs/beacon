@@ -22,12 +22,11 @@ def calculate(x: int, y: int) -> int:
 
 ## Mode Comparison
 
-| Feature | Strict | Balanced | Loose |
-|---------|--------|----------|-------|
-| Annotation mismatches | Error | Warning | Hint |
-| Missing annotations | Error | Warning | Silent |
-| Implicit Any | Error | Warning | Silent |
-| Best for | New projects, type-safe libraries | Gradual adoption, existing codebases | Legacy code, exploratory development |
+| Feature               | Strict  | Balanced  | Loose   |
+| --------------------- | ------- | --------- | ------- |
+| Annotation mismatches | Error   | Warning   | Hint    |
+| Missing annotations   | Error   | Warning   | Silent  |
+| Implicit Any          | Error   | Warning   | Silent  |
 
 ## Strict Mode
 
@@ -39,6 +38,7 @@ Characteristics:
 - **All function parameters must have explicit type annotations** (ANN007)
 - **All function return types must have explicit type annotations** (ANN008)
 - **All class attributes must have explicit type annotations** (ANN009)
+- **Bare `except:` clauses are forbidden** (ANN010)
 - Missing annotations are treated as implicit `Any`, which is forbidden in strict mode
 - Type inference is not allowed as a substitute for explicit annotations
 - Best for greenfield projects, type-safe libraries, and critical components
@@ -75,6 +75,19 @@ class Config:
 
     # ✓ Valid - annotated class attribute
     port: int = 8080
+
+# Exception handling requires specific exception types
+def process() -> int:
+    try:
+        return risky_operation()
+    except:  # ✗ Error - bare except not allowed (ANN010)
+        return -1
+
+def safe_process() -> int:
+    try:
+        return risky_operation()
+    except (ValueError, TypeError):  # ✓ Valid - specific exception types
+        return -1
 ```
 
 ## Balanced Mode
@@ -141,21 +154,25 @@ Beacon validates type annotations against inferred types and reports missing ann
 
 ### Diagnostic Codes
 
-| Code | Description | Strict | Balanced | Loose |
-|------|-------------|--------|----------|-------|
-| ANN001 | Annotation mismatch on assignments | Error | Warning | Hint |
-| ANN002 | Missing annotation on assignments | Error | Warning | Silent |
-| ANN003 | Parameter annotation mismatch | Error | Warning | Hint |
-| ANN004 | Missing parameter annotation (inferred type is concrete) | - | Warning | Silent |
-| ANN005 | Return type annotation mismatch | Error | Warning | Hint |
-| ANN006 | Missing return type annotation (inferred type is concrete) | - | Warning | Silent |
-| ANN007 | Parameter missing annotation (implicit Any) | Error | - | - |
-| ANN008 | Return type missing annotation (implicit Any) | Error | - | - |
-| ANN009 | Class attribute missing annotation | Error | - | - |
+| Code   | Description                                                | Strict | Balanced | Loose  |
+| ------ | ---------------------------------------------------------- | ------ | -------- | ------ |
+| ANN001 | Annotation mismatch on assignments                         | Error  | Warning  | Hint   |
+| ANN002 | Missing annotation on assignments                          | Error  | Warning  | Silent |
+| ANN003 | Parameter annotation mismatch                              | Error  | Warning  | Hint   |
+| ANN004 | Missing parameter annotation (inferred type is concrete)   | -      | Warning  | Silent |
+| ANN005 | Return type annotation mismatch                            | Error  | Warning  | Hint   |
+| ANN006 | Missing return type annotation (inferred type is concrete) | -      | Warning  | Silent |
+| ANN007 | Parameter missing annotation (implicit Any)                | Error  | -        | -      |
+| ANN008 | Return type missing annotation (implicit Any)              | Error  | -        | -      |
+| ANN009 | Class attribute missing annotation                         | Error  | -        | -      |
+| ANN010 | Bare except clause without exception type                  | Error  | -        | -      |
 
-**Note:** In strict mode, all missing parameter and return type annotations are treated as implicit `Any` and reported as ANN007/ANN008 errors. Class attributes without annotations trigger ANN009 errors. In balanced mode, only parameters/returns with concrete inferred types (not Any) generate ANN004/ANN006 warnings.
+**Note:** In strict mode, all missing parameter and return type annotations are treated as implicit `Any` and reported as ANN007/ANN008 errors.
+Class attributes without annotations trigger ANN009 errors. Bare except clauses trigger ANN010 errors.
+In balanced mode, only parameters/returns with concrete inferred types (not Any) generate ANN004/ANN006 warnings.
+See complete [diagnostic codes](./lsp/diagnostic_codes.md) documentation for more information
 
-### Smart Filtering
+### Filtering
 
 Beacon skips diagnostics in cases where type inference is incomplete or trivial:
 

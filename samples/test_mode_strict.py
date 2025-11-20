@@ -249,3 +249,49 @@ class DataClass:
         instance = cls()
         instance.name = name  # Instance attribute assignment
         return instance
+
+
+# ============================================================================
+# Exception Handling
+# ============================================================================
+
+# ERROR: Should trigger ANN010 for bare except clause
+def risky_operation_bare_except() -> int:
+    """Bare except clause is not allowed in strict mode."""
+    try:
+        return 1 / 0
+    except:
+        return -1
+
+
+# OK: Specific exception type is allowed
+def risky_operation_specific() -> int:
+    """Specific exception types are allowed."""
+    try:
+        return 1 / 0
+    except ZeroDivisionError:
+        return -1
+
+
+# OK: Multiple specific exception types in tuple
+def risky_operation_tuple() -> int:
+    """Multiple exception types in tuple form are allowed."""
+    try:
+        return int("not a number")
+    except (ValueError, TypeError):
+        return -1
+
+
+# ERROR: Should trigger ANN010 for bare except
+# OK for specific exception handlers
+def mixed_exception_handlers() -> int:
+    """Mixed specific and bare except handlers."""
+    try:
+        return 1 / 0
+    except ValueError:
+        return 0
+    except TypeError:
+        return 1
+    except:
+        # ERROR: Bare except not allowed in strict mode
+        return -1

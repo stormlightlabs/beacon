@@ -1819,7 +1819,12 @@ impl PythonParser {
             .map(|s| s.to_string())
             .or_else(|| {
                 node.children(&mut node.walk())
-                    .find(|n| n.kind() == "dotted_name" || n.kind() == "identifier")
+                    .find(|n| {
+                        n.kind() == "dotted_name"
+                            || n.kind() == "identifier"
+                            || n.kind() == "tuple"
+                            || n.kind() == "attribute"
+                    })
                     .and_then(|n| n.utf8_text(source.as_bytes()).ok())
                     .map(|s| s.to_string())
             });
@@ -3959,6 +3964,43 @@ count: int = 0"#;
             AstNode::Module { body, .. } => {
                 assert!(matches!(body[0], AstNode::Try { .. }));
             }
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_try_except_tuple_exception_types() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "try:\n    x = 1\nexcept (ValueError, TypeError):\n    x = 0";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Try { handlers, .. } => {
+                    assert_eq!(handlers.len(), 1);
+                    assert_eq!(handlers[0].exception_type, Some("(ValueError, TypeError)".to_string()));
+                }
+                _ => panic!("Expected Try node"),
+            },
+            _ => panic!("Expected module"),
+        }
+    }
+
+    #[test]
+    fn test_try_except_bare_vs_specific() {
+        let mut parser = PythonParser::new().unwrap();
+        let source = "try:\n    x = 1\nexcept ValueError:\n    x = 0\nexcept:\n    x = -1";
+        let parsed = parser.parse(source).unwrap();
+
+        match parser.to_ast(&parsed).unwrap() {
+            AstNode::Module { body, .. } => match &body[0] {
+                AstNode::Try { handlers, .. } => {
+                    assert_eq!(handlers.len(), 2);
+                    assert_eq!(handlers[0].exception_type, Some("ValueError".to_string()));
+                    assert_eq!(handlers[1].exception_type, None);
+                }
+                _ => panic!("Expected Try node"),
+            },
             _ => panic!("Expected module"),
         }
     }

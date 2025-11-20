@@ -434,6 +434,7 @@ impl DiagnosticProvider {
                     self.check_annotation_coverage(stmt, ctx);
                 }
                 for handler in handlers {
+                    self.check_bare_except_handler(handler, ctx);
                     for stmt in &handler.body {
                         self.check_annotation_coverage(stmt, ctx);
                     }
@@ -856,6 +857,36 @@ impl DiagnosticProvider {
                     }
                 }
             }
+        }
+    }
+
+    /// Check for bare except handlers in strict mode
+    fn check_bare_except_handler(&self, handler: &beacon_parser::ExceptHandler, ctx: &mut DiagnosticContext) {
+        if handler.exception_type.is_none() && ctx.mode == config::TypeCheckingMode::Strict {
+            let position = Position {
+                line: (handler.line.saturating_sub(1)) as u32,
+                character: (handler.col.saturating_sub(1)) as u32,
+            };
+
+            let range = Range {
+                start: position,
+                end: Position {
+                    line: (handler.end_line.saturating_sub(1)) as u32,
+                    character: (handler.end_col.saturating_sub(1)) as u32,
+                },
+            };
+
+            ctx.diagnostics.push(Diagnostic {
+                range,
+                severity: Some(DiagnosticSeverity::ERROR),
+                code: Some(lsp_types::NumberOrString::String("ANN010".to_string())),
+                source: Some("beacon".to_string()),
+                message: "Bare except clause not allowed in strict mode - specify exception type(s)".to_string(),
+                related_information: None,
+                tags: None,
+                data: None,
+                code_description: None,
+            });
         }
     }
 
@@ -2966,6 +2997,202 @@ class MyClass:
         assert_eq!(
             ann009_count, 0,
             "Loose mode should not generate ANN009 for class attributes"
+        );
+    }
+
+    #[test]
+    fn test_strict_mode_rejects_bare_except() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Strict;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def foo():
+    try:
+        x = 1 / 0
+    except:
+        pass
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let ann010_diagnostics: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN010".to_string())))
+            .collect();
+
+        assert_eq!(
+            ann010_diagnostics.len(),
+            1,
+            "Expected 1 ANN010 diagnostic for bare except clause"
+        );
+
+        if let Some(diag) = ann010_diagnostics.first() {
+            assert_eq!(diag.severity, Some(DiagnosticSeverity::ERROR));
+            assert!(diag.message.contains("Bare except"));
+            assert!(diag.message.contains("strict mode"));
+        }
+    }
+
+    #[test]
+    fn test_strict_mode_accepts_specific_exception_types() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Strict;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def foo():
+    try:
+        x = 1 / 0
+    except ZeroDivisionError:
+        pass
+    except (ValueError, TypeError):
+        pass
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let ann010_count = diagnostics
+            .iter()
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN010".to_string())))
+            .count();
+
+        assert_eq!(ann010_count, 0, "Specific exception types should not trigger ANN010");
+    }
+
+    #[test]
+    fn test_balanced_mode_allows_bare_except() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Balanced;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def foo():
+    try:
+        x = 1 / 0
+    except:
+        pass
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let ann010_count = diagnostics
+            .iter()
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN010".to_string())))
+            .count();
+
+        assert_eq!(
+            ann010_count, 0,
+            "Balanced mode should not generate ANN010 for bare except"
+        );
+    }
+
+    #[test]
+    fn test_loose_mode_allows_bare_except() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Loose;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def foo():
+    try:
+        x = 1 / 0
+    except:
+        pass
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let ann010_count = diagnostics
+            .iter()
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN010".to_string())))
+            .count();
+
+        assert_eq!(ann010_count, 0, "Loose mode should not generate ANN010 for bare except");
+    }
+
+    #[test]
+    fn test_strict_mode_multiple_bare_except_handlers() {
+        let documents = DocumentManager::new().unwrap();
+        let mut config = crate::config::Config::default();
+        config.type_checking.mode = crate::config::TypeCheckingMode::Strict;
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def foo():
+    try:
+        x = 1 / 0
+    except ValueError:
+        pass
+    except:
+        pass
+
+def bar():
+    try:
+        y = 2 / 0
+    except:
+        pass
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let ann010_count = diagnostics
+            .iter()
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN010".to_string())))
+            .count();
+
+        assert_eq!(
+            ann010_count, 2,
+            "Expected 2 ANN010 diagnostics for two bare except clauses"
         );
     }
 }
