@@ -8,6 +8,7 @@
 
 use crate::{analysis::Analyzer, document::DocumentManager};
 
+use beacon_core::{Type, TypeCtor};
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams, NumberOrString, Position, Range, TextEdit,
     WorkspaceEdit,
@@ -293,10 +294,8 @@ impl CodeActionsProvider {
         None
     }
 
-    /// Format a [beacon_core::Type] for use in a type annotation, i.e. converts internal Type representation to Python syntax
-    fn format_type_for_annotation(ty: &beacon_core::Type) -> String {
-        use beacon_core::{Type, TypeCtor};
-
+    /// Format a [Type] for use in a type annotation, i.e. converts internal Type representation to Python syntax
+    fn format_type_for_annotation(ty: &Type) -> String {
         match ty {
             Type::Con(TypeCtor::Int) => "int".to_string(),
             Type::Con(TypeCtor::Float) => "float".to_string(),
@@ -355,7 +354,6 @@ impl CodeActionsProvider {
                     .collect::<Vec<_>>()
                     .join(" | ")
             }
-
             _ => "Any".to_string(),
         }
     }
@@ -374,7 +372,6 @@ impl CodeActionsProvider {
                 return None;
             }
 
-            // Find the unreachable case statement (diagnostic should point to it)
             let unreachable_case_start = (0..=diag_line)
                 .rev()
                 .find(|&i| i < lines.len() && lines[i].trim_start().starts_with("case "))?;
@@ -443,7 +440,6 @@ impl CodeActionsProvider {
                 return None;
             }
 
-            // Find the case statement (diagnostic should point to it)
             let case_start_line = (0..=diag_line)
                 .rev()
                 .find(|&i| i < lines.len() && lines[i].trim_start().starts_with("case "))?;
@@ -965,5 +961,410 @@ mod tests {
 
         assert!(move_action.is_some(), "Move action not found");
         assert!(remove_action.is_some(), "Remove action not found");
+    }
+
+    #[tokio::test]
+    async fn test_remove_unused_line() {
+        let (provider, uri) = create_test_provider().await;
+        let documents = provider.documents.clone();
+
+        let source = "x = 42\ny = 10\nz = 5\n";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostic = lsp_types::Diagnostic {
+            range: Range { start: Position { line: 1, character: 0 }, end: Position { line: 1, character: 1 } },
+            severity: Some(lsp_types::DiagnosticSeverity::WARNING),
+            code: Some(NumberOrString::String("unused-variable".to_string())),
+            message: "Unused variable 'y'".to_string(),
+            source: Some("beacon".to_string()),
+            ..Default::default()
+        };
+
+        let result = provider.remove_unused_line(&uri, &diagnostic);
+        assert!(result.is_some());
+
+        let action = result.unwrap();
+        assert_eq!(action.title, "Remove unused definition");
+        assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
+        assert_eq!(action.is_preferred, Some(true));
+
+        let edit = action.edit.unwrap();
+        let changes = edit.changes.unwrap();
+        let edits = &changes[&uri];
+        assert_eq!(edits.len(), 1);
+
+        assert_eq!(edits[0].range.start.line, 1);
+        assert_eq!(edits[0].range.start.character, 0);
+        assert_eq!(edits[0].range.end.line, 2);
+        assert_eq!(edits[0].range.end.character, 0);
+        assert_eq!(edits[0].new_text, "");
+    }
+
+    #[tokio::test]
+    async fn test_suggest_optional_return_type() {
+        let (provider, uri) = create_test_provider().await;
+        let documents = provider.documents.clone();
+
+        let source = "def foo() -> str:\n    return None\n";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostic = lsp_types::Diagnostic {
+            range: Range { start: Position { line: 0, character: 13 }, end: Position { line: 0, character: 16 } },
+            severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+            code: Some(NumberOrString::String("HM001".to_string())),
+            message: "Type mismatch: expected str, got None".to_string(),
+            source: Some("beacon".to_string()),
+            ..Default::default()
+        };
+
+        let result = provider.suggest_optional(&uri, &diagnostic);
+        assert!(result.is_some());
+
+        let action = result.unwrap();
+        assert_eq!(action.title, "Wrap type with Optional");
+        assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
+        assert_eq!(action.is_preferred, Some(true));
+
+        let edit = action.edit.unwrap();
+        let changes = edit.changes.unwrap();
+        let edits = &changes[&uri];
+
+        assert!(edits.iter().any(|e| e.new_text.contains("Optional[str]")));
+        assert!(edits.iter().any(|e| e.new_text.contains("from typing import Optional")));
+    }
+
+    #[tokio::test]
+    async fn test_suggest_optional_variable_type() {
+        let (provider, uri) = create_test_provider().await;
+        let documents = provider.documents.clone();
+
+        let source = "x: str = \"hello\"\nx = None\n";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostic = lsp_types::Diagnostic {
+            range: Range { start: Position { line: 0, character: 3 }, end: Position { line: 0, character: 6 } },
+            severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+            code: Some(NumberOrString::String("HM001".to_string())),
+            message: "Type mismatch: expected str, got None".to_string(),
+            source: Some("beacon".to_string()),
+            ..Default::default()
+        };
+
+        let result = provider.suggest_optional(&uri, &diagnostic);
+        assert!(result.is_some());
+
+        let action = result.unwrap();
+        assert_eq!(action.title, "Wrap type with Optional");
+
+        let edit = action.edit.unwrap();
+        let changes = edit.changes.unwrap();
+        let edits = &changes[&uri];
+        assert!(edits.iter().any(|e| e.new_text.contains("Optional[str]")));
+    }
+
+    #[tokio::test]
+    async fn test_suggest_optional_when_optional_exists() {
+        let (provider, uri) = create_test_provider().await;
+        let documents = provider.documents.clone();
+
+        let source = "from typing import Optional\nx: str = \"hello\"\n";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostic = lsp_types::Diagnostic {
+            range: Range { start: Position { line: 1, character: 3 }, end: Position { line: 1, character: 6 } },
+            severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+            code: Some(NumberOrString::String("HM001".to_string())),
+            message: "Type mismatch: expected str, got None".to_string(),
+            source: Some("beacon".to_string()),
+            ..Default::default()
+        };
+
+        let result = provider.suggest_optional(&uri, &diagnostic);
+        assert!(result.is_some());
+
+        let action = result.unwrap();
+        let edit = action.edit.unwrap();
+        let changes = edit.changes.unwrap();
+        let edits = &changes[&uri];
+
+        let import_edits: Vec<_> = edits
+            .iter()
+            .filter(|e| e.new_text.contains("from typing import"))
+            .collect();
+        assert_eq!(import_edits.len(), 0, "Should not add duplicate import");
+    }
+
+    #[tokio::test]
+    async fn test_wrap_return_type_with_optional() {
+        let (provider, _) = create_test_provider().await;
+
+        let line = "def foo() -> str:";
+        let result = provider.wrap_return_type_with_optional(line, 0);
+
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        assert_eq!(edit.new_text, " Optional[str]");
+        assert_eq!(edit.range.start.line, 0);
+    }
+
+    #[tokio::test]
+    async fn test_wrap_return_type_already_optional() {
+        let (provider, _) = create_test_provider().await;
+
+        let line = "def foo() -> Optional[str]:";
+        let result = provider.wrap_return_type_with_optional(line, 0);
+
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_wrap_return_type_complex() {
+        let (provider, _) = create_test_provider().await;
+
+        let line = "def foo() -> list[int]:";
+        let result = provider.wrap_return_type_with_optional(line, 0);
+
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        assert_eq!(edit.new_text, " Optional[list[int]]");
+    }
+
+    #[tokio::test]
+    async fn test_wrap_variable_type_with_optional() {
+        let (provider, _) = create_test_provider().await;
+
+        let line = "x: str = \"hello\"";
+        let result = provider.wrap_variable_type_with_optional(line, 0);
+
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        assert_eq!(edit.new_text, " Optional[str]");
+        assert_eq!(edit.range.start.line, 0);
+    }
+
+    #[tokio::test]
+    async fn test_wrap_variable_type_already_optional() {
+        let (provider, _) = create_test_provider().await;
+
+        let line = "x: Optional[str] = None";
+        let result = provider.wrap_variable_type_with_optional(line, 0);
+
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_wrap_variable_type_no_equals() {
+        let (provider, _) = create_test_provider().await;
+
+        let line = "x: str";
+        let result = provider.wrap_variable_type_with_optional(line, 0);
+
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        assert_eq!(edit.new_text, " Optional[str]");
+    }
+
+    #[tokio::test]
+    async fn test_add_optional_import_no_imports() {
+        let (provider, _) = create_test_provider().await;
+
+        let source = "x = 42\ny = 10\n";
+        let result = provider.add_optional_import(source);
+
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        assert_eq!(edit.new_text, "from typing import Optional\n");
+        assert_eq!(edit.range.start.line, 0);
+        assert_eq!(edit.range.start.character, 0);
+    }
+
+    #[tokio::test]
+    async fn test_add_optional_import_after_existing_imports() {
+        let (provider, _) = create_test_provider().await;
+
+        let source = "import os\nimport sys\nfrom pathlib import Path\n\nx = 42\n";
+        let result = provider.add_optional_import(source);
+
+        assert!(result.is_some());
+        let edit = result.unwrap();
+        assert_eq!(edit.new_text, "from typing import Optional\n");
+        assert_eq!(edit.range.start.line, 3);
+    }
+
+    #[tokio::test]
+    async fn test_add_missing_patterns() {
+        let (provider, uri) = create_test_provider().await;
+        let documents = provider.documents.clone();
+
+        let source = "def foo(x):\n    match x:\n        case int():\n            return 1\n";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostic = lsp_types::Diagnostic {
+            range: Range { start: Position { line: 1, character: 4 }, end: Position { line: 1, character: 9 } },
+            severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+            code: Some(NumberOrString::String("PM001".to_string())),
+            message: "Pattern match not exhaustive. Missing coverage for: str, bool".to_string(),
+            source: Some("beacon".to_string()),
+            ..Default::default()
+        };
+
+        let result = provider.add_missing_patterns(&uri, &diagnostic);
+        assert!(result.is_some());
+
+        let action = result.unwrap();
+        assert_eq!(action.title, "Add missing pattern cases");
+        assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
+        assert_eq!(action.is_preferred, Some(true));
+
+        let edit = action.edit.unwrap();
+        let changes = edit.changes.unwrap();
+        let edits = &changes[&uri];
+        assert_eq!(edits.len(), 1);
+
+        assert!(edits[0].new_text.contains("case _ if isinstance(_, str):"));
+        assert!(edits[0].new_text.contains("case _ if isinstance(_, bool):"));
+        assert!(edits[0].new_text.contains("pass  # TODO: Handle"));
+    }
+
+    #[tokio::test]
+    async fn test_add_missing_patterns_single_type() {
+        let (provider, uri) = create_test_provider().await;
+        let documents = provider.documents.clone();
+
+        let source = "def foo(x):\n    match x:\n        case int():\n            return 1\n";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostic = lsp_types::Diagnostic {
+            range: Range { start: Position { line: 1, character: 4 }, end: Position { line: 1, character: 9 } },
+            severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+            code: Some(NumberOrString::String("PM001".to_string())),
+            message: "Pattern match not exhaustive. Missing coverage for: str".to_string(),
+            source: Some("beacon".to_string()),
+            ..Default::default()
+        };
+
+        let result = provider.add_missing_patterns(&uri, &diagnostic);
+        assert!(result.is_some());
+
+        let action = result.unwrap();
+        assert_eq!(action.title, "Add missing pattern case");
+    }
+
+    #[tokio::test]
+    async fn test_generate_pattern_for_type_uppercase() {
+        let (provider, _) = create_test_provider().await;
+
+        let pattern = provider.generate_pattern_for_type("MyClass");
+        assert_eq!(pattern, "MyClass()");
+    }
+
+    #[tokio::test]
+    async fn test_generate_pattern_for_type_lowercase() {
+        let (provider, _) = create_test_provider().await;
+
+        let pattern = provider.generate_pattern_for_type("str");
+        assert_eq!(pattern, "_ if isinstance(_, str)");
+    }
+
+    #[tokio::test]
+    async fn test_generate_pattern_for_type_builtin() {
+        let (provider, _) = create_test_provider().await;
+
+        assert_eq!(provider.generate_pattern_for_type("int"), "_ if isinstance(_, int)");
+        assert_eq!(provider.generate_pattern_for_type("float"), "_ if isinstance(_, float)");
+        assert_eq!(provider.generate_pattern_for_type("bool"), "_ if isinstance(_, bool)");
+    }
+
+    #[tokio::test]
+    async fn test_implement_protocol_methods() {
+        let (provider, uri) = create_test_provider().await;
+        let documents = provider.documents.clone();
+
+        let source = "class MyClass:\n    pass\n\ndef other():\n    pass\n";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostic = lsp_types::Diagnostic {
+            range: Range { start: Position { line: 0, character: 6 }, end: Position { line: 0, character: 13 } },
+            severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+            code: Some(NumberOrString::String("HM006".to_string())),
+            message: "Type MyClass does not satisfy protocol Iterable".to_string(),
+            source: Some("beacon".to_string()),
+            ..Default::default()
+        };
+
+        let result = provider.implement_protocol_methods(&uri, &diagnostic);
+        assert!(result.is_some());
+
+        let action = result.unwrap();
+        assert_eq!(action.title, "Implement Iterable protocol methods");
+        assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
+        assert_eq!(action.is_preferred, Some(true));
+
+        let edit = action.edit.unwrap();
+        let changes = edit.changes.unwrap();
+        let edits = &changes[&uri];
+        assert_eq!(edits.len(), 1);
+
+        assert!(edits[0].new_text.contains("def __iter__(self):"));
+        assert!(edits[0].new_text.contains("raise NotImplementedError"));
+        assert_eq!(edits[0].range.start.line, 3);
+    }
+
+    #[tokio::test]
+    async fn test_implement_protocol_methods_iterator() {
+        let (provider, uri) = create_test_provider().await;
+        let documents = provider.documents.clone();
+
+        let source = "class MyIterator:\n    def __init__(self):\n        pass\n";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostic = lsp_types::Diagnostic {
+            range: Range { start: Position { line: 0, character: 6 }, end: Position { line: 0, character: 16 } },
+            severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+            code: Some(NumberOrString::String("HM006".to_string())),
+            message: "Type MyIterator does not satisfy protocol Iterator".to_string(),
+            source: Some("beacon".to_string()),
+            ..Default::default()
+        };
+
+        let result = provider.implement_protocol_methods(&uri, &diagnostic);
+        assert!(result.is_some());
+
+        let action = result.unwrap();
+        let edit = action.edit.unwrap();
+        let changes = edit.changes.unwrap();
+        let edits = &changes[&uri];
+
+        assert!(edits[0].new_text.contains("def __iter__(self):"));
+        assert!(edits[0].new_text.contains("return self"));
+        assert!(edits[0].new_text.contains("def __next__(self):"));
+    }
+
+    #[tokio::test]
+    async fn test_implement_protocol_methods_sized() {
+        let (provider, uri) = create_test_provider().await;
+        let documents = provider.documents.clone();
+
+        let source = "class MyContainer:\n    pass\n";
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostic = lsp_types::Diagnostic {
+            range: Range { start: Position { line: 0, character: 6 }, end: Position { line: 0, character: 17 } },
+            severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+            code: Some(NumberOrString::String("HM006".to_string())),
+            message: "Type MyContainer does not satisfy protocol Sized".to_string(),
+            source: Some("beacon".to_string()),
+            ..Default::default()
+        };
+
+        let result = provider.implement_protocol_methods(&uri, &diagnostic);
+        assert!(result.is_some());
+
+        let action = result.unwrap();
+        let edit = action.edit.unwrap();
+        let changes = edit.changes.unwrap();
+        let edits = &changes[&uri];
+
+        assert!(edits[0].new_text.contains("def __len__(self) -> int:"));
     }
 }

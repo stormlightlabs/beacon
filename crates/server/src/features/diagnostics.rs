@@ -3195,4 +3195,454 @@ def bar():
             "Expected 2 ANN010 diagnostics for two bare except clauses"
         );
     }
+
+    #[test]
+    fn test_config_severity_to_lsp() {
+        assert_eq!(
+            DiagnosticProvider::config_severity_to_lsp(config::DiagnosticSeverity::Error),
+            lsp_types::DiagnosticSeverity::ERROR
+        );
+        assert_eq!(
+            DiagnosticProvider::config_severity_to_lsp(config::DiagnosticSeverity::Warning),
+            lsp_types::DiagnosticSeverity::WARNING
+        );
+        assert_eq!(
+            DiagnosticProvider::config_severity_to_lsp(config::DiagnosticSeverity::Info),
+            lsp_types::DiagnosticSeverity::INFORMATION
+        );
+    }
+
+    #[test]
+    fn test_mode_severity_for_diagnostic_implicit_any() {
+        use lsp_types::DiagnosticSeverity as Severity;
+
+        assert_eq!(
+            DiagnosticProvider::mode_severity_for_diagnostic(
+                config::TypeCheckingMode::Strict,
+                DiagnosticCategory::ImplicitAny
+            ),
+            Some(Severity::ERROR)
+        );
+        assert_eq!(
+            DiagnosticProvider::mode_severity_for_diagnostic(
+                config::TypeCheckingMode::Balanced,
+                DiagnosticCategory::ImplicitAny
+            ),
+            Some(Severity::WARNING)
+        );
+        assert_eq!(
+            DiagnosticProvider::mode_severity_for_diagnostic(
+                config::TypeCheckingMode::Loose,
+                DiagnosticCategory::ImplicitAny
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_mode_severity_for_diagnostic_missing_annotation() {
+        use lsp_types::DiagnosticSeverity as Severity;
+
+        assert_eq!(
+            DiagnosticProvider::mode_severity_for_diagnostic(
+                config::TypeCheckingMode::Strict,
+                DiagnosticCategory::MissingAnnotation
+            ),
+            Some(Severity::ERROR)
+        );
+        assert_eq!(
+            DiagnosticProvider::mode_severity_for_diagnostic(
+                config::TypeCheckingMode::Balanced,
+                DiagnosticCategory::MissingAnnotation
+            ),
+            Some(Severity::WARNING)
+        );
+        assert_eq!(
+            DiagnosticProvider::mode_severity_for_diagnostic(
+                config::TypeCheckingMode::Loose,
+                DiagnosticCategory::MissingAnnotation
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_mode_severity_for_diagnostic_annotation_mismatch() {
+        use lsp_types::DiagnosticSeverity as Severity;
+
+        assert_eq!(
+            DiagnosticProvider::mode_severity_for_diagnostic(
+                config::TypeCheckingMode::Strict,
+                DiagnosticCategory::AnnotationMismatch
+            ),
+            Some(Severity::ERROR)
+        );
+        assert_eq!(
+            DiagnosticProvider::mode_severity_for_diagnostic(
+                config::TypeCheckingMode::Balanced,
+                DiagnosticCategory::AnnotationMismatch
+            ),
+            Some(Severity::WARNING)
+        );
+        assert_eq!(
+            DiagnosticProvider::mode_severity_for_diagnostic(
+                config::TypeCheckingMode::Loose,
+                DiagnosticCategory::AnnotationMismatch
+            ),
+            Some(Severity::HINT)
+        );
+    }
+
+    #[test]
+    fn test_types_are_compatible_basic() {
+        assert!(DiagnosticProvider::types_are_compatible(
+            &Type::Con(TypeCtor::Int),
+            &Type::Con(TypeCtor::Int)
+        ));
+        assert!(!DiagnosticProvider::types_are_compatible(
+            &Type::Con(TypeCtor::Int),
+            &Type::Con(TypeCtor::String)
+        ));
+    }
+
+    #[test]
+    fn test_types_are_compatible_with_any() {
+        assert!(DiagnosticProvider::types_are_compatible(
+            &Type::Con(TypeCtor::Any),
+            &Type::Con(TypeCtor::Int)
+        ));
+        assert!(DiagnosticProvider::types_are_compatible(
+            &Type::Con(TypeCtor::Int),
+            &Type::Con(TypeCtor::Any)
+        ));
+    }
+
+    #[test]
+    fn test_types_are_compatible_application() {
+        let list_int1 = Type::App(Box::new(Type::Con(TypeCtor::List)), Box::new(Type::Con(TypeCtor::Int)));
+        let list_int2 = Type::App(Box::new(Type::Con(TypeCtor::List)), Box::new(Type::Con(TypeCtor::Int)));
+        let list_str = Type::App(
+            Box::new(Type::Con(TypeCtor::List)),
+            Box::new(Type::Con(TypeCtor::String)),
+        );
+
+        assert!(DiagnosticProvider::types_are_compatible(&list_int1, &list_int2));
+        assert!(!DiagnosticProvider::types_are_compatible(&list_int1, &list_str));
+    }
+
+    #[test]
+    fn test_types_are_compatible_function() {
+        let fun1 = Type::Fun(
+            vec![("x".to_string(), Type::Con(TypeCtor::Int))],
+            Box::new(Type::Con(TypeCtor::String)),
+        );
+        let fun2 = Type::Fun(
+            vec![("y".to_string(), Type::Con(TypeCtor::Int))],
+            Box::new(Type::Con(TypeCtor::String)),
+        );
+        let fun3 = Type::Fun(
+            vec![("x".to_string(), Type::Con(TypeCtor::String))],
+            Box::new(Type::Con(TypeCtor::String)),
+        );
+
+        assert!(DiagnosticProvider::types_are_compatible(&fun1, &fun2));
+        assert!(!DiagnosticProvider::types_are_compatible(&fun1, &fun3));
+    }
+
+    #[test]
+    fn test_types_are_compatible_union() {
+        let union1 = Type::Union(vec![Type::Con(TypeCtor::Int), Type::Con(TypeCtor::String)]);
+        let union2 = Type::Union(vec![Type::Con(TypeCtor::String), Type::Con(TypeCtor::Int)]);
+        let union3 = Type::Union(vec![Type::Con(TypeCtor::Int), Type::Con(TypeCtor::Bool)]);
+
+        assert!(DiagnosticProvider::types_are_compatible(&union1, &union2));
+        assert!(!DiagnosticProvider::types_are_compatible(&union1, &union3));
+    }
+
+    #[test]
+    fn test_types_are_compatible_with_type_vars() {
+        let tv = TypeVar::new(0);
+        assert!(DiagnosticProvider::types_are_compatible(
+            &Type::Var(tv.clone()),
+            &Type::Con(TypeCtor::Int)
+        ));
+        assert!(DiagnosticProvider::types_are_compatible(
+            &Type::Con(TypeCtor::Int),
+            &Type::Var(tv)
+        ));
+    }
+
+    #[test]
+    fn test_contains_type_var_simple() {
+        let tv = TypeVar::new(0);
+        assert!(DiagnosticProvider::contains_type_var(&Type::Var(tv)));
+        assert!(!DiagnosticProvider::contains_type_var(&Type::Con(TypeCtor::Int)));
+    }
+
+    #[test]
+    fn test_contains_type_var_nested() {
+        let tv = TypeVar::new(0);
+        let list_var = Type::App(Box::new(Type::Con(TypeCtor::List)), Box::new(Type::Var(tv)));
+        assert!(DiagnosticProvider::contains_type_var(&list_var));
+
+        let list_int = Type::App(Box::new(Type::Con(TypeCtor::List)), Box::new(Type::Con(TypeCtor::Int)));
+        assert!(!DiagnosticProvider::contains_type_var(&list_int));
+    }
+
+    #[test]
+    fn test_contains_type_var_function() {
+        let tv = TypeVar::new(0);
+        let fun_var = Type::Fun(
+            vec![("x".to_string(), Type::Var(tv.clone()))],
+            Box::new(Type::Con(TypeCtor::Int)),
+        );
+        assert!(DiagnosticProvider::contains_type_var(&fun_var));
+
+        let fun_normal = Type::Fun(
+            vec![("x".to_string(), Type::Con(TypeCtor::Int))],
+            Box::new(Type::Con(TypeCtor::String)),
+        );
+        assert!(!DiagnosticProvider::contains_type_var(&fun_normal));
+    }
+
+    #[test]
+    fn test_contains_type_var_union() {
+        let tv = TypeVar::new(0);
+        let union_var = Type::Union(vec![Type::Con(TypeCtor::Int), Type::Var(tv)]);
+        assert!(DiagnosticProvider::contains_type_var(&union_var));
+
+        let union_normal = Type::Union(vec![Type::Con(TypeCtor::Int), Type::Con(TypeCtor::String)]);
+        assert!(!DiagnosticProvider::contains_type_var(&union_normal));
+    }
+
+    #[test]
+    fn test_extract_target_name_identifier() {
+        let node = AstNode::Identifier { name: "my_var".to_string(), line: 1, col: 1, end_line: 1, end_col: 7 };
+        assert_eq!(DiagnosticProvider::extract_target_name(&node), "my_var");
+    }
+
+    #[test]
+    fn test_extract_target_name_attribute() {
+        let node = AstNode::Attribute {
+            object: Box::new(AstNode::Identifier { name: "obj".to_string(), line: 1, col: 1, end_line: 1, end_col: 4 }),
+            attribute: "attr".to_string(),
+            line: 1,
+            col: 5,
+            end_line: 1,
+            end_col: 9,
+        };
+        assert_eq!(DiagnosticProvider::extract_target_name(&node), "attr");
+    }
+
+    #[test]
+    fn test_extract_target_name_fallback() {
+        let node = AstNode::Literal {
+            value: beacon_parser::LiteralValue::Integer(42),
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 3,
+        };
+        assert_eq!(DiagnosticProvider::extract_target_name(&node), "variable");
+    }
+
+    #[test]
+    fn test_is_name_main_check_valid() {
+        let test = AstNode::Compare {
+            left: Box::new(AstNode::Identifier {
+                name: "__name__".to_string(),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 9,
+            }),
+            ops: vec![beacon_parser::CompareOperator::Eq],
+            comparators: vec![AstNode::Literal {
+                value: beacon_parser::LiteralValue::String { value: "__main__".to_string(), prefix: String::new() },
+                line: 1,
+                col: 10,
+                end_line: 1,
+                end_col: 20,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 20,
+        };
+
+        assert!(DiagnosticProvider::is_name_main_check(&test));
+    }
+
+    #[test]
+    fn test_is_name_main_check_invalid() {
+        let test = AstNode::Compare {
+            left: Box::new(AstNode::Identifier {
+                name: "other_var".to_string(),
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 10,
+            }),
+            ops: vec![beacon_parser::CompareOperator::Eq],
+            comparators: vec![AstNode::Literal {
+                value: beacon_parser::LiteralValue::String { value: "__main__".to_string(), prefix: String::new() },
+                line: 1,
+                col: 10,
+                end_line: 1,
+                end_col: 20,
+            }],
+            line: 1,
+            col: 1,
+            end_line: 1,
+            end_col: 20,
+        };
+
+        assert!(!DiagnosticProvider::is_name_main_check(&test));
+    }
+
+    #[test]
+    fn test_line_col_to_byte_offset_simple() {
+        let source = "hello\nworld\ntest";
+        let offset = DiagnosticProvider::line_col_to_byte_offset_from_source(source, &2, &3);
+        assert_eq!(offset, 8);
+    }
+
+    #[test]
+    fn test_line_col_to_byte_offset_start() {
+        let source = "hello\nworld";
+        let offset = DiagnosticProvider::line_col_to_byte_offset_from_source(source, &1, &1);
+        assert_eq!(offset, 0);
+    }
+
+    #[test]
+    fn test_line_col_to_byte_offset_multiline() {
+        let source = "line1\nline2\nline3";
+        let offset = DiagnosticProvider::line_col_to_byte_offset_from_source(source, &3, &2);
+        assert_eq!(offset, 13);
+    }
+
+    #[test]
+    fn test_enhance_unification_error_str_int() {
+        let base = "Type mismatch: cannot unify str with int";
+        let enhanced = enhance_unification_error_message(base, "str", "int");
+        assert!(enhanced.contains("mixing strings and integers"));
+    }
+
+    #[test]
+    fn test_enhance_unification_error_list_dict() {
+        let base = "Type mismatch: cannot unify list with dict";
+        let enhanced = enhance_unification_error_message(base, "list", "dict");
+        assert!(enhanced.contains("Collection type mismatch"));
+    }
+
+    #[test]
+    fn test_enhance_unification_error_none() {
+        let base = "Type mismatch: cannot unify str with None";
+        let enhanced = enhance_unification_error_message(base, "str", "None");
+        assert!(enhanced.contains("None"));
+        assert!(enhanced.contains("Optional[T]"));
+    }
+
+    #[test]
+    fn test_enhance_unification_error_union() {
+        let base = "Type mismatch: cannot unify Union[int, str] with bool";
+        let enhanced = enhance_unification_error_message(base, "Union[int, str]", "bool");
+        assert!(enhanced.contains("Union types"));
+    }
+
+    #[test]
+    fn test_enhance_unification_error_default() {
+        let base = "Type mismatch: cannot unify float with bool";
+        let enhanced = enhance_unification_error_message(base, "float", "bool");
+        assert_eq!(enhanced, base);
+    }
+
+    #[test]
+    fn test_enhance_protocol_error_iterable() {
+        let enhanced = enhance_protocol_error_message("MyClass", "Iterable");
+        assert!(enhanced.contains("MyClass"));
+        assert!(enhanced.contains("Iterable"));
+        assert!(enhanced.contains("cannot be iterated"));
+    }
+
+    #[test]
+    fn test_enhance_protocol_error_other() {
+        let enhanced = enhance_protocol_error_message("MyClass", "Sized");
+        assert!(enhanced.contains("MyClass"));
+        assert!(enhanced.contains("Sized"));
+        assert!(!enhanced.contains("cannot be iterated"));
+    }
+
+    #[test]
+    fn test_enhance_attribute_error_splitlines() {
+        let enhanced = enhance_attribute_error_message("int", "splitlines");
+        assert!(enhanced.contains("splitlines"));
+        assert!(enhanced.contains("string method"));
+    }
+
+    #[test]
+    fn test_enhance_attribute_error_write_text() {
+        let enhanced = enhance_attribute_error_message("str", "write_text");
+        assert!(enhanced.contains("write_text"));
+        assert!(enhanced.contains("Path object"));
+    }
+
+    #[test]
+    fn test_enhance_attribute_error_get() {
+        let enhanced = enhance_attribute_error_message("list", "get");
+        assert!(enhanced.contains("get()"));
+        assert!(enhanced.contains("dictionaries"));
+    }
+
+    #[test]
+    fn test_enhance_attribute_error_append() {
+        let enhanced = enhance_attribute_error_message("str", "append");
+        assert!(enhanced.contains("append()"));
+        assert!(enhanced.contains("lists"));
+    }
+
+    #[test]
+    fn test_enhance_attribute_error_default() {
+        let enhanced = enhance_attribute_error_message("MyClass", "unknown_method");
+        assert!(enhanced.contains("unknown_method"));
+        assert!(enhanced.contains("not found"));
+    }
+
+    #[test]
+    fn test_enhance_variance_error_invariant_list() {
+        let enhanced = enhance_variance_error_message("list element", "invariant", "Dog", "Animal");
+        assert!(enhanced.contains("invariant"));
+        assert!(enhanced.contains("list"));
+        assert!(enhanced.contains("Mutable containers"));
+    }
+
+    #[test]
+    fn test_enhance_variance_error_invariant_generic() {
+        let enhanced = enhance_variance_error_message("generic type", "invariant", "int", "float");
+        assert!(enhanced.contains("invariant"));
+        assert!(enhanced.contains("exact type matches"));
+    }
+
+    #[test]
+    fn test_enhance_variance_error_covariant_return() {
+        let enhanced = enhance_variance_error_message("return type", "covariant", "Animal", "Dog");
+        assert!(enhanced.contains("covariant"));
+        assert!(enhanced.contains("Return types"));
+        assert!(enhanced.contains("subtype"));
+    }
+
+    #[test]
+    fn test_enhance_variance_error_contravariant_parameter() {
+        let enhanced = enhance_variance_error_message("parameter", "contravariant", "Dog", "Animal");
+        assert!(enhanced.contains("contravariant"));
+        assert!(enhanced.contains("parameters"));
+        assert!(enhanced.contains("supertype"));
+    }
+
+    #[test]
+    fn test_enhance_variance_error_unknown() {
+        let enhanced = enhance_variance_error_message("position", "unknown", "Type1", "Type2");
+        assert!(enhanced.contains("Variance error"));
+        assert!(!enhanced.contains("Mutable containers"));
+    }
 }

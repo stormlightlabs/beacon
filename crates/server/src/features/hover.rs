@@ -1097,4 +1097,275 @@ p = Person("Alice")"#;
         let result = provider.find_symbol_docstring("x", beacon_parser::SymbolKind::Variable);
         assert!(result.is_none());
     }
+
+    #[test]
+    fn test_format_builtin_var_hover_with_dunder_info() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_builtin_var_hover("__name__");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("__name__"));
+        assert!(content.value.contains("```python"));
+    }
+
+    #[test]
+    fn test_format_builtin_var_hover_without_dunder_info() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_builtin_var_hover("some_custom_builtin");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("Builtin Variable"));
+        assert!(content.value.contains("some_custom_builtin"));
+    }
+
+    #[test]
+    fn test_format_builtin_var_hover_file() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_builtin_var_hover("__file__");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("__file__"));
+        assert!(content.value.contains("```python"));
+    }
+
+    #[test]
+    fn test_format_magic_method_hover_with_dunder_info() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_magic_method_hover("__init__");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("__init__"));
+        assert!(content.value.contains("```python"));
+        assert!(content.value.contains("Magic Method"));
+    }
+
+    #[test]
+    fn test_format_magic_method_hover_str() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_magic_method_hover("__str__");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("__str__"));
+        assert!(content.value.contains("Magic Method"));
+    }
+
+    #[test]
+    fn test_format_magic_method_hover_without_dunder_info() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_magic_method_hover("__custom_magic__");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("Magic Method"));
+        assert!(content.value.contains("__custom_magic__"));
+    }
+
+    #[test]
+    fn test_format_dunder_hover_structure() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let dunder_info = crate::features::dunders::DunderInfo {
+            name: "__test__".to_string(),
+            category: "method".to_string(),
+            doc: "Test documentation".to_string(),
+            link: "https://example.com".to_string(),
+        };
+
+        let content = provider.format_dunder_hover(&dunder_info);
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("```python"));
+        assert!(content.value.contains("__test__"));
+        assert!(content.value.contains("Magic Method"));
+        assert!(content.value.contains("Test documentation"));
+        assert!(content.value.contains("Python Documentation"));
+        assert!(content.value.contains("https://example.com"));
+    }
+
+    #[test]
+    fn test_format_dunder_hover_builtin_variable_category() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let dunder_info = crate::features::dunders::DunderInfo {
+            name: "__name__".to_string(),
+            category: "variable".to_string(),
+            doc: "Module name".to_string(),
+            link: "https://docs.python.org/3/reference/import.html#name__".to_string(),
+        };
+
+        let content = provider.format_dunder_hover(&dunder_info);
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("Builtin Variable"));
+        assert!(!content.value.contains("Magic Method"));
+        assert!(content.value.contains("__name__"));
+        assert!(content.value.contains("Module name"));
+    }
+
+    #[test]
+    fn test_format_dunder_hover_method_category() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let dunder_info = crate::features::dunders::DunderInfo {
+            name: "__init__".to_string(),
+            category: "method".to_string(),
+            doc: "Initialize instance".to_string(),
+            link: "https://docs.python.org/3/reference/datamodel.html#object.__init__".to_string(),
+        };
+
+        let content = provider.format_dunder_hover(&dunder_info);
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("Magic Method"));
+        assert!(!content.value.contains("Builtin Variable"));
+    }
+
+    #[test]
+    fn test_format_builtin_type_hover_with_embedded_docs() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_builtin_type_hover("int");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("```python"));
+        assert!(content.value.contains("int"));
+        assert!(content.value.contains("Built-in Type"));
+    }
+
+    #[test]
+    fn test_format_builtin_type_hover_str() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_builtin_type_hover("str");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("str"));
+        assert!(content.value.contains("Built-in Type"));
+    }
+
+    #[test]
+    fn test_format_builtin_type_hover_list() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_builtin_type_hover("list");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("list"));
+        assert!(content.value.contains("Built-in Type"));
+    }
+
+    #[test]
+    fn test_format_builtin_type_hover_dict() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_builtin_type_hover("dict");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("dict"));
+        assert!(content.value.contains("Built-in Type"));
+    }
+
+    #[test]
+    fn test_format_builtin_type_hover_bool() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_builtin_type_hover("bool");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("bool"));
+        assert!(content.value.contains("Built-in Type"));
+    }
+
+    #[test]
+    fn test_format_builtin_type_hover_float() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_builtin_type_hover("float");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("float"));
+        assert!(content.value.contains("Built-in Type"));
+    }
+
+    #[test]
+    fn test_format_builtin_type_hover_tuple() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_builtin_type_hover("tuple");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("tuple"));
+        assert!(content.value.contains("Built-in Type"));
+    }
+
+    #[test]
+    fn test_format_builtin_type_hover_set() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_builtin_type_hover("set");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("set"));
+        assert!(content.value.contains("Built-in Type"));
+    }
+
+    #[test]
+    fn test_format_builtin_type_hover_unknown_type() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_builtin_type_hover("UnknownType");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("UnknownType"));
+        assert!(content.value.contains("Built-in Type"));
+        assert!(content.value.contains("```python"));
+    }
+
+    #[test]
+    fn test_format_builtin_type_hover_without_introspection() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_builtin_type_hover("CustomBuiltin");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        assert!(content.value.contains("CustomBuiltin"));
+        assert!(content.value.contains("Built-in Type"));
+    }
+
+    #[test]
+    fn test_format_builtin_type_hover_with_doc_link() {
+        let documents = DocumentManager::new().unwrap();
+        let provider = HoverProvider::new(documents);
+
+        let content = provider.format_builtin_type_hover("str");
+
+        assert_eq!(content.kind, MarkupKind::Markdown);
+        if content.value.contains("Python Documentation") {
+            assert!(content.value.contains("http"));
+        }
+    }
 }
