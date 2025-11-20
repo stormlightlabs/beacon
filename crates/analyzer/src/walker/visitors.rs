@@ -284,6 +284,9 @@ pub fn visit_function(
                         .as_ref()
                         .map(|ann| env.parse_annotation_or_any(ann))
                         .unwrap_or_else(|| Type::Var(env.fresh_var()));
+
+                    ctx.record_type(param.line, param.col, param_type.clone());
+
                     (param.name.clone(), param_type)
                 })
                 .collect();

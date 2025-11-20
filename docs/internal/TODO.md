@@ -40,7 +40,7 @@ Implement strict/balanced/loose mode enforcement with mode-aware diagnostic filt
 - [x] Warn on implicit Any from missing annotations
 - [x] Suggest type annotations where inference is uncertain
 - [x] Allow gradual typing (mixed annotated/unannotated code)
-- [ ] Improve type inference to populate type_map for simple function parameters and return types
+- [x] Improve type inference to populate type_map for simple function parameters and return types
 
 ### Loose Mode Implementation
 

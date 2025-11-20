@@ -887,7 +887,12 @@ impl DiagnosticProvider {
                 } else if ctx.mode != config::TypeCheckingMode::Loose {
                     let inferred_type_opt = Self::get_type_for_position(ctx.type_map, ctx.position_map, line, col);
 
-                    match inferred_type_opt {
+                    let return_type_opt = inferred_type_opt.map(|ty| match ty {
+                        Type::Fun(_, ret) => *ret,
+                        other => other,
+                    });
+
+                    match return_type_opt {
                         Some(Type::Con(TypeCtor::Any)) => {
                             let severity =
                                 Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::ImplicitAny);
@@ -921,9 +926,9 @@ impl DiagnosticProvider {
                                 });
                             }
                         }
-                        Some(inferred_type)
-                            if !matches!(inferred_type, Type::Con(TypeCtor::NoneType))
-                                && !Self::contains_type_var(&inferred_type) =>
+                        Some(return_type)
+                            if !matches!(return_type, Type::Con(TypeCtor::NoneType))
+                                && !Self::contains_type_var(&return_type) =>
                         {
                             let severity =
                                 Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::MissingAnnotation);
@@ -948,7 +953,7 @@ impl DiagnosticProvider {
                                     code: Some(lsp_types::NumberOrString::String("ANN006".to_string())),
                                     source: Some("beacon".to_string()),
                                     message: format!(
-                                        "Function '{name}' missing return type annotation (inferred as '{inferred_type}')"
+                                        "Function '{name}' missing return type annotation (inferred as '{return_type}')"
                                     ),
                                     related_information: None,
                                     tags: None,
