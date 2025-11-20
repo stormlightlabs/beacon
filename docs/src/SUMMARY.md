@@ -14,6 +14,7 @@
         - [Interpreter](./lsp/python_docs.md)
     - [Static Analysis](./lsp/static_analysis.md)
         - [Rules](./lsp/lint_rules.md)
+        - [Diagnostic Codes](./lsp/diagnostic_codes.md)
         - [Type Checker](./lsp/type_checking.md)
             - [Type Checking Modes](./type-checking-modes.md)
     - [Logging and Observability](./lsp/logging.md)
