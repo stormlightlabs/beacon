@@ -256,6 +256,7 @@ impl Analyzer {
 
         for (_node_id, ty) in type_map.iter_mut() {
             *ty = substitution.apply(ty);
+            Self::finalize_type(ty);
         }
 
         self.position_maps.insert(uri.clone(), position_map.clone());
@@ -939,6 +940,40 @@ impl Analyzer {
         }
 
         chars.all(|c| c.is_alphanumeric() || c == '_')
+    }
+
+    /// Convert unresolved type variables to Any for balanced mode diagnostics
+    ///
+    /// After constraint solving, type variables that couldn't be unified with any concrete type should be treated as implicit Any for diagnostic purposes.
+    fn finalize_type(ty: &mut Type) {
+        use beacon_core::{Type, TypeCtor};
+
+        match ty {
+            Type::Var(_) => {
+                *ty = Type::Con(TypeCtor::Any);
+            }
+            Type::App(t1, t2) => {
+                Self::finalize_type(t1);
+                Self::finalize_type(t2);
+            }
+            Type::Fun(args, ret) => {
+                for (_, arg_ty) in args {
+                    Self::finalize_type(arg_ty);
+                }
+                Self::finalize_type(ret);
+            }
+            Type::Union(types) => {
+                for t in types {
+                    Self::finalize_type(t);
+                }
+            }
+            Type::Record(fields, _) => {
+                for (_, field_ty) in fields {
+                    Self::finalize_type(field_ty);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

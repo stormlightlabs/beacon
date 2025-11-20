@@ -22,11 +22,13 @@ def calculate(x: int, y: int) -> int:
 
 ## Mode Comparison
 
-| Feature               | Strict  | Balanced  | Loose   |
-| --------------------- | ------- | --------- | ------- |
-| Annotation mismatches | Error   | Warning   | Hint    |
-| Missing annotations   | Error   | Warning   | Silent  |
-| Implicit Any          | Error   | Warning   | Silent  |
+| Feature                          | Strict  | Balanced  | Loose   |
+| -------------------------------- | ------- | --------- | ------- |
+| Annotation mismatches            | Error   | Warning   | Hint    |
+| Missing annotations (inferred)   | Error   | Warning   | Silent  |
+| Implicit Any                     | Error   | Warning   | Silent  |
+| Bare except clauses              | Error   | Allowed   | Allowed |
+| Class attribute annotations      | Required| Optional  | Optional|
 
 ## Strict Mode
 
@@ -92,13 +94,14 @@ def safe_process() -> int:
 
 ## Balanced Mode
 
-Provides helpful warnings while allowing gradual type annotation adoption.
+Provides helpful warnings while allowing gradual type annotation adoption. Distinguishes between concrete inferred types and implicit Any to guide annotation efforts.
 
 Characteristics:
 
-- Annotation mismatches are warnings
-- Missing annotations are warnings
-- Allows mixing annotated and unannotated code
+- Annotation mismatches are warnings (not errors)
+- Missing annotations with concrete inferred types trigger warnings showing the inferred type
+- Implicit Any types (unresolvable inference) trigger warnings to identify ambiguous cases
+- Allows mixing annotated and unannotated code (gradual typing)
 - Ideal for incrementally adding types to existing projects
 
 Example:
@@ -110,13 +113,26 @@ Example:
 def process(data: list[int]) -> int:
     return sum(data)
 
-# ⚠ Warning - missing return type annotation (ANN006)
+# ⚠ Warning ANN006 - missing return type annotation (inferred as int)
+# Suggestion includes the inferred type to guide annotation
 def calculate(x: int, y: int):
     return x + y
 
-# ⚠ Warning - missing parameter annotation (ANN004)
+# ⚠ Warning ANN004 - parameter 'first' missing annotation (inferred as str)
+# Type can be inferred from usage context
 def format_name(first, last: str) -> str:
     return f"{first} {last}"
+
+# ⚠ Warning ANN011 - parameter 'data' has implicit Any type
+# ⚠ Warning ANN012 - return type is implicit Any
+# Type inference couldn't determine concrete types
+def process_unknown(data, options):
+    return data
+
+# ⚠ Warning ANN011 - parameter 'b' has implicit Any type
+# Gradual typing: warns only on unannotated parameter
+def mixed_params(a: int, b, c: int) -> int:
+    return a + b + c
 ```
 
 ## Loose Mode
@@ -162,37 +178,54 @@ Beacon validates type annotations against inferred types and reports missing ann
 | ANN004 | Missing parameter annotation (inferred type is concrete)   | -      | Warning  | Silent |
 | ANN005 | Return type annotation mismatch                            | Error  | Warning  | Hint   |
 | ANN006 | Missing return type annotation (inferred type is concrete) | -      | Warning  | Silent |
-| ANN007 | Parameter missing annotation (implicit Any)                | Error  | -        | -      |
-| ANN008 | Return type missing annotation (implicit Any)              | Error  | -        | -      |
+| ANN007 | Parameter missing annotation (strict mode)                 | Error  | -        | -      |
+| ANN008 | Return type missing annotation (strict mode)               | Error  | -        | -      |
 | ANN009 | Class attribute missing annotation                         | Error  | -        | -      |
 | ANN010 | Bare except clause without exception type                  | Error  | -        | -      |
+| ANN011 | Parameter has implicit Any type                            | -      | Warning  | -      |
+| ANN012 | Return type has implicit Any type                          | -      | Warning  | -      |
 
-**Note:** In strict mode, all missing parameter and return type annotations are treated as implicit `Any` and reported as ANN007/ANN008 errors.
+**Strict Mode:** All missing parameter and return type annotations trigger ANN007/ANN008 errors respectively.
 Class attributes without annotations trigger ANN009 errors. Bare except clauses trigger ANN010 errors.
-In balanced mode, only parameters/returns with concrete inferred types (not Any) generate ANN004/ANN006 warnings.
+
+**Balanced Mode:** Distinguishes between concrete inferred types and implicit Any:
+
+- ANN004/ANN006: Missing annotations where type inference determined a concrete type (warns with suggested type)
+- ANN011/ANN012: Missing annotations where type inference resulted in implicit Any (warns about ambiguity)
+
 See complete [diagnostic codes](./lsp/diagnostic_codes.md) documentation for more information
 
-### Filtering
+### Type Inference and Implicit Any
 
-Beacon skips diagnostics in cases where type inference is incomplete or trivial:
+After constraint solving, Beacon finalizes any unresolved type variables as `Any` enabling balanced mode to distinguish between:
 
-- Types inferred as `Any` (inference couldn't determine a specific type)
-- Types containing unresolved type variables
-- Function return types inferred as `None` (procedures without explicit returns)
+1. **Concrete inferred types**: Type inference successfully determined a specific type (int, str, list, etc.)
+2. **Implicit Any**: Type inference couldn't resolve to a concrete type due to insufficient context
+3. **Active type variables**: Still in the inference process (no diagnostic yet)
+
+Diagnostic behavior:
+
+- **Strict mode**: All missing annotations are errors (ANN007/ANN008), regardless of inference
+- **Balanced mode**: Warns on both concrete inferred types (ANN004/ANN006) and implicit Any (ANN011/ANN012)
+- **Loose mode**: Silent on missing annotations, only hints on explicit mismatches
+- **NoneType returns**: No diagnostic for procedures with implicit None return (void functions)
 
 Example:
 
 ```python
-# beacon: mode=strict
+# beacon: mode=balanced
 
-# ✓ No diagnostic - inferred as Any (incomplete inference)
-x = get_dynamic_value()
-
-# ✓ No diagnostic - procedure with no return
-def log_message(msg: str) -> None:
-    print(msg)
-
-# ✗ Error (ANN006) - returns concrete type without annotation
+# ⚠ Warning ANN004/ANN006 - concrete inferred type (int)
+# Suggestion shows the inferred type
 def add(x: int, y: int):
     return x + y  # Inferred as int
+
+# ⚠ Warning ANN011/ANN012 - implicit Any
+# Type inference couldn't determine concrete type
+def process(data):
+    return transform(data)  # Unknown transform behavior
+
+# ✓ No diagnostic - procedure with None return
+def log_message(msg: str):
+    print(msg)  # Inferred as None, no warning needed
 ```

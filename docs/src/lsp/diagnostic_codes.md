@@ -31,6 +31,8 @@ Note that  per-mode rows show the icon used in strict / balanced / loose order
 | [ANN008](#ann008)                         | `ImplicitAnyReturn`               | &#10005;                            | Annotations     | Strict mode forbids implicit `Any` return types.                      |
 | [ANN009](#ann009)                         | `MissingClassAttributeAnnotation` | &#10005;                            | Annotations     | Strict mode requires explicit annotations on class attributes.        |
 | [ANN010](#ann010)                         | `BareExceptClause`                | &#10005;                            | Annotations     | Strict mode forbids bare `except:` clauses without exception types.   |
+| [ANN011](#ann011)                         | `ParameterImplicitAny`            | &#9888;                             | Annotations     | Balanced mode warns when parameter type resolves to implicit `Any`.   |
+| [ANN012](#ann012)                         | `ReturnImplicitAny`               | &#9888;                             | Annotations     | Balanced mode warns when return type resolves to implicit `Any`.      |
 | [DUNDER_INFO](#dunder_info)               | `EntryPointGuard`                 | &#9432;                             | Dunder Patterns | Highlights `if __name__ == "__main__":` guard blocks.                 |
 | [DUNDER001](#dunder001)                   | `MagicMethodOutOfScope`           | &#9888;                             | Dunder Patterns | Magic methods defined outside a class.                                |
 | [HM001](#hm001)                           | `TypeMismatch`                    | &#10005;                            | Type System     | Hindley–Milner could not unify two types.                             |
@@ -251,6 +253,65 @@ except Exception:
 
 Balanced and loose modes allow bare except clauses for gradual adoption.
 See [Type Checking Modes](../type-checking-modes.md) for mode configuration.
+
+### ANN011
+
+#### Example
+
+```py
+# beacon: mode=balanced
+def process_unknown(data, options):
+    return data  # ANN011: 'data' and 'options' have implicit Any type
+```
+
+#### Guidance
+
+Balanced mode distinguishes between concrete inferred types (which trigger ANN004 with type suggestions) and implicit Any (which triggers ANN011).
+When type inference cannot determine a concrete type due to insufficient context, parameters are finalized as `Any` and this warning is emitted.
+
+Add type annotations to clarify the intended types:
+
+```py
+# Good: Explicit annotations remove ambiguity
+def process_unknown(data: dict[str, Any], options: dict[str, str]) -> dict[str, Any]:
+    return data
+```
+
+This diagnostic helps identify truly ambiguous cases where annotations provide the most value.
+Strict mode reports all missing parameter annotations as ANN007 errors instead.
+See [Type Checking Modes](../type-checking-modes.md) for inference behavior.
+
+### ANN012
+
+#### Example
+
+```py
+# beacon: mode=balanced
+def handle_dynamic(value):
+    print(value)  # ANN012: Return type is implicit Any
+```
+
+#### Guidance
+
+When a function's return type cannot be inferred to a concrete type, balanced mode warns with ANN012.
+This differs from ANN006, which fires when inference determines a concrete type but the annotation is missing.
+
+Add an explicit return type annotation:
+
+```py
+# Good: Explicit return type
+def handle_dynamic(value: Any) -> None:
+    print(value)
+```
+
+For functions with implicit Any returns, consider whether:
+
+- The return type should be `None` (procedures)
+- You need to add annotations to parameters to enable better inference
+- The function genuinely needs `-> Any` due to dynamic behavior
+
+Strict mode reports all missing return annotations as ANN008 errors instead.
+See [Type Checking Modes](../type-checking-modes.md) for the distinction between concrete inference and implicit Any.
 
 ### DUNDER_INFO
 
