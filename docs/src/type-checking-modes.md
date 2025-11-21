@@ -1,6 +1,6 @@
 # Type Checking Modes
 
-Beacon supports three type checking modes that let you balance type safety with development flexibility: strict, balanced, and loose.
+Beacon supports three type checking modes that let you balance type safety with development flexibility: strict, balanced, and relaxed.
 
 ## Configuration
 
@@ -8,7 +8,7 @@ Set the mode in your `beacon.toml` (see [config documentatation](./configuration
 
 ```toml
 [type_checking]
-mode = "balanced"  # or "strict" or "loose"
+mode = "balanced"  # or "strict" or "relaxed"
 ```
 
 Override the mode for specific files using a comment directive at the top of the file:
@@ -22,7 +22,7 @@ def calculate(x: int, y: int) -> int:
 
 ## Mode Comparison
 
-| Feature                          | Strict  | Balanced  | Loose   |
+| Feature                          | Strict  | Balanced  | Relaxed  |
 | -------------------------------- | ------- | --------- | ------- |
 | Annotation mismatches            | Error   | Warning   | Hint    |
 | Missing annotations (inferred)   | Error   | Warning   | Silent  |
@@ -135,7 +135,7 @@ def mixed_params(a: int, b, c: int) -> int:
     return a + b + c
 ```
 
-## Loose Mode
+## Relaxed Mode
 
 Minimally intrusive type checking focused on explicit mismatches.
 
@@ -149,7 +149,7 @@ Characteristics:
 Example:
 
 ```python
-# beacon: mode=loose
+# beacon: mode=relaxed
 
 # ✓ No diagnostics
 def process(data):
@@ -170,7 +170,7 @@ Beacon validates type annotations against inferred types and reports missing ann
 
 ### Diagnostic Codes
 
-| Code   | Description                                                | Strict | Balanced | Loose  |
+| Code   | Description                                                | Strict | Balanced | Relaxed |
 | ------ | ---------------------------------------------------------- | ------ | -------- | ------ |
 | ANN001 | Annotation mismatch on assignments                         | Error  | Warning  | Hint   |
 | ANN002 | Missing annotation on assignments                          | Error  | Warning  | Silent |
@@ -207,7 +207,7 @@ Diagnostic behavior:
 
 - **Strict mode**: All missing annotations are errors (ANN007/ANN008), regardless of inference
 - **Balanced mode**: Warns on both concrete inferred types (ANN004/ANN006) and implicit Any (ANN011/ANN012)
-- **Loose mode**: Silent on missing annotations, only hints on explicit mismatches
+- **Relaxed mode**: Silent on missing annotations, only hints on explicit mismatches
 - **NoneType returns**: No diagnostic for procedures with implicit None return (void functions)
 
 Example:

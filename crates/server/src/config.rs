@@ -62,7 +62,7 @@ pub enum TypeCheckingMode {
     #[default]
     Balanced,
     /// Annotations supply upper/lower bounds but can be overridden by inference, very lenient
-    Loose,
+    Relaxed,
 }
 
 impl TypeCheckingMode {
@@ -82,7 +82,7 @@ impl TypeCheckingMode {
 
     /// Check if this mode allows implicit Any types
     pub fn allows_implicit_any(&self) -> bool {
-        matches!(self, Self::Loose)
+        matches!(self, Self::Relaxed)
     }
 
     /// Get the diagnostic severity for missing annotations in this mode
@@ -90,7 +90,7 @@ impl TypeCheckingMode {
         match self {
             Self::Strict => Some(DiagnosticSeverity::Error),
             Self::Balanced => Some(DiagnosticSeverity::Warning),
-            Self::Loose => None,
+            Self::Relaxed => None,
         }
     }
 
@@ -99,7 +99,7 @@ impl TypeCheckingMode {
         match self {
             Self::Strict => "strict",
             Self::Balanced => "balanced",
-            Self::Loose => "loose",
+            Self::Relaxed => "relaxed",
         }
     }
 }
@@ -112,7 +112,7 @@ impl std::fmt::Display for ParseModeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Invalid type checking mode: '{}'. Valid modes are: strict, balanced, loose",
+            "Invalid type checking mode: '{}'. Valid modes are: strict, balanced, relaxed",
             self.0
         )
     }
@@ -127,7 +127,7 @@ impl FromStr for TypeCheckingMode {
         match s.trim().to_lowercase().as_str() {
             "strict" => Ok(Self::Strict),
             "balanced" => Ok(Self::Balanced),
-            "loose" => Ok(Self::Loose),
+            "relaxed" => Ok(Self::Relaxed),
             _ => Err(ParseModeError(s.to_string())),
         }
     }
@@ -138,7 +138,7 @@ impl FromStr for TypeCheckingMode {
 /// Searches for comments like:
 /// - `# beacon: mode=strict`
 /// - `# beacon: mode=balanced`
-/// - `# beacon: mode=loose`
+/// - `# beacon: mode=relaxed`
 ///
 /// The directive must appear within the first 10 lines of the file.
 pub fn parse_mode_directive(source: &str) -> Option<TypeCheckingMode> {
@@ -706,7 +706,7 @@ mode = "strict"
     fn test_update_from_value_json() {
         let json_str = r#"{
             "typeChecking": {
-                "mode": "loose"
+                "mode": "relaxed"
             },
             "pythonVersion": "3.13",
             "maxAnyDepth": 10
@@ -716,7 +716,7 @@ mode = "strict"
         let mut config = Config::default();
         config.update_from_value(json_value);
 
-        assert_eq!(config.type_checking.mode, TypeCheckingMode::Loose);
+        assert_eq!(config.type_checking.mode, TypeCheckingMode::Relaxed);
         assert_eq!(config.python_version, PythonVersion::Py313);
         assert_eq!(config.max_any_depth, 10);
     }
@@ -775,7 +775,7 @@ mode = "strict"
         let temp_dir = TempDir::new().unwrap();
         let pyproject_path = temp_dir.path().join("pyproject.toml");
         let toml_content = r#"[tool.beacon.type_checking]
-mode = "loose"
+mode = "relaxed"
 
 [tool.beacon]
 python_version = "3.13""#;
@@ -783,7 +783,7 @@ python_version = "3.13""#;
         fs::write(&pyproject_path, toml_content).unwrap();
 
         let config = Config::discover_and_load(temp_dir.path()).unwrap();
-        assert_eq!(config.type_checking.mode, TypeCheckingMode::Loose);
+        assert_eq!(config.type_checking.mode, TypeCheckingMode::Relaxed);
         assert_eq!(config.python_version, PythonVersion::Py313);
     }
 
@@ -802,7 +802,7 @@ mode = "strict""#,
         fs::write(
             &pyproject_path,
             r#"[tool.beacon.type_checking]
-mode = "loose""#,
+mode = "relaxed""#,
         )
         .unwrap();
 
@@ -1199,25 +1199,25 @@ trailing_commas = "always"
     fn test_type_checking_mode_validation() {
         let strict = TypeCheckingMode::Strict;
         let balanced = TypeCheckingMode::Balanced;
-        let loose = TypeCheckingMode::Loose;
+        let relaxed = TypeCheckingMode::Relaxed;
 
         assert!(strict.validate().is_ok());
         assert!(balanced.validate().is_ok());
-        assert!(loose.validate().is_ok());
+        assert!(relaxed.validate().is_ok());
     }
 
     #[test]
     fn test_type_checking_mode_requires_annotations() {
         assert!(TypeCheckingMode::Strict.requires_annotations());
         assert!(!TypeCheckingMode::Balanced.requires_annotations());
-        assert!(!TypeCheckingMode::Loose.requires_annotations());
+        assert!(!TypeCheckingMode::Relaxed.requires_annotations());
     }
 
     #[test]
     fn test_type_checking_mode_allows_implicit_any() {
         assert!(!TypeCheckingMode::Strict.allows_implicit_any());
         assert!(!TypeCheckingMode::Balanced.allows_implicit_any());
-        assert!(TypeCheckingMode::Loose.allows_implicit_any());
+        assert!(TypeCheckingMode::Relaxed.allows_implicit_any());
     }
 
     #[test]
@@ -1230,7 +1230,7 @@ trailing_commas = "always"
             TypeCheckingMode::Balanced.missing_annotation_severity(),
             Some(DiagnosticSeverity::Warning)
         );
-        assert_eq!(TypeCheckingMode::Loose.missing_annotation_severity(), None);
+        assert_eq!(TypeCheckingMode::Relaxed.missing_annotation_severity(), None);
     }
 
     #[test]
@@ -1241,7 +1241,7 @@ trailing_commas = "always"
         let config = TypeCheckingConfig { mode: TypeCheckingMode::Balanced };
         assert!(config.validate().is_ok());
 
-        let config = TypeCheckingConfig { mode: TypeCheckingMode::Loose };
+        let config = TypeCheckingConfig { mode: TypeCheckingMode::Relaxed };
         assert!(config.validate().is_ok());
     }
 
@@ -1282,9 +1282,9 @@ trailing_commas = "always"
         let config: TypeCheckingConfig = serde_json::from_str(json_str).unwrap();
         assert_eq!(config.mode, TypeCheckingMode::Balanced);
 
-        let json_str = r#"{"mode": "loose"}"#;
+        let json_str = r#"{"mode": "relaxed"}"#;
         let config: TypeCheckingConfig = serde_json::from_str(json_str).unwrap();
-        assert_eq!(config.mode, TypeCheckingMode::Loose);
+        assert_eq!(config.mode, TypeCheckingMode::Relaxed);
     }
 
     #[test]
@@ -1297,16 +1297,16 @@ trailing_commas = "always"
         let config: TypeCheckingConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.mode, TypeCheckingMode::Balanced);
 
-        let toml_str = r#"mode = "loose""#;
+        let toml_str = r#"mode = "relaxed""#;
         let config: TypeCheckingConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.mode, TypeCheckingMode::Loose);
+        assert_eq!(config.mode, TypeCheckingMode::Relaxed);
     }
 
     #[test]
     fn test_type_checking_mode_from_str() {
         assert_eq!("strict".parse::<TypeCheckingMode>(), Ok(TypeCheckingMode::Strict));
         assert_eq!("balanced".parse::<TypeCheckingMode>(), Ok(TypeCheckingMode::Balanced));
-        assert_eq!("loose".parse::<TypeCheckingMode>(), Ok(TypeCheckingMode::Loose));
+        assert_eq!("relaxed".parse::<TypeCheckingMode>(), Ok(TypeCheckingMode::Relaxed));
 
         assert_eq!("STRICT".parse::<TypeCheckingMode>(), Ok(TypeCheckingMode::Strict));
         assert_eq!(
@@ -1324,14 +1324,14 @@ trailing_commas = "always"
         assert!(err.to_string().contains("invalid"));
         assert!(err.to_string().contains("strict"));
         assert!(err.to_string().contains("balanced"));
-        assert!(err.to_string().contains("loose"));
+        assert!(err.to_string().contains("relaxed"));
     }
 
     #[test]
     fn test_type_checking_mode_as_str() {
         assert_eq!(TypeCheckingMode::Strict.as_str(), "strict");
         assert_eq!(TypeCheckingMode::Balanced.as_str(), "balanced");
-        assert_eq!(TypeCheckingMode::Loose.as_str(), "loose");
+        assert_eq!(TypeCheckingMode::Relaxed.as_str(), "relaxed");
     }
 
     #[test]
@@ -1356,13 +1356,13 @@ def foo():
                 want: Some(TypeCheckingMode::Balanced),
             },
             ParseModeTestCase {
-                name: "basic loose mode",
+                name: "basic relaxed mode",
                 source: r#"
-# beacon: mode=loose
+# beacon: mode=relaxed
 def foo():
     pass
 "#,
-                want: Some(TypeCheckingMode::Loose),
+                want: Some(TypeCheckingMode::Relaxed),
             },
             ParseModeTestCase {
                 name: "case insensitive BEACON MODE=STRICT",
@@ -1374,13 +1374,13 @@ def foo():
                 want: Some(TypeCheckingMode::Strict),
             },
             ParseModeTestCase {
-                name: "case insensitive Beacon Mode=Loose",
+                name: "case insensitive Beacon Mode=Relaxed",
                 source: r#"
-# Beacon: Mode=Loose
+# Beacon: Mode=Relaxed
 def foo():
     pass
 "#,
-                want: Some(TypeCheckingMode::Loose),
+                want: Some(TypeCheckingMode::Relaxed),
             },
             ParseModeTestCase {
                 name: "with extra whitespace",
@@ -1419,11 +1419,11 @@ def foo():
 # Line 6
 # Line 7
 # Line 8
-# beacon: mode=loose
+# beacon: mode=relaxed
 def foo():
     pass
 "#,
-                want: Some(TypeCheckingMode::Loose),
+                want: Some(TypeCheckingMode::Relaxed),
             },
             ParseModeTestCase {
                 name: "beyond 10 lines (line 11)",
@@ -1519,7 +1519,7 @@ def foo():
                 name: "only first match",
                 source: r#"
 # beacon: mode=strict
-# beacon: mode=loose
+# beacon: mode=relaxed
 def foo():
     pass
 "#,

@@ -61,7 +61,7 @@ Type checking strictness mode. Controls how the type checker handles annotation 
 - **Values:**
     - `"strict"`: Annotation mismatches are hard errors with strict enforcement
     - `"balanced"`: Annotation mismatches are diagnostics with quick fixes, but inference proceeds
-    - `"loose"`: Annotations supply bounds but can be overridden by inference
+    - `"relaxed"`: Annotations supply bounds but can be overridden by inference
 
 ```toml
 [type_checking]

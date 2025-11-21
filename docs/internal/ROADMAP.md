@@ -11,28 +11,28 @@
 
 ## Release Ladder to v1.0
 
-| Version | Theme                                      | Key Deliverables                            | Status  |
-| ------- | ------------------------------------------ | ------------------------------------------- | ------- |
-| v0.1.0  | Baseline formatter + parser + analyzer     | Initial release                             | shipped |
-| v0.2.0  | Cache granularity & selective invalidation | Merge ft/cache-granularity, import tracking | ready   |
-| v0.3.0  | Type checker bug fixes                     | Fix known HM issues, improve test coverage  | [Completed & cut 2025-11-19](https://github.com/stormlightlabs/beacon/releases/tag/v0.3.0) |
-| v0.4.0  | Type checking modes                        | Implement strict/balanced/loose enforcement | planned |
-| v0.5.0  | Stdlib stubs & error messages              | Expand stubs, "did you mean" suggestions    | planned |
-| v0.6.0  | Cross-file static analysis                 | Workspace-aware CFG, import/export tracking | planned |
-| v0.7.0  | Advanced data flow                         | Taint analysis, null safety improvements    | planned |
-| v0.8.0  | Linting expansion                          | 10 new rules, autofix infrastructure        | planned |
-| v0.9.0  | Formatting polish & config                 | Additional PEP8 options, config validation  | planned |
-| v0.10.0 | Multi-root workspace support               | workspace/didChangeWorkspaceFolders         | planned |
-| v0.11.0 | Snippet engine                             | Context-aware snippets, LSP integration     | planned |
-| v0.12.0 | Auto-import & code actions                 | Import management, quick fixes              | planned |
-| v0.13.0 | Diagnostics publishing baseline            | publishDiagnostics, severity toggles        | planned |
-| v0.14.0 | Monorepo performance - caching             | Workspace-aware cache, parallelization      | planned |
-| v0.15.0 | Monorepo performance - scale               | Handle 100k+ LOC projects, benchmarks       | planned |
-| v0.16.0 | Telemetry & observability                  | Performance metrics, cache hit rates        | planned |
-| v0.17.0 | Production hardening                       | Stress testing, memory profiling, stability | planned |
-| v0.18.0 | Beta stabilization                         | Full QA pass, regression suite              | planned |
-| v0.19.0 | Release candidate                          | Migration guide, docs freeze                | planned |
-| v1.0.0  | General availability                       | Stable release                              | planned |
+| Version | Theme                                      | Key Deliverables                              | Status  |
+| ------- | ------------------------------------------ | -------------------------------------------   | ------- |
+| v0.1.0  | Baseline formatter + parser + analyzer     | Initial release                               | shipped |
+| v0.2.0  | Cache granularity & selective invalidation | Merge ft/cache-granularity, import tracking   | done    |
+| v0.3.0  | Type checker bug fixes                     | Fix known HM issues, improve test coverage    | [shipped](#v030---type-checker-bug-fixes) |
+| v0.4.0  | Type checking modes                        | Implement strict/balanced/relaxed enforcement | planned |
+| v0.5.0  | Stdlib stubs & error messages              | Expand stubs, "did you mean" suggestions      | planned |
+| v0.6.0  | Cross-file static analysis                 | Workspace-aware CFG, import/export tracking   | planned |
+| v0.7.0  | Advanced data flow                         | Taint analysis, null safety improvements      | planned |
+| v0.8.0  | Linting expansion                          | 10 new rules, autofix infrastructure          | planned |
+| v0.9.0  | Formatting polish & config                 | Additional PEP8 options, config validation    | planned |
+| v0.10.0 | Multi-root workspace support               | workspace/didChangeWorkspaceFolders           | planned |
+| v0.11.0 | Snippet engine                             | Context-aware snippets, LSP integration       | planned |
+| v0.12.0 | Auto-import & code actions                 | Import management, quick fixes                | planned |
+| v0.13.0 | Diagnostics publishing baseline            | publishDiagnostics, severity toggles          | planned |
+| v0.14.0 | Monorepo performance - caching             | Workspace-aware cache, parallelization        | planned |
+| v0.15.0 | Monorepo performance - scale               | Handle 100k+ LOC projects, benchmarks         | planned |
+| v0.16.0 | Telemetry & observability                  | Performance metrics, cache hit rates          | planned |
+| v0.17.0 | Production hardening                       | Stress testing, memory profiling, stability   | planned |
+| v0.18.0 | Beta stabilization                         | Full QA pass, regression suite                | planned |
+| v0.19.0 | Release candidate                          | Migration guide, docs freeze                  | planned |
+| v1.0.0  | General availability                       | Stable release                                | planned |
 
 ## Type Checker Stabilization (v0.2.0 - v0.5.0)
 
@@ -54,7 +54,7 @@
 
 **Goals:**
 
-- Implement strict/balanced/loose mode enforcement
+- Implement strict/balanced/relaxed mode enforcement
 - Add mode-aware diagnostic filtering
 - Configuration for per-file mode overrides
 - Integration with existing type system
@@ -63,7 +63,7 @@
 
 - Strict mode: no implicit Any, require complete annotations
 - Balanced mode: infer types, warn on ambiguous cases
-- Loose mode: permissive inference, minimal warnings
+- Relaxed mode: permissive inference, minimal warnings
 
 **Requirements:**
 

@@ -28,7 +28,7 @@ Controlled **subtyping-like** features via **union/optionals** and **protocols/s
 
 **Annotation-aware**: treat PEP 484/PEP 695 types as constraints and hints.
 
-**Soundness modes**: "strict", "balanced", "loose" (affecting treatment of `Any`, unknown attributes, dynamic imports).
+**Soundness modes**: "strict", "balanced", "relaxed" (affecting treatment of `Any`, unknown attributes, dynamic imports).
 
 ```text
                ┌──────────────────────────────────────────────────┐

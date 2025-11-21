@@ -97,8 +97,6 @@ impl Document {
     }
 
     /// Get the effective type checking mode for this document
-    ///
-    /// Returns the per-file mode override if present, otherwise falls back to the workspace mode.
     pub fn effective_mode(&self, workspace_mode: crate::config::TypeCheckingMode) -> crate::config::TypeCheckingMode {
         self.mode_override.unwrap_or(workspace_mode)
     }
@@ -165,7 +163,6 @@ impl DocumentManager {
 
     /// Get a document by URI with read access
     ///
-    /// Returns a guard that allows reading the document.
     /// TODO: Consider returning a snapshot instead of holding the lock
     pub fn get_document<F, R>(&self, uri: &Url, f: F) -> Option<R>
     where
@@ -328,7 +325,7 @@ def foo():
     #[test]
     fn test_document_effective_mode_with_override() {
         let uri = Url::from_str("file:///test.py").unwrap();
-        let source = r#"# beacon: mode=loose
+        let source = r#"# beacon: mode=relaxed
 def foo():
     pass
 "#;
@@ -340,7 +337,7 @@ def foo():
         let workspace_mode = crate::config::TypeCheckingMode::Strict;
         assert_eq!(
             doc.effective_mode(workspace_mode),
-            crate::config::TypeCheckingMode::Loose
+            crate::config::TypeCheckingMode::Relaxed
         );
     }
 
