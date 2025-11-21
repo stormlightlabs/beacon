@@ -161,7 +161,7 @@ Configuration loading and hot-reload:
 - Config file discovery
 - Validation warnings
 - Runtime updates
-- Mode changes (strict/balanced/loose)
+- Mode changes (strict/balanced/relaxed)
 
 ## Error Handling
 

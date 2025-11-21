@@ -69,13 +69,13 @@ impl DiagnosticProvider {
         match (mode, category) {
             (config::TypeCheckingMode::Strict, DiagnosticCategory::ImplicitAny) => Some(Severity::ERROR),
             (config::TypeCheckingMode::Balanced, DiagnosticCategory::ImplicitAny) => Some(Severity::WARNING),
-            (config::TypeCheckingMode::Loose, DiagnosticCategory::ImplicitAny) => None,
+            (config::TypeCheckingMode::Relaxed, DiagnosticCategory::ImplicitAny) => None,
             (config::TypeCheckingMode::Strict, DiagnosticCategory::MissingAnnotation) => Some(Severity::ERROR),
             (config::TypeCheckingMode::Balanced, DiagnosticCategory::MissingAnnotation) => Some(Severity::WARNING),
-            (config::TypeCheckingMode::Loose, DiagnosticCategory::MissingAnnotation) => None,
+            (config::TypeCheckingMode::Relaxed, DiagnosticCategory::MissingAnnotation) => None,
             (config::TypeCheckingMode::Strict, DiagnosticCategory::AnnotationMismatch) => Some(Severity::ERROR),
             (config::TypeCheckingMode::Balanced, DiagnosticCategory::AnnotationMismatch) => Some(Severity::WARNING),
-            (config::TypeCheckingMode::Loose, DiagnosticCategory::AnnotationMismatch) => Some(Severity::HINT),
+            (config::TypeCheckingMode::Relaxed, DiagnosticCategory::AnnotationMismatch) => Some(Severity::HINT),
         }
     }
 
@@ -166,8 +166,6 @@ impl DiagnosticProvider {
     }
 
     /// Get the effective type checking mode for a document
-    ///
-    /// Returns the per-file mode override if present, otherwise the workspace mode.
     fn get_effective_mode(&self, uri: &Url) -> config::TypeCheckingMode {
         let Ok(workspace) = self.workspace.try_read() else {
             return config::TypeCheckingMode::default();
@@ -187,12 +185,12 @@ impl DiagnosticProvider {
 
         let message = if is_override {
             format!(
-                "Type checking mode: {} (per-file override) - Add '# beacon: mode=strict/balanced/loose' to change",
+                "Type checking mode: {} (per-file override) - Add '# beacon: mode=strict/balanced/relaxed' to change",
                 mode.as_str()
             )
         } else {
             format!(
-                "Type checking mode: {} (workspace default) - Add '# beacon: mode=strict/balanced/loose' to override for this file",
+                "Type checking mode: {} (workspace default) - Add '# beacon: mode=strict/balanced/relaxed' to override for this file",
                 mode.as_str()
             )
         };
@@ -396,7 +394,7 @@ impl DiagnosticProvider {
             AstNode::Assignment { target, line, col, .. } => {
                 if ctx.in_class_def && ctx.mode == config::TypeCheckingMode::Strict {
                     self.check_class_attribute_annotation(target, *line, *col, ctx);
-                } else if ctx.mode != config::TypeCheckingMode::Loose {
+                } else if ctx.mode != config::TypeCheckingMode::Relaxed {
                     if let Some(inferred_type) =
                         Self::get_type_for_position(ctx.type_map, ctx.position_map, *line, *col)
                     {
@@ -702,7 +700,7 @@ impl DiagnosticProvider {
                         data: None,
                         code_description: None,
                     });
-                } else if ctx.mode != config::TypeCheckingMode::Loose {
+                } else if ctx.mode != config::TypeCheckingMode::Relaxed {
                     let inferred_type_opt =
                         Self::get_type_for_position(ctx.type_map, ctx.position_map, param.line, param.col);
 
@@ -884,7 +882,7 @@ impl DiagnosticProvider {
                         data: None,
                         code_description: None,
                     });
-                } else if ctx.mode != config::TypeCheckingMode::Loose {
+                } else if ctx.mode != config::TypeCheckingMode::Relaxed {
                     let inferred_type_opt = Self::get_type_for_position(ctx.type_map, ctx.position_map, line, col);
 
                     let return_type_opt = inferred_type_opt.map(|ty| match ty {
@@ -2697,10 +2695,10 @@ def add(x, y):
     }
 
     #[test]
-    fn test_loose_mode_does_not_reject_implicit_any() {
+    fn test_relaxed_mode_does_not_reject_implicit_any() {
         let documents = DocumentManager::new().unwrap();
         let mut config = crate::config::Config::default();
-        config.type_checking.mode = crate::config::TypeCheckingMode::Loose;
+        config.type_checking.mode = crate::config::TypeCheckingMode::Relaxed;
         let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
             None,
             config.clone(),
@@ -2731,11 +2729,11 @@ def add(x, y):
 
         assert!(
             ann007_diagnostics.is_empty(),
-            "Loose mode should not generate ANN007 for implicit Any"
+            "Relaxed mode should not generate ANN007 for implicit Any"
         );
         assert!(
             ann008_diagnostics.is_empty(),
-            "Loose mode should not generate ANN008 for implicit Any"
+            "Relaxed mode should not generate ANN008 for implicit Any"
         );
     }
 
@@ -3109,10 +3107,10 @@ class MyClass:
     }
 
     #[test]
-    fn test_loose_mode_does_not_require_class_attribute_annotations() {
+    fn test_relaxed_mode_does_not_require_class_attribute_annotations() {
         let documents = DocumentManager::new().unwrap();
         let mut config = crate::config::Config::default();
-        config.type_checking.mode = crate::config::TypeCheckingMode::Loose;
+        config.type_checking.mode = crate::config::TypeCheckingMode::Relaxed;
         let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
             None,
             config.clone(),
@@ -3138,7 +3136,7 @@ class MyClass:
 
         assert_eq!(
             ann009_count, 0,
-            "Loose mode should not generate ANN009 for class attributes"
+            "Relaxed mode should not generate ANN009 for class attributes"
         );
     }
 
@@ -3260,10 +3258,10 @@ def foo():
     }
 
     #[test]
-    fn test_loose_mode_allows_bare_except() {
+    fn test_relaxed_mode_allows_bare_except() {
         let documents = DocumentManager::new().unwrap();
         let mut config = crate::config::Config::default();
-        config.type_checking.mode = crate::config::TypeCheckingMode::Loose;
+        config.type_checking.mode = crate::config::TypeCheckingMode::Relaxed;
         let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
             None,
             config.clone(),
@@ -3290,7 +3288,10 @@ def foo():
             .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN010".to_string())))
             .count();
 
-        assert_eq!(ann010_count, 0, "Loose mode should not generate ANN010 for bare except");
+        assert_eq!(
+            ann010_count, 0,
+            "Relaxed mode should not generate ANN010 for bare except"
+        );
     }
 
     #[test]
@@ -3637,7 +3638,7 @@ def bar():
         );
         assert_eq!(
             DiagnosticProvider::mode_severity_for_diagnostic(
-                config::TypeCheckingMode::Loose,
+                config::TypeCheckingMode::Relaxed,
                 DiagnosticCategory::ImplicitAny
             ),
             None
@@ -3664,7 +3665,7 @@ def bar():
         );
         assert_eq!(
             DiagnosticProvider::mode_severity_for_diagnostic(
-                config::TypeCheckingMode::Loose,
+                config::TypeCheckingMode::Relaxed,
                 DiagnosticCategory::MissingAnnotation
             ),
             None
@@ -3691,7 +3692,7 @@ def bar():
         );
         assert_eq!(
             DiagnosticProvider::mode_severity_for_diagnostic(
-                config::TypeCheckingMode::Loose,
+                config::TypeCheckingMode::Relaxed,
                 DiagnosticCategory::AnnotationMismatch
             ),
             Some(Severity::HINT)

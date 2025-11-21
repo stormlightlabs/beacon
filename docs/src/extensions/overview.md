@@ -84,7 +84,7 @@ if not configs.beacon then
       settings = {},
       init_options = {
         typeChecking = {
-          mode = 'balanced', -- 'strict', 'balanced', or 'loose'
+          mode = 'balanced', -- 'strict', 'balanced', or 'relaxed'
         },
         python = {
           version = '3.12',

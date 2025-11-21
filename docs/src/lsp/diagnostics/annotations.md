@@ -12,7 +12,7 @@ value: int = "stale"  # Annotated as int, inferred as str
 
 ### Guidance
 
-Annotation/inference mismatches inherit their severity from the active mode (strict → error, balanced → warning, loose → hint).
+Annotation/inference mismatches inherit their severity from the active mode (strict → error, balanced → warning, relaxed → hint).
 Align the annotation with real usage, or change the code so the inferred type matches.
 See [Type Checking](../type_checking.md#type-inference) and [Type Checking Modes](../../type-checking-modes.md) for the inference rules.
 
@@ -28,7 +28,7 @@ profile = load_profile()  # Missing annotation (ANN002)
 ### Guidance
 
 Strict/balanced modes expect assignments with concrete inferred types to be annotated.
-Add the appropriate annotation (`profile: Profile = load_profile()`), or downgrade the file to loose mode if intentional (see [Type Checking Modes](../../type-checking-modes.md)).
+Add the appropriate annotation (`profile: Profile = load_profile()`), or downgrade the file to relaxed mode if intentional (see [Type Checking Modes](../../type-checking-modes.md)).
 
 ## ANN003 – `ParameterAnnotationMismatch` {#ann003}
 
@@ -59,7 +59,7 @@ Balanced/strict modes infer `address: str` (or similar) and emit ANN004.
 ### Guidance
 
 Add explicit parameter annotations whenever inference is concrete: `def send_email(address: str) -> None:`.
-Loose mode skips this check entirely (see [Type Checking Modes](../../type-checking-modes.md)).
+Relaxed mode skips this check entirely (see [Type Checking Modes](../../type-checking-modes.md)).
 
 ## ANN005 – `ReturnAnnotationMismatch` {#ann005}
 
@@ -90,7 +90,7 @@ Balanced/strict modes infer a concrete return type (e.g., `int`) and require `->
 ### Guidance
 
 Add return annotations when inference is precise and not `Any`/`None`: `def total(values: list[int]) -> int:`.
-Loose mode suppresses this requirement (see [Type Checking Modes](../../type-checking-modes.md)).
+Relaxed mode suppresses this requirement (see [Type Checking Modes](../../type-checking-modes.md)).
 
 ## ANN007 – `ImplicitAnyParameter` {#ann007}
 
@@ -105,7 +105,7 @@ def transform(data):
 ### Guidance
 
 Strict mode disallows implicit `Any` on parameters even when inference could deduce a type.
-Add annotations for every parameter (`data: str`). Balanced/loose modes emit ANN004 instead or skip the check entirely.
+Add annotations for every parameter (`data: str`). Balanced/relaxed modes emit ANN004 instead or skip the check entirely.
 Review [Type Checking Modes](../../type-checking-modes.md) for severity rules.
 
 ## ANN008 – `ImplicitAnyReturn` {#ann008}
@@ -121,7 +121,7 @@ def make_id():
 ### Guidance
 
 Strict mode requires explicit return annotations on every function.
-Provide the exact type (`-> str`) or loosen the file mode if you intentionally rely on inference.
+Provide the exact type (`-> str`) or relax the file mode if you intentionally rely on inference.
 See [Type Checking Modes](../../type-checking-modes.md) for override syntax.
 
 ## ANN009 – `MissingClassAttributeAnnotation` {#ann009}
@@ -138,7 +138,7 @@ class Configuration:
 ### Guidance
 
 Strict mode requires explicit type annotations on all class attributes.
-Add the annotation (`host: str = "localhost"`) or use balanced/loose mode if gradual typing is preferred.
+Add the annotation (`host: str = "localhost"`) or use balanced/relaxed mode if gradual typing is preferred.
 Note that instance attributes (assigned in `__init__` or other methods) are not subject to this check—only class-level attributes defined directly in the class body.
 See [Type Checking Modes](../../type-checking-modes.md) for mode configuration.
 
@@ -174,7 +174,7 @@ except Exception:
     ...
 ```
 
-Balanced and loose modes allow bare except clauses for gradual adoption.
+Balanced and relaxed modes allow bare except clauses for gradual adoption.
 See [Type Checking Modes](../../type-checking-modes.md) for mode configuration.
 
 ## ANN011 – `ParameterImplicitAny` {#ann011}

@@ -16,7 +16,7 @@ To temporarily suppress any diagnostic, use the mechanisms described in [Suppres
 - &#10005; = Error
 - &#9432; = Info/Hints
 
-Note that per-mode rows show the icon used in strict / balanced / loose order
+Note that per-mode rows show the icon used in strict / balanced / relaxed order
 
 | Code                                                                      | Name                              | Level                              | Category        | Description                                                          |
 | ------------------------------------------------------------------------- | --------------------------------- | ---------------------------------- | --------------- | -------------------------------------------------------------------- |

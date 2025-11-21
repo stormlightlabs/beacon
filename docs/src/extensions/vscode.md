@@ -101,7 +101,7 @@ All settings are under the `beacon.*` namespace and can be configured per-worksp
 
 | Setting                    | Type     | Default      | Description                                                      |
 | -------------------------- | -------- | ------------ | ---------------------------------------------------------------- |
-| `beacon.typeChecking.mode` | `string` | `"balanced"` | Type checking strictness: `"strict"`, `"balanced"`, or `"loose"` |
+| `beacon.typeChecking.mode` | `string` | `"balanced"` | Type checking strictness: `"strict"`, `"balanced"`, or `"relaxed"` |
 
 ### Inlay Hints
 

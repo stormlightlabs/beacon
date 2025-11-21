@@ -6,11 +6,11 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
 ## Type Checking Modes (v0.4.0)
 
-Implement strict/balanced/loose mode enforcement with mode-aware diagnostic filtering.
+Implement strict/balanced/relaxed mode enforcement with mode-aware diagnostic filtering.
 
 ### Configuration & Infrastructure
 
-- [x] Design mode configuration schema (strict/balanced/loose)
+- [x] Design mode configuration schema (strict/balanced/relaxed)
 - [x] Add `mode` field to workspace/file configuration with validation
 - [x] Implement per-file mode override mechanism (e.g., `# beacon: mode=strict`)
 - [x] LSP integration: show current mode in status/diagnostics
@@ -23,7 +23,7 @@ Implement strict/balanced/loose mode enforcement with mode-aware diagnostic filt
 - [x] Walk AST to find annotated assignments and parameters
 - [x] Look up inferred types from `result.type_map` for annotated nodes
 - [x] Compare user annotations with inferred types
-- [x] Generate mode-aware diagnostics (error/warning/silent based on strict/balanced/loose)
+- [x] Generate mode-aware diagnostics (error/warning/silent based on strict/balanced/relaxed)
 - [x] Detect missing or partial annotations for coverage warnings
 
 ### Strict Mode Implementation
@@ -42,12 +42,13 @@ Implement strict/balanced/loose mode enforcement with mode-aware diagnostic filt
 - [x] Allow gradual typing (mixed annotated/unannotated code)
 - [x] Improve type inference to populate type_map for simple function parameters and return types
 
-### Loose Mode Implementation
+### ~~Loose~~ Relaxed Mode Implementation
 
-- [ ] Permissive type inference (current default behavior)
-- [ ] Minimal warnings for missing annotations
-- [ ] Allow implicit Any without errors or warnings
-- [ ] Maximum flexibility for gradual adoption
+- [x] Rename "loose" mode to "relaxed" mode across codebase & docs
+- [x] Permissive type inference (current default behavior)
+- [x] Minimal warnings for missing annotations
+- [x] Allow implicit Any without errors or warnings
+- [x] Maximum flexibility for gradual adoption
 
 ### Diagnostic Filtering & Categorization
 
@@ -193,7 +194,7 @@ See [Logging](#logging) section below for detailed logging standards.
 
 - [x] Configuration options (`mode`, `pythonVersion`, `stubPaths`, `decoratorStubs`)
 - [x] Config hot-reload without restart
-- [x] Type checking modes (strict/balanced/loose) - implemented but not enforced
+- [x] Type checking modes (strict/balanced/relaxed) - implemented but not enforced
 - [ ] Formatting configuration validation
 - [ ] Per-rule linter configuration (see Linter Tech Debt)
 

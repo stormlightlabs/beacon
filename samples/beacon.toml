@@ -7,7 +7,7 @@
 # Type checking strictness mode
 # - strict: Requires explicit type annotations, no implicit Any types
 # - balanced: Type inference with warnings on ambiguous cases (default)
-# - loose: Permissive type inference, minimal warnings
+# - relaxed: Permissive type inference, minimal warnings
 mode = "balanced"
 
 # Python Version Target
@@ -124,6 +124,6 @@ blank_line_before_function = true
 # Individual files can override the type checking mode using a comment directive:
 #   # beacon: mode=strict
 #   # beacon: mode=balanced
-#   # beacon: mode=loose
+#   # beacon: mode=relaxed
 #
 # The directive must appear within the first 10 lines of the file.
