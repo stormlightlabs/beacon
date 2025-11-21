@@ -8,6 +8,36 @@
 
 ### Fixed
 
+## [0.4.0] - 2025-11-21
+
+### Added
+
+- Type checking mode configuration system with three enforcement levels: strict, balanced, and relaxed modes
+    - `15a014c`
+- Strict mode rejecting implicit Any types in function signatures, requiring explicit class attribute annotations, and prohibiting bare except clauses
+    - `9c3e6f8`
+- Balanced mode with implicit Any warnings for gradual typing adoption
+    - `e496f14`
+- Relaxed mode for minimal enforcement in exploratory development
+    - `ebc3626`
+- Annotation coverage validation with mode-aware diagnostics
+    - `60f5805`
+- Per-file mode override capability via inline directives
+    - `15a014c`
+- LSP status integration displaying active type checking mode
+    - `15a014c`
+- Unit tests for diagnostics and hover features
+    - `cf58b42`
+
+### Changed
+
+- Enhanced type_map population for function parameters and return types to improve LSP features
+    - `e496f14`
+- Reorganized diagnostic codes documentation for better maintainability
+    - `7df336c`
+
+### Fixed
+
 ## [0.3.0] - 2025-11-19
 
 ### Added
