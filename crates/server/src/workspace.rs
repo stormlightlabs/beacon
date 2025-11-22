@@ -17,13 +17,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use url::Url;
 
-/// Embedded Python stdlib stub files
-const BUILTINS_STUB: &str = include_str!("../../../stubs/builtins.pyi");
-const TYPING_STUB: &str = include_str!("../../../stubs/typing.pyi");
-const DATACLASSES_STUB: &str = include_str!("../../../stubs/dataclasses.pyi");
-const OS_STUB: &str = include_str!("../../../stubs/os.pyi");
-const ENUM_STUB: &str = include_str!("../../../stubs/enum.pyi");
-const PATHLIB_STUB: &str = include_str!("../../../stubs/pathlib.pyi");
+/// Beacon-specific stub for capabilities support
+const CAPABILITIES_STUB: &str = include_str!("../../../stubs/capabilities_support.pyi");
 
 /// Symbol import information
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -877,7 +872,7 @@ impl Workspace {
     /// 1. Manual stubs in config.stub_paths
     /// 2. Stub packages (*-stubs)
     /// 3. Inline stubs (py.typed packages)
-    /// 4. Typeshed (TODO)
+    /// 4. Typeshed (embedded)
     pub fn load_stub(&self, module_name: &str) -> Option<StubFile> {
         if let Some(stub) = self.find_manual_stub(module_name) {
             return Some(stub);
@@ -891,7 +886,7 @@ impl Workspace {
             return Some(stub);
         }
 
-        None
+        beacon_analyzer::get_embedded_stub(module_name)
     }
 
     /// Find stub in manual stub paths (config.stub_paths)
@@ -1022,45 +1017,49 @@ impl Workspace {
     /// Pre-loads core Python stdlib types that are always available. Includes builtins, typing, dataclasses, os, enum, and pathlib.
     /// Registers these modules in the workspace index so they can be resolved during import resolution.
     fn load_builtin_stubs(&mut self) {
-        let stdlib_stubs = vec![
-            ("builtins", BUILTINS_STUB),
-            ("typing", TYPING_STUB),
-            ("dataclasses", DATACLASSES_STUB),
-            ("os", OS_STUB),
-            ("enum", ENUM_STUB),
-            ("pathlib", PATHLIB_STUB),
-        ];
+        let stdlib_modules = vec!["builtins", "typing", "dataclasses", "os", "enum", "pathlib"];
 
-        let stub_count = stdlib_stubs.len();
-        tracing::debug!("Loading {} stdlib modules", stub_count);
+        tracing::debug!("Loading {} stdlib modules from typeshed", stdlib_modules.len());
 
-        for (module_name, stub_content) in stdlib_stubs {
-            match self.parse_stub_from_string(module_name, stub_content) {
-                Ok(stub) => {
-                    tracing::debug!(
-                        "Parsed stdlib module '{}' ({} exports)",
-                        module_name,
-                        stub.exports.len()
-                    );
+        for module_name in &stdlib_modules {
+            if let Some(stub) = beacon_analyzer::get_embedded_stub(module_name) {
+                tracing::debug!(
+                    "Loaded typeshed stub for '{}' ({} exports)",
+                    module_name,
+                    stub.exports.len()
+                );
 
-                    if let Ok(mut cache) = self.stubs.write() {
-                        cache.insert(module_name.to_string(), stub);
-                    }
-
-                    if let Ok(uri) = Url::parse(&format!("builtin://{module_name}")) {
-                        let module_info =
-                            ModuleInfo::new(uri.clone(), module_name.to_string(), PathBuf::from("<builtin>"), false);
-                        self.index.insert(module_info);
-                        tracing::debug!("Registered stdlib module '{}' at {}", module_name, uri);
-                    }
+                if let Ok(mut cache) = self.stubs.write() {
+                    cache.insert(module_name.to_string(), stub);
                 }
-                Err(e) => {
-                    tracing::error!("Failed to parse stdlib module '{}': {:?}", module_name, e);
+
+                if let Ok(uri) = Url::parse(&format!("builtin://{module_name}")) {
+                    let module_info =
+                        ModuleInfo::new(uri.clone(), module_name.to_string(), PathBuf::from("<builtin>"), false);
+                    self.index.insert(module_info);
+                    tracing::debug!("Registered stdlib module '{}' at {}", module_name, uri);
                 }
+            } else {
+                tracing::warn!("Failed to load typeshed stub for '{}'", module_name);
             }
         }
 
-        tracing::info!("Loaded {} stdlib stub modules", stub_count);
+        match self.parse_stub_from_string("capabilities_support", CAPABILITIES_STUB) {
+            Ok(stub) => {
+                tracing::debug!("Loaded Beacon-specific stub: capabilities_support");
+                if let Ok(mut cache) = self.stubs.write() {
+                    cache.insert("capabilities_support".to_string(), stub);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to parse capabilities_support stub: {:?}", e);
+            }
+        }
+
+        tracing::info!(
+            "Loaded {} stdlib stub modules + Beacon-specific stubs",
+            stdlib_modules.len()
+        );
     }
 
     /// Parse a stub file from string content (used for embedded stdlib stubs)
@@ -2083,33 +2082,20 @@ def test_function(x: str) -> bool: ...
     }
 
     #[test]
-    fn test_embedded_stubs_parse_successfully() {
-        let config = Config::default();
-        let documents = DocumentManager::new().unwrap();
-        let workspace = Workspace::new(None, config, documents);
+    fn test_embedded_typeshed_stubs_available() {
+        let stdlib_modules = vec!["builtins", "typing", "dataclasses", "os", "enum", "pathlib"];
 
-        let stubs_to_test = vec![
-            ("builtins", BUILTINS_STUB),
-            ("typing", TYPING_STUB),
-            ("dataclasses", DATACLASSES_STUB),
-            ("os", OS_STUB),
-            ("enum", ENUM_STUB),
-            ("pathlib", PATHLIB_STUB),
-        ];
+        for module_name in stdlib_modules {
+            let stub = beacon_analyzer::get_embedded_stub(module_name);
+            assert!(stub.is_some(), "Typeshed stub for '{module_name}' should be available");
 
-        for (module_name, stub_content) in stubs_to_test {
-            let result = workspace.parse_stub_from_string(module_name, stub_content);
-            assert!(
-                result.is_ok(),
-                "Failed to parse embedded stub {}: {:?}",
-                module_name,
-                result.err()
-            );
-
-            let stub = result.unwrap();
+            let stub = stub.unwrap();
             assert_eq!(stub.module, module_name);
             assert!(!stub.is_partial);
-            assert!(!stub.exports.is_empty(), "Stub {module_name} has no exports");
+            assert!(
+                stub.content.is_some(),
+                "Typeshed stub for '{module_name}' should have content"
+            );
         }
     }
 

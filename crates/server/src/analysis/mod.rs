@@ -2345,13 +2345,8 @@ method = s.upper
 
     #[test]
     fn test_overload_parsing_from_stub() {
-        let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf();
-        let stub_path = workspace_root.join("stubs/overload_test.pyi");
+        let server_crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let stub_path = server_crate_dir.join("tests/fixtures/overload_test.pyi");
         let mut class_registry = ClassRegistry::new();
 
         let stub = crate::workspace::StubFile {

@@ -1113,64 +1113,31 @@ class list(Generic[_T]):
     }
 
     #[test]
-    fn test_stub_loading_real_builtins() {
-        use super::StubFile;
+    fn test_stub_loading_typeshed_builtins() {
         use beacon_core::ClassRegistry;
-        use rustc_hash::FxHashMap;
-        use std::path::PathBuf;
 
-        let stub_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("stubs/builtins.pyi");
-
-        let stub_content = std::fs::read_to_string(&stub_path).unwrap();
-
-        let stub = StubFile {
-            module: "builtins".to_string(),
-            path: stub_path,
-            exports: FxHashMap::default(),
-            is_partial: false,
-            reexports: Vec::new(),
-            all_exports: None,
-            content: Some(stub_content),
-        };
+        let stub = crate::embedded_stubs::get_embedded_stub("builtins")
+            .expect("builtins stub should be available from typeshed");
 
         let mut class_registry = ClassRegistry::new();
         let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
         load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry).unwrap();
 
         let list_class = class_registry.get_class("list");
-        assert!(list_class.is_some(), "list class should be registered in builtins.pyi");
+        assert!(list_class.is_some(), "list class should be registered in typeshed builtins.pyi");
 
         let list_metadata = list_class.unwrap();
 
         let append_method = list_metadata.methods.get("append");
-        assert!(append_method.is_some(), "append method should exist in builtins.pyi");
+        assert!(append_method.is_some(), "append method should exist in typeshed builtins.pyi");
     }
 
     #[test]
-    fn test_stub_loading_typing_module() {
-        let stub_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("stubs/typing.pyi");
+    fn test_stub_loading_typeshed_typing_module() {
+        use beacon_core::ClassRegistry;
 
-        let stub_content = std::fs::read_to_string(&stub_path).unwrap();
-
-        let stub = StubFile {
-            module: "typing".to_string(),
-            path: stub_path,
-            exports: FxHashMap::default(),
-            is_partial: false,
-            reexports: Vec::new(),
-            all_exports: None,
-            content: Some(stub_content),
-        };
+        let stub = crate::embedded_stubs::get_embedded_stub("typing")
+            .expect("typing stub should be available from typeshed");
 
         let mut class_registry = ClassRegistry::new();
         let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
@@ -1179,7 +1146,7 @@ class list(Generic[_T]):
         let generator_class = class_registry.get_class("Generator");
         assert!(
             generator_class.is_some(),
-            "Generator class should be registered in typing.pyi"
+            "Generator class should be registered in typeshed typing.pyi"
         );
 
         let generator_metadata = generator_class.unwrap();
@@ -1199,7 +1166,7 @@ class list(Generic[_T]):
         let iterator_class = class_registry.get_class("Iterator");
         assert!(
             iterator_class.is_some(),
-            "Iterator class should be registered in typing.pyi"
+            "Iterator class should be registered in typeshed typing.pyi"
         );
 
         let iterator_metadata = iterator_class.unwrap();
@@ -1215,7 +1182,7 @@ class list(Generic[_T]):
         let iterable_class = class_registry.get_class("Iterable");
         assert!(
             iterable_class.is_some(),
-            "Iterable class should be registered in typing.pyi"
+            "Iterable class should be registered in typeshed typing.pyi"
         );
 
         let iterable_metadata = iterable_class.unwrap();
@@ -1281,25 +1248,11 @@ class list(Generic[_T]):
     }
 
     #[test]
-    fn test_typing_protocol_types_loaded() {
-        let stub_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("stubs/typing.pyi");
+    fn test_typeshed_typing_protocol_types_loaded() {
+        use beacon_core::ClassRegistry;
 
-        let stub_content = std::fs::read_to_string(&stub_path).unwrap();
-
-        let stub = StubFile {
-            module: "typing".to_string(),
-            path: stub_path,
-            exports: FxHashMap::default(),
-            is_partial: false,
-            reexports: Vec::new(),
-            all_exports: None,
-            content: Some(stub_content),
-        };
+        let stub = crate::embedded_stubs::get_embedded_stub("typing")
+            .expect("typing stub should be available from typeshed");
 
         let mut class_registry = ClassRegistry::new();
         let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
@@ -1320,7 +1273,7 @@ class list(Generic[_T]):
             let protocol_class = class_registry.get_class(protocol_name);
             assert!(
                 protocol_class.is_some(),
-                "{protocol_name} class should be registered in typing.pyi"
+                "{protocol_name} class should be registered in typeshed typing.pyi"
             );
         }
     }
