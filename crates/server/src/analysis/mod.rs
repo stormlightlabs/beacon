@@ -62,8 +62,8 @@ impl Analyzer {
     /// Create a new analyzer with the given configuration
     pub fn new(config: Config, documents: DocumentManager) -> Self {
         let stub_cache = Arc::new(std::sync::RwLock::new(beacon_analyzer::StubCache::new()));
-        let stdlib_modules = vec!["builtins", "typing", "dataclasses", "os", "enum", "pathlib"];
-        for module_name in &stdlib_modules {
+        let stdlib_modules = beacon_analyzer::EMBEDDED_STDLIB_MODULES;
+        for module_name in stdlib_modules.iter().copied() {
             if let Some(stub) = beacon_analyzer::get_embedded_stub(module_name) {
                 if let Ok(mut cache) = stub_cache.write() {
                     cache.insert(module_name.to_string(), stub);

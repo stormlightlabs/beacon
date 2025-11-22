@@ -4,8 +4,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+include!("src/embedded_stdlib_modules.rs");
+
 fn main() {
-    println!("cargo:rerun-if-changed=../../typeshed");
+    println!("cargo:rerun-if-changed=src/embedded_stdlib_modules.rs");
     println!("cargo:rerun-if-changed=../../.git/modules/typeshed");
 
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR not set");
@@ -20,7 +22,11 @@ fn main() {
         return;
     }
 
-    let (stub_manifest, total_stubs) = generate_stub_manifest(&typeshed_path);
+    let stub_manifest = generate_stub_manifest(&typeshed_path, EMBEDDED_STDLIB_MODULES);
+    for (_, path) in &stub_manifest {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+    let total_stubs = stub_manifest.len();
     let version_info = generate_version_info();
 
     let mut output = fs::File::create(&dest_path).expect("Failed to create embedded_stubs.rs");
@@ -71,56 +77,34 @@ pub static EMBEDDED_STUBS: Lazy<HashMap<&'static str, &'static str>> = Lazy::new
     println!("cargo:warning=Bundled {total_stubs} typeshed stubs");
 }
 
-fn generate_stub_manifest(typeshed_path: &Path) -> (Vec<(String, PathBuf)>, usize) {
-    let mut stubs = Vec::new();
-
-    if let Ok(entries) = fs::read_dir(typeshed_path) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("pyi") {
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    let module_name = stem.to_string();
-                    stubs.push((module_name, path));
-                }
-            } else if path.is_dir() {
-                collect_stubs_from_package(&path, &mut stubs);
-            }
-        }
-    }
-
-    let count = stubs.len();
-    (stubs, count)
+fn generate_stub_manifest(typeshed_path: &Path, modules: &[&str]) -> Vec<(String, PathBuf)> {
+    modules
+        .iter()
+        .map(|module_name| {
+            let stub_path = find_stub_file(typeshed_path, module_name).unwrap_or_else(|| {
+                panic!(
+                    "Failed to locate stub for module '{module_name}' in {}",
+                    typeshed_path.display()
+                )
+            });
+            ((*module_name).to_string(), stub_path)
+        })
+        .collect()
 }
 
-fn collect_stubs_from_package(package_path: &Path, stubs: &mut Vec<(String, PathBuf)>) {
-    let package_name = package_path.file_name().and_then(|s| s.to_str());
-    if package_name.is_none() {
-        return;
-    }
-    let package_name = package_name.unwrap();
-
-    if package_name.starts_with('@') || package_name.starts_with('.') {
-        return;
+fn find_stub_file(typeshed_path: &Path, module_name: &str) -> Option<PathBuf> {
+    let relative_path = module_name.replace('.', "/");
+    let direct_file = typeshed_path.join(format!("{relative_path}.pyi"));
+    if direct_file.exists() {
+        return Some(direct_file);
     }
 
-    let init_stub = package_path.join("__init__.pyi");
-    if init_stub.exists() {
-        stubs.push((package_name.to_string(), init_stub));
+    let package_init = typeshed_path.join(&relative_path).join("__init__.pyi");
+    if package_init.exists() {
+        return Some(package_init);
     }
 
-    if let Ok(entries) = fs::read_dir(package_path) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("pyi") {
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    if stem != "__init__" {
-                        let module_name = format!("{package_name}.{stem}");
-                        stubs.push((module_name, path));
-                    }
-                }
-            }
-        }
-    }
+    None
 }
 
 fn generate_version_info() -> (String, String) {

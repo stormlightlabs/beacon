@@ -2,5 +2,16 @@
 buildScripts.enable = true
 features = "all"
 
+[cargo.extraEnv]
+CARGO_TARGET_DIR = "target/rust-analyzer"
+
+[files]
+exclude_dirs = [
+    "target",
+    "node_modules",
+    "typeshed",
+    "logs",
+]
+
 [check]
-command = "clippy"
+command = "check"
