@@ -85,6 +85,13 @@ impl TypeVarConstraintRegistry {
     }
 
     /// Validate that a type satisfies a TypeVar's bound (if any)
+    ///
+    /// TODO: Bound validation currently produces false positives for some typeshed stubs.
+    /// For example, TypeVars with bounds like SupportsNext, SupportsAdd, Awaitable may
+    /// incorrectly reject valid types like int, str, or list due to:
+    /// 1. Missing protocol implementation checks in is_subtype_of
+    /// 2. Incomplete structural subtyping for protocol types
+    /// 3. TypeVar bound inference not handling implicit protocol satisfaction
     pub fn validate_bound(&self, typevar_id: u32, ty: &Type) -> Result<(), String> {
         if let Some(bound) = self.get_bound(typevar_id) {
             if !ty.is_subtype_of(bound) {
@@ -202,7 +209,7 @@ mod tests {
 
         assert!(registry.validate_bound(1, &animal).is_ok());
 
-        // TODO: implement subtyping hierarchy yet
+        // TODO: implement subtyping hierarchy
         let _ = registry.validate_bound(1, &dog);
     }
 

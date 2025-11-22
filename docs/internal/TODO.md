@@ -32,20 +32,19 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
 ### Method Resolution for Inherited Methods
 
-Typeshed stubs use Protocol base classes (e.g., `list(MutableSequence[_T])`), but Beacon's current method resolution doesn't fully support inherited methods from Protocol parents.
-
-- [ ] Implement method lookup through inheritance chain
-- [ ] Support Protocol base class method resolution
-- [ ] Add tests for inherited method lookups (list.append, str.upper, dict.get)
-- [ ] Verify compatibility with MutableSequence, Sequence, Mapping protocols
+- [x] Implement method lookup through inheritance chain
+- [x] Support Protocol base class method resolution
+- [ ] Fix stub parsing edge cases: Some builtin methods (str.upper, str.lower, dict.get) not found due to class registration timing or overload processing
+- [ ] Fix TypeVar bound validation false positives: Protocol bounds (SupportsNext, SupportsAdd, Awaitable) incorrectly reject valid types
+- [ ] Improve structural subtyping for protocol types in is_subtype_of
+- [ ] Handle implicit protocol satisfaction in TypeVar bound inference
 
 ### Tests & Documentation
 
-- [ ] Python version-specific stub selection (3.8 vs 3.12 differences)
+- [ ] Document typeshed version and update process
 - [ ] Integration test: custom stub overrides typeshed stub
 - [ ] Integration test: `pythonVersion` config change behavior
 - [ ] Performance test: stub resolution overhead on large projects
-- [ ] Document typeshed version and update process
 
 ## Linter Tech Debt
 

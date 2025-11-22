@@ -564,7 +564,7 @@ mod tests {
 
         let method_type = MethodType::Overloaded(overload_set);
         assert!(method_type.primary_type().is_some());
-        assert_eq!(method_type.all_signatures().len(), 3); // 2 overloads + 1 impl
+        assert_eq!(method_type.all_signatures().len(), 3);
     }
 
     #[test]
@@ -679,7 +679,7 @@ mod tests {
 
         let record = meta.to_record_type();
         if let Type::Record(fields, _) = record {
-            assert_eq!(fields.len(), 2); // value + convert
+            assert_eq!(fields.len(), 2);
             assert!(fields.iter().any(|(name, _)| name == "value"));
             assert!(fields.iter().any(|(name, _)| name == "convert"));
         } else {
@@ -811,5 +811,190 @@ mod tests {
             }
             _ => panic!("Expected Fun type"),
         }
+    }
+
+    #[test]
+    fn test_lookup_attribute_with_inheritance_single_level() {
+        let mut registry = ClassRegistry::new();
+
+        let mut base = ClassMetadata::new("Base".to_string());
+        base.add_method(
+            "base_method".to_string(),
+            Type::Fun(
+                vec![(String::new(), Type::any())],
+                Box::new(Type::Con(TypeCtor::String)),
+            ),
+        );
+        registry.register_class("Base".to_string(), base);
+
+        let mut derived = ClassMetadata::new("Derived".to_string());
+        derived.add_base_class("Base".to_string());
+        derived.add_method(
+            "derived_method".to_string(),
+            Type::Fun(vec![(String::new(), Type::any())], Box::new(Type::Con(TypeCtor::Int))),
+        );
+        registry.register_class("Derived".to_string(), derived);
+
+        assert!(
+            registry
+                .lookup_attribute_with_inheritance("Derived", "derived_method")
+                .is_some()
+        );
+        assert!(
+            registry
+                .lookup_attribute_with_inheritance("Derived", "base_method")
+                .is_some()
+        );
+        assert!(
+            registry
+                .lookup_attribute_with_inheritance("Derived", "nonexistent")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_lookup_attribute_with_inheritance_multi_level() {
+        let mut registry = ClassRegistry::new();
+
+        let mut grandparent = ClassMetadata::new("GrandParent".to_string());
+        grandparent.add_method(
+            "grandparent_method".to_string(),
+            Type::Fun(vec![(String::new(), Type::any())], Box::new(Type::Con(TypeCtor::Bool))),
+        );
+        registry.register_class("GrandParent".to_string(), grandparent);
+
+        let mut parent = ClassMetadata::new("Parent".to_string());
+        parent.add_base_class("GrandParent".to_string());
+        parent.add_method(
+            "parent_method".to_string(),
+            Type::Fun(
+                vec![(String::new(), Type::any())],
+                Box::new(Type::Con(TypeCtor::String)),
+            ),
+        );
+        registry.register_class("Parent".to_string(), parent);
+
+        let mut child = ClassMetadata::new("Child".to_string());
+        child.add_base_class("Parent".to_string());
+        child.add_method(
+            "child_method".to_string(),
+            Type::Fun(vec![(String::new(), Type::any())], Box::new(Type::Con(TypeCtor::Int))),
+        );
+        registry.register_class("Child".to_string(), child);
+
+        assert!(
+            registry
+                .lookup_attribute_with_inheritance("Child", "child_method")
+                .is_some()
+        );
+        assert!(
+            registry
+                .lookup_attribute_with_inheritance("Child", "parent_method")
+                .is_some()
+        );
+        assert!(
+            registry
+                .lookup_attribute_with_inheritance("Child", "grandparent_method")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn test_lookup_attribute_with_inheritance_protocol_base() {
+        let mut registry = ClassRegistry::new();
+
+        let mut protocol = ClassMetadata::new("MutableSequence".to_string());
+        protocol.set_protocol(true);
+        protocol.add_method(
+            "append".to_string(),
+            Type::Fun(
+                vec![
+                    (String::new(), Type::any()),
+                    (String::new(), Type::Con(TypeCtor::TypeVariable("_T".to_string()))),
+                ],
+                Box::new(Type::Con(TypeCtor::NoneType)),
+            ),
+        );
+        protocol.add_method(
+            "extend".to_string(),
+            Type::Fun(
+                vec![
+                    (String::new(), Type::any()),
+                    (String::new(), Type::Con(TypeCtor::Iterable)),
+                ],
+                Box::new(Type::Con(TypeCtor::NoneType)),
+            ),
+        );
+        registry.register_class("MutableSequence".to_string(), protocol);
+
+        let mut list_class = ClassMetadata::new("list".to_string());
+        list_class.add_base_class("MutableSequence".to_string());
+        list_class.add_type_param("_T".to_string());
+        registry.register_class("list".to_string(), list_class);
+
+        let append_method = registry.lookup_attribute_with_inheritance("list", "append");
+        assert!(
+            append_method.is_some(),
+            "list should inherit append from MutableSequence"
+        );
+
+        let extend_method = registry.lookup_attribute_with_inheritance("list", "extend");
+        assert!(
+            extend_method.is_some(),
+            "list should inherit extend from MutableSequence"
+        );
+    }
+
+    #[test]
+    fn test_lookup_attribute_with_inheritance_multiple_bases() {
+        let mut registry = ClassRegistry::new();
+
+        let mut base1 = ClassMetadata::new("Base1".to_string());
+        base1.add_method(
+            "method1".to_string(),
+            Type::Fun(vec![(String::new(), Type::any())], Box::new(Type::Con(TypeCtor::Int))),
+        );
+        registry.register_class("Base1".to_string(), base1);
+
+        let mut base2 = ClassMetadata::new("Base2".to_string());
+        base2.add_method(
+            "method2".to_string(),
+            Type::Fun(
+                vec![(String::new(), Type::any())],
+                Box::new(Type::Con(TypeCtor::String)),
+            ),
+        );
+        registry.register_class("Base2".to_string(), base2);
+
+        let mut derived = ClassMetadata::new("Derived".to_string());
+        derived.add_base_class("Base1".to_string());
+        derived.add_base_class("Base2".to_string());
+        registry.register_class("Derived".to_string(), derived);
+
+        assert!(
+            registry
+                .lookup_attribute_with_inheritance("Derived", "method1")
+                .is_some()
+        );
+        assert!(
+            registry
+                .lookup_attribute_with_inheritance("Derived", "method2")
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn test_is_subclass_of_with_protocol() {
+        let mut registry = ClassRegistry::new();
+
+        let mut protocol = ClassMetadata::new("Sized".to_string());
+        protocol.set_protocol(true);
+        registry.register_class("Sized".to_string(), protocol);
+
+        let mut list_class = ClassMetadata::new("list".to_string());
+        list_class.add_base_class("Sized".to_string());
+        registry.register_class("list".to_string(), list_class);
+
+        assert!(registry.is_subclass_of("list", "Sized"));
     }
 }

@@ -811,6 +811,14 @@ fn convert_type_vars(ty: beacon_core::Type, ctx: &mut StubTypeContext) -> beacon
     }
 }
 
+/// Load a stub file into the class registry and typevar registry
+///
+/// TODO: Some classes may not register all their methods correctly, particularly for
+/// overloaded methods with complex type annotations. This affects methods like str.upper,
+/// dict.get, etc. The issue appears to be related to:
+/// 1. Method collection and registration timing
+/// 2. Overload processing for methods with multiple signatures
+/// 3. Class registration order (base classes should be registered before derived classes)
 pub fn load_stub_into_registry(
     stub: &StubFile, class_registry: &mut ClassRegistry, typevar_registry: &mut beacon_core::TypeVarConstraintRegistry,
 ) -> Result<()> {

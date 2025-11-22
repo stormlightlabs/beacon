@@ -61,13 +61,23 @@ pub struct Analyzer {
 impl Analyzer {
     /// Create a new analyzer with the given configuration
     pub fn new(config: Config, documents: DocumentManager) -> Self {
+        let stub_cache = Arc::new(std::sync::RwLock::new(beacon_analyzer::StubCache::new()));
+        let stdlib_modules = vec!["builtins", "typing", "dataclasses", "os", "enum", "pathlib"];
+        for module_name in &stdlib_modules {
+            if let Some(stub) = beacon_analyzer::get_embedded_stub(module_name) {
+                if let Ok(mut cache) = stub_cache.write() {
+                    cache.insert(module_name.to_string(), stub);
+                }
+            }
+        }
+
         Self {
             config,
             cache: CacheManager::new(),
             _type_var_gen: TypeVarGen::new(),
             documents,
             position_maps: FxHashMap::default(),
-            stub_cache: None,
+            stub_cache: Some(stub_cache),
         }
     }
 
