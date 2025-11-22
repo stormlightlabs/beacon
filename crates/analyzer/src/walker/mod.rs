@@ -29,11 +29,15 @@ pub fn generate_constraints(
     let mut ctx = ConstraintGenContext::new();
 
     ctx.set_context(symbol_table, source);
+    ctx.class_registry = loader::new_class_registry_with_stdlib();
+    ctx.typevar_registry = loader::new_typevar_registry_with_stdlib();
 
     if let Some(stub_cache) = &stub_cache {
         if let Ok(cache) = stub_cache.try_read() {
-            if let Some(builtins) = cache.get("builtins") {
-                loader::load_stub_into_registry(builtins, &mut ctx.class_registry, &mut ctx.typevar_registry)?;
+            for (module_name, stub) in cache.iter() {
+                if !crate::EMBEDDED_STDLIB_MODULES.contains(&module_name.as_str()) {
+                    loader::load_stub_into_registry(stub, &mut ctx.class_registry, &mut ctx.typevar_registry)?;
+                }
             }
         }
     }

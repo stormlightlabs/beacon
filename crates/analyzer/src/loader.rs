@@ -4,9 +4,36 @@ use beacon_core::{
     errors::{AnalysisError, Result},
 };
 use beacon_parser::AstNode;
+use once_cell::sync::Lazy;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+/// Pre-parsed stdlib class and typevar registries (cached at startup)
+static STDLIB_REGISTRIES: Lazy<(ClassRegistry, beacon_core::TypeVarConstraintRegistry)> = Lazy::new(|| {
+    let mut class_registry = ClassRegistry::new();
+    let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
+
+    for module_name in crate::EMBEDDED_STDLIB_MODULES.iter().copied() {
+        if let Some(stub) = crate::get_embedded_stub(module_name) {
+            if let Err(e) = load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry) {
+                eprintln!("Warning: Failed to load stdlib stub '{module_name}': {e:?}");
+            }
+        }
+    }
+
+    (class_registry, typevar_registry)
+});
+
+/// Create a new ClassRegistry pre-populated with stdlib classes
+pub fn new_class_registry_with_stdlib() -> ClassRegistry {
+    STDLIB_REGISTRIES.0.clone()
+}
+
+/// Create a new TypeVarConstraintRegistry pre-populated with stdlib type variables
+pub fn new_typevar_registry_with_stdlib() -> beacon_core::TypeVarConstraintRegistry {
+    STDLIB_REGISTRIES.1.clone()
+}
 
 /// Cache for parsed stub files
 #[derive(Default)]
@@ -42,6 +69,11 @@ impl StubCache {
     /// Check if the cache is empty
     pub fn is_empty(&self) -> bool {
         self.cache.is_empty()
+    }
+
+    /// Get an iterator over the cached stubs
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &StubFile)> {
+        self.cache.iter()
     }
 }
 
@@ -1115,15 +1147,7 @@ class list(Generic[_T]):
 
     #[test]
     fn test_stub_loading_typeshed_builtins() {
-        use beacon_core::ClassRegistry;
-
-        let stub = crate::embedded_stubs::get_embedded_stub("builtins")
-            .expect("builtins stub should be available from typeshed");
-
-        let mut class_registry = ClassRegistry::new();
-        let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
-        load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry).unwrap();
-
+        let class_registry = new_class_registry_with_stdlib();
         let list_class = class_registry.get_class("list");
         assert!(
             list_class.is_some(),
@@ -1141,15 +1165,7 @@ class list(Generic[_T]):
 
     #[test]
     fn test_stub_loading_typeshed_typing_module() {
-        use beacon_core::ClassRegistry;
-
-        let stub =
-            crate::embedded_stubs::get_embedded_stub("typing").expect("typing stub should be available from typeshed");
-
-        let mut class_registry = ClassRegistry::new();
-        let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
-        load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry).unwrap();
-
+        let class_registry = new_class_registry_with_stdlib();
         let generator_class = class_registry.get_class("Generator");
         assert!(
             generator_class.is_some(),
@@ -1256,14 +1272,7 @@ class list(Generic[_T]):
 
     #[test]
     fn test_typeshed_typing_protocol_types_loaded() {
-        use beacon_core::ClassRegistry;
-
-        let stub =
-            crate::embedded_stubs::get_embedded_stub("typing").expect("typing stub should be available from typeshed");
-
-        let mut class_registry = ClassRegistry::new();
-        let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
-        load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry).unwrap();
+        let class_registry = new_class_registry_with_stdlib();
 
         let protocol_types = vec![
             "Generator",

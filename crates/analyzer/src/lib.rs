@@ -7,11 +7,12 @@
 //! - Pattern matching exhaustiveness
 //! - Type inference via constraint generation
 
+mod embedded_stdlib_modules;
+
 pub mod cfg;
 pub mod const_eval;
 pub mod data_flow;
 pub mod embedded_stubs;
-mod embedded_stdlib_modules;
 pub mod linter;
 pub mod loader;
 pub mod pattern;
@@ -22,10 +23,12 @@ pub mod walker;
 pub use cfg::{BasicBlock, BlockId, CfgBuilder, ControlFlowGraph, EdgeKind};
 pub use const_eval::{ConstValue, evaluate_const_expr};
 pub use data_flow::{DataFlowAnalyzer, DataFlowResult, UnreachableCode, UnusedVariable, UseBeforeDef};
-pub use embedded_stubs::{TypeshedVersion, available_stubs, get_embedded_stub, version_info};
 pub use embedded_stdlib_modules::EMBEDDED_STDLIB_MODULES;
+pub use embedded_stubs::{TypeshedVersion, available_stubs, get_embedded_stub, version_info};
 pub use linter::Linter;
-pub use loader::{StubCache, StubFile, StubTypeContext};
+pub use loader::{
+    StubCache, StubFile, StubTypeContext, new_class_registry_with_stdlib, new_typevar_registry_with_stdlib,
+};
 pub use rules::{DiagnosticMessage, Rule, RuleKind, RuleSeverity};
 pub use type_env::TypeEnvironment;
 pub use walker::generate_constraints;

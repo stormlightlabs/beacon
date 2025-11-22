@@ -364,7 +364,7 @@ impl ClassMetadata {
 }
 
 /// Registry of all class definitions in the analyzed module
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ClassRegistry {
     /// Maps class name to its metadata
     classes: HashMap<String, ClassMetadata>,
@@ -384,6 +384,13 @@ impl ClassRegistry {
     /// Look up class metadata by name
     pub fn get_class(&self, name: &str) -> Option<&ClassMetadata> {
         self.classes.get(name)
+    }
+
+    /// Merge another registry into this one, copying all classes
+    pub fn merge(&mut self, other: &ClassRegistry) {
+        for (name, metadata) in &other.classes {
+            self.classes.insert(name.clone(), metadata.clone());
+        }
     }
 
     /// Look up an attribute in a class
