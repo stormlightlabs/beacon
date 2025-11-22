@@ -1,0 +1,5 @@
+[build]
+rustflags = []
+
+[env]
+RUST_ANALYZER_DISABLE_PROC_MACRO_WARNINGS = "1"

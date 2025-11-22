@@ -1,0 +1,6 @@
+[cargo]
+buildScripts.enable = true
+features = "all"
+
+[check]
+command = "clippy"
