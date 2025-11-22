@@ -14,10 +14,16 @@ pub enum MethodType {
 
 impl MethodType {
     /// Get the primary type for this method (single signature or implementation signature for overloads)
+    ///
+    /// For overloaded methods, returns the implementation if available, otherwise the first overload signature.
+    /// Some stub files (e.g., typeshed) use @overload on all signatures without a separate implementation.
     pub fn primary_type(&self) -> Option<&Type> {
         match self {
             MethodType::Single(ty) => Some(ty),
-            MethodType::Overloaded(overload_set) => overload_set.implementation.as_ref(),
+            MethodType::Overloaded(overload_set) => overload_set
+                .implementation
+                .as_ref()
+                .or_else(|| overload_set.signatures.first()),
         }
     }
 

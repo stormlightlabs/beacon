@@ -9,7 +9,7 @@ use crate::config::Config;
 use crate::document::DocumentManager;
 
 use beacon_core::{Type, TypeCtor};
-use beacon_parser::AstNode;
+use beacon_parser::{AstNode, LiteralValue};
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
@@ -1023,14 +1023,45 @@ impl Workspace {
 
         for module_name in &stdlib_modules {
             if let Some(stub) = beacon_analyzer::get_embedded_stub(module_name) {
+                let mut parsed_stub = if let Some(content) = &stub.content {
+                    match self.parse_stub_from_string(module_name, content) {
+                        Ok(parsed) => parsed,
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to parse embedded stub '{}' ({:?}), using raw stub content",
+                                module_name,
+                                e
+                            );
+                            stub
+                        }
+                    }
+                } else {
+                    stub
+                };
+
                 tracing::debug!(
                     "Loaded typeshed stub for '{}' ({} exports)",
                     module_name,
-                    stub.exports.len()
+                    parsed_stub.exports.len()
                 );
 
+                if *module_name == "os" {
+                    parsed_stub.exports.entry("path".to_string()).or_insert_with(Type::any);
+                    parsed_stub
+                        .exports
+                        .entry("getcwd".to_string())
+                        .or_insert_with(Type::any);
+                }
+                if *module_name == "pathlib" {
+                    parsed_stub.exports.entry("Path".to_string()).or_insert_with(Type::any);
+                    parsed_stub
+                        .exports
+                        .entry("PurePath".to_string())
+                        .or_insert_with(Type::any);
+                }
+
                 if let Ok(mut cache) = self.stubs.write() {
-                    cache.insert(module_name.to_string(), stub);
+                    cache.insert(module_name.to_string(), parsed_stub);
                 }
 
                 if let Ok(uri) = Url::parse(&format!("builtin://{module_name}")) {
@@ -1317,11 +1348,35 @@ impl Workspace {
             AstNode::ImportFrom { module, names, .. } => {
                 for name in names {
                     reexports.push(format!("{module}.{name}"));
+                    exports
+                        .entry(name.clone())
+                        .or_insert_with(|| Type::Con(TypeCtor::Module(module.clone())));
+                }
+            }
+            AstNode::Import { module, alias, extra_modules, .. } => {
+                let export_name = alias.clone().unwrap_or_else(|| module.clone());
+                exports
+                    .entry(export_name)
+                    .or_insert_with(|| Type::Con(TypeCtor::Module(module.clone())));
+
+                for (extra_module, extra_alias) in extra_modules {
+                    let export_name = extra_alias.clone().unwrap_or_else(|| extra_module.clone());
+                    exports
+                        .entry(export_name)
+                        .or_insert_with(|| Type::Con(TypeCtor::Module(extra_module.clone())));
                 }
             }
             AstNode::Assignment { target, value, .. } => {
-                if target.target_to_string() == "__all__" {
-                    *all_exports = self.extract_all_list(value);
+                let target_name = target.target_to_string();
+                if target_name == "__all__" {
+                    if let Some(names) = self.extract_all_list(value) {
+                        for name in &names {
+                            exports.entry(name.clone()).or_insert_with(Type::any);
+                        }
+                        *all_exports = Some(names);
+                    }
+                } else if matches!(value.as_ref(), AstNode::Identifier { .. }) {
+                    exports.entry(target_name).or_insert_with(Type::any);
                 }
             }
             _ => {}
@@ -1331,8 +1386,19 @@ impl Workspace {
     /// Extract __all__ list from a list literal
     ///
     /// TODO: Implement extraction by adding list literal support to the AST
-    fn extract_all_list(&self, _node: &beacon_parser::AstNode) -> Option<Vec<String>> {
-        None
+    fn extract_all_list(&self, node: &beacon_parser::AstNode) -> Option<Vec<String>> {
+        match node {
+            AstNode::List { elements, .. } => {
+                let mut names = Vec::new();
+                for element in elements {
+                    if let AstNode::Literal { value: LiteralValue::String { value, .. }, .. } = element {
+                        names.push(value.clone());
+                    }
+                }
+                if names.is_empty() { None } else { Some(names) }
+            }
+            _ => None,
+        }
     }
 
     /// Parse an annotation string into a Type

@@ -812,13 +812,6 @@ fn convert_type_vars(ty: beacon_core::Type, ctx: &mut StubTypeContext) -> beacon
 }
 
 /// Load a stub file into the class registry and typevar registry
-///
-/// TODO: Some classes may not register all their methods correctly, particularly for
-/// overloaded methods with complex type annotations. This affects methods like str.upper,
-/// dict.get, etc. The issue appears to be related to:
-/// 1. Method collection and registration timing
-/// 2. Overload processing for methods with multiple signatures
-/// 3. Class registration order (base classes should be registered before derived classes)
 pub fn load_stub_into_registry(
     stub: &StubFile, class_registry: &mut ClassRegistry, typevar_registry: &mut beacon_core::TypeVarConstraintRegistry,
 ) -> Result<()> {
@@ -1132,20 +1125,26 @@ class list(Generic[_T]):
         load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry).unwrap();
 
         let list_class = class_registry.get_class("list");
-        assert!(list_class.is_some(), "list class should be registered in typeshed builtins.pyi");
+        assert!(
+            list_class.is_some(),
+            "list class should be registered in typeshed builtins.pyi"
+        );
 
         let list_metadata = list_class.unwrap();
 
         let append_method = list_metadata.methods.get("append");
-        assert!(append_method.is_some(), "append method should exist in typeshed builtins.pyi");
+        assert!(
+            append_method.is_some(),
+            "append method should exist in typeshed builtins.pyi"
+        );
     }
 
     #[test]
     fn test_stub_loading_typeshed_typing_module() {
         use beacon_core::ClassRegistry;
 
-        let stub = crate::embedded_stubs::get_embedded_stub("typing")
-            .expect("typing stub should be available from typeshed");
+        let stub =
+            crate::embedded_stubs::get_embedded_stub("typing").expect("typing stub should be available from typeshed");
 
         let mut class_registry = ClassRegistry::new();
         let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
@@ -1259,8 +1258,8 @@ class list(Generic[_T]):
     fn test_typeshed_typing_protocol_types_loaded() {
         use beacon_core::ClassRegistry;
 
-        let stub = crate::embedded_stubs::get_embedded_stub("typing")
-            .expect("typing stub should be available from typeshed");
+        let stub =
+            crate::embedded_stubs::get_embedded_stub("typing").expect("typing stub should be available from typeshed");
 
         let mut class_registry = ClassRegistry::new();
         let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();

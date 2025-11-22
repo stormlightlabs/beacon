@@ -86,6 +86,8 @@
 //! }
 //! ```
 
+use crate::{ClassMetadata, ClassRegistry};
+
 use rustc_hash::FxHashMap;
 use std::{fmt, ops::Not};
 
@@ -1262,6 +1264,156 @@ impl Type {
         false
     }
 
+    /// Check subtyping with structural protocol support using class metadata when available.
+    ///
+    /// Falls back to nominal/structural checks from [Self::is_subtype_of] when class metadata
+    /// is not provided.
+    pub fn is_subtype_of_with_registry(&self, other: &Type, class_registry: Option<&ClassRegistry>) -> bool {
+        if self.is_subtype_of(other) {
+            return true;
+        }
+
+        let Some(registry) = class_registry else {
+            return false;
+        };
+
+        self.structural_subtype_check(other, registry).unwrap_or(false)
+    }
+
+    fn structural_subtype_check(&self, other: &Type, class_registry: &ClassRegistry) -> Option<bool> {
+        match other {
+            Type::Union(types) => {
+                return Some(
+                    types
+                        .iter()
+                        .any(|t| self.is_subtype_of_with_registry(t, Some(class_registry))),
+                );
+            }
+            Type::Intersection(types) => {
+                return Some(
+                    types
+                        .iter()
+                        .all(|t| self.is_subtype_of_with_registry(t, Some(class_registry))),
+                );
+            }
+            _ => {}
+        }
+
+        match self {
+            Type::Union(types) => {
+                return Some(
+                    types
+                        .iter()
+                        .all(|t| t.is_subtype_of_with_registry(other, Some(class_registry))),
+                );
+            }
+            Type::Intersection(types) => {
+                return Some(
+                    types
+                        .iter()
+                        .any(|t| t.is_subtype_of_with_registry(other, Some(class_registry))),
+                );
+            }
+            _ => {}
+        }
+
+        let protocol_record = other.protocol_structural_record(class_registry)?;
+        let actual_record = self.class_structural_record(class_registry)?;
+        Some(actual_record.is_subtype_of(&protocol_record))
+    }
+
+    /// Convert a class or protocol type into its structural record representation if possible.
+    fn class_structural_record(&self, class_registry: &ClassRegistry) -> Option<Type> {
+        if matches!(self, Type::Record(_, _)) {
+            return Some(self.clone());
+        }
+
+        let (name, args) = self.class_like_name_and_args()?;
+        let mut record = class_registry.class_to_record(&name)?;
+
+        if let Some(metadata) = class_registry.get_class(&name) {
+            if !metadata.type_params.is_empty() && !args.is_empty() {
+                let subst = metadata.create_type_substitution(&args);
+                record = ClassMetadata::substitute_type_params(&record, &subst);
+            }
+        }
+
+        Some(record)
+    }
+
+    /// Convert a protocol type into its structural record representation if possible.
+    fn protocol_structural_record(&self, class_registry: &ClassRegistry) -> Option<Type> {
+        let (name, args) = self.class_like_name_and_args()?;
+        let metadata = class_registry.get_class(&name)?;
+        if !metadata.is_protocol {
+            return None;
+        }
+
+        let mut record = class_registry.class_to_record(&name)?;
+        if !metadata.type_params.is_empty() && !args.is_empty() {
+            let subst = metadata.create_type_substitution(&args);
+            record = ClassMetadata::substitute_type_params(&record, &subst);
+        }
+        Some(record)
+    }
+
+    fn class_like_name_and_args(&self) -> Option<(String, Vec<Type>)> {
+        match self {
+            Type::Con(TypeCtor::Class(name)) => return Some((name.clone(), Vec::new())),
+            Type::Con(TypeCtor::Protocol(Some(name), _)) => return Some((name.clone(), Vec::new())),
+            Type::Con(TypeCtor::Literal(lit)) => {
+                if let Some(base_ctor) = TypeCtor::Literal(lit.clone()).base_type() {
+                    if let Some(name) = Self::builtin_class_name(&base_ctor) {
+                        return Some((name.to_string(), Vec::new()));
+                    }
+                }
+            }
+            Type::Con(ctor) => {
+                if let Some(name) = Self::builtin_class_name(ctor) {
+                    return Some((name.to_string(), Vec::new()));
+                }
+            }
+            _ => {}
+        }
+
+        if let Some((ctor, args)) = self.unapply() {
+            let name = match ctor {
+                TypeCtor::Class(name) => Some(name.clone()),
+                TypeCtor::Protocol(Some(name), _) => Some(name.clone()),
+                TypeCtor::Literal(lit) => TypeCtor::Literal(lit.clone())
+                    .base_type()
+                    .and_then(|base| Self::builtin_class_name(&base).map(|s| s.to_string())),
+                other => Self::builtin_class_name(other).map(|s| s.to_string()),
+            };
+
+            if let Some(name) = name {
+                return Some((name, args));
+            }
+        }
+
+        None
+    }
+
+    fn builtin_class_name(ctor: &TypeCtor) -> Option<&'static str> {
+        match ctor {
+            TypeCtor::Int => Some("int"),
+            TypeCtor::Float => Some("float"),
+            TypeCtor::String => Some("str"),
+            TypeCtor::Bool => Some("bool"),
+            TypeCtor::NoneType => Some("None"),
+            TypeCtor::List => Some("list"),
+            TypeCtor::Dict => Some("dict"),
+            TypeCtor::Set => Some("set"),
+            TypeCtor::Tuple => Some("tuple"),
+            TypeCtor::Iterator => Some("Iterator"),
+            TypeCtor::Iterable => Some("Iterable"),
+            TypeCtor::Generator => Some("Generator"),
+            TypeCtor::AsyncGenerator => Some("AsyncGenerator"),
+            TypeCtor::Coroutine => Some("Coroutine"),
+            _ => None,
+        }
+    }
+
     /// Display type in a user-friendly format for diagnostics
     ///
     /// This provides improved readability compared to the standard Display implementation:
@@ -1671,6 +1823,34 @@ mod tests {
 
         let fun = Type::fun_unnamed(vec![Type::int()], Type::bool());
         assert_eq!(fun.to_string(), "int -> bool");
+    }
+
+    #[test]
+    fn test_structural_protocol_subtyping_with_registry() {
+        let mut class_registry = ClassRegistry::new();
+
+        let mut readable = ClassMetadata::new("Readable".to_string());
+        readable.set_protocol(true);
+        readable.add_method("read".to_string(), Type::fun(vec![], Type::string()));
+        class_registry.register_class("Readable".to_string(), readable);
+
+        let mut file_reader = ClassMetadata::new("FileReader".to_string());
+        file_reader.add_method("read".to_string(), Type::fun(vec![], Type::string()));
+        class_registry.register_class("FileReader".to_string(), file_reader);
+
+        let mut writer = ClassMetadata::new("Writer".to_string());
+        writer.add_method(
+            "write".to_string(),
+            Type::fun(vec![("value".to_string(), Type::string())], Type::none()),
+        );
+        class_registry.register_class("Writer".to_string(), writer);
+
+        let readable_ty = Type::Con(TypeCtor::Class("Readable".to_string()));
+        let file_reader_ty = Type::Con(TypeCtor::Class("FileReader".to_string()));
+        let writer_ty = Type::Con(TypeCtor::Class("Writer".to_string()));
+
+        assert!(file_reader_ty.is_subtype_of_with_registry(&readable_ty, Some(&class_registry)));
+        assert!(!writer_ty.is_subtype_of_with_registry(&readable_ty, Some(&class_registry)));
     }
 
     #[test]

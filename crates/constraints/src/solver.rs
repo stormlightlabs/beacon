@@ -181,36 +181,72 @@ fn check_builtin_protocol_on_class(ty: &Type, protocol: &ProtocolName, class_reg
     };
 
     match protocol {
-        ProtocolName::Iterable => class_registry.lookup_attribute_with_inheritance(class_name, "__iter__").is_some(),
+        ProtocolName::Iterable => class_registry
+            .lookup_attribute_with_inheritance(class_name, "__iter__")
+            .is_some(),
         ProtocolName::Iterator => {
-            class_registry.lookup_attribute_with_inheritance(class_name, "__iter__").is_some()
-                && class_registry.lookup_attribute_with_inheritance(class_name, "__next__").is_some()
+            class_registry
+                .lookup_attribute_with_inheritance(class_name, "__iter__")
+                .is_some()
+                && class_registry
+                    .lookup_attribute_with_inheritance(class_name, "__next__")
+                    .is_some()
         }
-        ProtocolName::Sized => class_registry.lookup_attribute_with_inheritance(class_name, "__len__").is_some(),
+        ProtocolName::Sized => class_registry
+            .lookup_attribute_with_inheritance(class_name, "__len__")
+            .is_some(),
         ProtocolName::Sequence => {
-            class_registry.lookup_attribute_with_inheritance(class_name, "__len__").is_some()
-                && class_registry.lookup_attribute_with_inheritance(class_name, "__getitem__").is_some()
+            class_registry
+                .lookup_attribute_with_inheritance(class_name, "__len__")
+                .is_some()
+                && class_registry
+                    .lookup_attribute_with_inheritance(class_name, "__getitem__")
+                    .is_some()
         }
         ProtocolName::Mapping => {
-            class_registry.lookup_attribute_with_inheritance(class_name, "__len__").is_some()
-                && class_registry.lookup_attribute_with_inheritance(class_name, "__getitem__").is_some()
-                && class_registry.lookup_attribute_with_inheritance(class_name, "__iter__").is_some()
+            class_registry
+                .lookup_attribute_with_inheritance(class_name, "__len__")
+                .is_some()
+                && class_registry
+                    .lookup_attribute_with_inheritance(class_name, "__getitem__")
+                    .is_some()
+                && class_registry
+                    .lookup_attribute_with_inheritance(class_name, "__iter__")
+                    .is_some()
         }
-        ProtocolName::AsyncIterable => class_registry.lookup_attribute_with_inheritance(class_name, "__aiter__").is_some(),
+        ProtocolName::AsyncIterable => class_registry
+            .lookup_attribute_with_inheritance(class_name, "__aiter__")
+            .is_some(),
         ProtocolName::AsyncIterator => {
-            class_registry.lookup_attribute_with_inheritance(class_name, "__aiter__").is_some()
-                && class_registry.lookup_attribute_with_inheritance(class_name, "__anext__").is_some()
+            class_registry
+                .lookup_attribute_with_inheritance(class_name, "__aiter__")
+                .is_some()
+                && class_registry
+                    .lookup_attribute_with_inheritance(class_name, "__anext__")
+                    .is_some()
         }
-        ProtocolName::Awaitable => class_registry.lookup_attribute_with_inheritance(class_name, "__await__").is_some(),
+        ProtocolName::Awaitable => class_registry
+            .lookup_attribute_with_inheritance(class_name, "__await__")
+            .is_some(),
         ProtocolName::ContextManager => {
-            class_registry.lookup_attribute_with_inheritance(class_name, "__enter__").is_some()
-                && class_registry.lookup_attribute_with_inheritance(class_name, "__exit__").is_some()
+            class_registry
+                .lookup_attribute_with_inheritance(class_name, "__enter__")
+                .is_some()
+                && class_registry
+                    .lookup_attribute_with_inheritance(class_name, "__exit__")
+                    .is_some()
         }
         ProtocolName::AsyncContextManager => {
-            class_registry.lookup_attribute_with_inheritance(class_name, "__aenter__").is_some()
-                && class_registry.lookup_attribute_with_inheritance(class_name, "__aexit__").is_some()
+            class_registry
+                .lookup_attribute_with_inheritance(class_name, "__aenter__")
+                .is_some()
+                && class_registry
+                    .lookup_attribute_with_inheritance(class_name, "__aexit__")
+                    .is_some()
         }
-        ProtocolName::Callable => class_registry.lookup_attribute_with_inheritance(class_name, "__call__").is_some(),
+        ProtocolName::Callable => class_registry
+            .lookup_attribute_with_inheritance(class_name, "__call__")
+            .is_some(),
         ProtocolName::UserDefined(_) => false,
     }
 }
@@ -234,11 +270,19 @@ fn check_has_attribute(ty: &Type, attr_name: &str, class_registry: &ClassRegistr
                 TypeCtor::Any => return true,
                 _ => None,
             };
-            class_name.is_some_and(|name| class_registry.lookup_attribute_with_inheritance(name, attr_name).is_some())
+            class_name.is_some_and(|name| {
+                class_registry
+                    .lookup_attribute_with_inheritance(name, attr_name)
+                    .is_some()
+            })
         }
         Type::App(base, _) => {
             let base_ctor = extract_base_constructor(base);
-            base_ctor.is_some_and(|name| class_registry.lookup_attribute_with_inheritance(name, attr_name).is_some())
+            base_ctor.is_some_and(|name| {
+                class_registry
+                    .lookup_attribute_with_inheritance(name, attr_name)
+                    .is_some()
+            })
         }
         Type::Var(_) => true,
         _ => false,
@@ -246,10 +290,6 @@ fn check_has_attribute(ty: &Type, attr_name: &str, class_registry: &ClassRegistr
 }
 
 /// Get the type of an attribute from a type
-///
-/// TODO: Some builtin type methods (e.g., str.upper, str.lower, dict.get) may not be found
-/// depending on stub loading timing and class registration order. This suggests edge cases
-/// in stub parsing or class registry population that need investigation.
 fn get_attribute_type(ty: &Type, attr_name: &str, class_registry: &ClassRegistry) -> Option<Type> {
     match ty {
         Type::Con(TypeCtor::Class(class_name)) => {
@@ -358,7 +398,13 @@ fn classes_compatible(
                             }
                             beacon_core::Variance::Invariant => {
                                 actual_arg == expected_arg
-                                    || Unifier::unify(actual_arg, expected_arg, typevar_registry).is_ok()
+                                    || Unifier::unify_with_class_registry(
+                                        actual_arg,
+                                        expected_arg,
+                                        typevar_registry,
+                                        class_registry,
+                                    )
+                                    .is_ok()
                             }
                         };
 
@@ -627,7 +673,13 @@ fn check_protocol_with_variance(
             }
             beacon_core::Variance::Invariant => {
                 inferred_arg == expected_arg
-                    || beacon_core::Unifier::unify(inferred_arg, expected_arg, typevar_registry).is_ok()
+                    || beacon_core::Unifier::unify_with_class_registry(
+                        inferred_arg,
+                        expected_arg,
+                        typevar_registry,
+                        class_registry,
+                    )
+                    .is_ok()
             }
         };
 
@@ -1029,7 +1081,12 @@ fn handle_call_args(
                         continue;
                     }
 
-                    match Unifier::unify(&provided_ty, &expected_ty, ctx.typevar_registry) {
+                    match Unifier::unify_with_class_registry(
+                        &provided_ty,
+                        &expected_ty,
+                        ctx.typevar_registry,
+                        ctx.class_registry,
+                    ) {
                         Ok(s) => {
                             *ctx.subst = s.compose(ctx.subst.clone());
                         }
@@ -1071,10 +1128,11 @@ fn handle_call_args(
 }
 
 fn unify_return_type(ctx: &mut CallContext<'_>, call_ret_ty: &Type, target_ty: &Type) {
-    match Unifier::unify(
+    match Unifier::unify_with_class_registry(
         &ctx.subst.apply(call_ret_ty),
         &ctx.subst.apply(target_ty),
         ctx.typevar_registry,
+        ctx.class_registry,
     ) {
         Ok(s) => *ctx.subst = s.compose(ctx.subst.clone()),
         Err(BeaconError::TypeError(type_err)) => ctx.type_errors.push(TypeErrorInfo::new(type_err, ctx.span)),
@@ -1094,10 +1152,11 @@ fn unify_with_adhoc_fun(
 
     let expected_fn_ty = Type::fun_unnamed(all_args, ret_ty.clone());
 
-    match Unifier::unify(
+    match Unifier::unify_with_class_registry(
         &ctx.subst.apply(callable),
         &ctx.subst.apply(&expected_fn_ty),
         ctx.typevar_registry,
+        ctx.class_registry,
     ) {
         Ok(s) => {
             *ctx.subst = s.compose(ctx.subst.clone());
@@ -1239,7 +1298,12 @@ pub fn solve_constraints(
                     if !(involves_union
                         && (applied_t1.is_subtype_of(&applied_t2) || applied_t2.is_subtype_of(&applied_t1)))
                     {
-                        match Unifier::unify(&applied_t1, &applied_t2, typevar_registry) {
+                        match Unifier::unify_with_class_registry(
+                            &applied_t1,
+                            &applied_t2,
+                            typevar_registry,
+                            class_registry,
+                        ) {
                             Ok(s) => {
                                 subst = s.compose(subst);
                             }
@@ -1382,7 +1446,12 @@ pub fn solve_constraints(
                             Type::union(attr_types)
                         };
 
-                        match Unifier::unify(&subst.apply(&attr_ty), &attr_union, typevar_registry) {
+                        match Unifier::unify_with_class_registry(
+                            &subst.apply(&attr_ty),
+                            &attr_union,
+                            typevar_registry,
+                            class_registry,
+                        ) {
                             Ok(s) => {
                                 subst = s.compose(subst);
                             }
@@ -1407,7 +1476,12 @@ pub fn solve_constraints(
                         );
                         let getitem_ty = Type::Fun(vec![("item".to_string(), type_param)], Box::new(result_ty));
 
-                        match Unifier::unify(&subst.apply(&attr_ty), &getitem_ty, typevar_registry) {
+                        match Unifier::unify_with_class_registry(
+                            &subst.apply(&attr_ty),
+                            &getitem_ty,
+                            typevar_registry,
+                            class_registry,
+                        ) {
                             Ok(s) => {
                                 subst = s.compose(subst);
                             }
@@ -1431,7 +1505,12 @@ pub fn solve_constraints(
                                 resolved_attr_ty.clone()
                             };
 
-                            match Unifier::unify(&subst.apply(&attr_ty), &final_type, typevar_registry) {
+                            match Unifier::unify_with_class_registry(
+                                &subst.apply(&attr_ty),
+                                &final_type,
+                                typevar_registry,
+                                class_registry,
+                            ) {
                                 Ok(s) => {
                                     subst = s.compose(subst);
                                 }
@@ -1458,7 +1537,12 @@ pub fn solve_constraints(
                             TypeCtor::Set => Some("set"),
                             TypeCtor::Tuple => Some("tuple"),
                             TypeCtor::Any => {
-                                if let Ok(s) = Unifier::unify(&subst.apply(&attr_ty), &Type::any(), typevar_registry) {
+                                if let Ok(s) = Unifier::unify_with_class_registry(
+                                    &subst.apply(&attr_ty),
+                                    &Type::any(),
+                                    typevar_registry,
+                                    class_registry,
+                                ) {
                                     subst = s.compose(subst);
                                 }
                                 None
@@ -1467,7 +1551,9 @@ pub fn solve_constraints(
                         };
 
                         if let Some(class_name) = class_name {
-                            if let Some(resolved_attr_ty) = class_registry.lookup_attribute_with_inheritance(class_name, &attr_name) {
+                            if let Some(resolved_attr_ty) =
+                                class_registry.lookup_attribute_with_inheritance(class_name, &attr_name)
+                            {
                                 let final_type = if class_registry.is_method(class_name, &attr_name) {
                                     Type::BoundMethod(
                                         Box::new(applied_obj.clone()),
@@ -1478,7 +1564,12 @@ pub fn solve_constraints(
                                     resolved_attr_ty.clone()
                                 };
 
-                                match Unifier::unify(&subst.apply(&attr_ty), &final_type, typevar_registry) {
+                                match Unifier::unify_with_class_registry(
+                                    &subst.apply(&attr_ty),
+                                    &final_type,
+                                    typevar_registry,
+                                    class_registry,
+                                ) {
                                     Ok(s) => {
                                         subst = s.compose(subst);
                                     }
@@ -1499,25 +1590,31 @@ pub fn solve_constraints(
                         let (resolved_attr_ty, is_method, _class_name_opt) = if let Some((protocol_name, type_args)) =
                             applied_obj.unapply_protocol()
                         {
-                            if let Some(attr_type) = class_registry.lookup_attribute_with_inheritance(protocol_name, &attr_name) {
-                                let substituted_ty = if let Some(protocol_metadata) = class_registry.get_class(protocol_name) {
-                                    if !protocol_metadata.type_params.is_empty() {
-                                        let subst_map = protocol_metadata.create_type_substitution(&type_args);
-                                        beacon_core::ClassMetadata::substitute_type_params(&attr_type, &subst_map)
+                            if let Some(attr_type) =
+                                class_registry.lookup_attribute_with_inheritance(protocol_name, &attr_name)
+                            {
+                                let substituted_ty =
+                                    if let Some(protocol_metadata) = class_registry.get_class(protocol_name) {
+                                        if !protocol_metadata.type_params.is_empty() {
+                                            let subst_map = protocol_metadata.create_type_substitution(&type_args);
+                                            beacon_core::ClassMetadata::substitute_type_params(&attr_type, &subst_map)
+                                        } else {
+                                            attr_type.clone()
+                                        }
                                     } else {
                                         attr_type.clone()
-                                    }
-                                } else {
-                                    attr_type.clone()
-                                };
+                                    };
                                 let is_method = class_registry.is_method(protocol_name, &attr_name);
                                 (Some(substituted_ty), is_method, Some(protocol_name.to_string()))
                             } else {
                                 (None, false, None)
                             }
                         } else if let Some((class_name, type_args)) = applied_obj.unapply_class() {
-                            if let Some(attr_type) = class_registry.lookup_attribute_with_inheritance(class_name, &attr_name) {
-                                let substituted_ty = if let Some(class_metadata) = class_registry.get_class(class_name) {
+                            if let Some(attr_type) =
+                                class_registry.lookup_attribute_with_inheritance(class_name, &attr_name)
+                            {
+                                let substituted_ty = if let Some(class_metadata) = class_registry.get_class(class_name)
+                                {
                                     if !class_metadata.type_params.is_empty() {
                                         let subst_map = class_metadata.create_type_substitution(&type_args);
                                         beacon_core::ClassMetadata::substitute_type_params(&attr_type, &subst_map)
@@ -1553,7 +1650,12 @@ pub fn solve_constraints(
                                 resolved_ty.clone()
                             };
 
-                            match Unifier::unify(&subst.apply(&attr_ty), &final_type, typevar_registry) {
+                            match Unifier::unify_with_class_registry(
+                                &subst.apply(&attr_ty),
+                                &final_type,
+                                typevar_registry,
+                                class_registry,
+                            ) {
                                 Ok(s) => {
                                     subst = s.compose(subst);
                                 }
@@ -1610,7 +1712,12 @@ pub fn solve_constraints(
                     };
 
                     let applied_extracted = subst.apply(&extracted_elem);
-                    match Unifier::unify(&subst.apply(&elem_ty), &applied_extracted, typevar_registry) {
+                    match Unifier::unify_with_class_registry(
+                        &subst.apply(&elem_ty),
+                        &applied_extracted,
+                        typevar_registry,
+                        class_registry,
+                    ) {
                         Ok(s) => {
                             subst = s.compose(subst);
                         }
@@ -1678,7 +1785,12 @@ pub fn solve_constraints(
                     Type::union(incoming_types.clone())
                 };
 
-                match Unifier::unify(&subst.apply(&result_type), &subst.apply(&union_type), typevar_registry) {
+                match Unifier::unify_with_class_registry(
+                    &subst.apply(&result_type),
+                    &subst.apply(&union_type),
+                    typevar_registry,
+                    class_registry,
+                ) {
                     Ok(s) => {
                         subst = s.compose(subst);
                     }

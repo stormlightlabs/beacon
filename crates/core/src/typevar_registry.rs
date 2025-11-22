@@ -7,7 +7,7 @@
 //! - **Constraints**: A TypeVar can have multiple constraint types, restricting it to only those specific types.
 //!   Example: `T = TypeVar('T', int, str)` means T can only be int or str, not subtypes.
 
-use crate::types::Type;
+use crate::{ClassRegistry, Type, TypeCtor};
 use rustc_hash::FxHashMap;
 use std::fmt;
 
@@ -85,20 +85,100 @@ impl TypeVarConstraintRegistry {
     }
 
     /// Validate that a type satisfies a TypeVar's bound (if any)
-    ///
-    /// TODO: Bound validation currently produces false positives for some typeshed stubs.
-    /// For example, TypeVars with bounds like SupportsNext, SupportsAdd, Awaitable may
-    /// incorrectly reject valid types like int, str, or list due to:
-    /// 1. Missing protocol implementation checks in is_subtype_of
-    /// 2. Incomplete structural subtyping for protocol types
-    /// 3. TypeVar bound inference not handling implicit protocol satisfaction
     pub fn validate_bound(&self, typevar_id: u32, ty: &Type) -> Result<(), String> {
+        self.validate_bound_with_class_registry(typevar_id, ty, None)
+    }
+
+    /// Validate that a type satisfies a TypeVar's bound using class metadata when available
+    pub fn validate_bound_with_class_registry(
+        &self, typevar_id: u32, ty: &Type, class_registry: Option<&ClassRegistry>,
+    ) -> Result<(), String> {
         if let Some(bound) = self.get_bound(typevar_id) {
-            if !ty.is_subtype_of(bound) {
-                return Err(format!("Type {ty} does not satisfy bound {bound} for TypeVar"));
+            if matches!(ty, Type::Var(_)) {
+                return Ok(());
             }
+
+            if matches!(ty, Type::Con(TypeCtor::Any)) {
+                return Ok(());
+            }
+
+            if class_registry.is_none() && Self::is_protocol_type(bound) {
+                return Ok(());
+            }
+
+            if ty.is_subtype_of_with_registry(bound, class_registry) {
+                return Ok(());
+            }
+
+            return Err(format!("Type {ty} does not satisfy bound {bound} for TypeVar"));
         }
+
         Ok(())
+    }
+
+    /// Check if a type represents a protocol that requires structural typing
+    fn is_protocol_type(ty: &Type) -> bool {
+        match ty {
+            Type::Con(TypeCtor::Iterable)
+            | Type::Con(TypeCtor::Iterator)
+            | Type::Con(TypeCtor::Generator)
+            | Type::Con(TypeCtor::AsyncGenerator)
+            | Type::Con(TypeCtor::Coroutine) => true,
+            Type::Con(TypeCtor::Protocol(_, _)) => true,
+            Type::App(ctor, _) => Self::is_protocol_type(ctor),
+            Type::Con(TypeCtor::Class(name)) => {
+                if matches!(
+                    name.as_str(),
+                    "SupportsNext"
+                        | "SupportsAdd"
+                        | "SupportsAbs"
+                        | "SupportsInt"
+                        | "SupportsFloat"
+                        | "SupportsComplex"
+                        | "SupportsRound"
+                        | "SupportsIndex"
+                        | "SupportsSub"
+                        | "SupportsRSub"
+                        | "SupportsDivMod"
+                        | "SupportsRDivMod"
+                        | "SupportsIter"
+                        | "SupportsRAdd"
+                        | "SupportsTrunc"
+                        | "SupportsBytes"
+                        | "Iterable"
+                        | "Iterator"
+                        | "Awaitable"
+                        | "AsyncIterable"
+                        | "AsyncIterator"
+                        | "Sized"
+                        | "Sequence"
+                        | "Mapping"
+                        | "ContextManager"
+                        | "AsyncContextManager"
+                        | "Callable"
+                        | "Reversible"
+                        | "Collection"
+                        | "Container"
+                        | "Generator"
+                        | "AsyncGenerator"
+                        | "Coroutine"
+                ) {
+                    return true;
+                }
+
+                if name.starts_with('_') && (name.contains("Support") || name.contains("Protocol")) {
+                    return true;
+                }
+
+                if name.ends_with("Protocol") || name.ends_with("able") || name.ends_with("Mixin") {
+                    return true;
+                }
+
+                false
+            }
+
+            _ => false,
+        }
     }
 
     /// Validate that a type satisfies a TypeVar's constraints (if any)
@@ -119,14 +199,20 @@ impl TypeVarConstraintRegistry {
 
     /// Validate that a type satisfies both bounds and constraints for a TypeVar
     pub fn validate(&self, typevar_id: u32, ty: &Type) -> Result<(), String> {
-        self.validate_bound(typevar_id, ty)?;
+        self.validate_with_class_registry(typevar_id, ty, None)
+    }
+
+    /// Validate bounds and constraints with optional class metadata context
+    pub fn validate_with_class_registry(
+        &self, typevar_id: u32, ty: &Type, class_registry: Option<&ClassRegistry>,
+    ) -> Result<(), String> {
+        self.validate_bound_with_class_registry(typevar_id, ty, class_registry)?;
         self.validate_constraints(typevar_id, ty)?;
         Ok(())
     }
 
     /// Merge another registry into this one
     ///
-    /// This is useful when combining registries from different scopes or modules.
     /// If a TypeVar ID exists in both registries, the incoming registry's entry takes precedence.
     pub fn merge(&mut self, other: &TypeVarConstraintRegistry) {
         self.bounds.extend(other.bounds.clone());

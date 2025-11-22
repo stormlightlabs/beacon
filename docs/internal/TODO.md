@@ -34,10 +34,10 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
 - [x] Implement method lookup through inheritance chain
 - [x] Support Protocol base class method resolution
-- [ ] Fix stub parsing edge cases: Some builtin methods (str.upper, str.lower, dict.get) not found due to class registration timing or overload processing
-- [ ] Fix TypeVar bound validation false positives: Protocol bounds (SupportsNext, SupportsAdd, Awaitable) incorrectly reject valid types
-- [ ] Improve structural subtyping for protocol types in is_subtype_of
-- [ ] Handle implicit protocol satisfaction in TypeVar bound inference
+- [x] Fix stub parsing edge cases: Some builtin methods (str.upper, str.lower, dict.get) not found due to class registration timing or overload processing
+- [x] Fix TypeVar bound validation false positives: Protocol bounds (SupportsNext, SupportsAdd, Awaitable) incorrectly reject valid types
+- [x] Improve structural subtyping for protocol types in is_subtype_of
+- [x] Handle implicit protocol satisfaction in TypeVar bound inference
 
 ### Tests & Documentation
 
