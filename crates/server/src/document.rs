@@ -51,7 +51,10 @@ impl Document {
     /// Apply content changes from LSP didChange events
     ///
     /// Handles both full document sync and incremental sync.
-    pub fn apply_changes(&mut self, changes: Vec<TextDocumentContentChangeEvent>) {
+    /// Returns the converted text edits for incremental reparsing.
+    pub fn apply_changes(&mut self, changes: Vec<TextDocumentContentChangeEvent>) -> Vec<crate::parser::TextEdit> {
+        let mut text_edits = Vec::new();
+
         for change in changes {
             match change.range {
                 Some(range) => {
@@ -60,19 +63,37 @@ impl Document {
                     let rope_mut = Arc::make_mut(&mut self.rope);
                     rope_mut.remove(start_offset..end_offset);
                     rope_mut.insert(start_offset, &change.text);
+                    text_edits.push(crate::parser::TextEdit { range, new_text: change.text });
                 }
-                None => self.rope = Arc::new(Rope::from_str(&change.text)),
+                None => {
+                    text_edits.clear();
+                    self.rope = Arc::new(Rope::from_str(&change.text));
+                }
             }
         }
+
+        text_edits
     }
 
     /// Reparse the document after changes and extract per-file mode directives from comments.
-    pub fn reparse(&mut self, parser: &mut LspParser) -> Result<()> {
-        let text = self.text();
-        let result = parser.parse(&text)?;
+    ///
+    /// Uses incremental parsing when possible by providing the old tree and edits.
+    pub fn reparse(&mut self, parser: &mut LspParser, edits: &[crate::parser::TextEdit]) -> Result<()> {
+        let new_text = self.text();
+
+        let result = if let Some(ref old_parse) = self.parse_result {
+            if !edits.is_empty() {
+                let old_text = old_parse.rope.to_string();
+                parser.reparse(&old_parse.tree, &old_text, &new_text, edits)?
+            } else {
+                parser.parse(&new_text)?
+            }
+        } else {
+            parser.parse(&new_text)?
+        };
 
         self.parse_result = Some(result);
-        self.mode_override = crate::config::parse_mode_directive(&text);
+        self.mode_override = crate::config::parse_mode_directive(&new_text);
 
         if let Some(mode) = self.mode_override {
             tracing::debug!("Found per-file mode directive: {} for {}", mode.as_str(), self.uri);
@@ -124,7 +145,7 @@ impl DocumentManager {
     pub fn open_document(&self, uri: Url, version: i32, text: String) -> Result<()> {
         let mut document = Document::new(uri.clone(), version, text);
         let mut parser = self.parser.write().unwrap();
-        document.reparse(&mut parser)?;
+        document.reparse(&mut parser, &[])?;
 
         let mut documents = self.documents.write().unwrap();
         documents.insert(uri, document);
@@ -143,6 +164,7 @@ impl DocumentManager {
     /// Update a document with changes
     ///
     /// Called when the client sends textDocument/didChange.
+    /// Uses incremental parsing to efficiently update the parse tree.
     pub fn update_document(
         &self, params: VersionedTextDocumentIdentifier, changes: Vec<TextDocumentContentChangeEvent>,
     ) -> Result<()> {
@@ -153,10 +175,10 @@ impl DocumentManager {
             .ok_or_else(|| DocumentError::DocumentNotFound(params.uri.clone()))?;
 
         document.version = params.version;
-        document.apply_changes(changes);
+        let edits = document.apply_changes(changes);
 
         let mut parser = self.parser.write().unwrap();
-        document.reparse(&mut parser)?;
+        document.reparse(&mut parser, &edits)?;
 
         Ok(())
     }
@@ -198,6 +220,7 @@ impl DocumentManager {
     /// Force reparse of a document
     ///
     /// Useful when configuration changes or external factors require reparsing.
+    /// Uses full parse since we don't have tracked edits in this scenario.
     pub fn force_reparse(&self, uri: &Url) -> Result<()> {
         let mut documents = self.documents.write().unwrap();
         let document = documents
@@ -205,7 +228,7 @@ impl DocumentManager {
             .ok_or_else(|| DocumentError::DocumentNotFound(uri.clone()))?;
 
         let mut parser = self.parser.write().unwrap();
-        document.reparse(&mut parser)?;
+        document.reparse(&mut parser, &[])?;
 
         Ok(())
     }
@@ -286,7 +309,7 @@ mod tests {
         let mut doc = Document::new(uri, 1, "def hello():\n    pass".to_string());
 
         let mut parser = LspParser::new().unwrap();
-        doc.reparse(&mut parser).unwrap();
+        doc.reparse(&mut parser, &[]).unwrap();
 
         assert!(doc.parse_result.is_some());
         assert!(doc.ast().is_some());
@@ -303,7 +326,7 @@ def foo():
         let mut doc = Document::new(uri, 1, source.to_string());
 
         let mut parser = LspParser::new().unwrap();
-        doc.reparse(&mut parser).unwrap();
+        doc.reparse(&mut parser, &[]).unwrap();
 
         assert_eq!(doc.mode_override, Some(crate::config::TypeCheckingMode::Strict));
     }
@@ -317,7 +340,7 @@ def foo():
         let mut doc = Document::new(uri, 1, source.to_string());
 
         let mut parser = LspParser::new().unwrap();
-        doc.reparse(&mut parser).unwrap();
+        doc.reparse(&mut parser, &[]).unwrap();
 
         assert_eq!(doc.mode_override, None);
     }
@@ -332,7 +355,7 @@ def foo():
         let mut doc = Document::new(uri, 1, source.to_string());
 
         let mut parser = LspParser::new().unwrap();
-        doc.reparse(&mut parser).unwrap();
+        doc.reparse(&mut parser, &[]).unwrap();
 
         let workspace_mode = crate::config::TypeCheckingMode::Strict;
         assert_eq!(
@@ -350,7 +373,7 @@ def foo():
         let mut doc = Document::new(uri, 1, source.to_string());
 
         let mut parser = LspParser::new().unwrap();
-        doc.reparse(&mut parser).unwrap();
+        doc.reparse(&mut parser, &[]).unwrap();
 
         let workspace_mode = crate::config::TypeCheckingMode::Strict;
         assert_eq!(
@@ -369,7 +392,7 @@ def foo():
         let mut doc = Document::new(uri, 1, source.to_string());
 
         let mut parser = LspParser::new().unwrap();
-        doc.reparse(&mut parser).unwrap();
+        doc.reparse(&mut parser, &[]).unwrap();
 
         assert_eq!(doc.mode_override, Some(crate::config::TypeCheckingMode::Balanced));
     }
@@ -385,7 +408,7 @@ def foo():
         let mut doc = Document::new(uri, 1, source.to_string());
 
         let mut parser = LspParser::new().unwrap();
-        doc.reparse(&mut parser).unwrap();
+        doc.reparse(&mut parser, &[]).unwrap();
 
         assert_eq!(doc.mode_override, Some(crate::config::TypeCheckingMode::Strict));
     }

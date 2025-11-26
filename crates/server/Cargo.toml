@@ -41,3 +41,12 @@ unicode-width = "0.2"
 
 [dev-dependencies]
 tempfile = "3.15"
+criterion = { version = "0.7", features = ["html_reports"] }
+
+[[bench]]
+name = "lsp_handlers"
+harness = false
+
+[[bench]]
+name = "parser_benchmark"
+harness = false
