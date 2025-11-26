@@ -36,6 +36,8 @@
         - [Next Steps](./lsp/next_steps.md)
 - [Development](./development/overview.md)
     - [Typeshed Integration](./development/typeshed-integration.md)
+    - [Benchmarking](./development/benchmarking.md)
+    - [Tracing & Observability](./development/tracing.md)
 - [Editor Extensions](./extensions/overview.md)
     - [VS Code](./extensions/vscode.md)
     - [Zed](./extensions/zed.md)
