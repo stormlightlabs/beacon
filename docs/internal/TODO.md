@@ -41,9 +41,8 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
 ### Tests & Documentation
 
-- [ ] Document typeshed version and update process
+- [x] Document typeshed version and update process
 - [ ] Integration test: custom stub overrides typeshed stub
-- [ ] Integration test: `pythonVersion` config change behavior
 - [ ] Performance test: stub resolution overhead on large projects
 
 ## Linter Tech Debt
