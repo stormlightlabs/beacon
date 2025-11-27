@@ -11,9 +11,3 @@ default-theme = "dark"
 preferred-dark-theme = "navy"
 theme = "theme"
 git-repository-url = "https://github.com/stormlightlabs/beacon"
-additional-js = ["mermaid.min.js", "mermaid-init.js"]
-
-[preprocessor]
-
-[preprocessor.mermaid]
-command = "mdbook-mermaid"

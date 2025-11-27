@@ -14,17 +14,55 @@ The typechecker operates in five phases:
 
 The core algorithm uses Robinson's unification with an occurs check, extended with Python-specific features like union types, protocols, and row-polymorphic records.
 
-```mermaid
-graph TD
-    A[Source Code] --> B[Parser]
-    B --> C[AST + Symbol Table]
-    C --> D[Constraint Generator]
-    D --> E[Constraint Set]
-    E --> F[Constraint Solver]
-    F --> G[Unifier]
-    G --> H[Type Substitutions]
-    H --> I[Type Map]
-    I --> J[Type Errors]
+```text
+        ┌─────────────┐
+        │Source Code  │
+        └──────┬──────┘
+               │
+               ▼
+        ┌─────────────┐
+        │   Parser    │
+        └──────┬──────┘
+               │
+               ▼
+        ┌─────────────────────┐
+        │ AST + Symbol Table  │
+        └──────────┬──────────┘
+                   │
+                   ▼
+        ┌──────────────────────┐
+        │ Constraint Generator │
+        └──────────┬───────────┘
+                   │
+                   ▼
+        ┌──────────────────────┐
+        │   Constraint Set     │
+        └──────────┬───────────┘
+                   │
+                   ▼
+        ┌──────────────────────┐
+        │  Constraint Solver   │
+        └──────────┬───────────┘
+                   │
+                   ▼
+        ┌──────────────────────┐
+        │     Unifier          │
+        └──────────┬───────────┘
+                   │
+                   ▼
+        ┌──────────────────────┐
+        │  Type Substitutions  │
+        └──────────┬───────────┘
+                   │
+                   ▼
+        ┌──────────────────────┐
+        │     Type Map         │
+        └──────────┬───────────┘
+                   │
+                   ▼
+        ┌──────────────────────┐
+        │     Type Errors      │
+        └──────────────────────┘
 ```
 
 ### Type System
@@ -51,18 +89,36 @@ The constraint generator walks the AST and produces constraints:
 - `Narrowing(var, predicate, T)` - flow-sensitive typing
 - `Join(var, types, T)` - control flow merge points
 
-```mermaid
-graph LR
-    A[AST Node] --> B{Node Type}
-    B -->|Variable| C[Lookup Type]
-    B -->|Call| D[Call Constraint]
-    B -->|Attribute| E[HasAttr Constraint]
-    B -->|If/Match| F[Narrowing Constraint]
-
-    C --> G[Constraint Set]
-    D --> G
-    E --> G
-    F --> G
+```text
+                            ┌──────────┐
+                            │ AST Node │
+                            └─────┬────┘
+                                  │
+                                  ▼
+                            ┌───────────┐
+                            │ Node Type │
+                            └─────┬─────┘
+              ┌─────────────┬─────┼───────┬────────────┐
+              │             │     │       │            │
+      Variable│        Call │     │ Attr  │  If/Match  │
+              │             │     │       │            │
+              ▼             ▼     ▼       ▼            ▼
+       ┌────────────┐ ┌──────────────┐  ┌──────────────┐
+       │Lookup Type │ │ Call         │  │ HasAttr      │
+       │            │ │ Constraint   │  │ Constraint   │
+       └──────┬─────┘ └──────┬───────┘  └──────┬───────┘
+              │              │                 │
+              │              │                 │          ┌──────────────┐
+              │              │                 │          │ Narrowing    │
+              │              │                 │          │ Constraint   │
+              │              │                 │          └──────┬───────┘
+              │              │                 │                 │
+              └──────────────┴─────────────────┴─────────────────┘
+                                          │
+                                          ▼
+                                   ┌──────────────┐
+                                   │Constraint Set│
+                                   └──────────────┘
 ```
 
 ### Constraint Solving

@@ -14,31 +14,30 @@ The server operates as a JSON-RPC service:
 
 The backend uses tower-lsp for protocol handling and implements the LanguageServer trait.
 
-```mermaid
-graph TD
-    A[Editor Client] -->|JSON-RPC| B[LSP Backend]
-
-    B --> C[Document Manager]
-    B --> D[Analyzer]
-    B --> E[Workspace]
-    B --> F[Feature Providers]
-
-    C --> G[textDocument/didOpen]
-    C --> H[textDocument/didChange]
-    C --> I[textDocument/didClose]
-
-    D --> M
-    F --> M[Diagnostics]
-
-    E --> K
-    F --> K[Completion]
-
-    F --> J[Hover]
-    F --> N[13 More Features]
-
-    E --> L
-    F --> L[Definition]
-
+```text
+                        ┌───────────────┐
+                        │ Editor Client │
+                        └──────┬────────┘
+                               │ JSON-RPC
+                               ▼
+                        ┌─────────────┐
+                        │ LSP Backend │
+                        └──────┬──────┘
+                   ┌───────────┼───────────┬────────────┐
+                   │           │           │            │
+                   ▼           ▼           ▼            ▼
+         ┌─────────────┐ ┌─────────┐ ┌──────────┐ ┌─────────────────┐
+         │  Document   │ │Analyzer │ │Workspace │ │Feature Providers│
+         │  Manager    │ └────┬────┘ └────┬─────┘ └────┬──────┬─────┘
+         └──────┬──────┘      │           │            │      │
+                │             │           │            │      │
+      ┌─────────┼─────────┐   │           │            │      │
+      │         │         │   │           │            │      │
+      ▼         ▼         ▼   ▼           ▼            ▼      ▼
+┌──────────┐ ┌──────────┐ ┌────────┐ ┌───────────┐ ┌──────────────────────┐
+│didOpen   │ │didChange │ │didClose│ │Diagnostics│ │Hover, Completion,    │
+│          │ │          │ │        │ │           │ │Definition, +13 More  │
+└──────────┘ └──────────┘ └────────┘ └───────────┘ └──────────────────────┘
 ```
 
 ### Document Management
@@ -49,18 +48,19 @@ When a document opens, the manager stores the URI, version, and text. When a doc
 
 Each document is parsed into an AST and symbol table on demand. Parse results are cached until the document changes.
 
-```mermaid
-graph LR
-    A[didOpen] --> B[Store Document]
-    B --> C[Parse]
-    C --> D[Cache AST]
+```text
+    ┌─────────┐     ┌────────────────┐     ┌───────┐     ┌───────────┐
+    │ didOpen ├────►│ Store Document ├────►│ Parse ├────►│ Cache AST │
+    └─────────┘     └────────────────┘     └───────┘     └───────────┘
+                                              ▲
+                                              │
+    ┌───────────┐   ┌───────────────┐     ┌───┴────────────────┐
+    │ didChange ├──►│ Apply Changes ├────►│  Invalidate Cache  │
+    └───────────┘   └───────────────┘     └────────────────────┘
 
-    E[didChange] --> F[Apply Changes]
-    F --> G[Invalidate Cache]
-    G --> C
-
-    H[didClose] --> I[Remove Document]
-    I --> J[Clear Cache]
+    ┌──────────┐    ┌─────────────────┐   ┌─────────────┐
+    │ didClose ├───►│ Remove Document ├──►│ Clear Cache │
+    └──────────┘    └─────────────────┘   └─────────────┘
 ```
 
 ### Analysis Orchestration
@@ -77,21 +77,62 @@ The analyzer coordinates all analysis phases:
 
 Caching occurs at multiple levels. Full document analysis is cached by URI and version. Individual function scope analysis is cached by content hash for incremental updates.
 
-```mermaid
-graph TD
-    A[Document Change] --> B{Cache Hit?}
-    B -->|Yes| C[Return Cached Result]
-    B -->|No| D[Parse AST]
-
-    D --> E[Generate Constraints]
-    E --> F[Solve Constraints]
-    F --> G[Build CFG]
-    G --> H[Data Flow Analysis]
-    H --> I[Run Linter]
-
-    I --> J[Combine Diagnostics]
-    J --> K[Cache Result]
-    K --> L[Publish Diagnostics]
+```text
+                        ┌─────────────────┐
+                        │ Document Change │
+                        └────────┬────────┘
+                                 │
+                                 ▼
+                        ┌────────────────┐
+                        │  Cache Hit?    │
+                        └───┬────────┬───┘
+                   Yes      │        │      No
+                   ┌────────┘        └────────┐
+                   │                          │
+                   ▼                          ▼
+         ┌──────────────────┐        ┌──────────────┐
+         │  Return Cached   │        │  Parse AST   │
+         │  Result          │        └──────┬───────┘
+         └──────────────────┘               │
+                                            ▼
+                                   ┌──────────────────────┐
+                                   │ Generate Constraints │
+                                   └──────────┬───────────┘
+                                              │
+                                              ▼
+                                   ┌──────────────────────┐
+                                   │  Solve Constraints   │
+                                   └──────────┬───────────┘
+                                              │
+                                              ▼
+                                   ┌──────────────────────┐
+                                   │     Build CFG        │
+                                   └──────────┬───────────┘
+                                              │
+                                              ▼
+                                   ┌──────────────────────┐
+                                   │ Data Flow Analysis   │
+                                   └──────────┬───────────┘
+                                              │
+                                              ▼
+                                   ┌──────────────────────┐
+                                   │    Run Linter        │
+                                   └──────────┬───────────┘
+                                              │
+                                              ▼
+                                   ┌──────────────────────┐
+                                   │ Combine Diagnostics  │
+                                   └──────────┬───────────┘
+                                              │
+                                              ▼
+                                   ┌──────────────────────┐
+                                   │   Cache Result       │
+                                   └──────────┬───────────┘
+                                              │
+                                              ▼
+                                   ┌──────────────────────┐
+                                   │ Publish Diagnostics  │
+                                   └──────────────────────┘
 ```
 
 ### Feature Providers
@@ -126,21 +167,31 @@ Each LSP feature is implemented by a dedicated provider:
 
 **Formatting providers** apply code formatting to documents or ranges.
 
-```mermaid
-graph TD
-    A[LSP Request] --> B{Request Type}
-
-    B -->|Hover| C[Type Lookup]
-    B -->|Completion| D[Symbol Search]
-    B -->|Definition| E[Symbol Resolution]
-    B -->|References| F[Usage Search]
-    B -->|Formatting| G[Format Code]
-
-    C --> H[Response]
-    D --> H
-    E --> H
-    F --> H
-    G --> H
+```text
+                          ┌─────────────┐
+                          │ LSP Request │
+                          └──────┬──────┘
+                                 │
+                                 ▼
+                          ┌──────────────┐
+                          │ Request Type │
+                          └──────┬───────┘
+                  ┌──────────────┼──────────────┬─────────────┐
+                  │              │              │             │
+         Hover    │   Completion │  Definition  │  References │  Formatting
+                  │              │              │             │
+                  ▼              ▼              ▼             ▼             ▼
+         ┌────────────┐  ┌──────────────┐  ┌────────────┐  ┌────────────┐  ┌─────────────┐
+         │Type Lookup │  │Symbol Search │  │Symbol      │  │Usage Search│  │Format Code  │
+         │            │  │              │  │Resolution  │  │            │  │             │
+         └──────┬─────┘  └──────┬───────┘  └──────┬─────┘  └──────┬─────┘  └──────┬──────┘
+                │               │                 │               │               │
+                └───────────────┴─────────────────┴───────────────┴───────────────┘
+                                                  │
+                                                  ▼
+                                           ┌─────────────┐
+                                           │  Response   │
+                                           └─────────────┘
 ```
 
 ### Workspace Indexing

@@ -50,3 +50,7 @@ harness = false
 [[bench]]
 name = "parser_benchmark"
 harness = false
+
+[[bench]]
+name = "stub_resolution_benchmark"
+harness = false

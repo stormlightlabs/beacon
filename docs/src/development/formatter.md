@@ -13,18 +13,21 @@ The formatter operates in four phases:
 
 The formatter uses tree-sitter for parsing and comment extraction, ensuring accurate preservation of all source elements.
 
-```mermaid
-graph LR
-    A[Source Code] --> B[Parser]
-    B --> C[AST + Comments]
-    C --> D[Import Sorter]
-    D --> E[Token Stream Generator]
-    E --> F[Token Stream]
-    F --> G[Formatting Writer]
-    G --> H[Formatted Output]
-
-    style A fill:#e1f5ff
-    style H fill:#d4edda
+```
+┌─────────────┐   ┌────────┐   ┌────────────────┐   ┌───────────────┐
+│Source Code  ├──►│ Parser ├──►│ AST + Comments ├──►│ Import Sorter │
+└─────────────┘   └────────┘   └────────────────┘   └───────┬───────┘
+                                                             │
+                                                             ▼
+┌─────────────────┐   ┌──────────────┐   ┌──────────────────────────┐
+│Formatted Output │◄──┤Formatting    │◄──┤Token Stream Generator    │
+│                 │   │Writer        │   │                          │
+└─────────────────┘   └──────────────┘   └────────┬─────────────────┘
+                                                   │
+                                                   ▼
+                                          ┌─────────────────┐
+                                          │  Token Stream   │
+                                          └─────────────────┘
 ```
 
 ### Import Sorting
@@ -38,24 +41,33 @@ Imports are categorized and sorted:
 
 Within each category, imports are sorted alphabetically. This matches the style of Black and isort.
 
-```mermaid
-graph TD
-    A[All Imports] --> B{Categorize}
-
-    B --> C[Future]
-    B --> D[Stdlib]
-    B --> E[Third-Party]
-    B --> F[Local]
-
-    C --> G[Sort Alphabetically]
-    D --> G
-    E --> G
-    F --> G
-
-    G --> H[Formatted Imports]
-
-    style A fill:#e1f5ff
-    style H fill:#d4edda
+```
+                        ┌─────────────┐
+                        │All Imports  │
+                        └──────┬──────┘
+                               │
+                               ▼
+                        ┌─────────────┐
+                        │ Categorize  │
+                        └──────┬──────┘
+              ┌────────────────┼────────────────┐
+              │                │                │
+              ▼                ▼                ▼                ▼
+         ┌────────┐       ┌────────┐      ┌────────────┐   ┌───────┐
+         │ Future │       │ Stdlib │      │Third-Party │   │ Local │
+         └────┬───┘       └────┬───┘      └──────┬─────┘   └───┬───┘
+              │                │                 │             │
+              └────────────────┴─────────────────┴─────────────┘
+                                      │
+                                      ▼
+                           ┌────────────────────┐
+                           │Sort Alphabetically │
+                           └──────────┬─────────┘
+                                      │
+                                      ▼
+                           ┌────────────────────┐
+                           │Formatted Imports   │
+                           └────────────────────┘
 ```
 
 ### Token Stream Generation
@@ -84,21 +96,36 @@ The writer applies formatting rules:
 - Operators surrounded by single spaces
 - No spaces inside brackets/parentheses
 
-```mermaid
-graph TD
-    A[Token Stream] --> B{Token Type}
-
-    B -->|Indent| C[Apply Indent Width]
-    B -->|Newline| D[Check Line Length]
-    B -->|String| E[Normalize Quotes]
-    B -->|Delimiter| F[Add/Remove Spaces]
-
-    C --> G[Output Buffer]
-    D --> G
-    E --> G
-    F --> G
-
-    G --> H[Formatted Text]
+```
+                          ┌──────────────┐
+                          │ Token Stream │
+                          └──────┬───────┘
+                                 │
+                                 ▼
+                          ┌──────────────┐
+                          │  Token Type  │
+                          └──────┬───────┘
+              ┌──────────────────┼──────────────────┬─────────────┐
+              │                  │                  │             │
+        Indent│            Newline│           String│   Delimiter │
+              │                  │                  │             │
+              ▼                  ▼                  ▼             ▼
+      ┌───────────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────────┐
+      │Apply Indent   │  │Check Line    │  │Normalize     │  │Add/Remove   │
+      │Width          │  │Length        │  │Quotes        │  │Spaces       │
+      └───────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────┬──────┘
+              │                 │                 │                 │
+              └─────────────────┴─────────────────┴─────────────────┘
+                                        │
+                                        ▼
+                                ┌───────────────┐
+                                │Output Buffer  │
+                                └───────┬───────┘
+                                        │
+                                        ▼
+                                ┌───────────────┐
+                                │Formatted Text │
+                                └───────────────┘
 ```
 
 ### Caching

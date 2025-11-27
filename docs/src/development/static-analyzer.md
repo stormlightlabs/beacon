@@ -12,24 +12,38 @@ The analyzer operates in three phases:
 
 The CFG captures all possible execution paths through a function, including normal flow, exception handling, loops, and early returns.
 
-```mermaid
-graph TD
-    A[AST] --> B[CFG Builder]
-    B --> C[Control Flow Graph]
-    C --> D[Data Flow Analyzer]
-    D --> E{Analysis Type}
-
-    E -->|Reachability| F[Find Unreachable Code]
-    E -->|Use-Def| G[Find Use Before Def]
-    E -->|Liveness| H[Find Unused Variables]
-
-    F --> I[Diagnostics]
-    G --> I
-    H --> I
-
-    style A fill:#e1f5ff
-    style C fill:#fff3cd
-    style I fill:#f8d7da
+```text
+                                    ┌─────────────────────┐
+                                    │        AST          │
+                                    └──────────┬──────────┘
+                                               │
+                                               ▼
+                                    ┌─────────────────────┐
+                                    │    CFG Builder      │
+                                    └──────────┬──────────┘
+                                               │
+                                               ▼
+                                    ┌─────────────────────┐
+                                    │ Control Flow Graph  │
+                                    └──────────┬──────────┘
+                                               │
+                                               ▼
+                                    ┌─────────────────────┐
+                                    │ Data Flow Analyzer  │
+                                    └──────────┬──────────┘
+                                               │
+                                               ▼
+                        ┌──────────────────────┴──────────────────────┐
+                        │          Analysis Type                      │
+                        └─┬─────────────────┬──────────────────────┬──┘
+                          │                 │                      │
+              ┌───────────▼──────┐  ┌───────▼────────┐  ┌──────────▼──────────┐
+              │   Reachability   │  │    Use-Def     │  │     Liveness        │
+              └───────────┬──────┘  └───────┬────────┘  └─────────┬───────────┘
+                          │                 │                     │
+                          │    ┌────────────▼─────────┐           │
+                          └────►      Diagnostics     ◄───────────┘
+                               └──────────────────────┘
 ```
 
 ### Control Flow Graph
@@ -41,28 +55,40 @@ Each function is converted into a CFG with basic blocks and edges:
 - Entry and exit blocks mark function boundaries
 - Loop headers have back edges for iteration
 
-```mermaid
-graph TD
-    Entry[Entry Block]
-    Entry --> If{If Statement}
-
-    If -->|True| Then[Then Block]
-    If -->|False| Else[Else Block]
-
-    Then --> Merge[Merge Block]
-    Else --> Merge
-
-    Merge --> Loop{While Loop}
-    Loop -->|True| Body[Loop Body]
-    Loop -->|False| Exit[Exit Block]
-
-    Body -->|Continue| Loop
-    Body -->|Normal| Loop
-    Body -->|Break| Exit
-
-    style Entry fill:#d4edda
-    style Exit fill:#f8d7da
-    style Loop fill:#fff3cd
+```text
+                    ┌─────────────────┐
+                    │  Entry Block    │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌────────────────┐
+                ┌───┤  If Statement  ├───┐
+                │   └────────────────┘   │
+           True │                        │ False
+                ▼                        ▼
+         ┌────────────┐           ┌────────────┐
+         │ Then Block │           │ Else Block │
+         └──────┬─────┘           └──────┬─────┘
+                │                        │
+                └────────┬───────────────┘
+                         ▼
+                  ┌─────────────┐
+                  │ Merge Block │
+                  └──────┬──────┘
+                         │
+                         ▼
+                  ┌─────────────┐
+              ┌───┤ While Loop  ├──┐
+              │   └─────────────┘  │
+         True │          ▲         │ False
+              │          │         │
+              ▼          │         ▼
+         ┌─────────┐     │    ┌──────────┐
+         │Loop Body├─────┘    │Exit Block│
+         │         ├──────────►          │
+         └─────────┘  Break   └──────────┘
+     Normal│     │Continue
+           └─────┘
 ```
 
 ### CFG Construction

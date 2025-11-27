@@ -42,8 +42,8 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 ### Tests & Documentation
 
 - [x] Document typeshed version and update process
-- [ ] Integration test: custom stub overrides typeshed stub
-- [ ] Performance test: stub resolution overhead on large projects
+- [x] Integration test: custom stub overrides typeshed stub
+- [x] Performance test: stub resolution overhead on large projects
 
 ## Linter Tech Debt
 

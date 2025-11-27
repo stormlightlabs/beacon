@@ -12,27 +12,56 @@ The linter operates in three phases:
 
 Each rule is identified by a code from BEA001 to BEA030.
 
-```mermaid
-graph TD
-    A[AST + Symbol Table] --> B[Linter Context Init]
-    B --> C[AST Visitor]
-
-    C --> D{Node Type}
-    D -->|Import| E[Check Import Rules]
-    D -->|Loop| F[Check Loop Rules]
-    D -->|Function| G[Check Function Rules]
-    D -->|Name| H[Check Name Rules]
-
-    E --> I[Diagnostics]
-    F --> I
-    G --> I
-    H --> I
-
-    I --> J[Suppression Filter]
-    J --> K[Final Diagnostics]
-
-    style A fill:#4c566a
-    style K fill:#d08770
+```
+              ┌──────────────────────┐
+              │ AST + Symbol Table   │
+              └──────────┬───────────┘
+                         │
+                         ▼
+              ┌──────────────────────┐
+              │ Linter Context Init  │
+              └──────────┬───────────┘
+                         │
+                         ▼
+              ┌──────────────────────┐
+              │    AST Visitor       │
+              └──────────┬───────────┘
+                         │
+                         ▼
+              ┌──────────────────────┐
+              │     Node Type        │
+              └─┬──────┬────┬────┬──┘
+                │      │    │    │
+    ┌───────────┘      │    │    └───────────┐
+    │                  │    │                │
+    │ Import      Loop │    │ Function  Name │
+    │                  │    │                │
+    ▼                  ▼    ▼                ▼
+┌─────────┐    ┌─────────────┐    ┌─────────────┐
+│Check    │    │Check Loop   │    │Check Name   │
+│Import   │    │Rules        │    │Rules        │
+│Rules    │    ├─────────────┤    └──────┬──────┘
+└────┬────┘    │Check        │           │
+     │         │Function     │           │
+     │         │Rules        │           │
+     │         └──────┬──────┘           │
+     │                │                  │
+     └────────────────┴──────────────────┘
+                      │
+                      ▼
+           ┌──────────────────┐
+           │   Diagnostics    │
+           └──────────┬───────┘
+                      │
+                      ▼
+           ┌──────────────────┐
+           │Suppression Filter│
+           └──────────┬───────┘
+                      │
+                      ▼
+           ┌──────────────────┐
+           │Final Diagnostics │
+           └──────────────────┘
 ```
 
 ### Rule Categories
@@ -47,13 +76,23 @@ Style rules flag redundant pass statements, assert on tuples, percent format iss
 
 Type rules validate except handler types, detect constant conditionals, check for duplicate branches, find loop variable overwrites, and verify dataclass and protocol patterns.
 
-```mermaid
-graph LR
-    A[Rules] --> B[Import<br/>BEA001-003]
-    A --> C[Control Flow<br/>BEA004-008]
-    A --> D[Names<br/>BEA009-014]
-    A --> E[Style<br/>BEA015-020]
-    A --> F[Type<br/>BEA021-027]
+```
+                              ┌───────┐
+                              │ Rules │
+                              └───┬───┘
+                  ┌───────────────┼──────────────────┬─────────────┐
+                  │               │                  │             │
+                  ▼               ▼                  ▼             ▼
+         ┌────────────┐  ┌──────────────┐  ┌────────────┐  ┌──────────┐
+         │  Import    │  │Control Flow  │  │   Names    │  │  Style   │
+         │BEA001-003  │  │ BEA004-008   │  │BEA009-014  │  │BEA015-020│
+         └────────────┘  └──────────────┘  └────────────┘  └────┬─────┘
+                                                                 │
+                                                                 ▼
+                                                          ┌────────────┐
+                                                          │    Type    │
+                                                          │ BEA021-027 │
+                                                          └────────────┘
 ```
 
 ### Context Tracking
@@ -66,21 +105,71 @@ Import tracking records all imported names to detect unused imports. Loop variab
 
 Assigned variable tracking finds variables written to, enabling unused variable detection. Dataclass and protocol scope tracking identifies decorated classes for specialized rules.
 
-```mermaid
-graph TD
-    A[Enter Function] --> B[Increment Function Depth]
-    B --> C[Visit Function Body]
-    C --> D{Found Return?}
-    D -->|Yes, Depth > 0| E[OK]
-    D -->|Yes, Depth = 0| F[Error: Return Outside Function]
-    C --> G[Decrement Function Depth]
+```
+Function Context:
 
-    H[Enter Loop] --> I[Increment Loop Depth]
-    I --> J[Visit Loop Body]
-    J --> K{Found Break?}
-    K -->|Yes, Depth > 0| L[OK]
-    K -->|Yes, Depth = 0| M[Error: Break Outside Loop]
-    J --> N[Decrement Loop Depth]
+    ┌────────────────┐
+    │ Enter Function │
+    └───────┬────────┘
+            │
+            ▼
+    ┌──────────────────────┐
+    │Increment Function    │
+    │Depth                 │
+    └───────┬──────────────┘
+            │
+            ▼
+    ┌──────────────────────┐
+    │Visit Function Body   │
+    └───────┬──────────────┘
+            │
+            ├──────────────────────────┐
+            │                          │
+            ▼                          ▼
+    ┌──────────────┐         ┌───────────────────┐
+    │Found Return? │         │Decrement Function │
+    └───────┬──────┘         │Depth              │
+            │                └───────────────────┘
+    ┌───────┴────────┐
+    │                │
+    ▼                ▼
+┌────────┐    ┌─────────────────────────┐
+│OK      │    │Error: Return Outside    │
+│(Depth  │    │Function (Depth = 0)     │
+│> 0)    │    │                         │
+└────────┘    └─────────────────────────┘
+
+Loop Context:
+
+    ┌────────────────┐
+    │  Enter Loop    │
+    └───────┬────────┘
+            │
+            ▼
+    ┌──────────────────────┐
+    │Increment Loop Depth  │
+    └───────┬──────────────┘
+            │
+            ▼
+    ┌──────────────────────┐
+    │Visit Loop Body       │
+    └───────┬──────────────┘
+            │
+            ├──────────────────────────┐
+            │                          │
+            ▼                          ▼
+    ┌──────────────┐         ┌───────────────────┐
+    │Found Break?  │         │Decrement Loop     │
+    └───────┬──────┘         │Depth              │
+            │                └───────────────────┘
+    ┌───────┴────────┐
+    │                │
+    ▼                ▼
+┌────────┐    ┌─────────────────────────┐
+│OK      │    │Error: Break Outside     │
+│(Depth  │    │Loop (Depth = 0)         │
+│> 0)    │    │                         │
+└────────┘    └─────────────────────────┘
 ```
 
 ### Suppression
