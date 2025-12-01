@@ -61,13 +61,24 @@ pub static EMBEDDED_STUBS: Lazy<HashMap<&'static str, &'static str>> = Lazy::new
     )
     .expect("Failed to write stub map");
 
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let manifest_path = PathBuf::from(&manifest_dir);
+
     for (module_name, file_path) in stub_manifest {
-        let relative_path = file_path.strip_prefix("../../").unwrap_or(&file_path);
+        let absolute_path = if file_path.is_absolute() {
+            file_path
+        } else {
+            manifest_path
+                .join(&file_path)
+                .canonicalize()
+                .unwrap_or_else(|_| panic!("Failed to canonicalize path: {}", file_path.display()))
+        };
+
         writeln!(
             output,
-            "    stubs.insert(\"{}\", include_str!(\"../../../../../{}\"));",
+            "    stubs.insert(\"{}\", include_str!(\"{}\"));",
             module_name,
-            relative_path.display()
+            absolute_path.display()
         )
         .expect("Failed to write stub entry");
     }
