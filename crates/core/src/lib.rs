@@ -83,9 +83,14 @@ pub fn should_generalize<E: Expansiveness>(expr: &E) -> bool {
 
 /// Type variable generator for creating fresh type variables
 use std::sync::{
-    Arc,
+    Arc, OnceLock,
     atomic::{AtomicU32, Ordering},
 };
+
+fn global_typevar_counter() -> Arc<AtomicU32> {
+    static GLOBAL_COUNTER: OnceLock<Arc<AtomicU32>> = OnceLock::new();
+    GLOBAL_COUNTER.get_or_init(|| Arc::new(AtomicU32::new(0))).clone()
+}
 
 #[derive(Debug, Clone)]
 pub struct TypeVarGen {
@@ -94,7 +99,7 @@ pub struct TypeVarGen {
 
 impl TypeVarGen {
     pub fn new() -> Self {
-        Self { counter: Arc::new(AtomicU32::new(0)) }
+        Self { counter: global_typevar_counter() }
     }
 
     /// Generate a fresh type variable
@@ -126,8 +131,6 @@ mod tests {
         let tv1 = generator.fresh();
         let tv2 = generator.fresh();
         assert_ne!(tv1, tv2);
-        assert_eq!(tv1.id, 0);
-        assert_eq!(tv2.id, 1);
     }
 
     #[test]

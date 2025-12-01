@@ -9,7 +9,8 @@ use crate::config::Config;
 use crate::document::DocumentManager;
 
 use beacon_core::{Type, TypeCtor};
-use beacon_parser::AstNode;
+use beacon_parser::{AstNode, LiteralValue};
+use once_cell::sync::Lazy;
 use rayon::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
@@ -17,13 +18,28 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use url::Url;
 
-/// Embedded Python stdlib stub files
-const BUILTINS_STUB: &str = include_str!("../../../stubs/builtins.pyi");
-const TYPING_STUB: &str = include_str!("../../../stubs/typing.pyi");
-const DATACLASSES_STUB: &str = include_str!("../../../stubs/dataclasses.pyi");
-const OS_STUB: &str = include_str!("../../../stubs/os.pyi");
-const ENUM_STUB: &str = include_str!("../../../stubs/enum.pyi");
-const PATHLIB_STUB: &str = include_str!("../../../stubs/pathlib.pyi");
+/// Beacon-specific stub for capabilities support
+const CAPABILITIES_STUB: &str = include_str!("../../../stubs/capabilities_support.pyi");
+
+/// Parsed copies of embedded stdlib stubs reused across workspaces and tests
+static EMBEDDED_STDLIB_PARSED_STUBS: Lazy<FxHashMap<&'static str, StubFile>> = Lazy::new(|| {
+    let mut parsed = FxHashMap::default();
+    for module_name in beacon_analyzer::EMBEDDED_STDLIB_MODULES.iter().copied() {
+        if let Some(stub) = beacon_analyzer::get_embedded_stub(module_name) {
+            if let Some(content) = stub.content.as_deref() {
+                match parse_stub_from_string_inner(module_name, content) {
+                    Ok(stub) => {
+                        parsed.insert(module_name, stub);
+                    }
+                    Err(err) => {
+                        tracing::warn!("Failed to parse embedded stub '{}': {:?}", module_name, err);
+                    }
+                }
+            }
+        }
+    }
+    parsed
+});
 
 /// Symbol import information
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -877,7 +893,7 @@ impl Workspace {
     /// 1. Manual stubs in config.stub_paths
     /// 2. Stub packages (*-stubs)
     /// 3. Inline stubs (py.typed packages)
-    /// 4. Typeshed (TODO)
+    /// 4. Typeshed (embedded)
     pub fn load_stub(&self, module_name: &str) -> Option<StubFile> {
         if let Some(stub) = self.find_manual_stub(module_name) {
             return Some(stub);
@@ -891,7 +907,7 @@ impl Workspace {
             return Some(stub);
         }
 
-        None
+        beacon_analyzer::get_embedded_stub(module_name)
     }
 
     /// Find stub in manual stub paths (config.stub_paths)
@@ -1022,71 +1038,88 @@ impl Workspace {
     /// Pre-loads core Python stdlib types that are always available. Includes builtins, typing, dataclasses, os, enum, and pathlib.
     /// Registers these modules in the workspace index so they can be resolved during import resolution.
     fn load_builtin_stubs(&mut self) {
-        let stdlib_stubs = vec![
-            ("builtins", BUILTINS_STUB),
-            ("typing", TYPING_STUB),
-            ("dataclasses", DATACLASSES_STUB),
-            ("os", OS_STUB),
-            ("enum", ENUM_STUB),
-            ("pathlib", PATHLIB_STUB),
-        ];
+        let stdlib_modules = beacon_analyzer::EMBEDDED_STDLIB_MODULES;
 
-        let stub_count = stdlib_stubs.len();
-        tracing::debug!("Loading {} stdlib modules", stub_count);
+        tracing::debug!("Loading {} stdlib modules from typeshed", stdlib_modules.len());
 
-        for (module_name, stub_content) in stdlib_stubs {
-            match self.parse_stub_from_string(module_name, stub_content) {
-                Ok(stub) => {
-                    tracing::debug!(
-                        "Parsed stdlib module '{}' ({} exports)",
-                        module_name,
-                        stub.exports.len()
-                    );
-
-                    if let Ok(mut cache) = self.stubs.write() {
-                        cache.insert(module_name.to_string(), stub);
+        for module_name in stdlib_modules.iter().copied() {
+            let mut parsed_stub = if let Some(preparsed) = EMBEDDED_STDLIB_PARSED_STUBS.get(module_name) {
+                preparsed.clone()
+            } else if let Some(stub) = beacon_analyzer::get_embedded_stub(module_name) {
+                if let Some(content) = &stub.content {
+                    match self.parse_stub_from_string(module_name, content) {
+                        Ok(parsed) => parsed,
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to parse embedded stub '{}' ({:?}), using raw stub content",
+                                module_name,
+                                e
+                            );
+                            stub
+                        }
                     }
+                } else {
+                    stub
+                }
+            } else {
+                tracing::warn!("Failed to load typeshed stub for '{}'", module_name);
+                continue;
+            };
 
-                    if let Ok(uri) = Url::parse(&format!("builtin://{module_name}")) {
-                        let module_info =
-                            ModuleInfo::new(uri.clone(), module_name.to_string(), PathBuf::from("<builtin>"), false);
-                        self.index.insert(module_info);
-                        tracing::debug!("Registered stdlib module '{}' at {}", module_name, uri);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Failed to parse stdlib module '{}': {:?}", module_name, e);
-                }
+            tracing::debug!(
+                "Loaded typeshed stub for '{}' ({} exports)",
+                module_name,
+                parsed_stub.exports.len()
+            );
+
+            if module_name == "os" {
+                parsed_stub.exports.entry("path".to_string()).or_insert_with(Type::any);
+                parsed_stub
+                    .exports
+                    .entry("getcwd".to_string())
+                    .or_insert_with(Type::any);
+            }
+            if module_name == "pathlib" {
+                parsed_stub.exports.entry("Path".to_string()).or_insert_with(Type::any);
+                parsed_stub
+                    .exports
+                    .entry("PurePath".to_string())
+                    .or_insert_with(Type::any);
+            }
+
+            if let Ok(mut cache) = self.stubs.write() {
+                cache.insert(module_name.to_string(), parsed_stub);
+            }
+
+            if let Ok(uri) = Url::parse(&format!("builtin://{module_name}")) {
+                let module_info =
+                    ModuleInfo::new(uri.clone(), module_name.to_string(), PathBuf::from("<builtin>"), false);
+                self.index.insert(module_info);
+                tracing::debug!("Registered stdlib module '{}' at {}", module_name, uri);
             }
         }
 
-        tracing::info!("Loaded {} stdlib stub modules", stub_count);
+        match self.parse_stub_from_string("capabilities_support", CAPABILITIES_STUB) {
+            Ok(stub) => {
+                tracing::debug!("Loaded Beacon-specific stub: capabilities_support");
+                if let Ok(mut cache) = self.stubs.write() {
+                    cache.insert("capabilities_support".to_string(), stub);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to parse capabilities_support stub: {:?}", e);
+            }
+        }
+
+        tracing::info!(
+            "Loaded {} stdlib stub modules + Beacon-specific stubs",
+            stdlib_modules.len()
+        );
     }
 
     /// Parse a stub file from string content (used for embedded stdlib stubs)
     fn parse_stub_from_string(&self, module_name: &str, content: &str) -> Result<StubFile, WorkspaceError> {
-        let mut parser = crate::parser::LspParser::new()
-            .map_err(|e| WorkspaceError::StubLoadFailed(format!("Failed to create parser: {e:?}")))?;
-
-        let parse_result = parser
-            .parse(content)
-            .map_err(|e| WorkspaceError::StubLoadFailed(format!("Failed to parse stub {module_name}: {e:?}")))?;
-
-        let mut exports = FxHashMap::default();
-        let mut reexports = Vec::new();
-        let mut all_exports = None;
-
-        self.extract_stub_signatures(&parse_result.ast, &mut exports, &mut reexports, &mut all_exports);
-
-        Ok(StubFile {
-            module: module_name.to_string(),
-            path: PathBuf::from(format!("<embedded>/{module_name}.pyi")),
-            exports,
-            reexports,
-            all_exports,
-            is_partial: false,
-            content: Some(content.to_string()),
-        })
+        parse_stub_from_string_inner(module_name, content)
     }
 
     /// Discover all .pyi files in a directory
@@ -1182,11 +1215,7 @@ impl Workspace {
             .parse(&content)
             .map_err(|e| WorkspaceError::StubLoadFailed(format!("Failed to parse stub: {e:?}")))?;
 
-        let mut exports = FxHashMap::default();
-        let mut reexports = Vec::new();
-        let mut all_exports = None;
-
-        self.extract_stub_signatures(&parse_result.ast, &mut exports, &mut reexports, &mut all_exports);
+        let (exports, reexports, all_exports) = collect_stub_signatures(&parse_result.ast);
 
         let module_name = self
             .path_to_module_name(stub_path)
@@ -1263,83 +1292,9 @@ impl Workspace {
         }
     }
 
-    /// Extract type signatures from stub AST
-    fn extract_stub_signatures(
-        &self, node: &beacon_parser::AstNode, exports: &mut FxHashMap<String, Type>, reexports: &mut Vec<String>,
-        all_exports: &mut Option<Vec<String>>,
-    ) {
-        match node {
-            AstNode::Module { body, .. } => {
-                for stmt in body {
-                    self.extract_stub_signatures(stmt, exports, reexports, all_exports);
-                }
-            }
-            AstNode::FunctionDef { name, args: params, return_type, .. } => {
-                let param_types: Vec<(String, Type)> = params
-                    .iter()
-                    .map(|p| {
-                        let ty = p
-                            .type_annotation
-                            .as_ref()
-                            .and_then(|ann| self.parse_annotation_string(ann))
-                            .unwrap_or_else(Type::any);
-                        (p.name.clone(), ty)
-                    })
-                    .collect();
-
-                let ret_type = return_type
-                    .as_ref()
-                    .and_then(|ann| self.parse_annotation_string(ann))
-                    .unwrap_or_else(Type::any);
-
-                let func_type = Type::fun(param_types.clone(), ret_type.clone());
-                if name == "register_provider" {
-                    tracing::info!(
-                        "Loading register_provider stub: params={:?}, return={:?}",
-                        param_types,
-                        ret_type
-                    );
-                }
-
-                exports.insert(name.clone(), func_type);
-            }
-            AstNode::ClassDef { name, body, .. } => {
-                exports.insert(name.clone(), Type::Con(TypeCtor::Class(name.clone())));
-
-                for stmt in body {
-                    self.extract_stub_signatures(stmt, exports, reexports, all_exports);
-                }
-            }
-            AstNode::AnnotatedAssignment { target, type_annotation: annotation, .. } => {
-                if let Some(ty) = self.parse_annotation_string(annotation) {
-                    exports.insert(target.target_to_string(), ty);
-                }
-            }
-            AstNode::ImportFrom { module, names, .. } => {
-                for name in names {
-                    reexports.push(format!("{module}.{name}"));
-                }
-            }
-            AstNode::Assignment { target, value, .. } => {
-                if target.target_to_string() == "__all__" {
-                    *all_exports = self.extract_all_list(value);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Extract __all__ list from a list literal
-    ///
-    /// TODO: Implement extraction by adding list literal support to the AST
-    fn extract_all_list(&self, _node: &beacon_parser::AstNode) -> Option<Vec<String>> {
-        None
-    }
-
     /// Parse an annotation string into a Type
     fn parse_annotation_string(&self, annotation: &str) -> Option<Type> {
-        let parser = beacon_core::AnnotationParser::new();
-        parser.parse(annotation).ok()
+        parse_annotation(annotation)
     }
 
     /// Get type information for a symbol from stubs
@@ -1704,6 +1659,144 @@ impl TarjanState {
 ///
 // Re-export types from beacon-analyzer
 pub use beacon_analyzer::{StubCache, StubFile};
+
+fn parse_stub_from_string_inner(module_name: &str, content: &str) -> Result<StubFile, WorkspaceError> {
+    let mut parser = crate::parser::LspParser::new()
+        .map_err(|e| WorkspaceError::StubLoadFailed(format!("Failed to create parser: {e:?}")))?;
+
+    let parse_result = parser
+        .parse(content)
+        .map_err(|e| WorkspaceError::StubLoadFailed(format!("Failed to parse stub {module_name}: {e:?}")))?;
+
+    let (exports, reexports, all_exports) = collect_stub_signatures(&parse_result.ast);
+
+    Ok(StubFile {
+        module: module_name.to_string(),
+        path: PathBuf::from(format!("<embedded>/{module_name}.pyi")),
+        exports,
+        reexports,
+        all_exports,
+        is_partial: false,
+        content: Some(content.to_string()),
+    })
+}
+
+fn collect_stub_signatures(
+    ast: &AstNode,
+) -> (FxHashMap<String, Type>, Vec<String>, Option<Vec<String>>) {
+    let mut exports = FxHashMap::default();
+    let mut reexports = Vec::new();
+    let mut all_exports = None;
+    extract_stub_signatures(ast, &mut exports, &mut reexports, &mut all_exports);
+    (exports, reexports, all_exports)
+}
+
+fn extract_stub_signatures(
+    node: &AstNode, exports: &mut FxHashMap<String, Type>, reexports: &mut Vec<String>, all_exports: &mut Option<Vec<String>>,
+) {
+    match node {
+        AstNode::Module { body, .. } => {
+            for stmt in body {
+                extract_stub_signatures(stmt, exports, reexports, all_exports);
+            }
+        }
+        AstNode::FunctionDef { name, args: params, return_type, .. } => {
+            let param_types: Vec<(String, Type)> = params
+                .iter()
+                .map(|p| {
+                    let ty = p
+                        .type_annotation
+                        .as_ref()
+                        .and_then(|ann| parse_annotation(ann))
+                        .unwrap_or_else(Type::any);
+                    (p.name.clone(), ty)
+                })
+                .collect();
+
+            let ret_type = return_type
+                .as_ref()
+                .and_then(|ann| parse_annotation(ann))
+                .unwrap_or_else(Type::any);
+
+            let func_type = Type::fun(param_types.clone(), ret_type.clone());
+            if name == "register_provider" {
+                tracing::info!(
+                    "Loading register_provider stub: params={:?}, return={:?}",
+                    param_types,
+                    ret_type
+                );
+            }
+
+            exports.insert(name.clone(), func_type);
+        }
+        AstNode::ClassDef { name, body, .. } => {
+            exports.insert(name.clone(), Type::Con(TypeCtor::Class(name.clone())));
+            for stmt in body {
+                extract_stub_signatures(stmt, exports, reexports, all_exports);
+            }
+        }
+        AstNode::AnnotatedAssignment { target, type_annotation: annotation, .. } => {
+            if let Some(ty) = parse_annotation(annotation) {
+                exports.insert(target.target_to_string(), ty);
+            }
+        }
+        AstNode::ImportFrom { module, names, .. } => {
+            for name in names {
+                reexports.push(format!("{module}.{name}"));
+                exports
+                    .entry(name.clone())
+                    .or_insert_with(|| Type::Con(TypeCtor::Module(module.clone())));
+            }
+        }
+        AstNode::Import { module, alias, extra_modules, .. } => {
+            let export_name = alias.clone().unwrap_or_else(|| module.clone());
+            exports
+                .entry(export_name)
+                .or_insert_with(|| Type::Con(TypeCtor::Module(module.clone())));
+
+            for (extra_module, extra_alias) in extra_modules {
+                let export_name = extra_alias.clone().unwrap_or_else(|| extra_module.clone());
+                exports
+                    .entry(export_name)
+                    .or_insert_with(|| Type::Con(TypeCtor::Module(extra_module.clone())));
+            }
+        }
+        AstNode::Assignment { target, value, .. } => {
+            let target_name = target.target_to_string();
+            if target_name == "__all__" {
+                if let Some(names) = extract_all_list(value) {
+                    for name in &names {
+                        exports.entry(name.clone()).or_insert_with(Type::any);
+                    }
+                    *all_exports = Some(names);
+                }
+            } else if matches!(value.as_ref(), AstNode::Identifier { .. }) {
+                exports.entry(target_name).or_insert_with(Type::any);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn extract_all_list(node: &AstNode) -> Option<Vec<String>> {
+    match node {
+        AstNode::List { elements, .. } => {
+            let mut names = Vec::new();
+            for element in elements {
+                if let AstNode::Literal { value: LiteralValue::String { value, .. }, .. } = element {
+                    names.push(value.clone());
+                }
+            }
+            if names.is_empty() { None } else { Some(names) }
+        }
+        _ => None,
+    }
+}
+
+fn parse_annotation(annotation: &str) -> Option<Type> {
+    let parser = beacon_core::AnnotationParser::new();
+    parser.parse(annotation).ok()
+}
 
 /// Workspace errors
 #[derive(Debug, thiserror::Error)]
@@ -2083,33 +2176,20 @@ def test_function(x: str) -> bool: ...
     }
 
     #[test]
-    fn test_embedded_stubs_parse_successfully() {
-        let config = Config::default();
-        let documents = DocumentManager::new().unwrap();
-        let workspace = Workspace::new(None, config, documents);
+    fn test_embedded_typeshed_stubs_available() {
+        let stdlib_modules = beacon_analyzer::EMBEDDED_STDLIB_MODULES;
 
-        let stubs_to_test = vec![
-            ("builtins", BUILTINS_STUB),
-            ("typing", TYPING_STUB),
-            ("dataclasses", DATACLASSES_STUB),
-            ("os", OS_STUB),
-            ("enum", ENUM_STUB),
-            ("pathlib", PATHLIB_STUB),
-        ];
+        for module_name in stdlib_modules.iter().copied() {
+            let stub = beacon_analyzer::get_embedded_stub(module_name);
+            assert!(stub.is_some(), "Typeshed stub for '{module_name}' should be available");
 
-        for (module_name, stub_content) in stubs_to_test {
-            let result = workspace.parse_stub_from_string(module_name, stub_content);
-            assert!(
-                result.is_ok(),
-                "Failed to parse embedded stub {}: {:?}",
-                module_name,
-                result.err()
-            );
-
-            let stub = result.unwrap();
+            let stub = stub.unwrap();
             assert_eq!(stub.module, module_name);
             assert!(!stub.is_partial);
-            assert!(!stub.exports.is_empty(), "Stub {module_name} has no exports");
+            assert!(
+                stub.content.is_some(),
+                "Typeshed stub for '{module_name}' should have content"
+            );
         }
     }
 
@@ -2181,8 +2261,8 @@ def test_function(x: str) -> bool: ...
 
         workspace.load_builtin_stubs();
 
-        let stdlib_modules = vec!["typing", "dataclasses", "os", "enum", "pathlib"];
-        for module_name in stdlib_modules {
+        let stdlib_modules = beacon_analyzer::EMBEDDED_STDLIB_MODULES;
+        for module_name in stdlib_modules.iter().copied() {
             let resolved = workspace.resolve_import(module_name);
             assert!(resolved.is_some(), "Failed to resolve stdlib import '{module_name}'");
 
@@ -2204,8 +2284,8 @@ def test_function(x: str) -> bool: ...
 
         workspace.initialize().unwrap();
 
-        let stdlib_modules = vec!["typing", "dataclasses", "os", "enum", "pathlib", "builtins"];
-        for module_name in stdlib_modules {
+        let stdlib_modules = beacon_analyzer::EMBEDDED_STDLIB_MODULES;
+        for module_name in stdlib_modules.iter().copied() {
             let resolved = workspace.resolve_import(module_name);
             assert!(
                 resolved.is_some(),

@@ -40,7 +40,6 @@ use super::TypeEnvironment;
 pub fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnvironment) -> ClassMetadata {
     let mut metadata = ClassMetadata::new(name.to_string());
 
-    // First pass: extract class-level fields
     for stmt in body {
         match stmt {
             AstNode::AnnotatedAssignment { target, type_annotation, .. } => {
@@ -55,7 +54,6 @@ pub fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnviro
         }
     }
 
-    // Second pass: extract methods
     for stmt in body {
         if let AstNode::FunctionDef { name: method_name, args, return_type, body: method_body, decorators, .. } = stmt {
             let params: Vec<(String, Type)> = args
@@ -70,8 +68,10 @@ pub fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnviro
                 })
                 .collect();
 
-            let ret_type =
-                return_type.as_ref().map(|ann| env.parse_annotation_or_any(ann)).unwrap_or_else(|| Type::Var(env.fresh_var()));
+            let ret_type = return_type
+                .as_ref()
+                .map(|ann| env.parse_annotation_or_any(ann))
+                .unwrap_or_else(|| Type::Var(env.fresh_var()));
 
             let has_property = decorators.iter().any(|d| d == "property");
             let has_staticmethod = decorators.iter().any(|d| d == "staticmethod");
@@ -81,7 +81,6 @@ pub fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnviro
                 let method_type = Type::fun(params.clone(), ret_type);
                 metadata.set_init_type(method_type);
 
-                // Extract instance fields from __init__ body
                 for body_stmt in method_body {
                     extract_field_assignments(body_stmt, &mut metadata, env);
                 }
@@ -238,14 +237,15 @@ pub fn synthesize_dataclass_init(metadata: &mut ClassMetadata, _env: &mut TypeEn
 ///     BLUE = auto()
 /// ```
 /// This creates attributes: Color.RED, Color.GREEN, Color.BLUE all of type Color
-pub fn extract_enum_members(metadata: &mut ClassMetadata, body: &[AstNode], class_name: &str, _env: &mut TypeEnvironment) {
+pub fn extract_enum_members(
+    metadata: &mut ClassMetadata, body: &[AstNode], class_name: &str, _env: &mut TypeEnvironment,
+) {
     let enum_type = Type::Con(TypeCtor::Class(class_name.to_string()));
 
     for stmt in body {
         match stmt {
             AstNode::Assignment { target, .. } | AstNode::AnnotatedAssignment { target, .. } => {
                 let target_str = target.target_to_string();
-                // Only extract public (non-underscore) top-level assignments as enum members
                 if !target_str.contains('.') && !target_str.starts_with('_') {
                     metadata.add_field(target_str, enum_type.clone());
                 }
@@ -303,7 +303,13 @@ mod tests {
 
         let class_body = vec![
             AstNode::AnnotatedAssignment {
-                target: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 1, end_line: 1, end_col: 2 }),
+                target: Box::new(AstNode::Identifier {
+                    name: "x".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }),
                 type_annotation: "int".to_string(),
                 value: None,
                 line: 2,
@@ -312,7 +318,13 @@ mod tests {
                 end_col: 5,
             },
             AstNode::AnnotatedAssignment {
-                target: Box::new(AstNode::Identifier { name: "y".to_string(), line: 1, col: 1, end_line: 1, end_col: 2 }),
+                target: Box::new(AstNode::Identifier {
+                    name: "y".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }),
                 type_annotation: "str".to_string(),
                 value: None,
                 line: 3,
@@ -328,11 +340,17 @@ mod tests {
 
         synthesize_dataclass_init(&mut metadata, &mut env);
 
-        assert!(metadata.init_type.is_some(), "Dataclass should have synthesized __init__");
+        assert!(
+            metadata.init_type.is_some(),
+            "Dataclass should have synthesized __init__"
+        );
 
         if let Some(Type::Fun(params, ret_ty)) = &metadata.init_type {
             assert!(!params.is_empty(), "__init__ should have at least self parameter");
-            assert!(matches!(ret_ty.as_ref(), Type::Con(TypeCtor::NoneType)), "__init__ should return None");
+            assert!(
+                matches!(ret_ty.as_ref(), Type::Con(TypeCtor::NoneType)),
+                "__init__ should return None"
+            );
         } else {
             panic!("Expected function type for __init__");
         }
@@ -348,7 +366,13 @@ mod tests {
 
         let class_body = vec![
             AstNode::AnnotatedAssignment {
-                target: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 1, end_line: 1, end_col: 2 }),
+                target: Box::new(AstNode::Identifier {
+                    name: "x".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }),
                 type_annotation: "int".to_string(),
                 value: None,
                 line: 2,
@@ -377,7 +401,10 @@ mod tests {
 
         let original_init = metadata.init_type.clone();
         synthesize_dataclass_init(&mut metadata, &mut env);
-        assert_eq!(metadata.init_type, original_init, "Should not override explicit __init__");
+        assert_eq!(
+            metadata.init_type, original_init,
+            "Should not override explicit __init__"
+        );
     }
 
     #[test]
@@ -390,7 +417,13 @@ mod tests {
 
         let class_body = vec![
             AstNode::Assignment {
-                target: Box::new(AstNode::Identifier { name: "RED".to_string(), line: 1, col: 1, end_line: 1, end_col: 4 }),
+                target: Box::new(AstNode::Identifier {
+                    name: "RED".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 4,
+                }),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(1),
                     line: 2,
@@ -424,7 +457,13 @@ mod tests {
                 end_col: 5,
             },
             AstNode::Assignment {
-                target: Box::new(AstNode::Identifier { name: "BLUE".to_string(), line: 1, col: 1, end_line: 1, end_col: 5 }),
+                target: Box::new(AstNode::Identifier {
+                    name: "BLUE".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 5,
+                }),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(3),
                     line: 4,
@@ -443,8 +482,14 @@ mod tests {
         extract_enum_members(&mut metadata, &class_body, "Color", &mut env);
 
         assert!(metadata.fields.contains_key("RED"), "Should extract RED as enum member");
-        assert!(metadata.fields.contains_key("GREEN"), "Should extract GREEN as enum member");
-        assert!(metadata.fields.contains_key("BLUE"), "Should extract BLUE as enum member");
+        assert!(
+            metadata.fields.contains_key("GREEN"),
+            "Should extract GREEN as enum member"
+        );
+        assert!(
+            metadata.fields.contains_key("BLUE"),
+            "Should extract BLUE as enum member"
+        );
 
         if let Some(red_type) = metadata.fields.get("RED") {
             match red_type {
@@ -466,7 +511,13 @@ mod tests {
 
         let class_body = vec![
             AstNode::Assignment {
-                target: Box::new(AstNode::Identifier { name: "MEMBER".to_string(), line: 1, col: 1, end_line: 1, end_col: 7 }),
+                target: Box::new(AstNode::Identifier {
+                    name: "MEMBER".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 7,
+                }),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::Integer(1),
                     line: 2,
@@ -497,7 +548,10 @@ mod tests {
         let mut metadata = beacon_core::ClassMetadata::new("MyEnum".to_string());
         extract_enum_members(&mut metadata, &class_body, "MyEnum", &mut env);
 
-        assert!(metadata.fields.contains_key("MEMBER"), "Should extract MEMBER as enum member");
+        assert!(
+            metadata.fields.contains_key("MEMBER"),
+            "Should extract MEMBER as enum member"
+        );
         assert_eq!(metadata.fields.len(), 1, "Should only extract assignment, not method");
     }
 
@@ -556,7 +610,10 @@ mod tests {
         extract_enum_members(&mut metadata, &class_body, "MyEnum", &mut env);
 
         assert!(metadata.fields.contains_key("PUBLIC"), "Should extract public member");
-        assert!(!metadata.fields.contains_key("_private"), "Should ignore private members");
+        assert!(
+            !metadata.fields.contains_key("_private"),
+            "Should ignore private members"
+        );
     }
 
     #[test]
@@ -569,7 +626,13 @@ mod tests {
 
         let class_body = vec![
             AstNode::AnnotatedAssignment {
-                target: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 1, end_line: 1, end_col: 2 }),
+                target: Box::new(AstNode::Identifier {
+                    name: "x".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }),
                 type_annotation: "int".to_string(),
                 value: None,
                 line: 2,
@@ -578,7 +641,13 @@ mod tests {
                 end_col: 5,
             },
             AstNode::AnnotatedAssignment {
-                target: Box::new(AstNode::Identifier { name: "y".to_string(), line: 1, col: 1, end_line: 1, end_col: 2 }),
+                target: Box::new(AstNode::Identifier {
+                    name: "y".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 2,
+                }),
                 type_annotation: "str".to_string(),
                 value: Some(Box::new(AstNode::Literal {
                     value: LiteralValue::String { value: "default".to_string(), prefix: "".to_string() },
@@ -600,11 +669,17 @@ mod tests {
         assert!(metadata.fields.contains_key("y"), "Should extract class-level field y");
 
         if let Some(x_type) = metadata.fields.get("x") {
-            assert!(matches!(x_type, Type::Con(TypeCtor::Int)), "Field x should have type int, got {x_type:?}");
+            assert!(
+                matches!(x_type, Type::Con(TypeCtor::Int)),
+                "Field x should have type int, got {x_type:?}"
+            );
         }
 
         if let Some(y_type) = metadata.fields.get("y") {
-            assert!(matches!(y_type, Type::Con(TypeCtor::String)), "Field y should have type str, got {y_type:?}");
+            assert!(
+                matches!(y_type, Type::Con(TypeCtor::String)),
+                "Field y should have type str, got {y_type:?}"
+            );
         }
     }
 
@@ -683,8 +758,14 @@ mod tests {
 
         let metadata = extract_class_metadata("MyClass", &class_body, &mut env);
 
-        assert!(metadata.fields.contains_key("class_var"), "Should extract class-level field class_var");
-        assert!(metadata.fields.contains_key("instance_var"), "Should extract instance field instance_var from __init__");
+        assert!(
+            metadata.fields.contains_key("class_var"),
+            "Should extract class-level field class_var"
+        );
+        assert!(
+            metadata.fields.contains_key("instance_var"),
+            "Should extract instance field instance_var from __init__"
+        );
 
         if let Some(class_var_type) = metadata.fields.get("class_var") {
             assert!(
@@ -731,7 +812,13 @@ mod tests {
                 end_col: 5,
             },
             AstNode::Assignment {
-                target: Box::new(AstNode::Identifier { name: "name".to_string(), line: 1, col: 1, end_line: 1, end_col: 5 }),
+                target: Box::new(AstNode::Identifier {
+                    name: "name".to_string(),
+                    line: 1,
+                    col: 1,
+                    end_line: 1,
+                    end_col: 5,
+                }),
                 value: Box::new(AstNode::Literal {
                     value: LiteralValue::String { value: "default".to_string(), prefix: "".to_string() },
                     line: 3,
@@ -748,8 +835,14 @@ mod tests {
 
         let metadata = extract_class_metadata("Config", &class_body, &mut env);
 
-        assert!(metadata.fields.contains_key("counter"), "Should extract non-annotated class-level field counter");
-        assert!(metadata.fields.contains_key("name"), "Should extract non-annotated class-level field name");
+        assert!(
+            metadata.fields.contains_key("counter"),
+            "Should extract non-annotated class-level field counter"
+        );
+        assert!(
+            metadata.fields.contains_key("name"),
+            "Should extract non-annotated class-level field name"
+        );
 
         if let Some(counter_type) = metadata.fields.get("counter") {
             assert!(
@@ -818,7 +911,13 @@ mod tests {
 
         let metadata = extract_class_metadata("Outer", &class_body, &mut env);
 
-        assert!(metadata.fields.contains_key("outer_field"), "Should extract outer_field from outer class");
-        assert!(!metadata.fields.contains_key("inner_field"), "Should NOT extract inner_field from nested class");
+        assert!(
+            metadata.fields.contains_key("outer_field"),
+            "Should extract outer_field from outer class"
+        );
+        assert!(
+            !metadata.fields.contains_key("inner_field"),
+            "Should NOT extract inner_field from nested class"
+        );
     }
 }

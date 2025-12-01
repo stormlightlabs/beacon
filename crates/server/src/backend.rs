@@ -438,28 +438,34 @@ impl LanguageServer for Backend {
         self.publish_diagnostics(params.text_document.uri).await;
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let mut analyzer = self.analyzer.write().await;
         Ok(self.features.hover.hover(params, &mut analyzer))
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
         let mut analyzer = self.analyzer.write().await;
         Ok(self.features.signature_help.signature_help(params, &mut analyzer))
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         Ok(self.features.completion.completion(params).await)
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn goto_definition(&self, params: GotoDefinitionParams) -> Result<Option<GotoDefinitionResponse>> {
         Ok(self.features.goto_definition.goto_definition(params))
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         Ok(Some(self.features.references.find_references(params).await))
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
         let mut analyzer = self.analyzer.write().await;
         let workspace = self.workspace.read().await;
@@ -471,32 +477,39 @@ impl LanguageServer for Backend {
         )))
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         Ok(Some(self.features.code_actions.code_actions(params).await))
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn semantic_tokens_full(&self, params: SemanticTokensParams) -> Result<Option<SemanticTokensResult>> {
         Ok(self.features.semantic_tokens.semantic_tokens_full(params))
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn semantic_tokens_range(
         &self, params: SemanticTokensRangeParams,
     ) -> Result<Option<SemanticTokensRangeResult>> {
         Ok(self.features.semantic_tokens.semantic_tokens_range(params))
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn document_symbol(&self, params: DocumentSymbolParams) -> Result<Option<DocumentSymbolResponse>> {
         Ok(self.features.document_symbols.document_symbols(params))
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn document_highlight(&self, params: DocumentHighlightParams) -> Result<Option<Vec<DocumentHighlight>>> {
         Ok(self.features.document_highlight.document_highlight(params))
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         Ok(self.features.rename.rename(params))
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn symbol(&self, params: WorkspaceSymbolParams) -> Result<Option<Vec<SymbolInformation>>> {
         Ok(self.features.workspace_symbols.workspace_symbol(params))
     }
@@ -505,22 +518,26 @@ impl LanguageServer for Backend {
         Ok(self.features.workspace_symbols.symbol_resolve(params))
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
         Ok(self.features.folding_range.folding_range(params))
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         let workspace = self.workspace.read().await;
         let config = &workspace.config.formatting;
         Ok(self.features.formatting.format_document(&params, config))
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn range_formatting(&self, params: DocumentRangeFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         let workspace = self.workspace.read().await;
         let config = &workspace.config.formatting;
         Ok(self.features.formatting.format_range(&params, config))
     }
 
+    #[tracing::instrument(skip(self), level = "debug")]
     async fn on_type_formatting(&self, params: DocumentOnTypeFormattingParams) -> Result<Option<Vec<TextEdit>>> {
         let workspace = self.workspace.read().await;
         let config = &workspace.config.formatting;

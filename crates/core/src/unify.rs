@@ -30,7 +30,7 @@
 //!
 //! The occurs check prevents infinite types by rejecting unifications like `'a ~ list['a]`.
 
-use crate::{Result, Subst, Type, TypeCtor, TypeError, TypeVar, TypeVarConstraintRegistry, Variance};
+use crate::{ClassRegistry, Result, Subst, Type, TypeCtor, TypeError, TypeVar, TypeVarConstraintRegistry, Variance};
 
 use rustc_hash::FxHashSet;
 
@@ -43,7 +43,14 @@ impl Unifier {
     /// The TypeVarConstraintRegistry is used to validate that any TypeVar substitutions
     /// respect bounds and constraints defined for those TypeVars.
     pub fn unify(t1: &Type, t2: &Type, registry: &TypeVarConstraintRegistry) -> Result<Subst> {
-        Self::unify_impl(t1, t2, registry)
+        Self::unify_impl(t1, t2, registry, None)
+    }
+
+    /// Unify two types with access to class metadata for structural protocol checking
+    pub fn unify_with_class_registry(
+        t1: &Type, t2: &Type, registry: &TypeVarConstraintRegistry, class_registry: &ClassRegistry,
+    ) -> Result<Subst> {
+        Self::unify_impl(t1, t2, registry, Some(class_registry))
     }
 
     /// Extract a human-readable name from a type constructor for error messages
@@ -97,14 +104,16 @@ impl Unifier {
         }
     }
 
-    fn unify_impl(t1: &Type, t2: &Type, registry: &TypeVarConstraintRegistry) -> Result<Subst> {
+    fn unify_impl(
+        t1: &Type, t2: &Type, registry: &TypeVarConstraintRegistry, class_registry: Option<&ClassRegistry>,
+    ) -> Result<Subst> {
         match (t1, t2) {
             (Type::Con(TypeCtor::Any), _) | (_, Type::Con(TypeCtor::Any)) => Ok(Subst::empty()),
             (Type::Var(tv1), Type::Var(tv2)) if tv1 == tv2 => Ok(Subst::empty()),
-            (Type::Var(tv), t) | (t, Type::Var(tv)) => Self::unify_var(tv, t, registry),
+            (Type::Var(tv), t) | (t, Type::Var(tv)) => Self::unify_var(tv, t, registry, class_registry),
             (Type::Con(tc1), Type::Con(tc2)) if tc1 == tc2 => Ok(Subst::empty()),
             (Type::App(f1, a1), Type::App(f2, a2)) => {
-                let s1 = Self::unify_impl(f1, f2, registry)?;
+                let s1 = Self::unify_impl(f1, f2, registry, class_registry)?;
 
                 let applied_a1 = s1.apply(a1);
                 let applied_a2 = s1.apply(a2);
@@ -114,7 +123,7 @@ impl Unifier {
                 match variance {
                     Variance::Invariant => {
                         if applied_a1 != applied_a2 {
-                            match Self::unify_impl(&applied_a1, &applied_a2, registry) {
+                            match Self::unify_impl(&applied_a1, &applied_a2, registry, class_registry) {
                                 Ok(s2) => Ok(s2.compose(s1)),
                                 Err(_)
                                     if !matches!(applied_a1, Type::Var(_)) && !matches!(applied_a2, Type::Var(_)) =>
@@ -134,11 +143,11 @@ impl Unifier {
                         }
                     }
                     Variance::Covariant => {
-                        let s2 = Self::unify_impl(&applied_a1, &applied_a2, registry)?;
+                        let s2 = Self::unify_impl(&applied_a1, &applied_a2, registry, class_registry)?;
                         Ok(s2.compose(s1))
                     }
                     Variance::Contravariant => {
-                        let s2 = Self::unify_impl(&applied_a2, &applied_a1, registry)?;
+                        let s2 = Self::unify_impl(&applied_a2, &applied_a1, registry, class_registry)?;
                         Ok(s2.compose(s1))
                     }
                 }
@@ -154,34 +163,40 @@ impl Unifier {
 
                 let mut subst = Subst::empty();
                 for ((_, ty1), (_, ty2)) in args1.iter().zip(args2.iter()) {
-                    let s = Self::unify_impl(&subst.apply(ty1), &subst.apply(ty2), registry)?;
+                    let s = Self::unify_impl(&subst.apply(ty1), &subst.apply(ty2), registry, class_registry)?;
                     subst = s.compose(subst);
                 }
 
-                let s = Self::unify_impl(&subst.apply(ret1), &subst.apply(ret2), registry)?;
+                let s = Self::unify_impl(&subst.apply(ret1), &subst.apply(ret2), registry, class_registry)?;
                 Ok(s.compose(subst))
             }
-            (Type::Union(types1), Type::Union(types2)) => Self::unify_unions(types1, types2, registry),
-            (Type::Union(types), t) | (t, Type::Union(types)) => Self::unify_union_with_type(types, t, registry),
+            (Type::Union(types1), Type::Union(types2)) => Self::unify_unions(types1, types2, registry, class_registry),
+            (Type::Union(types), t) | (t, Type::Union(types)) => {
+                Self::unify_union_with_type(types, t, registry, class_registry)
+            }
             (Type::Record(fields1, row1), Type::Record(fields2, row2)) => {
-                Self::unify_records(fields1, row1, fields2, row2, registry)
+                Self::unify_records(fields1, row1, fields2, row2, registry, class_registry)
             }
             (Type::BoundMethod(receiver1, _, method1), Type::BoundMethod(receiver2, _, method2)) => {
-                let s1 = Self::unify_impl(receiver1, receiver2, registry)?;
-                let s2 = Self::unify_impl(&s1.apply(method1), &s1.apply(method2), registry)?;
+                let s1 = Self::unify_impl(receiver1, receiver2, registry, class_registry)?;
+                let s2 = Self::unify_impl(&s1.apply(method1), &s1.apply(method2), registry, class_registry)?;
                 Ok(s2.compose(s1))
             }
-            (Type::BoundMethod(_, _, method), fun @ Type::Fun(_, _)) => Self::unify_impl(method, fun, registry),
-            (fun @ Type::Fun(_, _), Type::BoundMethod(_, _, method)) => Self::unify_impl(fun, method, registry),
+            (Type::BoundMethod(_, _, method), fun @ Type::Fun(_, _)) => {
+                Self::unify_impl(method, fun, registry, class_registry)
+            }
+            (fun @ Type::Fun(_, _), Type::BoundMethod(_, _, method)) => {
+                Self::unify_impl(fun, method, registry, class_registry)
+            }
             (Type::BoundMethod(_, _, method), other)
                 if !matches!(other, Type::BoundMethod(_, _, _) | Type::Fun(_, _)) =>
             {
-                Self::unify_impl(method, other, registry)
+                Self::unify_impl(method, other, registry, class_registry)
             }
             (other, Type::BoundMethod(_, _, method))
                 if !matches!(other, Type::BoundMethod(_, _, _) | Type::Fun(_, _)) =>
             {
-                Self::unify_impl(other, method, registry)
+                Self::unify_impl(other, method, registry, class_registry)
             }
             (Type::Tuple(types1), Type::Tuple(types2)) => {
                 if types1.len() != types2.len() {
@@ -194,7 +209,7 @@ impl Unifier {
 
                 let mut subst = Subst::empty();
                 for (t1, t2) in types1.iter().zip(types2.iter()) {
-                    let s = Self::unify_impl(&subst.apply(t1), &subst.apply(t2), registry)?;
+                    let s = Self::unify_impl(&subst.apply(t1), &subst.apply(t2), registry, class_registry)?;
                     subst = s.compose(subst);
                 }
                 Ok(subst)
@@ -214,16 +229,20 @@ impl Unifier {
                 }
 
                 let renamed_body1 = renaming.apply(body1);
-                Self::unify_impl(&renamed_body1, body2, registry)
+                Self::unify_impl(&renamed_body1, body2, registry, class_registry)
             }
-            (Type::ForAll(_, body), t) | (t, Type::ForAll(_, body)) => Self::unify_impl(body, t, registry),
+            (Type::ForAll(_, body), t) | (t, Type::ForAll(_, body)) => {
+                Self::unify_impl(body, t, registry, class_registry)
+            }
             (Type::Con(TypeCtor::TypeVariable(_)), _) | (_, Type::Con(TypeCtor::TypeVariable(_))) => Ok(Subst::empty()),
             _ => Err(TypeError::UnificationError(t1.display_for_diagnostics(), t2.display_for_diagnostics()).into()),
         }
     }
 
     /// Unify a type variable with a type (performs occurs check and validates bounds/constraints)
-    fn unify_var(tv: &TypeVar, t: &Type, registry: &TypeVarConstraintRegistry) -> Result<Subst> {
+    fn unify_var(
+        tv: &TypeVar, t: &Type, registry: &TypeVarConstraintRegistry, class_registry: Option<&ClassRegistry>,
+    ) -> Result<Subst> {
         match t {
             Type::Var(tv2) if tv == tv2 => Ok(Subst::empty()),
             _ => {
@@ -231,7 +250,7 @@ impl Unifier {
                     return Err(TypeError::OccursCheckFailed(tv.clone(), t.to_string()).into());
                 }
 
-                if let Err(msg) = registry.validate(tv.id, t) {
+                if let Err(msg) = registry.validate_with_class_registry(tv.id, t, class_registry) {
                     return Err(TypeError::UnificationError(format!("TypeVar {tv}"), format!("{t} ({msg})")).into());
                 }
 
@@ -273,7 +292,9 @@ impl Unifier {
     ///
     /// TODO: Subset relationships
     /// TODO: Find bijections
-    fn unify_unions(types1: &[Type], types2: &[Type], registry: &TypeVarConstraintRegistry) -> Result<Subst> {
+    fn unify_unions(
+        types1: &[Type], types2: &[Type], registry: &TypeVarConstraintRegistry, class_registry: Option<&ClassRegistry>,
+    ) -> Result<Subst> {
         if types1.len() != types2.len() {
             return Err(TypeError::UnificationError(
                 format!("union with {} alternatives", types1.len()),
@@ -289,7 +310,7 @@ impl Unifier {
 
         let mut subst = Subst::empty();
         for (t1, t2) in sorted1.iter().zip(sorted2.iter()) {
-            let s = Self::unify_impl(&subst.apply(t1), &subst.apply(t2), registry)?;
+            let s = Self::unify_impl(&subst.apply(t1), &subst.apply(t2), registry, class_registry)?;
             subst = s.compose(subst);
         }
 
@@ -315,11 +336,13 @@ impl Unifier {
     /// - `Union[Var('t), None]` ~ `int` → `['t ↦ int]`
     /// - `Union[int, str]` ~ `int` → empty substitution (picks int branch)
     /// - `Union[Calculator, None]` ~ `None` → empty substitution (picks None branch)
-    fn unify_union_with_type(union_types: &[Type], t: &Type, registry: &TypeVarConstraintRegistry) -> Result<Subst> {
+    fn unify_union_with_type(
+        union_types: &[Type], t: &Type, registry: &TypeVarConstraintRegistry, class_registry: Option<&ClassRegistry>,
+    ) -> Result<Subst> {
         let mut errors = Vec::new();
 
         for union_member in union_types {
-            match Self::unify_impl(union_member, t, registry) {
+            match Self::unify_impl(union_member, t, registry, class_registry) {
                 Ok(subst) => {
                     return Ok(subst);
                 }
@@ -342,7 +365,7 @@ impl Unifier {
     /// Unify record types (simplified row polymorphism)
     fn unify_records(
         fields1: &[(String, Type)], row1: &Option<TypeVar>, fields2: &[(String, Type)], row2: &Option<TypeVar>,
-        registry: &TypeVarConstraintRegistry,
+        registry: &TypeVarConstraintRegistry, class_registry: Option<&ClassRegistry>,
     ) -> Result<Subst> {
         let mut subst = Subst::empty();
         let map1: std::collections::HashMap<_, _> = fields1.iter().map(|(k, v)| (k, v)).collect();
@@ -350,7 +373,7 @@ impl Unifier {
         let mut unified_fields = FxHashSet::default();
         for (name, type1) in &map1 {
             if let Some(type2) = map2.get(name) {
-                let s = Self::unify_impl(&subst.apply(type1), &subst.apply(type2), registry)?;
+                let s = Self::unify_impl(&subst.apply(type1), &subst.apply(type2), registry, class_registry)?;
                 subst = s.compose(subst);
                 unified_fields.insert(name);
             }
@@ -384,7 +407,7 @@ impl Unifier {
                 Ok(s.compose(subst))
             }
             (_, _, Some(rv1), Some(rv2)) => {
-                let s = Self::unify_var(rv1, &Type::Var(rv2.clone()), registry)?;
+                let s = Self::unify_var(rv1, &Type::Var(rv2.clone()), registry, class_registry)?;
                 Ok(s.compose(subst))
             }
             _ => Err(TypeError::UnificationError(
@@ -417,7 +440,7 @@ impl Unifier {
         let mut subst = Subst::empty();
 
         for t in &types[1..] {
-            let s = Self::unify_impl(&subst.apply(&result_type), &subst.apply(t), registry)?;
+            let s = Self::unify_impl(&subst.apply(&result_type), &subst.apply(t), registry, None)?;
             subst = s.compose(subst);
             result_type = subst.apply(&result_type);
         }

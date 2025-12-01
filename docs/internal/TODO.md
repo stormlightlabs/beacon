@@ -4,69 +4,46 @@ Current milestone tasks and technical debt tracking. All integration tests are t
 
 See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
-## Type Checking Modes (v0.4.0)
-
-Implement strict/balanced/relaxed mode enforcement with mode-aware diagnostic filtering.
-
-### Configuration & Infrastructure
-
-- [x] Design mode configuration schema (strict/balanced/relaxed)
-- [x] Add `mode` field to workspace/file configuration with validation
-- [x] Implement per-file mode override mechanism (e.g., `# beacon: mode=strict`)
-- [x] LSP integration: show current mode in status/diagnostics
-- [x] Mode detection and validation in config loader
-- [x] Integration with existing type checker context
-- [x] Add sample `beacon.toml` to sample workspace (`samples/`)
-
-### Annotation Coverage and Type Inference Validation
-
-- [x] Walk AST to find annotated assignments and parameters
-- [x] Look up inferred types from `result.type_map` for annotated nodes
-- [x] Compare user annotations with inferred types
-- [x] Generate mode-aware diagnostics (error/warning/silent based on strict/balanced/relaxed)
-- [x] Detect missing or partial annotations for coverage warnings
-
-### Strict Mode Implementation
-
-- [x] Reject implicit Any types in function signatures
-- [x] Require explicit return type annotations on functions
-- [x] Require explicit parameter type annotations (no inference)
-- [x] Error on unannotated class attributes
-- [x] Reject bare `except:` clauses
-
-### Balanced Mode Implementation
-
-- [x] Type inference with warnings on ambiguous cases
-- [x] Warn on implicit Any from missing annotations
-- [x] Suggest type annotations where inference is uncertain
-- [x] Allow gradual typing (mixed annotated/unannotated code)
-- [x] Improve type inference to populate type_map for simple function parameters and return types
-
-### ~~Loose~~ Relaxed Mode Implementation
-
-- [x] Rename "loose" mode to "relaxed" mode across codebase & docs
-- [x] Permissive type inference (current default behavior)
-- [x] Minimal warnings for missing annotations
-- [x] Allow implicit Any without errors or warnings
-- [x] Maximum flexibility for gradual adoption
-
-### Diagnostic Filtering & Categorization
-
-- [x] Mode-aware diagnostic severity mapping (error vs warning vs silent)
-- [x] Filter type diagnostics based on current mode
-- [x] Diagnostic categorization by mode level (strict-only, balanced-only, etc.)
-- [x] Preserve existing diagnostic codes (BEA0xx) with mode context
-- [x] New diagnostic codes: ANN011 (parameter implicit Any), ANN012 (return type implicit Any)
-
 ## Typeshed Integration (v0.5.0)
 
-- [ ] Implement [typeshed-stdlib-mirror](https://github.com/stormlightlabs/typeshed-stdlib-mirror) integration
-    - [ ] Version-aware stub selection (3.8, 3.9, 3.10, 3.11, 3.12+)
-- [ ] Stub loader with merge strategy (custom stubs override typeshed)
-- [ ] Incremental stub updates without breaking analysis
-- [ ] Stub cache invalidation on Python version change
-- [ ] Documentation for stub sources and update process
-- [ ] Tests for version-specific stub behavior
+### Build Process & Stub Distribution
+
+- [x] Git submodule + bundle at build time (reproducible, version-controlled)
+- [x] Version manifest for bundled stubs (commit hash, last updated timestamp)
+
+### Existing Custom Stubs Migration
+
+- [x] Audited existing custom stubs vs typeshed equivalents
+- [x] Migrated stdlib stubs (builtins, typing, dataclasses, enum, os, pathlib) to typeshed
+- [x] Kept capabilities_support.pyi (Beacon-specific) in `/stubs`
+- [x] Moved overload_test.pyi to test fixtures (`crates/server/tests/fixtures/`)
+- [x] Updated all tests to use embedded typeshed stubs
+
+### Stub Loader Architecture
+
+- [x] Implemented layered stub lookup:
+    1. Manual stubs (config.stub_paths, highest priority)
+    2. Stub packages (*-stubs directories)
+    3. Inline stubs (.pyi files in project)
+    4. Typeshed stubs (embedded at build time, fallback)
+- [x] Module resolution via `get_embedded_stub()` for typeshed stubs
+- [x] On-demand stub loading during constraint generation
+- [x] Builtins loaded upfront, other stubs loaded on import
+
+### Method Resolution for Inherited Methods
+
+- [x] Implement method lookup through inheritance chain
+- [x] Support Protocol base class method resolution
+- [x] Fix stub parsing edge cases: Some builtin methods (str.upper, str.lower, dict.get) not found due to class registration timing or overload processing
+- [x] Fix TypeVar bound validation false positives: Protocol bounds (SupportsNext, SupportsAdd, Awaitable) incorrectly reject valid types
+- [x] Improve structural subtyping for protocol types in is_subtype_of
+- [x] Handle implicit protocol satisfaction in TypeVar bound inference
+
+### Tests & Documentation
+
+- [x] Document typeshed version and update process
+- [x] Integration test: custom stub overrides typeshed stub
+- [x] Performance test: stub resolution overhead on large projects
 
 ## Linter Tech Debt
 

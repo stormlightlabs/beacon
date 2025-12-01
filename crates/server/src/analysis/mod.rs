@@ -61,13 +61,23 @@ pub struct Analyzer {
 impl Analyzer {
     /// Create a new analyzer with the given configuration
     pub fn new(config: Config, documents: DocumentManager) -> Self {
+        let stub_cache = Arc::new(std::sync::RwLock::new(beacon_analyzer::StubCache::new()));
+        let stdlib_modules = beacon_analyzer::EMBEDDED_STDLIB_MODULES;
+        for module_name in stdlib_modules.iter().copied() {
+            if let Some(stub) = beacon_analyzer::get_embedded_stub(module_name) {
+                if let Ok(mut cache) = stub_cache.write() {
+                    cache.insert(module_name.to_string(), stub);
+                }
+            }
+        }
+
         Self {
             config,
             cache: CacheManager::new(),
             _type_var_gen: TypeVarGen::new(),
             documents,
             position_maps: FxHashMap::default(),
-            stub_cache: None,
+            stub_cache: Some(stub_cache),
         }
     }
 
@@ -2345,13 +2355,8 @@ method = s.upper
 
     #[test]
     fn test_overload_parsing_from_stub() {
-        let workspace_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .to_path_buf();
-        let stub_path = workspace_root.join("stubs/overload_test.pyi");
+        let server_crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let stub_path = server_crate_dir.join("tests/fixtures/overload_test.pyi");
         let mut class_registry = ClassRegistry::new();
 
         let stub = crate::workspace::StubFile {
