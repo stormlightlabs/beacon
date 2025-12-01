@@ -19,4 +19,8 @@ pnpm-debug.log*
 #.idea/
 *.log
 lsp.log*
+
+# AI/LLM related files
 .claude/
+AGENTS.md
+STATUS.md
