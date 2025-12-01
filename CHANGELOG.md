@@ -8,6 +8,29 @@
 
 ### Fixed
 
+## [0.5.0] - 2025-12-01
+
+### Added
+
+- `cac2496`
+    - Typeshed stdlib integration with automated build-time embedding
+    - Method resolution through inheritance chain with overload support
+    - Structural subtyping checks using class metadata
+    - Type conversion to structural representations for protocol satisfaction
+    - Tracing instrumentation throughout type checker and analyzer
+    - Criterion benchmarks for type inference, LSP handlers, parser, and stub resolution
+    - Comprehensive architecture documentation for typechecker, static analyzer, formatter, linter, LSP server, and typeshed integration
+
+### Changed
+
+- `cac2496`
+    - Migrated from custom stubs to embedded typeshed stdlib stubs
+    - Enhanced constraint solver with improved method resolution capabilities
+    - Improved TypeVar registry handling with protocol bounds support
+    - Reorganized development documentation into separate component guides
+
+### Fixed
+
 ## [0.4.0] - 2025-11-21
 
 ### Added

@@ -1,6 +1,6 @@
 id = "beacon-zed"
 name = "Beacon"
-version = "0.1.0"
+version = "0.5.0"
 schema_version = 1
 authors = ["Owais J <desertthunder.dev@gmail.com>"]
 description = "Python language server & HM type checker"

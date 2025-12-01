@@ -151,7 +151,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "beacon-analyzer"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "beacon-constraint",
  "beacon-core",
@@ -166,7 +166,7 @@ dependencies = [
 
 [[package]]
 name = "beacon-cli"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "beacon-constraint"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "beacon-core",
  "beacon-parser",
@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "beacon-core"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "beacon-lsp"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "beacon-analyzer",
  "beacon-constraint",
@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "beacon-parser"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "beacon-core",
  "html2md",
@@ -268,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "beacon-zed"
-version = "0.1.0"
+version = "0.5.0"
 dependencies = [
  "zed_extension_api",
 ]
