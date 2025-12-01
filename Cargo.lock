@@ -227,6 +227,7 @@ dependencies = [
  "beacon-constraint",
  "beacon-core",
  "beacon-parser",
+ "clap",
  "criterion",
  "dirs",
  "ignore",

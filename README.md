@@ -29,6 +29,29 @@ Beacon works with any LSP-compatible editor:
 - Neovim (via standard LSP client)
 - Helix (via standard LSP client)
 
+## Usage Modes
+
+### Stdio (Default)
+
+For editor integration, Beacon uses stdio mode by default:
+
+```bash
+# Directly with the lsp or the CLI
+beacon-lsp # or beacon lsp
+```
+
+### TCP
+
+For debugging, testing, or remote connections, use TCP mode:
+
+```bash
+# Server binary with defaults (127.0.0.1:9350)
+beacon lsp --tcp --host 127.0.0.1 --port 9350
+
+# Explicit stdio mode
+beacon-lsp --stdio
+```
+
 ## Quick Start
 
 See the [Development Quick Start Guide](./docs/src/development.md) for installation, usage, and editor setup instructions

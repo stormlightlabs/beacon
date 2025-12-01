@@ -85,7 +85,45 @@ impl Features {
     }
 }
 
+/// Shared state that persists across LSP connections (for TCP mode)
+pub struct SharedState {
+    documents: Arc<DocumentManager>,
+    analyzer: Arc<RwLock<analysis::Analyzer>>,
+    workspace: Arc<RwLock<Workspace>>,
+    features: Arc<Features>,
+    interpreter_path: Option<std::path::PathBuf>,
+}
+
+impl SharedState {
+    /// Create new shared state for TCP mode where state persists across reconnections
+    pub fn new() -> Self {
+        let config = Config::default();
+        let documents = Arc::new(DocumentManager::new().expect("Failed to create document manager"));
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), (*documents).clone())));
+
+        let analyzer = Arc::new(RwLock::new(analysis::Analyzer::with_workspace(
+            config,
+            (*documents).clone(),
+            workspace.clone(),
+        )));
+
+        let interpreter_path = interpreter::find_python_interpreter(None);
+        let introspection_cache = cache::IntrospectionCache::new(None);
+
+        let features = Arc::new(Features::new(
+            (*documents).clone(),
+            interpreter_path.clone(),
+            introspection_cache,
+            workspace.clone(),
+            analyzer.clone(),
+        ));
+
+        Self { documents, analyzer, workspace, features, interpreter_path }
+    }
+}
+
 impl Backend {
+    /// Create a new Backend with fresh state (stdio mode)
     pub fn new(client: Client) -> Self {
         let config = Config::default();
         let documents = Arc::new(DocumentManager::new().expect("Failed to create document manager"));
@@ -109,6 +147,18 @@ impl Backend {
         ));
 
         Self { client, documents, analyzer, workspace, features, interpreter_path }
+    }
+
+    /// Create a new Backend using shared state (TCP mode with persistent state)
+    pub fn with_shared_state(client: Client, shared: &SharedState) -> Self {
+        Self {
+            client,
+            documents: shared.documents.clone(),
+            analyzer: shared.analyzer.clone(),
+            workspace: shared.workspace.clone(),
+            features: shared.features.clone(),
+            interpreter_path: shared.interpreter_path.clone(),
+        }
     }
 
     /// Publish diagnostics for a document
@@ -1244,5 +1294,46 @@ mod tests {
 
         assert!(result.capabilities.document_formatting_provider.is_some());
         assert!(result.capabilities.document_range_formatting_provider.is_some());
+    }
+
+    #[test]
+    fn test_shared_state_creation() {
+        let shared = SharedState::new();
+
+        assert!(Arc::strong_count(&shared.documents) > 0);
+        assert!(Arc::strong_count(&shared.analyzer) > 0);
+        assert!(Arc::strong_count(&shared.workspace) > 0);
+        assert!(Arc::strong_count(&shared.features) > 0);
+    }
+
+    #[test]
+    fn test_backend_with_shared_state() {
+        let shared = SharedState::new();
+
+        let (service1, _socket1) = LspService::new(|client| Backend::with_shared_state(client, &shared));
+        let (service2, _socket2) = LspService::new(|client| Backend::with_shared_state(client, &shared));
+
+        let backend1 = service1.inner();
+        let backend2 = service2.inner();
+
+        assert!(Arc::ptr_eq(&backend1.documents, &backend2.documents));
+        assert!(Arc::ptr_eq(&backend1.analyzer, &backend2.analyzer));
+        assert!(Arc::ptr_eq(&backend1.workspace, &backend2.workspace));
+        assert!(Arc::ptr_eq(&backend1.features, &backend2.features));
+    }
+
+    #[test]
+    fn test_shared_state_vs_fresh_state() {
+        let shared = SharedState::new();
+
+        let (service_shared, _) = LspService::new(|client| Backend::with_shared_state(client, &shared));
+        let backend_shared = service_shared.inner();
+
+        let (service_fresh, _) = LspService::new(Backend::new);
+        let backend_fresh = service_fresh.inner();
+
+        assert!(!Arc::ptr_eq(&backend_shared.documents, &backend_fresh.documents));
+        assert!(!Arc::ptr_eq(&backend_shared.analyzer, &backend_fresh.analyzer));
+        assert!(!Arc::ptr_eq(&backend_shared.workspace, &backend_fresh.workspace));
     }
 }

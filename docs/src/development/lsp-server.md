@@ -221,6 +221,35 @@ indent_size = 4
 
 Configuration can be specified in `beacon.toml`, `pyproject.toml`, or sent via LSP workspace/didChangeConfiguration.
 
+## Communication Modes
+
+The LSP server supports two communication modes: stdio (default) and TCP.
+
+### Stdio
+
+Stdio is the standard LSP communication method. The server reads requests from stdin and writes responses to stdout.
+
+```bash
+beacon-lsp                # or beacon lsp - Default
+beacon-lsp --stdio        # Explicit stdio mode
+```
+
+Editors typically launch the server automatically and communicate via pipes. Each editor session creates a new server process with fresh state.
+
+### TCP
+
+TCP mode allows the server to accept network connections. This is useful for debugging, testing, and remote development:
+
+```bash
+beacon lsp --tcp --host 127.0.0.1 --port 9350   # Defaults: 127.0.0.1:9350
+```
+
+In TCP mode, the server:
+
+- Runs indefinitely, accepting connections in a loop
+- Handles one client connection at a time (sequential)
+- Maintains state across reconnections (documents, workspace, analyzer)
+
 ## Limitations
 
 Workspace indexing is synchronous during initialization, which can cause delays on large projects with thousands of Python files.

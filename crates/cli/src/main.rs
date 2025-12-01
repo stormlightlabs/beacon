@@ -111,9 +111,22 @@ enum Commands {
     },
     /// Start Beacon Language Server
     Lsp {
-        /// Use TCP instead of stdio
+        /// Use stdio for communication (default)
+        #[arg(long, conflicts_with_all = ["tcp", "host", "port"])]
+        stdio: bool,
+
+        /// Use TCP for communication
         #[arg(long)]
-        tcp: Option<u16>,
+        tcp: bool,
+
+        /// Host to bind TCP server to (requires --tcp)
+        #[arg(long, default_value = "127.0.0.1", requires = "tcp")]
+        host: String,
+
+        /// Port to bind TCP server to (requires --tcp)
+        #[arg(long, default_value = "9350", requires = "tcp")]
+        port: u16,
+
         /// Log file path for debugging
         #[arg(long)]
         log_file: Option<PathBuf>,
@@ -255,7 +268,7 @@ async fn main() -> Result<()> {
         Commands::Check { file } => check_command(&read_input(file)?),
         Commands::Resolve { file, verbose } => resolve_command(&read_input(file)?, verbose),
         Commands::Typecheck { paths, format } => typecheck_command(paths, format).await,
-        Commands::Lsp { tcp, log_file } => lsp_command(tcp, log_file).await,
+        Commands::Lsp { stdio, tcp, host, port, log_file } => lsp_command(stdio, tcp, host, port, log_file).await,
         Commands::Format { paths, write, check, output } => format_command(paths, write, check, output),
         Commands::Analyze { target, format, show_cfg, show_types, lint_only, dataflow_only } => {
             analyze_command(target, format, show_cfg, show_types, lint_only, dataflow_only)
@@ -539,8 +552,7 @@ async fn typecheck_command(paths: Vec<PathBuf>, format: OutputFormat) -> Result<
     Ok(())
 }
 
-/// TODO: Implement TCP server
-async fn lsp_command(tcp: Option<u16>, log_file: Option<PathBuf>) -> Result<()> {
+async fn lsp_command(_stdio: bool, tcp: bool, host: String, port: u16, log_file: Option<PathBuf>) -> Result<()> {
     if let Some(path) = log_file {
         let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
         let filename = path
@@ -567,13 +579,12 @@ async fn lsp_command(tcp: Option<u16>, log_file: Option<PathBuf>) -> Result<()> 
             .init();
     }
 
-    if let Some(port) = tcp {
-        tracing::info!("Starting Beacon LSP server on TCP port {}", port);
-        eprintln!("TCP mode not yet implemented. Use stdio mode (default).");
-        std::process::exit(1);
+    if tcp {
+        tracing::info!("Starting Beacon LSP server on TCP {}:{}", host, port);
+        beacon_lsp::run_server_tcp(&host, port).await?;
     } else {
         tracing::info!("Starting Beacon LSP server on stdio");
-        beacon_lsp::run_server().await;
+        beacon_lsp::run_server_stdio().await;
     }
 
     Ok(())
@@ -2490,5 +2501,80 @@ result = obj.method(10)
         let errors = vec![];
         let path = PathBuf::from("test.py");
         format_compact(&errors, &path);
+    }
+
+    #[test]
+    fn test_lsp_command_default_stdio() {
+        let cli = Cli::try_parse_from(&["beacon", "lsp"]);
+        assert!(cli.is_ok());
+
+        if let Commands::Lsp { stdio, tcp, host, port, .. } = cli.unwrap().command {
+            assert!(!stdio);
+            assert!(!tcp);
+            assert_eq!(host, "127.0.0.1");
+            assert_eq!(port, 9350);
+        } else {
+            panic!("Expected Lsp command");
+        }
+    }
+
+    #[test]
+    fn test_lsp_command_explicit_stdio() {
+        let cli = Cli::try_parse_from(&["beacon", "lsp", "--stdio"]);
+        assert!(cli.is_ok());
+
+        if let Commands::Lsp { stdio, tcp, .. } = cli.unwrap().command {
+            assert!(stdio);
+            assert!(!tcp);
+        } else {
+            panic!("Expected Lsp command");
+        }
+    }
+
+    #[test]
+    fn test_lsp_command_tcp_mode() {
+        let cli = Cli::try_parse_from(&["beacon", "lsp", "--tcp"]);
+        assert!(cli.is_ok());
+
+        if let Commands::Lsp { stdio, tcp, host, port, .. } = cli.unwrap().command {
+            assert!(!stdio);
+            assert!(tcp);
+            assert_eq!(host, "127.0.0.1");
+            assert_eq!(port, 9350);
+        } else {
+            panic!("Expected Lsp command");
+        }
+    }
+
+    #[test]
+    fn test_lsp_command_tcp_custom_config() {
+        let cli = Cli::try_parse_from(&["beacon", "lsp", "--tcp", "--host", "0.0.0.0", "--port", "8080"]);
+        assert!(cli.is_ok());
+
+        if let Commands::Lsp { tcp, host, port, .. } = cli.unwrap().command {
+            assert!(tcp);
+            assert_eq!(host, "0.0.0.0");
+            assert_eq!(port, 8080);
+        } else {
+            panic!("Expected Lsp command");
+        }
+    }
+
+    #[test]
+    fn test_lsp_command_conflicts() {
+        let result = Cli::try_parse_from(&["beacon", "lsp", "--stdio", "--tcp"]);
+        assert!(
+            result.is_err(),
+            "Expected error when both --stdio and --tcp are specified"
+        );
+    }
+
+    #[test]
+    fn test_lsp_command_requires_tcp() {
+        let result = Cli::try_parse_from(&["beacon", "lsp", "--host", "0.0.0.0"]);
+        assert!(result.is_err(), "Expected error when --host is used without --tcp");
+
+        let result = Cli::try_parse_from(&["beacon", "lsp", "--port", "8080"]);
+        assert!(result.is_err(), "Expected error when --port is used without --tcp");
     }
 }
