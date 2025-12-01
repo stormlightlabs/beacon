@@ -19,3 +19,4 @@ pnpm-debug.log*
 #.idea/
 *.log
 lsp.log*
+.claude/
