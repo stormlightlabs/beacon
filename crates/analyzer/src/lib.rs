@@ -20,7 +20,10 @@ pub mod rules;
 pub mod type_env;
 pub mod walker;
 
-pub use cfg::{BasicBlock, BlockId, CfgBuilder, ControlFlowGraph, EdgeKind};
+pub use cfg::{
+    BasicBlock, BlockId, CallGraph, CallResolver, CallSite, CfgBuilder, ControlFlowGraph, EdgeKind, FunctionId,
+    ModuleCFG, ModuleCFGBuilder, WorkspaceCFG,
+};
 pub use const_eval::{ConstValue, evaluate_const_expr};
 pub use data_flow::{DataFlowAnalyzer, DataFlowResult, UnreachableCode, UnusedVariable, UseBeforeDef};
 pub use embedded_stdlib_modules::EMBEDDED_STDLIB_MODULES;

@@ -2,10 +2,16 @@
 //!
 //! Represents the control flow structure of Python functions for static analysis.
 //! Each function gets its own CFG with basic blocks connected by edges.
+//!
+//! Cross-module CFG construction enables workspace-wide analysis including:
+//! - Inter-function call graph
+//! - Cross-file reachability analysis
+//! - Transitive type propagation across module boundaries
 
-use beacon_parser::AstNode;
+use beacon_parser::{AstNode, ScopeId};
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
+use url::Url;
 
 /// Unique identifier for basic blocks
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -127,6 +133,408 @@ impl ControlFlowGraph {
     }
 }
 
+/// Unique identifier for a function across the workspace
+///
+/// Combines file URI and scope ID to uniquely identify functions across multiple modules.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FunctionId {
+    /// URI of the file containing this function
+    pub uri: Url,
+    /// Scope ID from the symbol table
+    pub scope_id: ScopeId,
+    /// Function name for debugging
+    pub name: String,
+}
+
+impl FunctionId {
+    pub fn new(uri: Url, scope_id: ScopeId, name: String) -> Self {
+        Self { uri, scope_id, name }
+    }
+}
+
+/// Type of function call
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallKind {
+    /// Direct function call (e.g., foo())
+    Direct,
+    /// Method call (e.g., obj.method())
+    Method,
+    /// Dynamic call (e.g., callable_var())
+    Dynamic,
+}
+
+/// A call site within a basic block
+///
+/// Represents a function or method invocation that creates an inter-procedural edge in the call graph.
+#[derive(Debug, Clone)]
+pub struct CallSite {
+    /// Block containing this call
+    pub block_id: BlockId,
+    /// Statement index within the block
+    pub stmt_index: usize,
+    /// Resolved callee function (None if unresolved or dynamic)
+    pub receiver: Option<FunctionId>,
+    /// Type of call
+    pub kind: CallKind,
+    /// Source location for diagnostics
+    pub line: usize,
+    pub col: usize,
+}
+
+impl CallSite {
+    pub fn new(id: BlockId, index: usize, rec: Option<FunctionId>, kind: CallKind, ln: usize, col: usize) -> Self {
+        Self { block_id: id, stmt_index: index, receiver: rec, kind, line: ln, col }
+    }
+}
+
+/// Call graph mapping functions to their call sites and callees
+///
+/// Maintains both forward edges (function -> callees) and
+/// reverse edges (function -> callers) for efficient traversal.
+#[derive(Debug, Clone)]
+pub struct CallGraph {
+    /// Maps each function to the call sites it contains
+    call_sites: FxHashMap<FunctionId, Vec<CallSite>>,
+    /// Reverse edges: maps each function to its callers
+    callers: FxHashMap<FunctionId, Vec<FunctionId>>,
+}
+
+impl CallGraph {
+    pub fn new() -> Self {
+        Self { call_sites: FxHashMap::default(), callers: FxHashMap::default() }
+    }
+
+    /// Add a call site for a function
+    pub fn add_call_site(&mut self, caller: FunctionId, call_site: CallSite) {
+        self.call_sites
+            .entry(caller.clone())
+            .or_default()
+            .push(call_site.clone());
+
+        if let Some(callee) = &call_site.receiver {
+            self.callers.entry(callee.clone()).or_default().push(caller);
+        }
+    }
+
+    /// Get all call sites for a function
+    pub fn get_call_sites(&self, function: &FunctionId) -> Option<&Vec<CallSite>> {
+        self.call_sites.get(function)
+    }
+
+    /// Get all callers of a function
+    pub fn get_callers(&self, function: &FunctionId) -> Option<&Vec<FunctionId>> {
+        self.callers.get(function)
+    }
+
+    /// Get all callees for a function
+    pub fn get_callees(&self, function: &FunctionId) -> Vec<FunctionId> {
+        self.call_sites
+            .get(function)
+            .map(|sites| sites.iter().filter_map(|site| site.receiver.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Compute reachable functions from a set of entry points
+    ///
+    /// Uses BFS to find all functions transitively called from the given entry points.
+    /// This method handles circular dependencies gracefully by tracking visited nodes.
+    pub fn reachable_functions(&self, entry_points: &[FunctionId]) -> Vec<FunctionId> {
+        let mut visited = rustc_hash::FxHashSet::default();
+        let mut queue = VecDeque::new();
+
+        for entry in entry_points {
+            if visited.insert(entry.clone()) {
+                queue.push_back(entry.clone());
+            }
+        }
+
+        while let Some(function) = queue.pop_front() {
+            for callee in self.get_callees(&function) {
+                if visited.insert(callee.clone()) {
+                    queue.push_back(callee);
+                }
+            }
+        }
+
+        visited.into_iter().collect()
+    }
+
+    /// Detect strongly connected components (SCCs) using Tarjan's algorithm
+    ///
+    /// Returns a vector of SCCs, where each SCC is a vector of FunctionIds.
+    /// Functions in the same SCC are mutually recursive (can reach each other).
+    /// SCCs are returned in reverse topological order.
+    pub fn strongly_connected_components(&self) -> Vec<Vec<FunctionId>> {
+        let mut tarjan = TarjanSCC::new(self);
+        tarjan.run()
+    }
+
+    /// Check if there are any circular dependencies in the call graph
+    pub fn has_circular_dependencies(&self) -> bool {
+        self.strongly_connected_components().iter().any(|scc| scc.len() > 1)
+    }
+
+    /// Get all functions involved in circular dependencies
+    pub fn circular_dependency_functions(&self) -> rustc_hash::FxHashSet<FunctionId> {
+        self.strongly_connected_components()
+            .into_iter()
+            .filter(|scc| scc.len() > 1)
+            .flatten()
+            .collect()
+    }
+
+    /// Get all functions in the call graph
+    fn all_functions(&self) -> rustc_hash::FxHashSet<FunctionId> {
+        let mut functions = rustc_hash::FxHashSet::default();
+
+        for function in self.call_sites.keys() {
+            functions.insert(function.clone());
+        }
+
+        for function in self.callers.keys() {
+            functions.insert(function.clone());
+        }
+
+        functions
+    }
+}
+
+impl Default for CallGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Tarjan's algorithm for finding strongly connected components
+///
+/// Implements Tarjan's SCC algorithm to detect cycles and strongly connected components in the call graph.
+/// This is used to identify mutually recursive functions and handle circular dependencies gracefully.
+struct TarjanSCC<'a> {
+    graph: &'a CallGraph,
+    index_counter: usize,
+    stack: Vec<FunctionId>,
+    on_stack: rustc_hash::FxHashSet<FunctionId>,
+    indices: FxHashMap<FunctionId, usize>,
+    lowlinks: FxHashMap<FunctionId, usize>,
+    sccs: Vec<Vec<FunctionId>>,
+}
+
+impl<'a> TarjanSCC<'a> {
+    fn new(graph: &'a CallGraph) -> Self {
+        Self {
+            graph,
+            index_counter: 0,
+            stack: Vec::new(),
+            on_stack: rustc_hash::FxHashSet::default(),
+            indices: FxHashMap::default(),
+            lowlinks: FxHashMap::default(),
+            sccs: Vec::new(),
+        }
+    }
+
+    fn run(&mut self) -> Vec<Vec<FunctionId>> {
+        let functions: Vec<FunctionId> = self.graph.all_functions().into_iter().collect();
+
+        for function in functions {
+            if !self.indices.contains_key(&function) {
+                self.strong_connect(function);
+            }
+        }
+
+        std::mem::take(&mut self.sccs)
+    }
+
+    fn strong_connect(&mut self, v: FunctionId) {
+        self.indices.insert(v.clone(), self.index_counter);
+        self.lowlinks.insert(v.clone(), self.index_counter);
+        self.index_counter += 1;
+
+        self.stack.push(v.clone());
+        self.on_stack.insert(v.clone());
+
+        for w in self.graph.get_callees(&v) {
+            if !self.indices.contains_key(&w) {
+                self.strong_connect(w.clone());
+                let w_lowlink = *self.lowlinks.get(&w).unwrap();
+                let v_lowlink = self.lowlinks.get_mut(&v).unwrap();
+                *v_lowlink = (*v_lowlink).min(w_lowlink);
+            } else if self.on_stack.contains(&w) {
+                let w_index = *self.indices.get(&w).unwrap();
+                let v_lowlink = self.lowlinks.get_mut(&v).unwrap();
+                *v_lowlink = (*v_lowlink).min(w_index);
+            }
+        }
+
+        if self.lowlinks.get(&v) == self.indices.get(&v) {
+            let mut scc = Vec::new();
+            loop {
+                let w = self.stack.pop().unwrap();
+                self.on_stack.remove(&w);
+                scc.push(w.clone());
+                if w == v {
+                    break;
+                }
+            }
+            self.sccs.push(scc);
+        }
+    }
+}
+
+/// Module-level CFG containing all functions and module initialization
+///
+/// Represents the control flow for an entire Python module, including module-level statements and all function definitions.
+#[derive(Debug, Clone)]
+pub struct ModuleCFG {
+    /// URI of the module file
+    pub uri: Url,
+    /// Module name (e.g., "foo.bar")
+    pub module_name: String,
+    /// CFG for module-level initialization code
+    pub module_init_cfg: ControlFlowGraph,
+    /// Per-function CFGs indexed by scope ID
+    pub function_cfgs: FxHashMap<ScopeId, ControlFlowGraph>,
+    /// Function names indexed by scope ID
+    function_names: FxHashMap<ScopeId, String>,
+    /// All call sites in this module
+    pub call_sites: Vec<CallSite>,
+}
+
+impl ModuleCFG {
+    pub fn new(uri: Url, module_name: String) -> Self {
+        Self {
+            uri,
+            module_name,
+            module_init_cfg: ControlFlowGraph::new(),
+            function_cfgs: FxHashMap::default(),
+            function_names: FxHashMap::default(),
+            call_sites: Vec::new(),
+        }
+    }
+
+    /// Add a function CFG to this module
+    pub fn add_function_cfg(&mut self, scope_id: ScopeId, name: String, cfg: ControlFlowGraph) {
+        self.function_cfgs.insert(scope_id, cfg);
+        self.function_names.insert(scope_id, name);
+    }
+
+    /// Add a call site to this module
+    pub fn add_call_site(&mut self, call_site: CallSite) {
+        self.call_sites.push(call_site);
+    }
+
+    /// Get all function IDs defined in this module
+    pub fn function_ids(&self) -> Vec<FunctionId> {
+        self.function_cfgs
+            .keys()
+            .map(|scope_id| {
+                let name = self
+                    .function_names
+                    .get(scope_id)
+                    .cloned()
+                    .unwrap_or_else(|| format!("func_{:?}", scope_id));
+                FunctionId::new(self.uri.clone(), *scope_id, name)
+            })
+            .collect()
+    }
+
+    /// Get a function CFG by scope ID
+    pub fn get_function_cfg(&self, scope_id: ScopeId) -> Option<&ControlFlowGraph> {
+        self.function_cfgs.get(&scope_id)
+    }
+}
+
+/// Workspace-wide CFG coordinating all modules and the call graph
+///
+/// Top-level container for cross-module CFG analysis, maintaining all module CFGs and the workspace-wide call graph.
+#[derive(Debug, Clone)]
+pub struct WorkspaceCFG {
+    /// All module CFGs indexed by URI
+    modules: FxHashMap<Url, ModuleCFG>,
+    /// Workspace-wide call graph
+    call_graph: CallGraph,
+    /// Entry point functions for whole-program analysis
+    entry_points: Vec<FunctionId>,
+}
+
+impl WorkspaceCFG {
+    pub fn new() -> Self {
+        Self { modules: FxHashMap::default(), call_graph: CallGraph::new(), entry_points: Vec::new() }
+    }
+
+    /// Add a module CFG to the workspace
+    pub fn add_module(&mut self, module_cfg: ModuleCFG) {
+        self.modules.insert(module_cfg.uri.clone(), module_cfg);
+    }
+
+    /// Get a module CFG by URI
+    pub fn get_module(&self, uri: &Url) -> Option<&ModuleCFG> {
+        self.modules.get(uri)
+    }
+
+    /// Get a mutable reference to a module CFG
+    pub fn get_module_mut(&mut self, uri: &Url) -> Option<&mut ModuleCFG> {
+        self.modules.get_mut(uri)
+    }
+
+    /// Get the call graph
+    pub fn call_graph(&self) -> &CallGraph {
+        &self.call_graph
+    }
+
+    /// Get mutable reference to call graph
+    pub fn call_graph_mut(&mut self) -> &mut CallGraph {
+        &mut self.call_graph
+    }
+
+    /// Add an entry point function
+    pub fn add_entry_point(&mut self, function_id: FunctionId) {
+        self.entry_points.push(function_id);
+    }
+
+    /// Get all entry points
+    pub fn entry_points(&self) -> &[FunctionId] {
+        &self.entry_points
+    }
+
+    /// Compute all reachable functions from entry points
+    pub fn reachable_functions(&self) -> Vec<FunctionId> {
+        self.call_graph.reachable_functions(&self.entry_points)
+    }
+
+    /// Perform cross-module reachability analysis
+    ///
+    /// Returns all blocks reachable from the given entry points, traversing across function and module boundaries.
+    pub fn cross_module_reachable_blocks(&self, entry_points: &[FunctionId]) -> FxHashMap<FunctionId, Vec<BlockId>> {
+        let mut reachable = FxHashMap::default();
+        let reachable_functions = self.call_graph.reachable_functions(entry_points);
+
+        for function_id in reachable_functions {
+            if let Some(module) = self.modules.get(&function_id.uri) {
+                if let Some(cfg) = module.function_cfgs.get(&function_id.scope_id) {
+                    let blocks = cfg.reachable_blocks();
+                    reachable.insert(function_id, blocks);
+                }
+            }
+        }
+
+        reachable
+    }
+
+    pub fn modules(&self) -> FxHashMap<Url, ModuleCFG> {
+        self.modules.clone()
+    }
+
+    pub fn entry_point_fns(self) -> Vec<FunctionId> {
+        self.entry_points
+    }
+}
+
+impl Default for WorkspaceCFG {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Context for building CFG, tracking loop and exception contexts
 #[derive(Debug, Clone)]
 struct BuildContext {
@@ -142,17 +550,183 @@ struct BuildContext {
 pub struct CfgBuilder {
     cfg: ControlFlowGraph,
     ctx: BuildContext,
+    /// Call sites discovered during CFG construction
+    call_sites: Vec<(BlockId, usize, AstNode)>,
+}
+
+/// Builder for constructing module-level CFGs
+///
+/// Builds a complete ModuleCFG including module initialization code and all function CFGs.
+pub struct ModuleCFGBuilder<'a> {
+    symbol_table: &'a beacon_parser::SymbolTable,
+    uri: Url,
+    module_name: String,
+    source: &'a str,
+}
+
+impl<'a> ModuleCFGBuilder<'a> {
+    pub fn new(symbol_table: &'a beacon_parser::SymbolTable, uri: Url, module_name: String, source: &'a str) -> Self {
+        Self { symbol_table, uri, module_name, source }
+    }
+
+    /// Build a ModuleCFG from an AST
+    ///
+    /// Constructs CFGs for the module initialization code and all function definitions,  resolving call sites using the symbol table.
+    pub fn build(&self, ast: &AstNode) -> ModuleCFG {
+        let mut module_cfg = ModuleCFG::new(self.uri.clone(), self.module_name.clone());
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                let mut init_builder = CfgBuilder::new();
+                init_builder.build_module(body);
+                let (init_cfg, init_call_sites) =
+                    init_builder.build_with_resolution(self.symbol_table, &self.uri, self.symbol_table.root_scope);
+                module_cfg.module_init_cfg = init_cfg;
+                for call_site in init_call_sites {
+                    module_cfg.add_call_site(call_site);
+                }
+
+                self.process_module_body(body, &mut module_cfg);
+            }
+            _ => {}
+        }
+
+        module_cfg
+    }
+
+    fn process_module_body(&self, body: &[AstNode], module_cfg: &mut ModuleCFG) {
+        for stmt in body {
+            match stmt {
+                AstNode::FunctionDef { name, body: func_body, line, col, .. } => {
+                    let byte_offset = self.line_col_to_byte_offset(*line, *col);
+                    let scope_id = self.symbol_table.find_scope_at_position(byte_offset);
+
+                    let mut builder = CfgBuilder::new();
+                    builder.build_function(func_body);
+                    let (cfg, call_sites) = builder.build_with_resolution(self.symbol_table, &self.uri, scope_id);
+
+                    module_cfg.add_function_cfg(scope_id, name.clone(), cfg);
+                    for call_site in call_sites {
+                        module_cfg.add_call_site(call_site);
+                    }
+                }
+                AstNode::ClassDef { body: class_body, .. } => self.process_module_body(class_body, module_cfg),
+                _ => {}
+            }
+        }
+    }
+
+    fn line_col_to_byte_offset(&self, line: usize, col: usize) -> usize {
+        let mut current_line = 1;
+        let mut byte_offset = 0;
+
+        for (i, ch) in self.source.char_indices() {
+            if current_line == line {
+                let mut current_col = 1;
+                for (j, _) in self.source[i..].char_indices() {
+                    if current_col == col {
+                        return i + j;
+                    }
+                    current_col += 1;
+                }
+                return i + self.source[i..].len();
+            }
+
+            if ch == '\n' {
+                current_line += 1;
+                byte_offset = i + 1;
+            }
+        }
+
+        byte_offset
+    }
+}
+
+/// Resolves call targets to FunctionIds using symbol tables
+///
+/// Performs call target resolution by analyzing call expressions and looking up the target function in the symbol table.
+/// Supports direct calls, method calls, and detects dynamic calls that cannot be statically resolved.
+pub struct CallResolver<'a> {
+    symbol_table: &'a beacon_parser::SymbolTable,
+    current_uri: &'a Url,
+    current_scope: beacon_parser::ScopeId,
+}
+
+impl<'a> CallResolver<'a> {
+    pub fn new(symbol_table: &'a beacon_parser::SymbolTable, uri: &'a Url, scope: beacon_parser::ScopeId) -> Self {
+        Self { symbol_table, current_uri: uri, current_scope: scope }
+    }
+
+    /// Resolve a call expression to a FunctionId and CallKind
+    pub fn resolve_call(&self, call_node: &AstNode) -> (Option<FunctionId>, CallKind) {
+        match call_node {
+            AstNode::Call { function, .. } => self.resolve_call_target(function),
+            _ => (None, CallKind::Dynamic),
+        }
+    }
+
+    fn resolve_call_target(&self, function: &AstNode) -> (Option<FunctionId>, CallKind) {
+        match function {
+            AstNode::Identifier { name, .. } => {
+                if let Some(symbol) = self.symbol_table.lookup_symbol(name, self.current_scope) {
+                    match symbol.kind {
+                        beacon_parser::SymbolKind::Function => {
+                            let func_id = FunctionId::new(self.current_uri.clone(), symbol.scope_id, name.clone());
+                            (Some(func_id), CallKind::Direct)
+                        }
+                        _ => (None, CallKind::Dynamic),
+                    }
+                } else {
+                    (None, CallKind::Direct)
+                }
+            }
+            // FIXME: Full method resolution requires type inference
+            AstNode::Attribute { .. } => (None, CallKind::Method),
+            _ => (None, CallKind::Dynamic),
+        }
+    }
 }
 
 impl CfgBuilder {
     pub fn new() -> Self {
         let cfg = ControlFlowGraph::new();
         let ctx = BuildContext { current: cfg.entry, loops: Vec::new(), finally_blocks: Vec::new() };
-        Self { cfg, ctx }
+        Self { cfg, ctx, call_sites: Vec::new() }
     }
 
     pub fn build(self) -> ControlFlowGraph {
         self.cfg
+    }
+
+    /// Get the discovered call sites (block_id, stmt_index, call_node)
+    pub fn call_sites(&self) -> &[(BlockId, usize, AstNode)] {
+        &self.call_sites
+    }
+
+    /// Extract call sites from the builder
+    pub fn take_call_sites(self) -> (ControlFlowGraph, Vec<(BlockId, usize, AstNode)>) {
+        (self.cfg, self.call_sites)
+    }
+
+    /// Build CFG and resolve call sites using symbol table
+    pub fn build_with_resolution(
+        self, symbol_table: &beacon_parser::SymbolTable, uri: &Url, scope_id: beacon_parser::ScopeId,
+    ) -> (ControlFlowGraph, Vec<CallSite>) {
+        let resolver = CallResolver::new(symbol_table, uri, scope_id);
+        let mut resolved_sites = Vec::new();
+
+        for (block_id, stmt_index, call_node) in &self.call_sites {
+            let (line, col) = match call_node {
+                AstNode::Call { line, col, .. } => (*line, *col),
+                _ => (0, 0),
+            };
+
+            let (receiver, kind) = resolver.resolve_call(call_node);
+            let call_site = CallSite::new(*block_id, *stmt_index, receiver, kind, line, col);
+            resolved_sites.push(call_site);
+        }
+
+        (self.cfg, resolved_sites)
     }
 
     /// Build CFG for a function body
@@ -165,27 +739,164 @@ impl CfgBuilder {
         self.cfg.add_edge(self.ctx.current, self.cfg.exit, EdgeKind::Normal);
     }
 
+    /// Build CFG for module-level initialization code
+    ///
+    /// Processes top-level statements in a module, excluding function and class definitions.
+    /// Module initialization runs sequentially when the module is imported.
+    pub fn build_module(&mut self, body: &[AstNode]) {
+        let mut stmt_index = 0;
+        for stmt in body {
+            match stmt {
+                AstNode::FunctionDef { .. } | AstNode::ClassDef { .. } => stmt_index += 1,
+                _ => self.build_stmt(stmt, &mut stmt_index),
+            }
+        }
+
+        self.cfg.add_edge(self.ctx.current, self.cfg.exit, EdgeKind::Normal);
+    }
+
+    /// Extract call sites from an expression recursively
+    fn extract_calls_from_expr(&mut self, expr: &AstNode, stmt_index: usize) {
+        match expr {
+            AstNode::Call { function, args, keywords, .. } => {
+                self.call_sites.push((self.ctx.current, stmt_index, expr.clone()));
+                self.extract_calls_from_expr(function, stmt_index);
+                for arg in args {
+                    self.extract_calls_from_expr(arg, stmt_index);
+                }
+                for (_, value) in keywords {
+                    self.extract_calls_from_expr(value, stmt_index);
+                }
+            }
+            AstNode::BinaryOp { left, right, .. } => {
+                self.extract_calls_from_expr(left, stmt_index);
+                self.extract_calls_from_expr(right, stmt_index);
+            }
+            AstNode::UnaryOp { operand, .. } => self.extract_calls_from_expr(operand, stmt_index),
+            AstNode::Attribute { object, .. } => self.extract_calls_from_expr(object, stmt_index),
+            AstNode::Subscript { value, slice, .. } => {
+                self.extract_calls_from_expr(value, stmt_index);
+                self.extract_calls_from_expr(slice, stmt_index);
+            }
+            AstNode::List { elements, .. } => {
+                for elem in elements {
+                    self.extract_calls_from_expr(elem, stmt_index);
+                }
+            }
+            AstNode::Set { elements, .. } => {
+                for elem in elements {
+                    self.extract_calls_from_expr(elem, stmt_index);
+                }
+            }
+            AstNode::Tuple { elements, .. } => {
+                for elem in elements {
+                    self.extract_calls_from_expr(elem, stmt_index);
+                }
+            }
+            AstNode::Dict { keys, values, .. } => {
+                for key in keys {
+                    self.extract_calls_from_expr(key, stmt_index);
+                }
+                for value in values {
+                    self.extract_calls_from_expr(value, stmt_index);
+                }
+            }
+            AstNode::ListComp { element, generators, .. } => {
+                self.extract_calls_from_expr(element, stmt_index);
+                for comprehension in generators {
+                    self.extract_calls_from_expr(&comprehension.iter, stmt_index);
+                    for cond in &comprehension.ifs {
+                        self.extract_calls_from_expr(cond, stmt_index);
+                    }
+                }
+            }
+            AstNode::DictComp { key, value, generators, .. } => {
+                self.extract_calls_from_expr(key, stmt_index);
+                self.extract_calls_from_expr(value, stmt_index);
+                for comprehension in generators {
+                    self.extract_calls_from_expr(&comprehension.iter, stmt_index);
+                    for cond in &comprehension.ifs {
+                        self.extract_calls_from_expr(cond, stmt_index);
+                    }
+                }
+            }
+            AstNode::SetComp { element, generators, .. } => {
+                self.extract_calls_from_expr(element, stmt_index);
+                for comprehension in generators {
+                    self.extract_calls_from_expr(&comprehension.iter, stmt_index);
+                    for cond in &comprehension.ifs {
+                        self.extract_calls_from_expr(cond, stmt_index);
+                    }
+                }
+            }
+            AstNode::GeneratorExp { element, generators, .. } => {
+                self.extract_calls_from_expr(element, stmt_index);
+                for comprehension in generators {
+                    self.extract_calls_from_expr(&comprehension.iter, stmt_index);
+                    for cond in &comprehension.ifs {
+                        self.extract_calls_from_expr(cond, stmt_index);
+                    }
+                }
+            }
+            AstNode::Compare { left, comparators, .. } => {
+                self.extract_calls_from_expr(left, stmt_index);
+                for comp in comparators {
+                    self.extract_calls_from_expr(comp, stmt_index);
+                }
+            }
+            AstNode::Lambda { body, .. } => self.extract_calls_from_expr(body, stmt_index),
+            AstNode::Yield { value, .. } => {
+                if let Some(val) = value {
+                    self.extract_calls_from_expr(val, stmt_index)
+                }
+            }
+            AstNode::YieldFrom { value, .. } => self.extract_calls_from_expr(value, stmt_index),
+            AstNode::Await { value, .. } => self.extract_calls_from_expr(value, stmt_index),
+            AstNode::Starred { value, .. } => self.extract_calls_from_expr(value, stmt_index),
+            AstNode::NamedExpr { value, .. } => self.extract_calls_from_expr(value, stmt_index),
+            _ => {}
+        }
+    }
+
     fn build_stmt(&mut self, stmt: &AstNode, stmt_index: &mut usize) {
         match stmt {
             AstNode::If { test, body, elif_parts, else_body, .. } => {
-                self.build_if(test, body, elif_parts, else_body, stmt_index);
+                self.build_if(test, body, elif_parts, else_body, stmt_index)
             }
             AstNode::For { target: _, iter: _, body, else_body, .. } => {
-                self.build_for(body, else_body.as_ref(), stmt_index);
+                self.build_for(body, else_body.as_ref(), stmt_index)
             }
-            AstNode::While { test: _, body, else_body, .. } => {
-                self.build_while(body, else_body.as_ref(), stmt_index);
-            }
+            AstNode::While { test: _, body, else_body, .. } => self.build_while(body, else_body.as_ref(), stmt_index),
             AstNode::Try { body, handlers, else_body, finally_body, .. } => {
-                self.build_try(body, handlers, else_body.as_ref(), finally_body.as_ref(), stmt_index);
+                self.build_try(body, handlers, else_body.as_ref(), finally_body.as_ref(), stmt_index)
             }
-            AstNode::With { items: _, body, .. } => {
-                self.build_with(body, stmt_index);
+            AstNode::With { items: _, body, .. } => self.build_with(body, stmt_index),
+            AstNode::Match { subject: _, cases, .. } => self.build_match(cases, stmt_index),
+            AstNode::Return { value, .. } => {
+                if let Some(val) = value {
+                    self.extract_calls_from_expr(val, *stmt_index);
+                }
+
+                if let Some(block) = self.cfg.blocks.get_mut(&self.ctx.current) {
+                    block.statements.push(*stmt_index);
+                }
+                *stmt_index += 1;
+
+                let exit_target = if self.ctx.finally_blocks.is_empty() {
+                    self.cfg.exit
+                } else {
+                    *self.ctx.finally_blocks.last().unwrap()
+                };
+                self.cfg.add_edge(self.ctx.current, exit_target, EdgeKind::Normal);
+
+                let unreachable = self.cfg.new_block();
+                self.ctx.current = unreachable;
             }
-            AstNode::Match { subject: _, cases, .. } => {
-                self.build_match(cases, stmt_index);
-            }
-            AstNode::Return { .. } | AstNode::Raise { .. } => {
+            AstNode::Raise { exc, .. } => {
+                if let Some(exception) = exc {
+                    self.extract_calls_from_expr(exception, *stmt_index);
+                }
+
                 if let Some(block) = self.cfg.blocks.get_mut(&self.ctx.current) {
                     block.statements.push(*stmt_index);
                 }
@@ -229,6 +940,26 @@ impl CfgBuilder {
                 self.ctx.current = unreachable;
             }
             _ => {
+                match stmt {
+                    AstNode::Assignment { value, .. } => self.extract_calls_from_expr(value, *stmt_index),
+                    AstNode::AnnotatedAssignment { value, .. } => {
+                        if let Some(val) = value {
+                            self.extract_calls_from_expr(val, *stmt_index);
+                        }
+                    }
+                    AstNode::Assert { test, msg, .. } => {
+                        self.extract_calls_from_expr(test, *stmt_index);
+                        if let Some(msg_expr) = msg {
+                            self.extract_calls_from_expr(msg_expr, *stmt_index);
+                        }
+                    }
+                    AstNode::Call { .. }
+                    | AstNode::Yield { .. }
+                    | AstNode::YieldFrom { .. }
+                    | AstNode::Await { .. } => self.extract_calls_from_expr(stmt, *stmt_index),
+                    _ => {}
+                }
+
                 if let Some(block) = self.cfg.blocks.get_mut(&self.ctx.current) {
                     block.statements.push(*stmt_index);
                 }
