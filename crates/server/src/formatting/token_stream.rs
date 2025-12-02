@@ -1,8 +1,7 @@
 //! Token stream generation from AST
 //!
 //! Converts a parsed AST into a stream of formatting tokens.
-//! Tokens represent syntactic elements with their associated metadata
-//! (position, whitespace requirements, etc.).
+//! Tokens represent syntactic elements with their associated metadata (position, whitespace requirements, etc.).
 
 use super::import::{ImportCategory, categorize_import};
 use beacon_parser::{AstNode, LiteralValue, Pattern};

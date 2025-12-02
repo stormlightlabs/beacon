@@ -8,7 +8,7 @@ name = "beacon"
 path = "src/main.rs"
 
 [dependencies]
-beacon-parser = { path = "../parser" }
+beacon-parser = { path = "../parser", features = ["serde"] }
 beacon-lsp = { path = "../server" }
 beacon-constraint = { path = "../constraints" }
 beacon-core = { path = "../core" }

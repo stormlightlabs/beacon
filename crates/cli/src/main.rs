@@ -60,6 +60,9 @@ enum Commands {
         /// Show tree-sitter CST structure
         #[arg(short, long)]
         tree: bool,
+        /// Output AST as JSON (overrides pretty/debug output)
+        #[arg(long)]
+        json: bool,
     },
     /// Format Python source code without starting the language server
     Format {
@@ -263,7 +266,7 @@ enum DebugCommands {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse().command {
-        Commands::Parse { file, pretty, tree } => parse_command(&read_input(file)?, pretty, tree),
+        Commands::Parse { file, pretty, tree, json } => parse_command(&read_input(file)?, pretty, tree, json),
         Commands::Highlight { file, no_color } => highlight_command(&read_input(file)?, !no_color),
         Commands::Check { file } => check_command(&read_input(file)?),
         Commands::Resolve { file, verbose } => resolve_command(&read_input(file)?, verbose),
@@ -382,7 +385,7 @@ fn format_command(paths: Vec<PathBuf>, write: bool, check: bool, output: Option<
     Ok(())
 }
 
-fn parse_command(source: &str, pretty: bool, show_tree: bool) -> Result<()> {
+fn parse_command(source: &str, pretty: bool, show_tree: bool, emit_json: bool) -> Result<()> {
     let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
 
     let parsed = parser.parse(source).with_context(|| "Failed to parse Python source")?;
@@ -394,6 +397,12 @@ fn parse_command(source: &str, pretty: bool, show_tree: bool) -> Result<()> {
     }
 
     let ast = parser.to_ast(&parsed).with_context(|| "Failed to convert to AST")?;
+
+    if emit_json {
+        let json = serde_json::to_string_pretty(&ast).with_context(|| "Failed to serialize AST to JSON")?;
+        println!("{json}");
+        return Ok(());
+    }
 
     if pretty {
         println!("{}", "Python AST:".cyan().bold());
@@ -1879,7 +1888,7 @@ mod tests {
     #[test]
     fn test_parse_command_simple() {
         let source = "x = 42\ny = 'hello'";
-        let result = parse_command(source, false, false);
+        let result = parse_command(source, false, false, false);
         assert!(result.is_ok());
     }
 
@@ -1900,35 +1909,35 @@ class Calculator:
 calc = Calculator().add(5).add(10)
 print(calc.get())
 "#;
-        let result = parse_command(source, false, false);
+        let result = parse_command(source, false, false, false);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_parse_command_with_syntax_errors() {
         let source = "def incomplete_function(\nprint('missing closing paren')";
-        let result = parse_command(source, false, false);
+        let result = parse_command(source, false, false, false);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_parse_command_with_tree_flag() {
         let source = "def greet(name): return f'Hello {name}'";
-        let result = parse_command(source, false, true);
+        let result = parse_command(source, false, true, false);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_parse_command_with_pretty_flag() {
         let source = "class Person:\n    def __init__(self, name):\n        self.name = name";
-        let result = parse_command(source, true, false);
+        let result = parse_command(source, true, false, false);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_parse_command_with_both_flags() {
         let source = "[x**2 for x in range(10) if x % 2 == 0]";
-        let result = parse_command(source, true, true);
+        let result = parse_command(source, true, true, false);
         assert!(result.is_ok());
     }
 
