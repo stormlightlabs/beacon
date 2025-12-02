@@ -54,7 +54,25 @@ beacon-lsp --stdio
 
 ## Quick Start
 
-See the [Development Quick Start Guide](./docs/src/development.md) for installation, usage, and editor setup instructions
+See the [Development Quick Start Guide](./docs/src/development.md) for more detailed installation, usage, and editor setup instructions
+
+### Build & Run from Source
+
+Install the prerequisites listed in [CONTRIBUTING.md](./CONTRIBUTING.md#prerequisites), then clone the repo and bootstrap:
+
+```sh
+git clone https://github.com/stormlightlabs/beacon
+pnpm install && cargo fetch
+```
+
+Use cargo or the `just` recipes to build (`just build`), then run directly
+
+```sh
+# CLI
+cargo run -p beacon-cli -- typecheck samples/basic.py
+# Language server (stdio mode)
+cargo run -p beacon-lsp -- --stdio
+```
 
 ---
 

@@ -4,46 +4,46 @@ Current milestone tasks and technical debt tracking. All integration tests are t
 
 See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
-## Typeshed Integration (v0.5.0)
+## Cross-File Static Analysis (v0.6.0)
 
-### Build Process & Stub Distribution
+**Priority**: Current (2025-12-01) milestone focus
 
-- [x] Git submodule + bundle at build time (reproducible, version-controlled)
-- [x] Version manifest for bundled stubs (commit hash, last updated timestamp)
+### Workspace-Level CFG & Data Flow
 
-### Existing Custom Stubs Migration
+- [ ] Cross-module CFG construction
+- [ ] Cross-file reachability analysis
+- [ ] Transitive type propagation across module boundaries
+- [ ] Taint analysis across file boundaries
+- [ ] Handle circular dependencies in CFG gracefully
 
-- [x] Audited existing custom stubs vs typeshed equivalents
-- [x] Migrated stdlib stubs (builtins, typing, dataclasses, enum, os, pathlib) to typeshed
-- [x] Kept capabilities_support.pyi (Beacon-specific) in `/stubs`
-- [x] Moved overload_test.pyi to test fixtures (`crates/server/tests/fixtures/`)
-- [x] Updated all tests to use embedded typeshed stubs
+### Enhanced Import/Export Analysis
 
-### Stub Loader Architecture
+- [ ] Extend ImportDependencyTracker to track all symbol definitions (not just imports)
+- [ ] Build workspace symbol table with full module resolution
+- [ ] Inconsistent export detection (`__all__` mismatches)
+- [ ] Conflicting stub definitions across files
+- [ ] Star import resolution (`from foo import *`)
+- [ ] Unused import detection across workspace
 
-- [x] Implemented layered stub lookup:
-    1. Manual stubs (config.stub_paths, highest priority)
-    2. Stub packages (*-stubs directories)
-    3. Inline stubs (.pyi files in project)
-    4. Typeshed stubs (embedded at build time, fallback)
-- [x] Module resolution via `get_embedded_stub()` for typeshed stubs
-- [x] On-demand stub loading during constraint generation
-- [x] Builtins loaded upfront, other stubs loaded on import
+### Cross-File LSP Features
 
-### Method Resolution for Inherited Methods
+- [ ] Cross-file goto definition for all symbols (beyond imports)
+- [ ] Cross-file rename support
+- [ ] Multi-file refactoring infrastructure
+- [ ] Workspace-wide symbol search improvements
 
-- [x] Implement method lookup through inheritance chain
-- [x] Support Protocol base class method resolution
-- [x] Fix stub parsing edge cases: Some builtin methods (str.upper, str.lower, dict.get) not found due to class registration timing or overload processing
-- [x] Fix TypeVar bound validation false positives: Protocol bounds (SupportsNext, SupportsAdd, Awaitable) incorrectly reject valid types
-- [x] Improve structural subtyping for protocol types in is_subtype_of
-- [x] Handle implicit protocol satisfaction in TypeVar bound inference
+### Diagnostics & Validation
 
-### Tests & Documentation
+- [ ] Cross-file diagnostics for import/export issues
+- [ ] Type mismatch diagnostics across module boundaries
+- [ ] Cross-file dead code detection
 
-- [x] Document typeshed version and update process
-- [x] Integration test: custom stub overrides typeshed stub
-- [x] Performance test: stub resolution overhead on large projects
+### Performance & Testing
+
+- [ ] Performance benchmarks for multi-file analysis
+- [ ] Memory profiling for workspace-wide analysis
+- [ ] Integration tests for cross-file CFG
+- [ ] Stress testing with large multi-module projects
 
 ## Linter Tech Debt
 
@@ -122,22 +122,7 @@ Complex annotation parsing issues:
 
 ## Static Analysis Tech Debt
 
-**Priority**: v0.6.0 focus
-
-### Cross-File Analysis
-
-- [ ] Extend ImportDependencyTracker to track symbol-level dependencies
-- [ ] Build workspace symbol table with module resolution
-- [ ] Cross-file reachability analysis
-- [ ] Transitive type propagation across module boundaries
-- [ ] Inconsistent export detection (`__all__` mismatches)
-- [ ] Conflicting stub definitions across files
-
-### Symbol Table
-
-- [ ] Symbol reference tracking for unused detection improvements
-- [ ] Better handling of star imports (`from foo import *`)
-- [ ] Qualified name resolution across modules
+**Note**: Cross-file analysis tasks moved to [Cross-File Static Analysis (v0.6.0)](#cross-file-static-analysis-v060) section above
 
 ## Infrastructure Tech Debt
 
