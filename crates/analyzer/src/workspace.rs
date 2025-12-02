@@ -30,14 +30,12 @@ impl ModuleTypeInfo {
 
     /// Look up the type of a symbol by name in a given scope
     ///
-    /// Currently returns `None` because we don't track the mapping from symbols to AST node IDs.
-    /// To implement this, we need to:
-    /// 1. Track symbol definitions to their AST node IDs during parsing/analysis
-    /// 2. Store this mapping in the symbol table or a separate index
-    /// 3. Use the node ID to look up the type in `constraint_result.1` (the type_map)
-    pub fn lookup_symbol_type(&self, _name: &str, _scope_id: ScopeId) -> Option<Type> {
-        // FIXME: Implement symbol-to-node tracking
-        None
+    /// Uses the symbol's position to find its AST node ID, then looks up the type in the type_map.
+    pub fn lookup_symbol_type(&self, name: &str, scope_id: ScopeId) -> Option<Type> {
+        let scope = self.symbol_table.scopes.get(&scope_id)?;
+        let symbol = scope.symbols.get(name)?;
+        let node_id = self.constraint_result.2.get(&(symbol.line, symbol.col))?;
+        self.constraint_result.1.get(node_id).cloned()
     }
 }
 

@@ -119,17 +119,14 @@ impl<'a> CrossModuleTypeResolver<'a> {
     /// will properly unify argument and return types across module boundaries.
     fn resolve_cross_module_call(&mut self, _caller: &FunctionId, callee: &FunctionId) -> Result<bool> {
         if let Some(_callee_type) = self.workspace_env.get_function_type(callee) {
-            // Type already cached, no changes occurred
             Ok(false)
         } else {
             if let Some(_module_info) = self.workspace_env.get_module(&callee.uri) {
                 // FIXME: Extract actual function type from module_info.constraint_result
-                // For now, cache a placeholder type to allow fixed-point iteration to converge
                 let type_scheme = TypeScheme::mono(Type::any());
                 self.workspace_env.set_function_type(callee.clone(), type_scheme);
-                Ok(true) // Indicate that a type was newly cached
+                Ok(true)
             } else {
-                // Module not found in workspace, no changes
                 Ok(false)
             }
         }
