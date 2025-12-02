@@ -1,0 +1,72 @@
+{
+  "type": "Module",
+  "body": [
+    {
+      "type": "ClassDef",
+      "name": "Service",
+      "bases": [],
+      "metaclass": null,
+      "body": [
+        {
+          "type": "Assignment",
+          "target": {
+            "type": "Identifier",
+            "name": "timeout",
+            "line": 2,
+            "col": 5,
+            "end_line": 2,
+            "end_col": 12
+          },
+          "value": {
+            "type": "Literal",
+            "value": {
+              "kind": "Integer",
+              "data": 30
+            },
+            "line": 2,
+            "col": 15,
+            "end_line": 2,
+            "end_col": 17
+          },
+          "line": 2,
+          "col": 5,
+          "end_line": 2,
+          "end_col": 17
+        },
+        {
+          "type": "Assignment",
+          "target": {
+            "type": "Identifier",
+            "name": "retries",
+            "line": 3,
+            "col": 5,
+            "end_line": 3,
+            "end_col": 12
+          },
+          "value": {
+            "type": "Literal",
+            "value": {
+              "kind": "Integer",
+              "data": 3
+            },
+            "line": 3,
+            "col": 15,
+            "end_line": 3,
+            "end_col": 16
+          },
+          "line": 3,
+          "col": 5,
+          "end_line": 3,
+          "end_col": 16
+        }
+      ],
+      "docstring": null,
+      "decorators": [],
+      "line": 1,
+      "col": 1,
+      "end_line": 3,
+      "end_col": 16
+    }
+  ],
+  "docstring": null
+}

@@ -1,0 +1,54 @@
+{
+  "type": "Module",
+  "body": [
+    {
+      "type": "ClassDef",
+      "name": "Point",
+      "bases": [],
+      "metaclass": null,
+      "body": [
+        {
+          "type": "AnnotatedAssignment",
+          "target": {
+            "type": "Identifier",
+            "name": "x",
+            "line": 2,
+            "col": 5,
+            "end_line": 2,
+            "end_col": 6
+          },
+          "type_annotation": "int",
+          "value": null,
+          "line": 2,
+          "col": 5,
+          "end_line": 2,
+          "end_col": 11
+        },
+        {
+          "type": "AnnotatedAssignment",
+          "target": {
+            "type": "Identifier",
+            "name": "y",
+            "line": 3,
+            "col": 5,
+            "end_line": 3,
+            "end_col": 6
+          },
+          "type_annotation": "str",
+          "value": null,
+          "line": 3,
+          "col": 5,
+          "end_line": 3,
+          "end_col": 11
+        }
+      ],
+      "docstring": null,
+      "decorators": [],
+      "line": 1,
+      "col": 1,
+      "end_line": 3,
+      "end_col": 11
+    }
+  ],
+  "docstring": null
+}

@@ -1,0 +1,72 @@
+{
+  "type": "Module",
+  "body": [
+    {
+      "type": "ClassDef",
+      "name": "Color",
+      "bases": [],
+      "metaclass": null,
+      "body": [
+        {
+          "type": "Assignment",
+          "target": {
+            "type": "Identifier",
+            "name": "_PRIVATE",
+            "line": 2,
+            "col": 5,
+            "end_line": 2,
+            "end_col": 13
+          },
+          "value": {
+            "type": "Literal",
+            "value": {
+              "kind": "Integer",
+              "data": 1
+            },
+            "line": 2,
+            "col": 16,
+            "end_line": 2,
+            "end_col": 17
+          },
+          "line": 2,
+          "col": 5,
+          "end_line": 2,
+          "end_col": 17
+        },
+        {
+          "type": "Assignment",
+          "target": {
+            "type": "Identifier",
+            "name": "VALUE",
+            "line": 3,
+            "col": 5,
+            "end_line": 3,
+            "end_col": 10
+          },
+          "value": {
+            "type": "Literal",
+            "value": {
+              "kind": "Integer",
+              "data": 2
+            },
+            "line": 3,
+            "col": 13,
+            "end_line": 3,
+            "end_col": 14
+          },
+          "line": 3,
+          "col": 5,
+          "end_line": 3,
+          "end_col": 14
+        }
+      ],
+      "docstring": null,
+      "decorators": [],
+      "line": 1,
+      "col": 1,
+      "end_line": 3,
+      "end_col": 14
+    }
+  ],
+  "docstring": null
+}
