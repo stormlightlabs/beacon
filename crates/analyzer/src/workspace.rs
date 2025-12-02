@@ -149,7 +149,7 @@ impl Default for WorkspaceTypeEnvironmentBuilder {
 mod tests {
     use super::*;
     use beacon_constraint::{ConstraintGenContext, ConstraintSet};
-    use beacon_parser::SymbolTable;
+    use beacon_parser::{Scope, ScopeKind, Symbol, SymbolKind, SymbolTable};
 
     #[test]
     fn test_workspace_type_environment_creation() {
@@ -246,5 +246,124 @@ mod tests {
             .build();
 
         assert!(env.contains_module(&uri));
+    }
+
+    #[test]
+    fn test_lookup_symbol_type_success() {
+        let mut symbol_table = SymbolTable::new();
+        let scope_id = ScopeId::from_raw(1);
+
+        let mut scope = Scope {
+            id: scope_id,
+            kind: ScopeKind::Function,
+            parent: Some(symbol_table.root_scope),
+            symbols: FxHashMap::default(),
+            children: vec![],
+            start_byte: 0,
+            end_byte: 100,
+        };
+
+        scope.symbols.insert(
+            "foo".to_string(),
+            Symbol {
+                name: "foo".to_string(),
+                kind: SymbolKind::Function,
+                line: 5,
+                col: 10,
+                scope_id,
+                docstring: None,
+                references: vec![],
+            },
+        );
+
+        symbol_table.scopes.insert(scope_id, scope);
+
+        let ctx = ConstraintGenContext::new();
+        let mut type_map = FxHashMap::default();
+        let mut position_map = FxHashMap::default();
+
+        position_map.insert((5, 10), 42);
+
+        type_map.insert(42, Type::int());
+
+        let constraint_result = ConstraintResult(
+            ConstraintSet { constraints: vec![] },
+            type_map,
+            position_map,
+            ctx.class_registry,
+            FxHashMap::default(),
+            FxHashMap::default(),
+            ctx.typevar_registry,
+        );
+
+        let module_info = ModuleTypeInfo::new(constraint_result, Arc::new(symbol_table), "# test".to_string());
+        let result = module_info.lookup_symbol_type("foo", scope_id);
+        assert_eq!(result, Some(Type::int()));
+    }
+
+    #[test]
+    fn test_lookup_symbol_type_nonexistent_symbol() {
+        let _uri = Url::parse("file:///test.py").unwrap();
+        let symbol_table = Arc::new(SymbolTable::new());
+        let ctx = ConstraintGenContext::new();
+        let constraint_result = ConstraintResult(
+            ConstraintSet { constraints: vec![] },
+            FxHashMap::default(),
+            FxHashMap::default(),
+            ctx.class_registry,
+            FxHashMap::default(),
+            FxHashMap::default(),
+            ctx.typevar_registry,
+        );
+
+        let module_info = ModuleTypeInfo::new(constraint_result, symbol_table, "# test".to_string());
+        let result = module_info.lookup_symbol_type("nonexistent", ScopeId::from_raw(999));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_lookup_symbol_type_missing_position_mapping() {
+        let mut symbol_table = SymbolTable::new();
+        let scope_id = ScopeId::from_raw(1);
+
+        let mut scope = Scope {
+            id: scope_id,
+            kind: ScopeKind::Function,
+            parent: Some(symbol_table.root_scope),
+            symbols: FxHashMap::default(),
+            children: vec![],
+            start_byte: 0,
+            end_byte: 100,
+        };
+
+        scope.symbols.insert(
+            "bar".to_string(),
+            Symbol {
+                name: "bar".to_string(),
+                kind: SymbolKind::Variable,
+                line: 3,
+                col: 5,
+                scope_id,
+                docstring: None,
+                references: vec![],
+            },
+        );
+
+        symbol_table.scopes.insert(scope_id, scope);
+
+        let ctx = ConstraintGenContext::new();
+        let constraint_result = ConstraintResult(
+            ConstraintSet { constraints: vec![] },
+            FxHashMap::default(),
+            FxHashMap::default(),
+            ctx.class_registry,
+            FxHashMap::default(),
+            FxHashMap::default(),
+            ctx.typevar_registry,
+        );
+
+        let module_info = ModuleTypeInfo::new(constraint_result, Arc::new(symbol_table), "# test".to_string());
+        let result = module_info.lookup_symbol_type("bar", scope_id);
+        assert_eq!(result, None);
     }
 }
