@@ -161,6 +161,7 @@ dependencies = [
  "once_cell",
  "rustc-hash",
  "serde",
+ "serde_json",
  "tracing",
  "url",
 ]
@@ -263,6 +264,7 @@ dependencies = [
  "html2md",
  "owo-colors",
  "rustc-hash",
+ "serde",
  "thiserror 2.0.17",
  "tree-sitter",
  "tree-sitter-python",

@@ -11,3 +11,4 @@ owo-colors = "4.2"
 rustc-hash = "2.0"
 beacon-core = { path = "../core" }
 html2md = "0.2.15"
+serde = { version = "1.0", features = ["derive"], optional = true }

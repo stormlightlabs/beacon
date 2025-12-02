@@ -545,7 +545,7 @@ pub struct CrossModuleTaintViolation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cfg::CfgBuilder;
+    use crate::cfg::{CfgBuilder, ControlFlowGraph};
     use beacon_parser::{NameResolver, ScopeId, ScopeKind};
 
     fn find_function_scope(symbol_table: &SymbolTable) -> ScopeId {
@@ -557,579 +557,143 @@ mod tests {
             .expect("No function scope found")
     }
 
+    macro_rules! taint_fixture {
+        ($name:literal) => {{
+            serde_json::from_str::<AstNode>(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/fixtures/taint_workspace/",
+                $name,
+                ".json"
+            )))
+            .expect("invalid taint fixture JSON")
+        }};
+    }
+
+    struct FixtureContext {
+        ast: AstNode,
+        resolver: NameResolver,
+        cfg: ControlFlowGraph,
+        scope_id: ScopeId,
+    }
+
+    impl FixtureContext {
+        fn new(source: &str, ast: AstNode) -> Self {
+            let mut resolver = NameResolver::new(source.to_string());
+            resolver.resolve(&ast).expect("Failed to resolve fixture AST");
+
+            let mut builder = CfgBuilder::new();
+            if let AstNode::FunctionDef { body, .. } = &ast {
+                builder.build_function(body);
+            } else {
+                panic!("Expected FunctionDef at fixture root");
+            }
+            let cfg = builder.build();
+            let scope_id = find_function_scope(&resolver.symbol_table);
+
+            Self { ast, resolver, cfg, scope_id }
+        }
+
+        fn analyzer(&self) -> IntraModuleTaintAnalyzer<'_> {
+            IntraModuleTaintAnalyzer::new(&self.cfg, self.body(), &self.resolver.symbol_table, self.scope_id)
+        }
+
+        fn body(&self) -> &[AstNode] {
+            match &self.ast {
+                AstNode::FunctionDef { body, .. } => body,
+                _ => panic!("Expected FunctionDef at fixture root"),
+            }
+        }
+    }
+
     #[test]
     fn test_detect_user_input_source() {
-        let source = "def foo():\n    x = input()".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    x = input()";
+        let fixture = FixtureContext::new(source, taint_fixture!("user_input_source"));
+        let result = fixture.analyzer().analyze();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![AstNode::Assignment {
-                target: Box::new(AstNode::Identifier {
-                    name: "x".to_string(),
-                    line: 2,
-                    col: 5,
-                    end_line: 2,
-                    end_col: 6,
-                }),
-                value: Box::new(AstNode::Call {
-                    function: Box::new(AstNode::Identifier {
-                        name: "input".to_string(),
-                        line: 2,
-                        col: 9,
-                        end_line: 2,
-                        end_col: 14,
-                    }),
-                    args: vec![],
-                    keywords: vec![],
-                    line: 2,
-                    col: 9,
-                    end_line: 2,
-                    end_col: 16,
-                }),
-                line: 2,
-                col: 5,
-                end_col: 16,
-                end_line: 2,
-            }],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 2,
-            end_col: 16,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = IntraModuleTaintAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
-            let result = analyzer.analyze();
-
-            assert_eq!(result.sources.len(), 1);
-            assert_eq!(result.sources[0].var_name, "x");
-            assert_eq!(result.sources[0].kind, TaintSourceKind::UserInput);
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        assert_eq!(result.sources.len(), 1);
+        assert_eq!(result.sources[0].var_name, "x");
+        assert_eq!(result.sources[0].kind, TaintSourceKind::UserInput);
     }
 
     #[test]
     fn test_detect_eval_sink() {
-        let source = "def foo():\n    eval(x)".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    eval(x)";
+        let fixture = FixtureContext::new(source, taint_fixture!("eval_sink"));
+        let result = fixture.analyzer().analyze();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![AstNode::Call {
-                function: Box::new(AstNode::Identifier {
-                    name: "eval".to_string(),
-                    line: 2,
-                    col: 5,
-                    end_line: 2,
-                    end_col: 9,
-                }),
-                args: vec![AstNode::Identifier { name: "x".to_string(), line: 2, col: 10, end_line: 2, end_col: 11 }],
-                keywords: vec![],
-                line: 2,
-                col: 5,
-                end_line: 2,
-                end_col: 12,
-            }],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 2,
-            end_col: 12,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = IntraModuleTaintAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
-            let result = analyzer.analyze();
-
-            assert_eq!(result.sinks.len(), 1);
-            assert_eq!(result.sinks[0].kind, TaintSinkKind::CodeExecution);
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        assert_eq!(result.sinks.len(), 1);
+        assert_eq!(result.sinks[0].kind, TaintSinkKind::CodeExecution);
     }
 
     #[test]
     fn test_taint_propagation_through_assignment() {
-        let source = "def foo():\n    x = input()\n    y = x".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    x = input()\n    y = x";
+        let fixture = FixtureContext::new(source, taint_fixture!("assignment_propagation"));
+        let analyzer = fixture.analyzer();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 2,
-                        col: 5,
-                        end_line: 2,
-                        end_col: 6,
-                    }),
-                    value: Box::new(AstNode::Call {
-                        function: Box::new(AstNode::Identifier {
-                            name: "input".to_string(),
-                            line: 2,
-                            col: 9,
-                            end_line: 2,
-                            end_col: 14,
-                        }),
-                        args: vec![],
-                        keywords: vec![],
-                        line: 2,
-                        col: 9,
-                        end_line: 2,
-                        end_col: 16,
-                    }),
-                    line: 2,
-                    col: 5,
-                    end_col: 16,
-                    end_line: 2,
-                },
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "y".to_string(),
-                        line: 3,
-                        col: 5,
-                        end_line: 3,
-                        end_col: 6,
-                    }),
-                    value: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 3,
-                        col: 9,
-                        end_line: 3,
-                        end_col: 10,
-                    }),
-                    line: 3,
-                    col: 5,
-                    end_col: 10,
-                    end_line: 3,
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 3,
-            end_col: 10,
-        };
+        let sources = analyzer.identify_sources();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].var_name, "x");
 
-        resolver.resolve(&ast).unwrap();
+        let mut tainted = FxHashSet::default();
+        tainted.insert("x".to_string());
 
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = IntraModuleTaintAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
-
-            let sources = analyzer.identify_sources();
-            assert_eq!(sources.len(), 1);
-            assert_eq!(sources[0].var_name, "x");
-
-            let mut tainted = FxHashSet::default();
-            tainted.insert("x".to_string());
-
-            if let AstNode::Assignment { value, .. } = &body[1] {
-                assert!(analyzer.is_tainted_expr(value, &tainted));
-            } else {
-                panic!("Expected Assignment");
-            }
+        if let AstNode::Assignment { value, .. } = &fixture.body()[1] {
+            assert!(analyzer.is_tainted_expr(value, &tainted));
         } else {
-            panic!("Expected FunctionDef");
+            panic!("Expected Assignment");
         }
     }
 
     #[test]
     fn test_detect_violation_input_to_eval() {
-        let source = "def foo():\n    x = input()\n    eval(x)".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    x = input()\n    eval(x)";
+        let fixture = FixtureContext::new(source, taint_fixture!("input_to_eval_violation"));
+        let result = fixture.analyzer().analyze();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 2,
-                        col: 5,
-                        end_line: 2,
-                        end_col: 6,
-                    }),
-                    value: Box::new(AstNode::Call {
-                        function: Box::new(AstNode::Identifier {
-                            name: "input".to_string(),
-                            line: 2,
-                            col: 9,
-                            end_line: 2,
-                            end_col: 14,
-                        }),
-                        args: vec![],
-                        keywords: vec![],
-                        line: 2,
-                        col: 9,
-                        end_line: 2,
-                        end_col: 16,
-                    }),
-                    line: 2,
-                    col: 5,
-                    end_col: 16,
-                    end_line: 2,
-                },
-                AstNode::Call {
-                    function: Box::new(AstNode::Identifier {
-                        name: "eval".to_string(),
-                        line: 3,
-                        col: 5,
-                        end_line: 3,
-                        end_col: 9,
-                    }),
-                    args: vec![AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 3,
-                        col: 10,
-                        end_line: 3,
-                        end_col: 11,
-                    }],
-                    keywords: vec![],
-                    line: 3,
-                    col: 5,
-                    end_line: 3,
-                    end_col: 12,
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 3,
-            end_col: 12,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = IntraModuleTaintAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
-            let result = analyzer.analyze();
-
-            assert_eq!(result.violations.len(), 1);
-            assert_eq!(result.violations[0].source.var_name, "x");
-            assert_eq!(result.violations[0].sink.kind, TaintSinkKind::CodeExecution);
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        assert_eq!(result.violations.len(), 1);
+        assert_eq!(result.violations[0].source.var_name, "x");
+        assert_eq!(result.violations[0].sink.kind, TaintSinkKind::CodeExecution);
     }
 
     #[test]
     fn test_taint_removed_after_safe_assignment() {
-        let source = "def foo():\n    x = input()\n    x = 5\n    eval(x)".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    x = input()\n    x = 5\n    eval(x)";
+        let fixture = FixtureContext::new(source, taint_fixture!("safe_reassignment"));
+        let result = fixture.analyzer().analyze();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 2,
-                        col: 5,
-                        end_line: 2,
-                        end_col: 6,
-                    }),
-                    value: Box::new(AstNode::Call {
-                        function: Box::new(AstNode::Identifier {
-                            name: "input".to_string(),
-                            line: 2,
-                            col: 9,
-                            end_line: 2,
-                            end_col: 14,
-                        }),
-                        args: vec![],
-                        keywords: vec![],
-                        line: 2,
-                        col: 9,
-                        end_line: 2,
-                        end_col: 16,
-                    }),
-                    line: 2,
-                    col: 5,
-                    end_col: 16,
-                    end_line: 2,
-                },
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 3,
-                        col: 5,
-                        end_line: 3,
-                        end_col: 6,
-                    }),
-                    value: Box::new(AstNode::Literal {
-                        value: beacon_parser::LiteralValue::Integer(5),
-                        line: 3,
-                        col: 9,
-                        end_line: 3,
-                        end_col: 10,
-                    }),
-                    line: 3,
-                    col: 5,
-                    end_col: 10,
-                    end_line: 3,
-                },
-                AstNode::Call {
-                    function: Box::new(AstNode::Identifier {
-                        name: "eval".to_string(),
-                        line: 4,
-                        col: 5,
-                        end_line: 4,
-                        end_col: 9,
-                    }),
-                    args: vec![AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 4,
-                        col: 10,
-                        end_line: 4,
-                        end_col: 11,
-                    }],
-                    keywords: vec![],
-                    line: 4,
-                    col: 5,
-                    end_line: 4,
-                    end_col: 12,
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 4,
-            end_col: 12,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = IntraModuleTaintAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
-            let result = analyzer.analyze();
-
-            assert_eq!(
-                result.violations.len(),
-                0,
-                "Should have no violations after safe reassignment"
-            );
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        assert_eq!(
+            result.violations.len(),
+            0,
+            "Should have no violations after safe reassignment"
+        );
     }
 
     #[test]
     fn test_taint_propagation_through_binary_op() {
-        let source = "def foo():\n    x = input()\n    y = x + 'suffix'".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    x = input()\n    y = x + 'suffix'";
+        let fixture = FixtureContext::new(source, taint_fixture!("binary_op_propagation"));
+        let analyzer = fixture.analyzer();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 2,
-                        col: 5,
-                        end_line: 2,
-                        end_col: 6,
-                    }),
-                    value: Box::new(AstNode::Call {
-                        function: Box::new(AstNode::Identifier {
-                            name: "input".to_string(),
-                            line: 2,
-                            col: 9,
-                            end_line: 2,
-                            end_col: 14,
-                        }),
-                        args: vec![],
-                        keywords: vec![],
-                        line: 2,
-                        col: 9,
-                        end_line: 2,
-                        end_col: 16,
-                    }),
-                    line: 2,
-                    col: 5,
-                    end_col: 16,
-                    end_line: 2,
-                },
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "y".to_string(),
-                        line: 3,
-                        col: 5,
-                        end_line: 3,
-                        end_col: 6,
-                    }),
-                    value: Box::new(AstNode::BinaryOp {
-                        left: Box::new(AstNode::Identifier {
-                            name: "x".to_string(),
-                            line: 3,
-                            col: 9,
-                            end_line: 3,
-                            end_col: 10,
-                        }),
-                        op: beacon_parser::BinaryOperator::Add,
-                        right: Box::new(AstNode::Literal {
-                            value: beacon_parser::LiteralValue::String {
-                                value: "suffix".to_string(),
-                                prefix: String::new(),
-                            },
-                            line: 3,
-                            col: 13,
-                            end_line: 3,
-                            end_col: 21,
-                        }),
-                        line: 3,
-                        col: 9,
-                        end_line: 3,
-                        end_col: 21,
-                    }),
-                    line: 3,
-                    col: 5,
-                    end_col: 21,
-                    end_line: 3,
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 3,
-            end_col: 21,
-        };
+        let mut tainted = FxHashSet::default();
+        tainted.insert("x".to_string());
 
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = IntraModuleTaintAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
-
-            let mut tainted = FxHashSet::default();
-            tainted.insert("x".to_string());
-
-            if let AstNode::Assignment { value, .. } = &body[1] {
-                assert!(analyzer.is_tainted_expr(value, &tainted));
-            } else {
-                panic!("Expected Assignment");
-            }
+        if let AstNode::Assignment { value, .. } = &fixture.body()[1] {
+            assert!(analyzer.is_tainted_expr(value, &tainted));
         } else {
-            panic!("Expected FunctionDef");
+            panic!("Expected Assignment");
         }
     }
 
     #[test]
     fn test_detect_command_execution_sink() {
-        let source = "def foo():\n    os.system(cmd)".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    os.system(cmd)";
+        let fixture = FixtureContext::new(source, taint_fixture!("command_execution_sink"));
+        let result = fixture.analyzer().analyze();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![AstNode::Call {
-                function: Box::new(AstNode::Attribute {
-                    object: Box::new(AstNode::Identifier {
-                        name: "os".to_string(),
-                        line: 2,
-                        col: 5,
-                        end_line: 2,
-                        end_col: 7,
-                    }),
-                    attribute: "system".to_string(),
-                    line: 2,
-                    col: 5,
-                    end_line: 2,
-                    end_col: 14,
-                }),
-                args: vec![AstNode::Identifier { name: "cmd".to_string(), line: 2, col: 15, end_line: 2, end_col: 18 }],
-                keywords: vec![],
-                line: 2,
-                col: 5,
-                end_line: 2,
-                end_col: 19,
-            }],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 2,
-            end_col: 19,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = IntraModuleTaintAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
-            let result = analyzer.analyze();
-
-            assert_eq!(result.sinks.len(), 1);
-            assert_eq!(result.sinks[0].kind, TaintSinkKind::CommandExecution);
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        assert_eq!(result.sinks.len(), 1);
+        assert_eq!(result.sinks[0].kind, TaintSinkKind::CommandExecution);
     }
 
     #[test]
@@ -1163,92 +727,15 @@ mod tests {
 
     #[test]
     fn test_detect_file_read_source() {
-        let source = "def foo():\n    x = open('file.txt').read()".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    x = open('file.txt').read()";
+        let fixture = FixtureContext::new(source, taint_fixture!("file_read_source"));
+        let analyzer = fixture.analyzer();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![AstNode::Assignment {
-                target: Box::new(AstNode::Identifier {
-                    name: "x".to_string(),
-                    line: 2,
-                    col: 5,
-                    end_line: 2,
-                    end_col: 6,
-                }),
-                value: Box::new(AstNode::Call {
-                    function: Box::new(AstNode::Attribute {
-                        object: Box::new(AstNode::Call {
-                            function: Box::new(AstNode::Identifier {
-                                name: "open".to_string(),
-                                line: 2,
-                                col: 9,
-                                end_line: 2,
-                                end_col: 13,
-                            }),
-                            args: vec![AstNode::Literal {
-                                value: beacon_parser::LiteralValue::String {
-                                    value: "file.txt".to_string(),
-                                    prefix: String::new(),
-                                },
-                                line: 2,
-                                col: 14,
-                                end_line: 2,
-                                end_col: 24,
-                            }],
-                            keywords: vec![],
-                            line: 2,
-                            col: 9,
-                            end_line: 2,
-                            end_col: 25,
-                        }),
-                        attribute: "read".to_string(),
-                        line: 2,
-                        col: 9,
-                        end_line: 2,
-                        end_col: 30,
-                    }),
-                    args: vec![],
-                    keywords: vec![],
-                    line: 2,
-                    col: 9,
-                    end_line: 2,
-                    end_col: 32,
-                }),
-                line: 2,
-                col: 5,
-                end_col: 32,
-                end_line: 2,
-            }],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 2,
-            end_col: 32,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = IntraModuleTaintAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id);
-
-            if let AstNode::Assignment { value, .. } = &body[0] {
-                let kind = analyzer.classify_taint_source(value);
-                assert_eq!(kind, Some(TaintSourceKind::FileRead));
-            } else {
-                panic!("Expected Assignment");
-            }
+        if let AstNode::Assignment { value, .. } = &fixture.body()[0] {
+            let kind = analyzer.classify_taint_source(value);
+            assert_eq!(kind, Some(TaintSourceKind::FileRead));
         } else {
-            panic!("Expected FunctionDef");
+            panic!("Expected Assignment");
         }
     }
 }

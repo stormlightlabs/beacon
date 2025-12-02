@@ -1,0 +1,25 @@
+{
+  "type": "FunctionDef",
+  "name": "foo",
+  "args": [],
+  "body": [
+    {
+      "type": "Call",
+      "function": { "type": "Identifier", "name": "eval", "line": 2, "col": 5, "end_line": 2, "end_col": 9 },
+      "args": [{ "type": "Identifier", "name": "x", "line": 2, "col": 10, "end_line": 2, "end_col": 11 }],
+      "keywords": [],
+      "line": 2,
+      "col": 5,
+      "end_line": 2,
+      "end_col": 12
+    }
+  ],
+  "docstring": null,
+  "return_type": null,
+  "decorators": [],
+  "is_async": false,
+  "line": 1,
+  "col": 1,
+  "end_line": 2,
+  "end_col": 12
+}

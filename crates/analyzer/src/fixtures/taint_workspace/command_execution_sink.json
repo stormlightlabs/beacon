@@ -1,0 +1,33 @@
+{
+  "type": "FunctionDef",
+  "name": "foo",
+  "args": [],
+  "body": [
+    {
+      "type": "Call",
+      "function": {
+        "type": "Attribute",
+        "object": { "type": "Identifier", "name": "os", "line": 2, "col": 5, "end_line": 2, "end_col": 7 },
+        "attribute": "system",
+        "line": 2,
+        "col": 5,
+        "end_line": 2,
+        "end_col": 14
+      },
+      "args": [{ "type": "Identifier", "name": "cmd", "line": 2, "col": 15, "end_line": 2, "end_col": 18 }],
+      "keywords": [],
+      "line": 2,
+      "col": 5,
+      "end_line": 2,
+      "end_col": 19
+    }
+  ],
+  "docstring": null,
+  "return_type": null,
+  "decorators": [],
+  "is_async": false,
+  "line": 1,
+  "col": 1,
+  "end_line": 2,
+  "end_col": 19
+}

@@ -25,6 +25,7 @@ pub struct ParsedFile {
 }
 
 /// Function parameter with position information
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Parameter {
     pub name: String,
@@ -37,6 +38,8 @@ pub struct Parameter {
 }
 
 /// Basic AST node types for Python
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "type"))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum AstNode {
     Module {
@@ -429,6 +432,8 @@ pub enum AstNode {
     },
 }
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(tag = "kind", content = "data"))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum LiteralValue {
     String { value: String, prefix: String },
@@ -439,6 +444,7 @@ pub enum LiteralValue {
 }
 
 /// Exception handler for try/except
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExceptHandler {
     pub exception_type: Option<String>,
@@ -451,6 +457,7 @@ pub struct ExceptHandler {
 }
 
 /// With item for with statements
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct WithItem {
     pub context_expr: AstNode,
@@ -458,6 +465,7 @@ pub struct WithItem {
 }
 
 /// Comprehension clause: for target in iter if conditions
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Comprehension {
     pub target: String,
@@ -466,6 +474,7 @@ pub struct Comprehension {
 }
 
 /// Binary operators
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOperator {
     Add,
@@ -486,6 +495,7 @@ pub enum BinaryOperator {
 }
 
 /// Unary operators
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOperator {
     Not,
@@ -495,6 +505,7 @@ pub enum UnaryOperator {
 }
 
 /// Comparison operators
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompareOperator {
     Eq,
@@ -510,6 +521,7 @@ pub enum CompareOperator {
 }
 
 /// Match case for pattern matching
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchCase {
     pub pattern: Pattern,
@@ -522,6 +534,7 @@ pub struct MatchCase {
 }
 
 /// Pattern for pattern matching
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
     MatchValue(AstNode),
