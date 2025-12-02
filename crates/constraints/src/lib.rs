@@ -152,6 +152,7 @@ pub enum Constraint {
     Join(String, Vec<Type>, Type, Span),
 }
 
+#[derive(Debug, Clone)]
 pub struct ConstraintResult(
     pub ConstraintSet,
     pub FxHashMap<usize, Type>,
@@ -529,6 +530,7 @@ impl<'a> Default for ConstraintGenContext<'a> {
 /// Set of type constraints
 ///
 /// TODO: Replace with [beacon_core] constraint types
+#[derive(Debug, Clone)]
 pub struct ConstraintSet {
     pub constraints: Vec<Constraint>,
 }

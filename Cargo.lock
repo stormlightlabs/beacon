@@ -161,6 +161,7 @@ dependencies = [
  "once_cell",
  "rustc-hash",
  "serde",
+ "tracing",
  "url",
 ]
 

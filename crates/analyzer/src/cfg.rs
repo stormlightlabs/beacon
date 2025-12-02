@@ -179,11 +179,50 @@ pub struct CallSite {
     /// Source location for diagnostics
     pub line: usize,
     pub col: usize,
+    /// Node ID of the call expression (for constraint generation)
+    pub call_node_id: Option<usize>,
+    /// Node IDs of positional arguments (for constraint generation)
+    pub arg_node_ids: Vec<usize>,
+    /// Node IDs of keyword arguments as (name, node_id) pairs (for constraint generation)
+    pub kwarg_node_ids: Vec<(String, usize)>,
+    /// Node ID where the result is stored (for constraint generation)
+    pub result_node_id: Option<usize>,
 }
 
 impl CallSite {
     pub fn new(id: BlockId, index: usize, rec: Option<FunctionId>, kind: CallKind, ln: usize, col: usize) -> Self {
-        Self { block_id: id, stmt_index: index, receiver: rec, kind, line: ln, col }
+        Self {
+            block_id: id,
+            stmt_index: index,
+            receiver: rec,
+            kind,
+            line: ln,
+            col,
+            call_node_id: None,
+            arg_node_ids: Vec::new(),
+            kwarg_node_ids: Vec::new(),
+            result_node_id: None,
+        }
+    }
+
+    /// Create a CallSite with node tracking for constraint generation
+    pub fn with_nodes(
+        id: BlockId, index: usize, rec: Option<FunctionId>, kind: CallKind, ln: usize, col: usize,
+        call_node_id: Option<usize>, arg_node_ids: Vec<usize>, kwarg_node_ids: Vec<(String, usize)>,
+        result_node_id: Option<usize>,
+    ) -> Self {
+        Self {
+            block_id: id,
+            stmt_index: index,
+            receiver: rec,
+            kind,
+            line: ln,
+            col,
+            call_node_id,
+            arg_node_ids,
+            kwarg_node_ids,
+            result_node_id,
+        }
     }
 }
 
@@ -202,6 +241,11 @@ pub struct CallGraph {
 impl CallGraph {
     pub fn new() -> Self {
         Self { call_sites: FxHashMap::default(), callers: FxHashMap::default() }
+    }
+
+    /// Get a reference to all call sites
+    pub fn all_call_sites(&self) -> &FxHashMap<FunctionId, Vec<CallSite>> {
+        &self.call_sites
     }
 
     /// Add a call site for a function
