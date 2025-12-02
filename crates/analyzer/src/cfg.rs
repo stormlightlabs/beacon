@@ -265,7 +265,7 @@ impl CallGraph {
     /// Functions in the same SCC are mutually recursive (can reach each other).
     /// SCCs are returned in reverse topological order.
     pub fn strongly_connected_components(&self) -> Vec<Vec<FunctionId>> {
-        let mut tarjan = TarjanSCC::new(self);
+        let mut tarjan = TarjanCallState::new(self);
         tarjan.run()
     }
 
@@ -309,7 +309,7 @@ impl Default for CallGraph {
 ///
 /// Implements Tarjan's SCC algorithm to detect cycles and strongly connected components in the call graph.
 /// This is used to identify mutually recursive functions and handle circular dependencies gracefully.
-struct TarjanSCC<'a> {
+struct TarjanCallState<'a> {
     graph: &'a CallGraph,
     index_counter: usize,
     stack: Vec<FunctionId>,
@@ -319,7 +319,7 @@ struct TarjanSCC<'a> {
     sccs: Vec<Vec<FunctionId>>,
 }
 
-impl<'a> TarjanSCC<'a> {
+impl<'a> TarjanCallState<'a> {
     fn new(graph: &'a CallGraph) -> Self {
         Self {
             graph,

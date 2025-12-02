@@ -1562,7 +1562,7 @@ impl DependencyGraph {
     ///
     /// Returns a list of SCCs, where each SCC is a list of URIs. SCCs with size > 1 represent circular dependencies.
     fn compute_sccs(&self) -> Vec<Vec<Url>> {
-        let mut tarjan = TarjanState::new();
+        let mut tarjan = TarjanDepState::new();
 
         for node in self.edges.keys() {
             if !tarjan.indices.contains_key(node) {
@@ -1646,7 +1646,7 @@ impl DependencyGraph {
 }
 
 /// State for Tarjan's strongly connected components algorithm
-struct TarjanState {
+struct TarjanDepState {
     index: usize,
     stack: Vec<Url>,
     indices: FxHashMap<Url, usize>,
@@ -1655,7 +1655,7 @@ struct TarjanState {
     sccs: Vec<Vec<Url>>,
 }
 
-impl TarjanState {
+impl TarjanDepState {
     fn new() -> Self {
         Self {
             index: 0,
