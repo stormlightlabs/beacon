@@ -237,6 +237,7 @@ impl CallGraph {
     /// Compute reachable functions from a set of entry points
     ///
     /// Uses BFS to find all functions transitively called from the given entry points.
+    /// This method handles circular dependencies gracefully by tracking visited nodes.
     pub fn reachable_functions(&self, entry_points: &[FunctionId]) -> Vec<FunctionId> {
         let mut visited = rustc_hash::FxHashSet::default();
         let mut queue = VecDeque::new();
@@ -257,11 +258,125 @@ impl CallGraph {
 
         visited.into_iter().collect()
     }
+
+    /// Detect strongly connected components (SCCs) using Tarjan's algorithm
+    ///
+    /// Returns a vector of SCCs, where each SCC is a vector of FunctionIds.
+    /// Functions in the same SCC are mutually recursive (can reach each other).
+    /// SCCs are returned in reverse topological order.
+    pub fn strongly_connected_components(&self) -> Vec<Vec<FunctionId>> {
+        let mut tarjan = TarjanSCC::new(self);
+        tarjan.run()
+    }
+
+    /// Check if there are any circular dependencies in the call graph
+    pub fn has_circular_dependencies(&self) -> bool {
+        self.strongly_connected_components().iter().any(|scc| scc.len() > 1)
+    }
+
+    /// Get all functions involved in circular dependencies
+    pub fn circular_dependency_functions(&self) -> rustc_hash::FxHashSet<FunctionId> {
+        self.strongly_connected_components()
+            .into_iter()
+            .filter(|scc| scc.len() > 1)
+            .flatten()
+            .collect()
+    }
+
+    /// Get all functions in the call graph
+    fn all_functions(&self) -> rustc_hash::FxHashSet<FunctionId> {
+        let mut functions = rustc_hash::FxHashSet::default();
+
+        for function in self.call_sites.keys() {
+            functions.insert(function.clone());
+        }
+
+        for function in self.callers.keys() {
+            functions.insert(function.clone());
+        }
+
+        functions
+    }
 }
 
 impl Default for CallGraph {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Tarjan's algorithm for finding strongly connected components
+///
+/// Implements Tarjan's SCC algorithm to detect cycles and strongly connected components in the call graph.
+/// This is used to identify mutually recursive functions and handle circular dependencies gracefully.
+struct TarjanSCC<'a> {
+    graph: &'a CallGraph,
+    index_counter: usize,
+    stack: Vec<FunctionId>,
+    on_stack: rustc_hash::FxHashSet<FunctionId>,
+    indices: FxHashMap<FunctionId, usize>,
+    lowlinks: FxHashMap<FunctionId, usize>,
+    sccs: Vec<Vec<FunctionId>>,
+}
+
+impl<'a> TarjanSCC<'a> {
+    fn new(graph: &'a CallGraph) -> Self {
+        Self {
+            graph,
+            index_counter: 0,
+            stack: Vec::new(),
+            on_stack: rustc_hash::FxHashSet::default(),
+            indices: FxHashMap::default(),
+            lowlinks: FxHashMap::default(),
+            sccs: Vec::new(),
+        }
+    }
+
+    fn run(&mut self) -> Vec<Vec<FunctionId>> {
+        let functions: Vec<FunctionId> = self.graph.all_functions().into_iter().collect();
+
+        for function in functions {
+            if !self.indices.contains_key(&function) {
+                self.strong_connect(function);
+            }
+        }
+
+        std::mem::take(&mut self.sccs)
+    }
+
+    fn strong_connect(&mut self, v: FunctionId) {
+        self.indices.insert(v.clone(), self.index_counter);
+        self.lowlinks.insert(v.clone(), self.index_counter);
+        self.index_counter += 1;
+
+        self.stack.push(v.clone());
+        self.on_stack.insert(v.clone());
+
+        for w in self.graph.get_callees(&v) {
+            if !self.indices.contains_key(&w) {
+                self.strong_connect(w.clone());
+                let w_lowlink = *self.lowlinks.get(&w).unwrap();
+                let v_lowlink = self.lowlinks.get_mut(&v).unwrap();
+                *v_lowlink = (*v_lowlink).min(w_lowlink);
+            } else if self.on_stack.contains(&w) {
+                let w_index = *self.indices.get(&w).unwrap();
+                let v_lowlink = self.lowlinks.get_mut(&v).unwrap();
+                *v_lowlink = (*v_lowlink).min(w_index);
+            }
+        }
+
+        if self.lowlinks.get(&v) == self.indices.get(&v) {
+            let mut scc = Vec::new();
+            loop {
+                let w = self.stack.pop().unwrap();
+                self.on_stack.remove(&w);
+                scc.push(w.clone());
+                if w == v {
+                    break;
+                }
+            }
+            self.sccs.push(scc);
+        }
     }
 }
 

@@ -11,12 +11,7 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 ### Workspace-Level CFG & Data Flow
 
 - [x] Cross-module CFG construction
-    - [x] Call target resolution using symbol tables
-    - [x] Module-level CFG for module initialization code
-    - [x] Cross-module call graph
-    - [x] Workspace CFG infrastructure
-    - [ ] Integration with workspace analyzer
-- [ ] Handle circular dependencies in CFG gracefully (SCC detection in CallGraph.reachable_functions)
+- [x] Handle circular dependencies in CFG gracefully (SCC detection in CallGraph.reachable_functions)
 - [x] Cross-file reachability analysis
 - [ ] Transitive type propagation across module boundaries
 - [ ] Taint analysis across file boundaries

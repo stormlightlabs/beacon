@@ -923,3 +923,292 @@ result = func_a()
     assert_eq!(receiver.name, "func_a");
     assert_eq!(receiver.uri, uri_a);
 }
+
+#[test]
+fn test_scc_no_cycles() {
+    let mut call_graph = CallGraph::new();
+
+    let uri = test_uri("test.py");
+    let func_a = FunctionId::new(uri.clone(), ScopeId::from_raw(1), "a".to_string());
+    let func_b = FunctionId::new(uri.clone(), ScopeId::from_raw(2), "b".to_string());
+    let func_c = FunctionId::new(uri.clone(), ScopeId::from_raw(3), "c".to_string());
+
+    let call_a_to_b = CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1);
+    let call_b_to_c = CallSite::new(BlockId(2), 0, Some(func_c.clone()), CallKind::Direct, 2, 1);
+
+    call_graph.add_call_site(func_a.clone(), call_a_to_b);
+    call_graph.add_call_site(func_b.clone(), call_b_to_c);
+
+    let sccs = call_graph.strongly_connected_components();
+    assert_eq!(sccs.len(), 3);
+    assert!(sccs.iter().all(|scc| scc.len() == 1));
+    assert!(!call_graph.has_circular_dependencies());
+}
+
+#[test]
+fn test_scc_simple_cycle() {
+    let mut call_graph = CallGraph::new();
+
+    let uri = test_uri("test.py");
+    let func_a = FunctionId::new(uri.clone(), ScopeId::from_raw(1), "a".to_string());
+    let func_b = FunctionId::new(uri.clone(), ScopeId::from_raw(2), "b".to_string());
+
+    let call_a_to_b = CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1);
+    let call_b_to_a = CallSite::new(BlockId(2), 0, Some(func_a.clone()), CallKind::Direct, 2, 1);
+
+    call_graph.add_call_site(func_a.clone(), call_a_to_b);
+    call_graph.add_call_site(func_b.clone(), call_b_to_a);
+
+    let sccs = call_graph.strongly_connected_components();
+    assert_eq!(sccs.len(), 1);
+    assert_eq!(sccs[0].len(), 2);
+    assert!(call_graph.has_circular_dependencies());
+
+    let circular_funcs = call_graph.circular_dependency_functions();
+    assert_eq!(circular_funcs.len(), 2);
+    assert!(circular_funcs.contains(&func_a));
+    assert!(circular_funcs.contains(&func_b));
+}
+
+#[test]
+fn test_scc_self_loop() {
+    let mut call_graph = CallGraph::new();
+
+    let uri = test_uri("test.py");
+    let func_a = FunctionId::new(uri.clone(), ScopeId::from_raw(1), "a".to_string());
+
+    let call_a_to_a = CallSite::new(BlockId(1), 0, Some(func_a.clone()), CallKind::Direct, 1, 1);
+
+    call_graph.add_call_site(func_a.clone(), call_a_to_a);
+
+    let sccs = call_graph.strongly_connected_components();
+    assert_eq!(sccs.len(), 1);
+    assert_eq!(sccs[0].len(), 1);
+    assert_eq!(sccs[0][0], func_a);
+    assert!(!call_graph.has_circular_dependencies());
+}
+
+#[test]
+fn test_scc_complex_cycle() {
+    let mut call_graph = CallGraph::new();
+
+    let uri = test_uri("test.py");
+    let func_a = FunctionId::new(uri.clone(), ScopeId::from_raw(1), "a".to_string());
+    let func_b = FunctionId::new(uri.clone(), ScopeId::from_raw(2), "b".to_string());
+    let func_c = FunctionId::new(uri.clone(), ScopeId::from_raw(3), "c".to_string());
+    let func_d = FunctionId::new(uri.clone(), ScopeId::from_raw(4), "d".to_string());
+    let func_e = FunctionId::new(uri.clone(), ScopeId::from_raw(5), "e".to_string());
+
+    call_graph.add_call_site(
+        func_a.clone(),
+        CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1),
+    );
+    call_graph.add_call_site(
+        func_b.clone(),
+        CallSite::new(BlockId(2), 0, Some(func_c.clone()), CallKind::Direct, 2, 1),
+    );
+    call_graph.add_call_site(
+        func_c.clone(),
+        CallSite::new(BlockId(3), 0, Some(func_a.clone()), CallKind::Direct, 3, 1),
+    );
+    call_graph.add_call_site(
+        func_d.clone(),
+        CallSite::new(BlockId(4), 0, Some(func_e.clone()), CallKind::Direct, 4, 1),
+    );
+
+    let sccs = call_graph.strongly_connected_components();
+    assert_eq!(sccs.len(), 3);
+
+    let scc_sizes: Vec<usize> = sccs.iter().map(|scc| scc.len()).collect();
+    assert!(scc_sizes.contains(&3)); // A, B, C cycle
+    assert!(scc_sizes.iter().filter(|&&s| s == 1).count() == 2);
+
+    assert!(call_graph.has_circular_dependencies());
+
+    let circular_funcs = call_graph.circular_dependency_functions();
+    assert_eq!(circular_funcs.len(), 3);
+    assert!(circular_funcs.contains(&func_a));
+    assert!(circular_funcs.contains(&func_b));
+    assert!(circular_funcs.contains(&func_c));
+    assert!(!circular_funcs.contains(&func_d));
+    assert!(!circular_funcs.contains(&func_e));
+}
+
+#[test]
+fn test_scc_multiple_cycles() {
+    let mut call_graph = CallGraph::new();
+
+    let uri = test_uri("test.py");
+    let func_a = FunctionId::new(uri.clone(), ScopeId::from_raw(1), "a".to_string());
+    let func_b = FunctionId::new(uri.clone(), ScopeId::from_raw(2), "b".to_string());
+    let func_c = FunctionId::new(uri.clone(), ScopeId::from_raw(3), "c".to_string());
+    let func_d = FunctionId::new(uri.clone(), ScopeId::from_raw(4), "d".to_string());
+
+    call_graph.add_call_site(
+        func_a.clone(),
+        CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1),
+    );
+    call_graph.add_call_site(
+        func_b.clone(),
+        CallSite::new(BlockId(2), 0, Some(func_a.clone()), CallKind::Direct, 2, 1),
+    );
+
+    call_graph.add_call_site(
+        func_c.clone(),
+        CallSite::new(BlockId(3), 0, Some(func_d.clone()), CallKind::Direct, 3, 1),
+    );
+    call_graph.add_call_site(
+        func_d.clone(),
+        CallSite::new(BlockId(4), 0, Some(func_c.clone()), CallKind::Direct, 4, 1),
+    );
+
+    let sccs = call_graph.strongly_connected_components();
+
+    assert_eq!(sccs.len(), 2);
+    assert!(sccs.iter().all(|scc| scc.len() == 2));
+    assert!(call_graph.has_circular_dependencies());
+
+    let circular_funcs = call_graph.circular_dependency_functions();
+    assert_eq!(circular_funcs.len(), 4);
+}
+
+#[test]
+fn test_scc_nested_structure() {
+    let mut call_graph = CallGraph::new();
+
+    let uri = test_uri("test.py");
+    let func_a = FunctionId::new(uri.clone(), ScopeId::from_raw(1), "a".to_string());
+    let func_b = FunctionId::new(uri.clone(), ScopeId::from_raw(2), "b".to_string());
+    let func_c = FunctionId::new(uri.clone(), ScopeId::from_raw(3), "c".to_string());
+    let func_d = FunctionId::new(uri.clone(), ScopeId::from_raw(4), "d".to_string());
+
+    call_graph.add_call_site(
+        func_a.clone(),
+        CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1),
+    );
+    call_graph.add_call_site(
+        func_b.clone(),
+        CallSite::new(BlockId(2), 0, Some(func_c.clone()), CallKind::Direct, 2, 1),
+    );
+    call_graph.add_call_site(
+        func_c.clone(),
+        CallSite::new(BlockId(3), 0, Some(func_d.clone()), CallKind::Direct, 3, 1),
+    );
+    call_graph.add_call_site(
+        func_d.clone(),
+        CallSite::new(BlockId(4), 0, Some(func_b.clone()), CallKind::Direct, 4, 1),
+    );
+
+    let sccs = call_graph.strongly_connected_components();
+    assert_eq!(sccs.len(), 2);
+
+    let cycle_scc = sccs.iter().find(|scc| scc.len() == 3).expect("Should find cycle SCC");
+    assert!(cycle_scc.contains(&func_b));
+    assert!(cycle_scc.contains(&func_c));
+    assert!(cycle_scc.contains(&func_d));
+
+    assert!(call_graph.has_circular_dependencies());
+
+    let circular_funcs = call_graph.circular_dependency_functions();
+    assert_eq!(circular_funcs.len(), 3);
+    assert!(!circular_funcs.contains(&func_a));
+}
+
+#[test]
+fn test_scc_reachability_with_cycles() {
+    let mut call_graph = CallGraph::new();
+
+    let uri = test_uri("test.py");
+    let func_a = FunctionId::new(uri.clone(), ScopeId::from_raw(1), "a".to_string());
+    let func_b = FunctionId::new(uri.clone(), ScopeId::from_raw(2), "b".to_string());
+    let func_c = FunctionId::new(uri.clone(), ScopeId::from_raw(3), "c".to_string());
+    let func_d = FunctionId::new(uri.clone(), ScopeId::from_raw(4), "d".to_string());
+
+    call_graph.add_call_site(
+        func_a.clone(),
+        CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1),
+    );
+    call_graph.add_call_site(
+        func_b.clone(),
+        CallSite::new(BlockId(2), 0, Some(func_c.clone()), CallKind::Direct, 2, 1),
+    );
+    call_graph.add_call_site(
+        func_c.clone(),
+        CallSite::new(BlockId(3), 0, Some(func_b.clone()), CallKind::Direct, 3, 1),
+    );
+    call_graph.add_call_site(
+        func_c.clone(),
+        CallSite::new(BlockId(4), 0, Some(func_d.clone()), CallKind::Direct, 4, 1),
+    );
+
+    let reachable = call_graph.reachable_functions(&[func_a.clone()]);
+
+    assert_eq!(reachable.len(), 4);
+    assert!(reachable.contains(&func_a));
+    assert!(reachable.contains(&func_b));
+    assert!(reachable.contains(&func_c));
+    assert!(reachable.contains(&func_d));
+}
+
+#[test]
+fn test_scc_empty_graph() {
+    let call_graph = CallGraph::new();
+
+    let sccs = call_graph.strongly_connected_components();
+    assert!(sccs.is_empty());
+    assert!(!call_graph.has_circular_dependencies());
+
+    let circular_funcs = call_graph.circular_dependency_functions();
+    assert!(circular_funcs.is_empty());
+}
+
+#[test]
+fn test_scc_single_function_no_calls() {
+    let mut call_graph = CallGraph::new();
+
+    let uri = test_uri("test.py");
+    let func_a = FunctionId::new(uri.clone(), ScopeId::from_raw(1), "a".to_string());
+
+    call_graph.add_call_site(
+        func_a.clone(),
+        CallSite::new(BlockId(1), 0, None, CallKind::Dynamic, 1, 1),
+    );
+
+    let sccs = call_graph.strongly_connected_components();
+
+    assert_eq!(sccs.len(), 1);
+    assert_eq!(sccs[0].len(), 1);
+    assert_eq!(sccs[0][0], func_a);
+    assert!(!call_graph.has_circular_dependencies());
+}
+
+#[test]
+fn test_scc_cross_module_cycle() {
+    let mut call_graph = CallGraph::new();
+
+    let uri_a = test_uri("a.py");
+    let uri_b = test_uri("b.py");
+
+    let func_a = FunctionId::new(uri_a, ScopeId::from_raw(1), "func_a".to_string());
+    let func_b = FunctionId::new(uri_b, ScopeId::from_raw(1), "func_b".to_string());
+
+    call_graph.add_call_site(
+        func_a.clone(),
+        CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1),
+    );
+    call_graph.add_call_site(
+        func_b.clone(),
+        CallSite::new(BlockId(1), 0, Some(func_a.clone()), CallKind::Direct, 1, 1),
+    );
+
+    let sccs = call_graph.strongly_connected_components();
+
+    assert_eq!(sccs.len(), 1);
+    assert_eq!(sccs[0].len(), 2);
+    assert!(call_graph.has_circular_dependencies());
+
+    let circular_funcs = call_graph.circular_dependency_functions();
+    assert_eq!(circular_funcs.len(), 2);
+    assert!(circular_funcs.contains(&func_a));
+    assert!(circular_funcs.contains(&func_b));
+}

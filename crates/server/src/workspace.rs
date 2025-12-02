@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use url::Url;
 
+pub use beacon_analyzer::{StubCache, StubFile};
+
 /// Beacon-specific stub for capabilities support
 const CAPABILITIES_STUB: &str = include_str!("../../../stubs/capabilities_support.pyi");
 
@@ -148,6 +150,8 @@ pub struct Workspace {
     stubs: Arc<RwLock<StubCache>>,
     /// Tracks which modules have been analyzed and their versions
     analyzed_modules: FxHashMap<Url, i32>,
+    /// Workspace-wide control flow graph for cross-module analysis
+    workspace_cfg: Arc<RwLock<beacon_analyzer::WorkspaceCFG>>,
 }
 
 impl Workspace {
@@ -161,12 +165,55 @@ impl Workspace {
             dependency_graph: DependencyGraph::new(),
             stubs: Arc::new(RwLock::new(StubCache::new())),
             analyzed_modules: FxHashMap::default(),
+            workspace_cfg: Arc::new(RwLock::new(beacon_analyzer::WorkspaceCFG::new())),
         }
     }
 
     /// Get a reference to the stub cache for sharing with analyzer
     pub fn stub_cache(&self) -> Arc<RwLock<StubCache>> {
         Arc::clone(&self.stubs)
+    }
+
+    /// Get a reference to the workspace CFG
+    pub fn workspace_cfg(&self) -> Arc<RwLock<beacon_analyzer::WorkspaceCFG>> {
+        Arc::clone(&self.workspace_cfg)
+    }
+
+    /// Build CFG for a module and add it to the workspace CFG
+    ///
+    /// Constructs a ModuleCFG from the parsed AST and symbol table, resolving call sites and updating the workspace-wide call graph.
+    pub fn build_module_cfg(&self, uri: &Url) -> Option<()> {
+        let (ast, symbol_table, source) = self.documents.get_document(uri, |doc| {
+            let ast = doc.ast()?.clone();
+            let symbol_table = doc.symbol_table()?.clone();
+            let source = doc.text();
+            Some((ast, symbol_table, source))
+        })??;
+
+        let module_name = self.uri_to_module_name(uri).unwrap_or_else(|| uri.path().to_string());
+
+        let builder = beacon_analyzer::ModuleCFGBuilder::new(&symbol_table, uri.clone(), module_name, &source);
+        let module_cfg = builder.build(&ast);
+
+        if let Ok(mut workspace_cfg) = self.workspace_cfg.write() {
+            let call_graph = workspace_cfg.call_graph_mut();
+            for call_site in &module_cfg.call_sites {
+                if let Some(_) = &call_site.receiver {
+                    for func_id in module_cfg.function_ids() {
+                        if let Some(cfg) = module_cfg.get_function_cfg(func_id.scope_id) {
+                            if cfg.blocks.contains_key(&call_site.block_id) {
+                                call_graph.add_call_site(func_id.clone(), call_site.clone());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            workspace_cfg.add_module(module_cfg);
+        }
+
+        Some(())
     }
 
     /// Initialize workspace by discovering Python files and stubs
@@ -844,6 +891,8 @@ impl Workspace {
     /// Mark a module as analyzed with the given version
     pub fn mark_analyzed(&mut self, uri: &Url, version: i32) {
         self.analyzed_modules.insert(uri.clone(), version);
+        // Build CFG for the analyzed module and add to workspace CFG
+        self.build_module_cfg(uri);
     }
 
     /// Check if a module has been analyzed
@@ -1655,11 +1704,6 @@ impl TarjanState {
     }
 }
 
-/// Cache for loaded stub files
-///
-// Re-export types from beacon-analyzer
-pub use beacon_analyzer::{StubCache, StubFile};
-
 fn parse_stub_from_string_inner(module_name: &str, content: &str) -> Result<StubFile, WorkspaceError> {
     let mut parser = crate::parser::LspParser::new()
         .map_err(|e| WorkspaceError::StubLoadFailed(format!("Failed to create parser: {e:?}")))?;
@@ -1681,9 +1725,7 @@ fn parse_stub_from_string_inner(module_name: &str, content: &str) -> Result<Stub
     })
 }
 
-fn collect_stub_signatures(
-    ast: &AstNode,
-) -> (FxHashMap<String, Type>, Vec<String>, Option<Vec<String>>) {
+fn collect_stub_signatures(ast: &AstNode) -> (FxHashMap<String, Type>, Vec<String>, Option<Vec<String>>) {
     let mut exports = FxHashMap::default();
     let mut reexports = Vec::new();
     let mut all_exports = None;
@@ -1692,7 +1734,8 @@ fn collect_stub_signatures(
 }
 
 fn extract_stub_signatures(
-    node: &AstNode, exports: &mut FxHashMap<String, Type>, reexports: &mut Vec<String>, all_exports: &mut Option<Vec<String>>,
+    node: &AstNode, exports: &mut FxHashMap<String, Type>, reexports: &mut Vec<String>,
+    all_exports: &mut Option<Vec<String>>,
 ) {
     match node {
         AstNode::Module { body, .. } => {
