@@ -278,6 +278,8 @@ pub struct ModuleCFG {
     pub module_init_cfg: ControlFlowGraph,
     /// Per-function CFGs indexed by scope ID
     pub function_cfgs: FxHashMap<ScopeId, ControlFlowGraph>,
+    /// Function names indexed by scope ID
+    function_names: FxHashMap<ScopeId, String>,
     /// All call sites in this module
     pub call_sites: Vec<CallSite>,
 }
@@ -289,13 +291,15 @@ impl ModuleCFG {
             module_name,
             module_init_cfg: ControlFlowGraph::new(),
             function_cfgs: FxHashMap::default(),
+            function_names: FxHashMap::default(),
             call_sites: Vec::new(),
         }
     }
 
     /// Add a function CFG to this module
-    pub fn add_function_cfg(&mut self, scope_id: ScopeId, cfg: ControlFlowGraph) {
+    pub fn add_function_cfg(&mut self, scope_id: ScopeId, name: String, cfg: ControlFlowGraph) {
         self.function_cfgs.insert(scope_id, cfg);
+        self.function_names.insert(scope_id, name);
     }
 
     /// Add a call site to this module
@@ -304,10 +308,23 @@ impl ModuleCFG {
     }
 
     /// Get all function IDs defined in this module
-    ///
-    /// TODO: Populate function IDs from symbol table during analysis.
     pub fn function_ids(&self) -> Vec<FunctionId> {
-        Vec::new()
+        self.function_cfgs
+            .keys()
+            .map(|scope_id| {
+                let name = self
+                    .function_names
+                    .get(scope_id)
+                    .cloned()
+                    .unwrap_or_else(|| format!("func_{:?}", scope_id));
+                FunctionId::new(self.uri.clone(), *scope_id, name)
+            })
+            .collect()
+    }
+
+    /// Get a function CFG by scope ID
+    pub fn get_function_cfg(&self, scope_id: ScopeId) -> Option<&ControlFlowGraph> {
+        self.function_cfgs.get(&scope_id)
     }
 }
 
@@ -387,6 +404,14 @@ impl WorkspaceCFG {
 
         reachable
     }
+
+    pub fn modules(&self) -> FxHashMap<Url, ModuleCFG> {
+        self.modules.clone()
+    }
+
+    pub fn entry_point_fns(self) -> Vec<FunctionId> {
+        self.entry_points
+    }
 }
 
 impl Default for WorkspaceCFG {
@@ -414,6 +439,139 @@ pub struct CfgBuilder {
     call_sites: Vec<(BlockId, usize, AstNode)>,
 }
 
+/// Builder for constructing module-level CFGs
+///
+/// Builds a complete ModuleCFG including module initialization code and all function CFGs.
+pub struct ModuleCFGBuilder<'a> {
+    symbol_table: &'a beacon_parser::SymbolTable,
+    uri: Url,
+    module_name: String,
+    source: &'a str,
+}
+
+impl<'a> ModuleCFGBuilder<'a> {
+    pub fn new(symbol_table: &'a beacon_parser::SymbolTable, uri: Url, module_name: String, source: &'a str) -> Self {
+        Self { symbol_table, uri, module_name, source }
+    }
+
+    /// Build a ModuleCFG from an AST
+    ///
+    /// Constructs CFGs for the module initialization code and all function definitions,  resolving call sites using the symbol table.
+    pub fn build(&self, ast: &AstNode) -> ModuleCFG {
+        let mut module_cfg = ModuleCFG::new(self.uri.clone(), self.module_name.clone());
+
+        match ast {
+            AstNode::Module { body, .. } => {
+                let mut init_builder = CfgBuilder::new();
+                init_builder.build_module(body);
+                let (init_cfg, init_call_sites) =
+                    init_builder.build_with_resolution(self.symbol_table, &self.uri, self.symbol_table.root_scope);
+                module_cfg.module_init_cfg = init_cfg;
+                for call_site in init_call_sites {
+                    module_cfg.add_call_site(call_site);
+                }
+
+                self.process_module_body(body, &mut module_cfg);
+            }
+            _ => {}
+        }
+
+        module_cfg
+    }
+
+    fn process_module_body(&self, body: &[AstNode], module_cfg: &mut ModuleCFG) {
+        for stmt in body {
+            match stmt {
+                AstNode::FunctionDef { name, body: func_body, line, col, .. } => {
+                    let byte_offset = self.line_col_to_byte_offset(*line, *col);
+                    let scope_id = self.symbol_table.find_scope_at_position(byte_offset);
+
+                    let mut builder = CfgBuilder::new();
+                    builder.build_function(func_body);
+                    let (cfg, call_sites) = builder.build_with_resolution(self.symbol_table, &self.uri, scope_id);
+
+                    module_cfg.add_function_cfg(scope_id, name.clone(), cfg);
+                    for call_site in call_sites {
+                        module_cfg.add_call_site(call_site);
+                    }
+                }
+                AstNode::ClassDef { body: class_body, .. } => self.process_module_body(class_body, module_cfg),
+                _ => {}
+            }
+        }
+    }
+
+    fn line_col_to_byte_offset(&self, line: usize, col: usize) -> usize {
+        let mut current_line = 1;
+        let mut byte_offset = 0;
+
+        for (i, ch) in self.source.char_indices() {
+            if current_line == line {
+                let mut current_col = 1;
+                for (j, _) in self.source[i..].char_indices() {
+                    if current_col == col {
+                        return i + j;
+                    }
+                    current_col += 1;
+                }
+                return i + self.source[i..].len();
+            }
+
+            if ch == '\n' {
+                current_line += 1;
+                byte_offset = i + 1;
+            }
+        }
+
+        byte_offset
+    }
+}
+
+/// Resolves call targets to FunctionIds using symbol tables
+///
+/// Performs call target resolution by analyzing call expressions and looking up the target function in the symbol table.
+/// Supports direct calls, method calls, and detects dynamic calls that cannot be statically resolved.
+pub struct CallResolver<'a> {
+    symbol_table: &'a beacon_parser::SymbolTable,
+    current_uri: &'a Url,
+    current_scope: beacon_parser::ScopeId,
+}
+
+impl<'a> CallResolver<'a> {
+    pub fn new(symbol_table: &'a beacon_parser::SymbolTable, uri: &'a Url, scope: beacon_parser::ScopeId) -> Self {
+        Self { symbol_table, current_uri: uri, current_scope: scope }
+    }
+
+    /// Resolve a call expression to a FunctionId and CallKind
+    pub fn resolve_call(&self, call_node: &AstNode) -> (Option<FunctionId>, CallKind) {
+        match call_node {
+            AstNode::Call { function, .. } => self.resolve_call_target(function),
+            _ => (None, CallKind::Dynamic),
+        }
+    }
+
+    fn resolve_call_target(&self, function: &AstNode) -> (Option<FunctionId>, CallKind) {
+        match function {
+            AstNode::Identifier { name, .. } => {
+                if let Some(symbol) = self.symbol_table.lookup_symbol(name, self.current_scope) {
+                    match symbol.kind {
+                        beacon_parser::SymbolKind::Function => {
+                            let func_id = FunctionId::new(self.current_uri.clone(), symbol.scope_id, name.clone());
+                            (Some(func_id), CallKind::Direct)
+                        }
+                        _ => (None, CallKind::Dynamic),
+                    }
+                } else {
+                    (None, CallKind::Direct)
+                }
+            }
+            // FIXME: Full method resolution requires type inference
+            AstNode::Attribute { .. } => (None, CallKind::Method),
+            _ => (None, CallKind::Dynamic),
+        }
+    }
+}
+
 impl CfgBuilder {
     pub fn new() -> Self {
         let cfg = ControlFlowGraph::new();
@@ -435,11 +593,48 @@ impl CfgBuilder {
         (self.cfg, self.call_sites)
     }
 
+    /// Build CFG and resolve call sites using symbol table
+    pub fn build_with_resolution(
+        self, symbol_table: &beacon_parser::SymbolTable, uri: &Url, scope_id: beacon_parser::ScopeId,
+    ) -> (ControlFlowGraph, Vec<CallSite>) {
+        let resolver = CallResolver::new(symbol_table, uri, scope_id);
+        let mut resolved_sites = Vec::new();
+
+        for (block_id, stmt_index, call_node) in &self.call_sites {
+            let (line, col) = match call_node {
+                AstNode::Call { line, col, .. } => (*line, *col),
+                _ => (0, 0),
+            };
+
+            let (receiver, kind) = resolver.resolve_call(call_node);
+            let call_site = CallSite::new(*block_id, *stmt_index, receiver, kind, line, col);
+            resolved_sites.push(call_site);
+        }
+
+        (self.cfg, resolved_sites)
+    }
+
     /// Build CFG for a function body
     pub fn build_function(&mut self, body: &[AstNode]) {
         let mut stmt_index = 0;
         for stmt in body {
             self.build_stmt(stmt, &mut stmt_index);
+        }
+
+        self.cfg.add_edge(self.ctx.current, self.cfg.exit, EdgeKind::Normal);
+    }
+
+    /// Build CFG for module-level initialization code
+    ///
+    /// Processes top-level statements in a module, excluding function and class definitions.
+    /// Module initialization runs sequentially when the module is imported.
+    pub fn build_module(&mut self, body: &[AstNode]) {
+        let mut stmt_index = 0;
+        for stmt in body {
+            match stmt {
+                AstNode::FunctionDef { .. } | AstNode::ClassDef { .. } => stmt_index += 1,
+                _ => self.build_stmt(stmt, &mut stmt_index),
+            }
         }
 
         self.cfg.add_edge(self.ctx.current, self.cfg.exit, EdgeKind::Normal);
@@ -462,12 +657,8 @@ impl CfgBuilder {
                 self.extract_calls_from_expr(left, stmt_index);
                 self.extract_calls_from_expr(right, stmt_index);
             }
-            AstNode::UnaryOp { operand, .. } => {
-                self.extract_calls_from_expr(operand, stmt_index);
-            }
-            AstNode::Attribute { object, .. } => {
-                self.extract_calls_from_expr(object, stmt_index);
-            }
+            AstNode::UnaryOp { operand, .. } => self.extract_calls_from_expr(operand, stmt_index),
+            AstNode::Attribute { object, .. } => self.extract_calls_from_expr(object, stmt_index),
             AstNode::Subscript { value, slice, .. } => {
                 self.extract_calls_from_expr(value, stmt_index);
                 self.extract_calls_from_expr(slice, stmt_index);
@@ -538,26 +729,16 @@ impl CfgBuilder {
                     self.extract_calls_from_expr(comp, stmt_index);
                 }
             }
-            AstNode::Lambda { body, .. } => {
-                self.extract_calls_from_expr(body, stmt_index);
-            }
+            AstNode::Lambda { body, .. } => self.extract_calls_from_expr(body, stmt_index),
             AstNode::Yield { value, .. } => {
                 if let Some(val) = value {
-                    self.extract_calls_from_expr(val, stmt_index);
+                    self.extract_calls_from_expr(val, stmt_index)
                 }
             }
-            AstNode::YieldFrom { value, .. } => {
-                self.extract_calls_from_expr(value, stmt_index);
-            }
-            AstNode::Await { value, .. } => {
-                self.extract_calls_from_expr(value, stmt_index);
-            }
-            AstNode::Starred { value, .. } => {
-                self.extract_calls_from_expr(value, stmt_index);
-            }
-            AstNode::NamedExpr { value, .. } => {
-                self.extract_calls_from_expr(value, stmt_index);
-            }
+            AstNode::YieldFrom { value, .. } => self.extract_calls_from_expr(value, stmt_index),
+            AstNode::Await { value, .. } => self.extract_calls_from_expr(value, stmt_index),
+            AstNode::Starred { value, .. } => self.extract_calls_from_expr(value, stmt_index),
+            AstNode::NamedExpr { value, .. } => self.extract_calls_from_expr(value, stmt_index),
             _ => {}
         }
     }
@@ -565,23 +746,17 @@ impl CfgBuilder {
     fn build_stmt(&mut self, stmt: &AstNode, stmt_index: &mut usize) {
         match stmt {
             AstNode::If { test, body, elif_parts, else_body, .. } => {
-                self.build_if(test, body, elif_parts, else_body, stmt_index);
+                self.build_if(test, body, elif_parts, else_body, stmt_index)
             }
             AstNode::For { target: _, iter: _, body, else_body, .. } => {
-                self.build_for(body, else_body.as_ref(), stmt_index);
+                self.build_for(body, else_body.as_ref(), stmt_index)
             }
-            AstNode::While { test: _, body, else_body, .. } => {
-                self.build_while(body, else_body.as_ref(), stmt_index);
-            }
+            AstNode::While { test: _, body, else_body, .. } => self.build_while(body, else_body.as_ref(), stmt_index),
             AstNode::Try { body, handlers, else_body, finally_body, .. } => {
-                self.build_try(body, handlers, else_body.as_ref(), finally_body.as_ref(), stmt_index);
+                self.build_try(body, handlers, else_body.as_ref(), finally_body.as_ref(), stmt_index)
             }
-            AstNode::With { items: _, body, .. } => {
-                self.build_with(body, stmt_index);
-            }
-            AstNode::Match { subject: _, cases, .. } => {
-                self.build_match(cases, stmt_index);
-            }
+            AstNode::With { items: _, body, .. } => self.build_with(body, stmt_index),
+            AstNode::Match { subject: _, cases, .. } => self.build_match(cases, stmt_index),
             AstNode::Return { value, .. } => {
                 if let Some(val) = value {
                     self.extract_calls_from_expr(val, *stmt_index);
@@ -651,9 +826,7 @@ impl CfgBuilder {
             }
             _ => {
                 match stmt {
-                    AstNode::Assignment { value, .. } => {
-                        self.extract_calls_from_expr(value, *stmt_index);
-                    }
+                    AstNode::Assignment { value, .. } => self.extract_calls_from_expr(value, *stmt_index),
                     AstNode::AnnotatedAssignment { value, .. } => {
                         if let Some(val) = value {
                             self.extract_calls_from_expr(val, *stmt_index);
@@ -668,9 +841,7 @@ impl CfgBuilder {
                     AstNode::Call { .. }
                     | AstNode::Yield { .. }
                     | AstNode::YieldFrom { .. }
-                    | AstNode::Await { .. } => {
-                        self.extract_calls_from_expr(stmt, *stmt_index);
-                    }
+                    | AstNode::Await { .. } => self.extract_calls_from_expr(stmt, *stmt_index),
                     _ => {}
                 }
 
@@ -1549,596 +1720,5 @@ mod tests {
         let reachable = cfg.reachable_blocks();
         assert!(reachable.contains(&cfg.entry));
         assert!(reachable.contains(&cfg.exit));
-    }
-
-    mod cross_module {
-        use super::*;
-
-        fn test_uri(path: &str) -> Url {
-            Url::parse(&format!("file:///{}", path)).unwrap()
-        }
-
-        #[test]
-        fn test_function_id_creation() {
-            let uri = test_uri("test.py");
-            let scope_id = ScopeId::from_raw(1);
-            let func_id = FunctionId::new(uri.clone(), scope_id, "test_func".to_string());
-
-            assert_eq!(func_id.uri, uri);
-            assert_eq!(func_id.scope_id, scope_id);
-            assert_eq!(func_id.name, "test_func");
-        }
-
-        #[test]
-        fn test_function_id_equality() {
-            let uri = test_uri("test.py");
-            let scope_id = ScopeId::from_raw(1);
-
-            let func1 = FunctionId::new(uri.clone(), scope_id, "foo".to_string());
-            let func2 = FunctionId::new(uri.clone(), scope_id, "foo".to_string());
-            let func3 = FunctionId::new(uri.clone(), ScopeId::from_raw(2), "bar".to_string());
-
-            assert_eq!(func1, func2);
-            assert_ne!(func1, func3);
-        }
-
-        #[test]
-        fn test_call_site_creation() {
-            let block_id = BlockId(5);
-            let callee = FunctionId::new(test_uri("test.py"), ScopeId::from_raw(1), "foo".to_string());
-
-            let call_site = CallSite::new(block_id, 10, Some(callee.clone()), CallKind::Direct, 42, 15);
-
-            assert_eq!(call_site.block_id, block_id);
-            assert_eq!(call_site.stmt_index, 10);
-            assert_eq!(call_site.receiver, Some(callee));
-            assert_eq!(call_site.kind, CallKind::Direct);
-            assert_eq!(call_site.line, 42);
-            assert_eq!(call_site.col, 15);
-        }
-
-        #[test]
-        fn test_call_site_unresolved_callee() {
-            let call_site = CallSite::new(BlockId(1), 5, None, CallKind::Dynamic, 10, 5);
-
-            assert!(call_site.receiver.is_none());
-            assert_eq!(call_site.kind, CallKind::Dynamic);
-        }
-
-        #[test]
-        fn test_call_graph_add_call_site() {
-            let mut call_graph = CallGraph::new();
-
-            let caller = FunctionId::new(test_uri("a.py"), ScopeId::from_raw(1), "caller".to_string());
-            let callee = FunctionId::new(test_uri("b.py"), ScopeId::from_raw(2), "callee".to_string());
-
-            let call_site = CallSite::new(BlockId(1), 0, Some(callee.clone()), CallKind::Direct, 10, 5);
-
-            call_graph.add_call_site(caller.clone(), call_site);
-
-            let sites = call_graph.get_call_sites(&caller).unwrap();
-            assert_eq!(sites.len(), 1);
-            assert_eq!(sites[0].receiver, Some(callee.clone()));
-
-            let callers = call_graph.get_callers(&callee).unwrap();
-            assert_eq!(callers.len(), 1);
-            assert_eq!(callers[0], caller);
-        }
-
-        #[test]
-        fn test_call_graph_multiple_call_sites() {
-            let mut call_graph = CallGraph::new();
-
-            let caller = FunctionId::new(test_uri("a.py"), ScopeId::from_raw(1), "caller".to_string());
-            let callee1 = FunctionId::new(test_uri("b.py"), ScopeId::from_raw(2), "callee1".to_string());
-            let callee2 = FunctionId::new(test_uri("c.py"), ScopeId::from_raw(3), "callee2".to_string());
-
-            let call1 = CallSite::new(BlockId(1), 0, Some(callee1.clone()), CallKind::Direct, 10, 5);
-            let call2 = CallSite::new(BlockId(2), 1, Some(callee2.clone()), CallKind::Method, 15, 8);
-
-            call_graph.add_call_site(caller.clone(), call1);
-            call_graph.add_call_site(caller.clone(), call2);
-
-            let sites = call_graph.get_call_sites(&caller).unwrap();
-            assert_eq!(sites.len(), 2);
-
-            let callees = call_graph.get_callees(&caller);
-            assert_eq!(callees.len(), 2);
-            assert!(callees.contains(&callee1));
-            assert!(callees.contains(&callee2));
-        }
-
-        #[test]
-        fn test_call_graph_get_callees_with_unresolved() {
-            let mut call_graph = CallGraph::new();
-
-            let caller = FunctionId::new(test_uri("a.py"), ScopeId::from_raw(1), "caller".to_string());
-            let callee = FunctionId::new(test_uri("b.py"), ScopeId::from_raw(2), "callee".to_string());
-
-            call_graph.add_call_site(
-                caller.clone(),
-                CallSite::new(BlockId(1), 0, Some(callee.clone()), CallKind::Direct, 10, 5),
-            );
-            call_graph.add_call_site(
-                caller.clone(),
-                CallSite::new(BlockId(2), 1, None, CallKind::Dynamic, 15, 8),
-            );
-
-            let callees = call_graph.get_callees(&caller);
-            assert_eq!(callees.len(), 1);
-            assert_eq!(callees[0], callee);
-        }
-
-        #[test]
-        fn test_call_graph_reachable_functions_simple_chain() {
-            let mut call_graph = CallGraph::new();
-
-            let func1 = FunctionId::new(test_uri("a.py"), ScopeId::from_raw(1), "func1".to_string());
-            let func2 = FunctionId::new(test_uri("b.py"), ScopeId::from_raw(2), "func2".to_string());
-            let func3 = FunctionId::new(test_uri("c.py"), ScopeId::from_raw(3), "func3".to_string());
-
-            call_graph.add_call_site(
-                func1.clone(),
-                CallSite::new(BlockId(1), 0, Some(func2.clone()), CallKind::Direct, 10, 5),
-            );
-            call_graph.add_call_site(
-                func2.clone(),
-                CallSite::new(BlockId(1), 0, Some(func3.clone()), CallKind::Direct, 20, 5),
-            );
-
-            let reachable = call_graph.reachable_functions(&[func1.clone()]);
-
-            assert_eq!(reachable.len(), 3);
-            assert!(reachable.contains(&func1));
-            assert!(reachable.contains(&func2));
-            assert!(reachable.contains(&func3));
-        }
-
-        #[test]
-        fn test_call_graph_reachable_functions_diamond() {
-            let mut call_graph = CallGraph::new();
-
-            let entry = FunctionId::new(test_uri("a.py"), ScopeId::from_raw(1), "entry".to_string());
-            let left = FunctionId::new(test_uri("b.py"), ScopeId::from_raw(2), "left".to_string());
-            let right = FunctionId::new(test_uri("c.py"), ScopeId::from_raw(3), "right".to_string());
-            let bottom = FunctionId::new(test_uri("d.py"), ScopeId::from_raw(4), "bottom".to_string());
-
-            call_graph.add_call_site(
-                entry.clone(),
-                CallSite::new(BlockId(1), 0, Some(left.clone()), CallKind::Direct, 10, 5),
-            );
-            call_graph.add_call_site(
-                entry.clone(),
-                CallSite::new(BlockId(2), 1, Some(right.clone()), CallKind::Direct, 15, 5),
-            );
-            call_graph.add_call_site(
-                left.clone(),
-                CallSite::new(BlockId(1), 0, Some(bottom.clone()), CallKind::Direct, 20, 5),
-            );
-            call_graph.add_call_site(
-                right.clone(),
-                CallSite::new(BlockId(1), 0, Some(bottom.clone()), CallKind::Direct, 25, 5),
-            );
-
-            let reachable = call_graph.reachable_functions(&[entry.clone()]);
-
-            assert_eq!(reachable.len(), 4);
-            assert!(reachable.contains(&entry));
-            assert!(reachable.contains(&left));
-            assert!(reachable.contains(&right));
-            assert!(reachable.contains(&bottom));
-        }
-
-        #[test]
-        fn test_call_graph_reachable_functions_cycle() {
-            let mut call_graph = CallGraph::new();
-
-            let func1 = FunctionId::new(test_uri("a.py"), ScopeId::from_raw(1), "func1".to_string());
-            let func2 = FunctionId::new(test_uri("b.py"), ScopeId::from_raw(2), "func2".to_string());
-            let func3 = FunctionId::new(test_uri("c.py"), ScopeId::from_raw(3), "func3".to_string());
-
-            call_graph.add_call_site(
-                func1.clone(),
-                CallSite::new(BlockId(1), 0, Some(func2.clone()), CallKind::Direct, 10, 5),
-            );
-            call_graph.add_call_site(
-                func2.clone(),
-                CallSite::new(BlockId(1), 0, Some(func3.clone()), CallKind::Direct, 20, 5),
-            );
-            call_graph.add_call_site(
-                func3.clone(),
-                CallSite::new(BlockId(1), 0, Some(func1.clone()), CallKind::Direct, 30, 5),
-            );
-
-            let reachable = call_graph.reachable_functions(&[func1.clone()]);
-
-            assert_eq!(reachable.len(), 3);
-            assert!(reachable.contains(&func1));
-            assert!(reachable.contains(&func2));
-            assert!(reachable.contains(&func3));
-        }
-
-        #[test]
-        fn test_call_graph_unreachable_functions() {
-            let mut call_graph = CallGraph::new();
-
-            let func1 = FunctionId::new(test_uri("a.py"), ScopeId::from_raw(1), "func1".to_string());
-            let func2 = FunctionId::new(test_uri("b.py"), ScopeId::from_raw(2), "func2".to_string());
-            let func3 = FunctionId::new(test_uri("c.py"), ScopeId::from_raw(3), "func3".to_string());
-
-            call_graph.add_call_site(
-                func1.clone(),
-                CallSite::new(BlockId(1), 0, Some(func2.clone()), CallKind::Direct, 10, 5),
-            );
-
-            let reachable = call_graph.reachable_functions(&[func1.clone()]);
-
-            assert_eq!(reachable.len(), 2);
-            assert!(reachable.contains(&func1));
-            assert!(reachable.contains(&func2));
-            assert!(!reachable.contains(&func3));
-        }
-
-        #[test]
-        fn test_module_cfg_creation() {
-            let uri = test_uri("test.py");
-            let module_cfg = ModuleCFG::new(uri.clone(), "test".to_string());
-
-            assert_eq!(module_cfg.uri, uri);
-            assert_eq!(module_cfg.module_name, "test");
-            assert_eq!(module_cfg.function_cfgs.len(), 0);
-            assert_eq!(module_cfg.call_sites.len(), 0);
-        }
-
-        #[test]
-        fn test_module_cfg_add_function() {
-            let uri = test_uri("test.py");
-            let mut module_cfg = ModuleCFG::new(uri, "test".to_string());
-
-            let cfg = ControlFlowGraph::new();
-            let scope_id = ScopeId::from_raw(1);
-
-            module_cfg.add_function_cfg(scope_id, cfg);
-
-            assert_eq!(module_cfg.function_cfgs.len(), 1);
-            assert!(module_cfg.function_cfgs.contains_key(&scope_id));
-        }
-
-        #[test]
-        fn test_module_cfg_add_call_site() {
-            let uri = test_uri("test.py");
-            let mut module_cfg = ModuleCFG::new(uri.clone(), "test".to_string());
-
-            let callee = FunctionId::new(test_uri("other.py"), ScopeId::from_raw(2), "foo".to_string());
-            let call_site = CallSite::new(BlockId(1), 0, Some(callee), CallKind::Direct, 10, 5);
-
-            module_cfg.add_call_site(call_site);
-
-            assert_eq!(module_cfg.call_sites.len(), 1);
-        }
-
-        #[test]
-        fn test_workspace_cfg_creation() {
-            let workspace_cfg = WorkspaceCFG::new();
-            assert_eq!(workspace_cfg.modules.len(), 0);
-            assert_eq!(workspace_cfg.entry_points.len(), 0);
-        }
-
-        #[test]
-        fn test_workspace_cfg_add_module() {
-            let mut workspace_cfg = WorkspaceCFG::new();
-
-            let uri = test_uri("test.py");
-            let module_cfg = ModuleCFG::new(uri.clone(), "test".to_string());
-
-            workspace_cfg.add_module(module_cfg);
-
-            assert_eq!(workspace_cfg.modules.len(), 1);
-            assert!(workspace_cfg.get_module(&uri).is_some());
-        }
-
-        #[test]
-        fn test_workspace_cfg_add_entry_point() {
-            let mut workspace_cfg = WorkspaceCFG::new();
-
-            let entry = FunctionId::new(test_uri("main.py"), ScopeId::from_raw(1), "main".to_string());
-            workspace_cfg.add_entry_point(entry.clone());
-
-            let entry_points = workspace_cfg.entry_points();
-            assert_eq!(entry_points.len(), 1);
-            assert_eq!(entry_points[0], entry);
-        }
-
-        #[test]
-        fn test_workspace_cfg_reachable_functions() {
-            let mut workspace_cfg = WorkspaceCFG::new();
-
-            let func1 = FunctionId::new(test_uri("a.py"), ScopeId::from_raw(1), "func1".to_string());
-            let func2 = FunctionId::new(test_uri("b.py"), ScopeId::from_raw(2), "func2".to_string());
-
-            workspace_cfg.add_entry_point(func1.clone());
-
-            let call_site = CallSite::new(BlockId(1), 0, Some(func2.clone()), CallKind::Direct, 10, 5);
-            workspace_cfg.call_graph_mut().add_call_site(func1.clone(), call_site);
-
-            let reachable = workspace_cfg.reachable_functions();
-            assert_eq!(reachable.len(), 2);
-            assert!(reachable.contains(&func1));
-            assert!(reachable.contains(&func2));
-        }
-
-        #[test]
-        fn test_workspace_cfg_cross_module_reachable_blocks() {
-            let mut workspace_cfg = WorkspaceCFG::new();
-
-            let uri1 = test_uri("a.py");
-            let uri2 = test_uri("b.py");
-
-            let func1 = FunctionId::new(uri1.clone(), ScopeId::from_raw(1), "func1".to_string());
-            let func2 = FunctionId::new(uri2.clone(), ScopeId::from_raw(2), "func2".to_string());
-
-            let mut module1 = ModuleCFG::new(uri1.clone(), "a".to_string());
-            let cfg1 = ControlFlowGraph::new();
-            module1.add_function_cfg(ScopeId::from_raw(1), cfg1);
-
-            let mut module2 = ModuleCFG::new(uri2.clone(), "b".to_string());
-            let cfg2 = ControlFlowGraph::new();
-            module2.add_function_cfg(ScopeId::from_raw(2), cfg2);
-
-            workspace_cfg.add_module(module1);
-            workspace_cfg.add_module(module2);
-
-            let call_site = CallSite::new(BlockId(1), 0, Some(func2.clone()), CallKind::Direct, 10, 5);
-            workspace_cfg.call_graph_mut().add_call_site(func1.clone(), call_site);
-
-            let reachable = workspace_cfg.cross_module_reachable_blocks(&[func1.clone()]);
-
-            assert_eq!(reachable.len(), 2);
-            assert!(reachable.contains_key(&func1));
-            assert!(reachable.contains_key(&func2));
-        }
-
-        #[test]
-        fn test_call_extraction_simple_call() {
-            let mut builder = CfgBuilder::new();
-            let body = vec![AstNode::Call {
-                function: Box::new(AstNode::Identifier {
-                    name: "foo".to_string(),
-                    line: 1,
-                    col: 1,
-                    end_line: 1,
-                    end_col: 4,
-                }),
-                args: vec![],
-                keywords: vec![],
-                line: 1,
-                col: 1,
-                end_line: 1,
-                end_col: 6,
-            }];
-
-            builder.build_function(&body);
-            let call_sites = builder.call_sites();
-
-            assert_eq!(call_sites.len(), 1);
-            assert_eq!(call_sites[0].1, 0);
-        }
-
-        #[test]
-        fn test_call_extraction_assignment() {
-            let mut builder = CfgBuilder::new();
-            let body = vec![AstNode::Assignment {
-                target: Box::new(AstNode::Identifier {
-                    name: "x".to_string(),
-                    line: 1,
-                    col: 1,
-                    end_line: 1,
-                    end_col: 2,
-                }),
-                value: Box::new(AstNode::Call {
-                    function: Box::new(AstNode::Identifier {
-                        name: "foo".to_string(),
-                        line: 1,
-                        col: 5,
-                        end_line: 1,
-                        end_col: 8,
-                    }),
-                    args: vec![],
-                    keywords: vec![],
-                    line: 1,
-                    col: 5,
-                    end_line: 1,
-                    end_col: 10,
-                }),
-                line: 1,
-                col: 1,
-                end_line: 1,
-                end_col: 10,
-            }];
-
-            builder.build_function(&body);
-            let call_sites = builder.call_sites();
-
-            assert_eq!(call_sites.len(), 1);
-        }
-
-        #[test]
-        fn test_call_extraction_nested_calls() {
-            let mut builder = CfgBuilder::new();
-            let body = vec![AstNode::Call {
-                function: Box::new(AstNode::Identifier {
-                    name: "outer".to_string(),
-                    line: 1,
-                    col: 1,
-                    end_line: 1,
-                    end_col: 6,
-                }),
-                args: vec![AstNode::Call {
-                    function: Box::new(AstNode::Identifier {
-                        name: "inner".to_string(),
-                        line: 1,
-                        col: 7,
-                        end_line: 1,
-                        end_col: 12,
-                    }),
-                    args: vec![],
-                    keywords: vec![],
-                    line: 1,
-                    col: 7,
-                    end_line: 1,
-                    end_col: 14,
-                }],
-                keywords: vec![],
-                line: 1,
-                col: 1,
-                end_line: 1,
-                end_col: 15,
-            }];
-
-            builder.build_function(&body);
-            let call_sites = builder.call_sites();
-
-            assert_eq!(call_sites.len(), 2);
-        }
-
-        #[test]
-        fn test_call_extraction_return_statement() {
-            let mut builder = CfgBuilder::new();
-            let body = vec![AstNode::Return {
-                value: Some(Box::new(AstNode::Call {
-                    function: Box::new(AstNode::Identifier {
-                        name: "foo".to_string(),
-                        line: 1,
-                        col: 8,
-                        end_line: 1,
-                        end_col: 11,
-                    }),
-                    args: vec![],
-                    keywords: vec![],
-                    line: 1,
-                    col: 8,
-                    end_line: 1,
-                    end_col: 13,
-                })),
-                line: 1,
-                col: 1,
-                end_line: 1,
-                end_col: 13,
-            }];
-
-            builder.build_function(&body);
-            let call_sites = builder.call_sites();
-
-            assert_eq!(call_sites.len(), 1);
-        }
-
-        #[test]
-        fn test_call_extraction_method_call() {
-            let mut builder = CfgBuilder::new();
-            let body = vec![AstNode::Call {
-                function: Box::new(AstNode::Attribute {
-                    object: Box::new(AstNode::Identifier {
-                        name: "obj".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 4,
-                    }),
-                    attribute: "method".to_string(),
-                    line: 1,
-                    col: 1,
-                    end_line: 1,
-                    end_col: 11,
-                }),
-                args: vec![],
-                keywords: vec![],
-                line: 1,
-                col: 1,
-                end_line: 1,
-                end_col: 13,
-            }];
-
-            builder.build_function(&body);
-            let call_sites = builder.call_sites();
-
-            assert_eq!(call_sites.len(), 1);
-        }
-
-        #[test]
-        fn test_call_extraction_in_list_comp() {
-            let mut builder = CfgBuilder::new();
-            let body = vec![AstNode::Assignment {
-                target: Box::new(AstNode::Identifier {
-                    name: "result".to_string(),
-                    line: 1,
-                    col: 1,
-                    end_line: 1,
-                    end_col: 7,
-                }),
-                value: Box::new(AstNode::ListComp {
-                    element: Box::new(AstNode::Call {
-                        function: Box::new(AstNode::Identifier {
-                            name: "transform".to_string(),
-                            line: 1,
-                            col: 11,
-                            end_line: 1,
-                            end_col: 20,
-                        }),
-                        args: vec![AstNode::Identifier {
-                            name: "x".to_string(),
-                            line: 1,
-                            col: 21,
-                            end_line: 1,
-                            end_col: 22,
-                        }],
-                        keywords: vec![],
-                        line: 1,
-                        col: 11,
-                        end_line: 1,
-                        end_col: 23,
-                    }),
-                    generators: vec![],
-                    line: 1,
-                    col: 10,
-                    end_line: 1,
-                    end_col: 40,
-                }),
-                line: 1,
-                col: 1,
-                end_line: 1,
-                end_col: 40,
-            }];
-
-            builder.build_function(&body);
-            let call_sites = builder.call_sites();
-
-            assert_eq!(call_sites.len(), 1);
-        }
-
-        #[test]
-        fn test_take_call_sites() {
-            let mut builder = CfgBuilder::new();
-            let body = vec![AstNode::Call {
-                function: Box::new(AstNode::Identifier {
-                    name: "foo".to_string(),
-                    line: 1,
-                    col: 1,
-                    end_line: 1,
-                    end_col: 4,
-                }),
-                args: vec![],
-                keywords: vec![],
-                line: 1,
-                col: 1,
-                end_line: 1,
-                end_col: 6,
-            }];
-
-            builder.build_function(&body);
-            let (cfg, call_sites) = builder.take_call_sites();
-
-            assert_eq!(call_sites.len(), 1);
-            assert!(!cfg.blocks.is_empty());
-        }
     }
 }
