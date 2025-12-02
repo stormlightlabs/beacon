@@ -1,0 +1,54 @@
+{
+  "type": "Module",
+  "body": [
+    {
+      "type": "ClassDef",
+      "name": "Outer",
+      "bases": [],
+      "metaclass": null,
+      "body": [
+        {
+          "type": "AnnotatedAssignment",
+          "target": { "type": "Identifier", "name": "name", "line": 2, "col": 5, "end_line": 2, "end_col": 9 },
+          "type_annotation": "str",
+          "value": null,
+          "line": 2,
+          "col": 5,
+          "end_line": 2,
+          "end_col": 14
+        },
+        {
+          "type": "ClassDef",
+          "name": "Inner",
+          "bases": [],
+          "metaclass": null,
+          "body": [
+            {
+              "type": "AnnotatedAssignment",
+              "target": { "type": "Identifier", "name": "value", "line": 5, "col": 9, "end_line": 5, "end_col": 14 },
+              "type_annotation": "int",
+              "value": null,
+              "line": 5,
+              "col": 9,
+              "end_line": 5,
+              "end_col": 19
+            }
+          ],
+          "docstring": null,
+          "decorators": [],
+          "line": 4,
+          "col": 5,
+          "end_line": 5,
+          "end_col": 19
+        }
+      ],
+      "docstring": null,
+      "decorators": [],
+      "line": 1,
+      "col": 1,
+      "end_line": 5,
+      "end_col": 19
+    }
+  ],
+  "docstring": null
+}

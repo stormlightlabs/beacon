@@ -5,13 +5,17 @@ edition = "2024"
 
 [dependencies]
 beacon-core = { path = "../core" }
-beacon-parser = { path = "../parser" }
+beacon-parser = { path = "../parser", features = ["serde"] }
 beacon-constraint = { path = "../constraints" }
 rustc-hash.workspace = true
 lsp-types.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 url = "2.5"
 once_cell = "1.20"
+tracing = "0.1"
+
+[dev-dependencies]
+serde_json = "1.0"
 
 [build-dependencies]
 chrono = "0.4"

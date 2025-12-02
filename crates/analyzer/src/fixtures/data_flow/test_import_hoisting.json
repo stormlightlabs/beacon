@@ -1,0 +1,40 @@
+{
+  "type": "Module",
+  "body": [
+    {
+      "type": "FunctionDef",
+      "name": "foo",
+      "args": [],
+      "body": [
+        { "type": "ImportFrom", "module": "bar", "names": ["baz"], "line": 2, "col": 5, "end_line": 2, "end_col": 24 },
+        {
+          "type": "Assignment",
+          "target": { "type": "Identifier", "name": "result", "line": 3, "col": 5, "end_line": 3, "end_col": 11 },
+          "value": {
+            "type": "Call",
+            "function": { "type": "Identifier", "name": "baz", "line": 3, "col": 14, "end_line": 3, "end_col": 17 },
+            "args": [],
+            "keywords": [],
+            "line": 3,
+            "col": 14,
+            "end_line": 3,
+            "end_col": 19
+          },
+          "line": 3,
+          "col": 5,
+          "end_line": 3,
+          "end_col": 19
+        }
+      ],
+      "docstring": null,
+      "return_type": null,
+      "decorators": [],
+      "is_async": false,
+      "line": 1,
+      "col": 1,
+      "end_line": 3,
+      "end_col": 19
+    }
+  ],
+  "docstring": null
+}

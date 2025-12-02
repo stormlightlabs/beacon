@@ -151,6 +151,8 @@
 
 **Focus**: Workspace support, snippets, auto-import, diagnostics publishing
 
+This set of releases is around where the VSCode extension will be published as a pre-release
+
 ### v0.10.0 - Multi-Root Workspace Support
 
 **Goals:**

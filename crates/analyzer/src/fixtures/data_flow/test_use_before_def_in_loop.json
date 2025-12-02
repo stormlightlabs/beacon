@@ -1,0 +1,52 @@
+{
+  "type": "Module",
+  "body": [
+    {
+      "type": "FunctionDef",
+      "name": "foo",
+      "args": [],
+      "body": [
+        {
+          "type": "For",
+          "target": { "type": "Identifier", "name": "i", "line": 2, "col": 9, "end_line": 2, "end_col": 10 },
+          "iter": { "type": "Identifier", "name": "items", "line": 2, "col": 14, "end_line": 2, "end_col": 19 },
+          "body": [
+            {
+              "type": "Assignment",
+              "target": { "type": "Identifier", "name": "result", "line": 3, "col": 9, "end_line": 3, "end_col": 15 },
+              "value": { "type": "Identifier", "name": "total", "line": 3, "col": 18, "end_line": 3, "end_col": 23 },
+              "line": 3,
+              "col": 9,
+              "end_line": 3,
+              "end_col": 23
+            },
+            {
+              "type": "Assignment",
+              "target": { "type": "Identifier", "name": "total", "line": 4, "col": 9, "end_line": 4, "end_col": 14 },
+              "value": { "type": "Identifier", "name": "i", "line": 4, "col": 17, "end_line": 4, "end_col": 18 },
+              "line": 4,
+              "col": 9,
+              "end_line": 4,
+              "end_col": 18
+            }
+          ],
+          "else_body": null,
+          "is_async": false,
+          "line": 2,
+          "col": 5,
+          "end_line": 4,
+          "end_col": 18
+        }
+      ],
+      "docstring": null,
+      "return_type": null,
+      "decorators": [],
+      "is_async": false,
+      "line": 1,
+      "col": 1,
+      "end_line": 4,
+      "end_col": 18
+    }
+  ],
+  "docstring": null
+}

@@ -1,0 +1,54 @@
+{
+  "type": "Module",
+  "body": [
+    {
+      "type": "ClassDef",
+      "name": "CustomPoint",
+      "bases": [],
+      "metaclass": null,
+      "body": [
+        {
+          "type": "AnnotatedAssignment",
+          "target": { "type": "Identifier", "name": "x", "line": 2, "col": 5, "end_line": 2, "end_col": 6 },
+          "type_annotation": "int",
+          "value": null,
+          "line": 2,
+          "col": 5,
+          "end_line": 2,
+          "end_col": 11
+        },
+        {
+          "type": "FunctionDef",
+          "name": "__init__",
+          "args": [
+            {
+              "name": "self",
+              "line": 4,
+              "col": 18,
+              "end_line": 4,
+              "end_col": 22,
+              "type_annotation": null,
+              "default_value": null
+            }
+          ],
+          "body": [{ "type": "Pass", "line": 5, "col": 9, "end_line": 5, "end_col": 13 }],
+          "docstring": null,
+          "return_type": null,
+          "decorators": [],
+          "is_async": false,
+          "line": 4,
+          "col": 5,
+          "end_line": 5,
+          "end_col": 13
+        }
+      ],
+      "docstring": null,
+      "decorators": [],
+      "line": 1,
+      "col": 1,
+      "end_line": 5,
+      "end_col": 13
+    }
+  ],
+  "docstring": null
+}

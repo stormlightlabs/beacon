@@ -1,0 +1,69 @@
+{
+  "type": "Module",
+  "body": [
+    {
+      "type": "FunctionDef",
+      "name": "foo",
+      "args": [
+        {
+          "name": "cond",
+          "line": 1,
+          "col": 9,
+          "end_line": 1,
+          "end_col": 13,
+          "type_annotation": null,
+          "default_value": null
+        }
+      ],
+      "body": [
+        {
+          "type": "If",
+          "test": { "type": "Identifier", "name": "cond", "line": 2, "col": 8, "end_line": 2, "end_col": 12 },
+          "body": [
+            {
+              "type": "Assignment",
+              "target": { "type": "Identifier", "name": "x", "line": 3, "col": 9, "end_line": 3, "end_col": 10 },
+              "value": {
+                "type": "Literal",
+                "value": { "kind": "Integer", "data": 1 },
+                "line": 3,
+                "col": 13,
+                "end_line": 3,
+                "end_col": 14
+              },
+              "line": 3,
+              "col": 9,
+              "end_line": 3,
+              "end_col": 14
+            }
+          ],
+          "elif_parts": [],
+          "else_body": null,
+          "line": 2,
+          "col": 5,
+          "end_line": 3,
+          "end_col": 14
+        },
+        {
+          "type": "Call",
+          "function": { "type": "Identifier", "name": "print", "line": 4, "col": 5, "end_line": 4, "end_col": 10 },
+          "args": [{ "type": "Identifier", "name": "x", "line": 4, "col": 11, "end_line": 4, "end_col": 12 }],
+          "keywords": [],
+          "line": 4,
+          "col": 5,
+          "end_line": 4,
+          "end_col": 13
+        }
+      ],
+      "docstring": null,
+      "return_type": null,
+      "decorators": [],
+      "is_async": false,
+      "line": 1,
+      "col": 1,
+      "end_line": 4,
+      "end_col": 13
+    }
+  ],
+  "docstring": null
+}

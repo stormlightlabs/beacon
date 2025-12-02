@@ -1,0 +1,91 @@
+{
+  "type": "Module",
+  "body": [
+    {
+      "type": "FunctionDef",
+      "name": "foo",
+      "args": [],
+      "body": [
+        {
+          "type": "Import",
+          "module": "numpy",
+          "alias": "np",
+          "extra_modules": [],
+          "line": 2,
+          "col": 5,
+          "end_line": 2,
+          "end_col": 23
+        },
+        {
+          "type": "Assignment",
+          "target": { "type": "Identifier", "name": "arr", "line": 3, "col": 5, "end_line": 3, "end_col": 8 },
+          "value": {
+            "type": "Call",
+            "function": {
+              "type": "Attribute",
+              "object": { "type": "Identifier", "name": "np", "line": 3, "col": 11, "end_line": 3, "end_col": 13 },
+              "attribute": "array",
+              "line": 3,
+              "col": 11,
+              "end_line": 3,
+              "end_col": 19
+            },
+            "args": [
+              {
+                "type": "List",
+                "elements": [
+                  {
+                    "type": "Literal",
+                    "value": { "kind": "Integer", "data": 1 },
+                    "line": 3,
+                    "col": 21,
+                    "end_line": 3,
+                    "end_col": 22
+                  },
+                  {
+                    "type": "Literal",
+                    "value": { "kind": "Integer", "data": 2 },
+                    "line": 3,
+                    "col": 24,
+                    "end_line": 3,
+                    "end_col": 25
+                  },
+                  {
+                    "type": "Literal",
+                    "value": { "kind": "Integer", "data": 3 },
+                    "line": 3,
+                    "col": 27,
+                    "end_line": 3,
+                    "end_col": 28
+                  }
+                ],
+                "line": 3,
+                "col": 20,
+                "end_line": 3,
+                "end_col": 29
+              }
+            ],
+            "keywords": [],
+            "line": 3,
+            "col": 11,
+            "end_line": 3,
+            "end_col": 30
+          },
+          "line": 3,
+          "col": 5,
+          "end_line": 3,
+          "end_col": 30
+        }
+      ],
+      "docstring": null,
+      "return_type": null,
+      "decorators": [],
+      "is_async": false,
+      "line": 1,
+      "col": 1,
+      "end_line": 3,
+      "end_col": 30
+    }
+  ],
+  "docstring": null
+}

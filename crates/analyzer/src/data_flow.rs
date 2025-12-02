@@ -914,8 +914,9 @@ impl<'a> DataFlowAnalyzer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cfg::CfgBuilder;
-    use beacon_parser::{NameResolver, Parameter, ScopeId, ScopeKind, SymbolTable};
+    use crate::cfg::{CfgBuilder, ControlFlowGraph};
+    use beacon_parser::{NameResolver, ScopeId, ScopeKind, SymbolTable};
+    use serde_json;
 
     /// Helper to find the first function scope in the symbol table (for tests)
     fn find_function_scope(symbol_table: &SymbolTable) -> ScopeId {
@@ -927,1332 +928,338 @@ mod tests {
             .expect("No function scope found in symbol table")
     }
 
-    #[test]
-    fn test_use_before_def_detection() {
-        let source = "def foo():\n    y = x\n    x = 1".to_string();
-        let mut resolver = NameResolver::new(source);
+    macro_rules! data_flow_fixture {
+        ($name:literal) => {{
+            serde_json::from_str::<AstNode>(include_str!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/fixtures/data_flow/",
+                $name,
+                ".json"
+            )))
+            .expect("invalid data flow fixture JSON")
+        }};
+    }
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "y".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 2,
-                    }),
-                    value: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 2,
-                        col: 9,
-                        end_line: 2,
-                        end_col: 10,
-                    }),
-                    line: 2,
-                    end_line: 2,
-                    col: 5,
-                    end_col: 5,
-                },
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 2,
-                    }),
-                    value: Box::new(AstNode::Literal {
-                        value: beacon_parser::LiteralValue::Integer(1),
-                        line: 3,
-                        end_line: 3,
-                        col: 9,
-                        end_col: 9,
-                    }),
-                    line: 3,
-                    end_line: 3,
-                    col: 5,
-                    end_col: 5,
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
-        };
+    struct FunctionFixture {
+        ast: AstNode,
+        resolver: NameResolver,
+        cfg: ControlFlowGraph,
+        scope_id: ScopeId,
+        function_name: Option<String>,
+    }
 
-        resolver.resolve(&ast).unwrap();
+    impl FunctionFixture {
+        fn new(source: &str, ast: AstNode, function_name: Option<&str>) -> Self {
+            let mut resolver = NameResolver::new(source.to_string());
+            resolver.resolve(&ast).expect("Failed to resolve fixture AST");
 
-        if let AstNode::FunctionDef { body, .. } = &ast {
             let mut builder = CfgBuilder::new();
+            let body = Self::function_body(&ast, function_name);
             builder.build_function(body);
             let cfg = builder.build();
-
             let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let result = analyzer.find_use_before_def();
 
-            assert!(!result.is_empty(), "Expected use-before-def for x");
-            assert!(
-                result.iter().any(|e| e.var_name == "x"),
-                "Expected x to be flagged as use-before-def"
-            );
-        } else {
-            panic!("Expected FunctionDef");
+            Self { ast, resolver, cfg, scope_id, function_name: function_name.map(|name| name.to_string()) }
         }
+
+        fn function(&self) -> &AstNode {
+            match &self.ast {
+                AstNode::FunctionDef { .. } => &self.ast,
+                AstNode::Module { body, .. } => {
+                    if let Some(name) = &self.function_name {
+                        body.iter()
+                            .find(|node| matches!(node, AstNode::FunctionDef { name: func_name, .. } if func_name == name))
+                            .expect("function not found in module fixture")
+                    } else {
+                        body.iter()
+                            .find(|node| matches!(node, AstNode::FunctionDef { .. }))
+                            .expect("no function in module fixture")
+                    }
+                }
+                _ => panic!("fixture root must be FunctionDef or Module"),
+            }
+        }
+
+        fn function_body<'a>(ast: &'a AstNode, function_name: Option<&'a str>) -> &'a [AstNode] {
+            match Self::select_function(ast, function_name) {
+                AstNode::FunctionDef { body, .. } => body,
+                _ => unreachable!(),
+            }
+        }
+
+        fn select_function<'a>(ast: &'a AstNode, function_name: Option<&str>) -> &'a AstNode {
+            match ast {
+                AstNode::FunctionDef { .. } => ast,
+                AstNode::Module { body, .. } => {
+                    if let Some(name) = function_name {
+                        body.iter()
+                            .find(|node| matches!(node, AstNode::FunctionDef { name: func_name, .. } if func_name == name))
+                            .expect("function not found in module fixture")
+                    } else {
+                        body.iter()
+                            .find(|node| matches!(node, AstNode::FunctionDef { .. }))
+                            .expect("no function in module fixture")
+                    }
+                }
+                _ => panic!("fixture root must be FunctionDef or Module"),
+            }
+        }
+
+        fn analyzer(&self, parent_hoisted: Option<&FxHashSet<String>>) -> DataFlowAnalyzer<'_> {
+            DataFlowAnalyzer::new(
+                &self.cfg,
+                self.body(),
+                &self.resolver.symbol_table,
+                self.scope_id,
+                parent_hoisted,
+            )
+        }
+
+        fn body(&self) -> &[AstNode] {
+            if let AstNode::FunctionDef { body, .. } = self.function() { body } else { unreachable!() }
+        }
+
+        fn module_body(&self) -> Option<&[AstNode]> {
+            if let AstNode::Module { body, .. } = &self.ast { Some(body) } else { None }
+        }
+    }
+
+    #[test]
+    fn test_use_before_def_detection() {
+        let source = "def foo():\n    y = x\n    x = 1";
+        let fixture = FunctionFixture::new(source, data_flow_fixture!("test_use_before_def_detection"), None);
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
+
+        assert!(!result.is_empty(), "Expected use-before-def for x");
+        assert!(
+            result.iter().any(|e| e.var_name == "x"),
+            "Expected x to be flagged as use-before-def"
+        );
     }
 
     #[test]
     fn test_unused_variable_detection() {
-        let source = "def foo():\n    x = 1\n    y = 2\n    return y".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    x = 1\n    y = 2\n    return y";
+        let fixture = FunctionFixture::new(source, data_flow_fixture!("test_unused_variable_detection"), None);
+        let analyzer = fixture.analyzer(None);
+        let unused = analyzer.find_unused_variables();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 2,
-                    }),
-                    value: Box::new(AstNode::Literal {
-                        value: beacon_parser::LiteralValue::Integer(1),
-                        line: 2,
-                        end_line: 2,
-                        col: 9,
-                        end_col: 9,
-                    }),
-                    line: 2,
-                    end_line: 2,
-                    col: 5,
-                    end_col: 5,
-                },
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "y".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 2,
-                    }),
-                    value: Box::new(AstNode::Literal {
-                        value: beacon_parser::LiteralValue::Integer(2),
-                        line: 3,
-                        end_line: 3,
-                        col: 9,
-                        end_col: 9,
-                    }),
-                    line: 3,
-                    end_line: 3,
-                    col: 5,
-                    end_col: 5,
-                },
-                AstNode::Return {
-                    value: Some(Box::new(AstNode::Identifier {
-                        name: "y".to_string(),
-                        line: 4,
-                        end_line: 4,
-                        col: 12,
-                        end_col: 12,
-                    })),
-                    line: 4,
-                    end_line: 4,
-                    col: 5,
-                    end_col: 5,
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            is_async: false,
-            col: 1,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let unused = analyzer.find_unused_variables();
-
-            assert!(unused.iter().any(|u| u.var_name == "x"));
-            assert!(!unused.iter().any(|u| u.var_name == "y"));
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        assert!(unused.iter().any(|u| u.var_name == "x"));
+        assert!(!unused.iter().any(|u| u.var_name == "y"));
     }
 
     #[test]
     fn test_use_before_def_in_conditional() {
-        let source = "def foo(cond):\n    if cond:\n        x = 1\n    print(x)".to_string();
-        let mut resolver = NameResolver::new(source);
-
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![Parameter {
-                name: "cond".to_string(),
-                line: 1,
-                end_line: 1,
-                col: 9,
-                end_col: 9,
-                type_annotation: None,
-                default_value: None,
-            }],
-            body: vec![
-                AstNode::If {
-                    test: Box::new(AstNode::Identifier {
-                        name: "cond".to_string(),
-                        line: 2,
-                        col: 8,
-                        end_line: 2,
-                        end_col: 12,
-                    }),
-                    body: vec![AstNode::Assignment {
-                        target: Box::new(AstNode::Identifier {
-                            name: "x".to_string(),
-                            line: 1,
-                            col: 1,
-                            end_line: 1,
-                            end_col: 2,
-                        }),
-                        value: Box::new(AstNode::Literal {
-                            value: beacon_parser::LiteralValue::Integer(1),
-                            line: 3,
-                            end_line: 3,
-                            col: 13,
-                            end_col: 13,
-                        }),
-                        line: 3,
-                        end_line: 3,
-                        col: 9,
-                        end_col: 9,
-                    }],
-                    elif_parts: vec![],
-                    else_body: None,
-                    line: 2,
-                    end_line: 2,
-                    col: 5,
-                    end_col: 5,
-                },
-                AstNode::Call {
-                    function: Box::new(AstNode::Identifier {
-                        name: "print".to_string(),
-                        line: 4,
-                        col: 5,
-                        end_line: 4,
-                        end_col: 10,
-                    }),
-                    args: vec![AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 4,
-                        col: 11,
-                        end_line: 4,
-                        end_col: 12,
-                    }],
-                    line: 4,
-                    end_line: 4,
-                    col: 5,
-                    end_col: 5,
-                    keywords: Vec::new(),
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            is_async: false,
-            col: 1,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-
-            let cfg = builder.build();
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let result = analyzer.find_use_before_def();
-            assert!(!result.is_empty());
-            assert!(result.iter().any(|e| e.var_name == "x"));
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        let source = "def foo(cond):\n    if cond:\n        x = 1\n    print(x)";
+        let fixture = FunctionFixture::new(source, data_flow_fixture!("test_use_before_def_in_conditional"), None);
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
+        assert!(!result.is_empty());
+        assert!(result.iter().any(|e| e.var_name == "x"));
     }
 
     #[test]
     fn test_no_use_before_def_when_all_paths_assign() {
-        let source = "def foo(cond):\n    if cond:\n        x = 1\n    else:\n        x = 2\n    print(x)".to_string();
-        let mut resolver = NameResolver::new(source);
-
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![beacon_parser::Parameter {
-                name: "cond".to_string(),
-                line: 1,
-                end_line: 1,
-                col: 9,
-                end_col: 9,
-                type_annotation: None,
-                default_value: None,
-            }],
-            body: vec![
-                AstNode::If {
-                    test: Box::new(AstNode::Identifier {
-                        name: "cond".to_string(),
-                        line: 2,
-                        col: 8,
-                        end_line: 2,
-                        end_col: 8,
-                    }),
-                    body: vec![AstNode::Assignment {
-                        target: Box::new(AstNode::Identifier {
-                            name: "x".to_string(),
-                            line: 1,
-                            col: 1,
-                            end_line: 1,
-                            end_col: 2,
-                        }),
-                        value: Box::new(AstNode::Literal {
-                            value: beacon_parser::LiteralValue::Integer(1),
-                            line: 3,
-                            end_line: 3,
-                            col: 13,
-                            end_col: 13,
-                        }),
-                        line: 3,
-                        end_line: 3,
-                        col: 9,
-                        end_col: 9,
-                    }],
-                    elif_parts: vec![],
-                    else_body: Some(vec![AstNode::Assignment {
-                        target: Box::new(AstNode::Identifier {
-                            name: "x".to_string(),
-                            line: 1,
-                            col: 1,
-                            end_line: 1,
-                            end_col: 2,
-                        }),
-                        value: Box::new(AstNode::Literal {
-                            value: beacon_parser::LiteralValue::Integer(2),
-                            line: 5,
-                            end_line: 5,
-                            col: 13,
-                            end_col: 13,
-                        }),
-                        line: 5,
-                        end_line: 5,
-                        col: 9,
-                        end_col: 9,
-                    }]),
-                    line: 2,
-                    end_line: 2,
-                    col: 5,
-                    end_col: 5,
-                },
-                AstNode::Call {
-                    function: Box::new(AstNode::Identifier {
-                        name: "print".to_string(),
-                        line: 4,
-                        col: 5,
-                        end_line: 4,
-                        end_col: 10,
-                    }),
-                    args: vec![AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 6,
-                        col: 11,
-                        end_line: 6,
-                        end_col: 12,
-                    }],
-                    line: 6,
-                    end_line: 6,
-                    col: 5,
-                    end_col: 5,
-                    keywords: Vec::new(),
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-
-            let cfg = builder.build();
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let result = analyzer.find_use_before_def();
-
-            assert!(!result.iter().any(|e| e.var_name == "x" && e.line == 6));
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        let source = "def foo(cond):\n    if cond:\n        x = 1\n    else:\n        x = 2\n    print(x)";
+        let fixture = FunctionFixture::new(
+            source,
+            data_flow_fixture!("test_no_use_before_def_when_all_paths_assign"),
+            None,
+        );
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
+        assert!(!result.iter().any(|e| e.var_name == "x" && e.line == 6));
     }
 
     #[test]
     fn test_use_before_def_in_loop() {
-        let source = "def foo():\n    for i in items:\n        result = total\n        total = i".to_string();
-        let mut resolver = NameResolver::new(source);
-
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![AstNode::For {
-                target: Box::new(AstNode::Identifier {
-                    name: "i".to_string(),
-                    line: 1,
-                    col: 5,
-                    end_line: 1,
-                    end_col: 6,
-                }),
-                iter: Box::new(AstNode::Identifier {
-                    name: "items".to_string(),
-                    line: 2,
-                    col: 14,
-                    end_line: 2,
-                    end_col: 19,
-                }),
-                body: vec![
-                    AstNode::Assignment {
-                        target: Box::new(AstNode::Identifier {
-                            name: "result".to_string(),
-                            line: 1,
-                            col: 1,
-                            end_line: 1,
-                            end_col: 7,
-                        }),
-                        value: Box::new(AstNode::Identifier {
-                            name: "total".to_string(),
-                            line: 3,
-                            col: 18,
-                            end_line: 3,
-                            end_col: 23,
-                        }),
-                        line: 3,
-                        end_line: 3,
-                        col: 9,
-                        end_col: 9,
-                    },
-                    AstNode::Assignment {
-                        target: Box::new(AstNode::Identifier {
-                            name: "total".to_string(),
-                            line: 1,
-                            col: 1,
-                            end_line: 1,
-                            end_col: 6,
-                        }),
-                        value: Box::new(AstNode::Identifier {
-                            name: "i".to_string(),
-                            line: 4,
-                            col: 17,
-                            end_line: 4,
-                            end_col: 18,
-                        }),
-                        line: 4,
-                        end_line: 4,
-                        col: 9,
-                        end_col: 9,
-                    },
-                ],
-                else_body: None,
-                is_async: false,
-                line: 2,
-                end_line: 2,
-                col: 5,
-                end_col: 5,
-            }],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-
-            let cfg = builder.build();
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let result = analyzer.find_use_before_def();
-            assert!(!result.is_empty(), "Expected use-before-def errors");
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        let source = "def foo():\n    for i in items:\n        result = total\n        total = i";
+        let fixture = FunctionFixture::new(source, data_flow_fixture!("test_use_before_def_in_loop"), None);
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
+        assert!(!result.is_empty(), "Expected use-before-def errors");
     }
 
     #[test]
     fn test_unreachable_code_after_return() {
-        let source = "def foo():\n    return 1\n    x = 2".to_string();
-        let mut resolver = NameResolver::new(source);
-
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![
-                AstNode::Return {
-                    value: Some(Box::new(AstNode::Literal {
-                        value: beacon_parser::LiteralValue::Integer(1),
-                        line: 2,
-                        end_line: 2,
-                        col: 12,
-                        end_col: 12,
-                    })),
-                    line: 2,
-                    end_line: 2,
-                    col: 5,
-                    end_col: 5,
-                },
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 2,
-                    }),
-                    value: Box::new(AstNode::Literal {
-                        value: beacon_parser::LiteralValue::Integer(2),
-                        line: 3,
-                        end_line: 3,
-                        col: 9,
-                        end_col: 9,
-                    }),
-                    line: 3,
-                    end_line: 3,
-                    col: 5,
-                    end_col: 5,
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-
-            let cfg = builder.build();
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let result = analyzer.find_unreachable_code();
-            assert!(!result.is_empty());
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        let source = "def foo():\n    return 1\n    x = 2";
+        let fixture = FunctionFixture::new(source, data_flow_fixture!("test_unreachable_code_after_return"), None);
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_unreachable_code();
+        assert!(!result.is_empty());
     }
 
     #[test]
     fn test_data_flow_analyze_combined() {
-        let source = "def foo():\n    y = x\n    z = 1".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    y = x\n    z = 1";
+        let fixture = FunctionFixture::new(source, data_flow_fixture!("test_data_flow_analyze_combined"), None);
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.analyze();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "y".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 2,
-                    }),
-                    value: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 2,
-                        col: 9,
-                        end_col: 10,
-                        end_line: 2,
-                    }),
-                    line: 2,
-                    end_line: 2,
-                    col: 5,
-                    end_col: 5,
-                },
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "z".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 2,
-                    }),
-                    value: Box::new(AstNode::Literal {
-                        value: beacon_parser::LiteralValue::Integer(1),
-                        line: 3,
-                        end_line: 3,
-                        col: 9,
-                        end_col: 9,
-                    }),
-                    line: 3,
-                    end_line: 3,
-                    col: 5,
-                    end_col: 5,
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-
-            let cfg = builder.build();
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let result = analyzer.analyze();
-
-            assert!(!result.use_before_def.is_empty());
-            assert!(result.use_before_def.iter().any(|e| e.var_name == "x"));
-            assert!(result.unused_variables.iter().any(|u| u.var_name == "z"));
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        assert!(!result.use_before_def.is_empty());
+        assert!(result.use_before_def.iter().any(|e| e.var_name == "x"));
+        assert!(result.unused_variables.iter().any(|u| u.var_name == "z"));
     }
 
     #[test]
     fn test_parameters_not_use_before_def() {
-        let source = "def foo(param):\n    x = param".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo(param):\n    x = param";
+        let fixture = FunctionFixture::new(source, data_flow_fixture!("test_parameters_not_use_before_def"), None);
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![beacon_parser::Parameter {
-                name: "param".to_string(),
-                line: 1,
-                end_line: 1,
-                col: 9,
-                end_col: 9,
-                type_annotation: None,
-                default_value: None,
-            }],
-            body: vec![AstNode::Assignment {
-                target: Box::new(AstNode::Identifier {
-                    name: "x".to_string(),
-                    line: 2,
-                    col: 5,
-                    end_line: 2,
-                    end_col: 6,
-                }),
-                value: Box::new(AstNode::Identifier {
-                    name: "param".to_string(),
-                    line: 2,
-                    col: 9,
-                    end_col: 14,
-                    end_line: 2,
-                }),
-                line: 2,
-                end_line: 2,
-                col: 5,
-                end_col: 5,
-            }],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-
-            let cfg = builder.build();
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let result = analyzer.find_use_before_def();
-
-            assert!(!result.iter().any(|e| e.var_name == "param"));
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        assert!(!result.iter().any(|e| e.var_name == "param"));
     }
 
     #[test]
     fn test_for_loop_target_not_use_before_def() {
-        let source = "def foo():\n    for i in range(10):\n        print(i)".to_string();
-        let mut resolver = NameResolver::new(source);
-
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![AstNode::For {
-                target: Box::new(AstNode::Identifier {
-                    name: "i".to_string(),
-                    line: 1,
-                    col: 5,
-                    end_line: 1,
-                    end_col: 6,
-                }),
-                iter: Box::new(AstNode::Call {
-                    function: Box::new(AstNode::Identifier {
-                        name: "range".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 6,
-                    }),
-                    args: vec![AstNode::Literal {
-                        value: beacon_parser::LiteralValue::Integer(10),
-                        line: 2,
-                        col: 20,
-                        end_line: 2,
-                        end_col: 21,
-                    }],
-                    line: 2,
-                    end_line: 2,
-                    col: 14,
-                    end_col: 14,
-                    keywords: Vec::new(),
-                }),
-                body: vec![AstNode::Call {
-                    function: Box::new(AstNode::Identifier {
-                        name: "print".to_string(),
-                        line: 4,
-                        col: 5,
-                        end_line: 4,
-                        end_col: 10,
-                    }),
-                    args: vec![AstNode::Identifier {
-                        name: "i".to_string(),
-                        line: 3,
-                        col: 15,
-                        end_line: 3,
-                        end_col: 16,
-                    }],
-                    line: 3,
-                    end_line: 3,
-                    col: 9,
-                    end_col: 9,
-                    keywords: Vec::new(),
-                }],
-                else_body: None,
-                is_async: false,
-                line: 2,
-                end_line: 2,
-                col: 5,
-                end_col: 5,
-            }],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let result = analyzer.find_use_before_def();
-
-            let i_errors: Vec<_> = result.iter().filter(|e| e.var_name == "i").collect();
-            assert!(
-                i_errors.is_empty(),
-                "Loop variable 'i' should not be flagged as use-before-def, found: {i_errors:?}"
-            );
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        let source = "def foo():
+    for i in range(10):
+        print(i)";
+        let fixture = FunctionFixture::new(
+            source,
+            data_flow_fixture!("test_for_loop_target_not_use_before_def"),
+            None,
+        );
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
+        assert!(!result.iter().any(|e| e.var_name == "i"));
     }
 
     #[test]
     fn test_binary_op_uses_tracked() {
-        let source = "def foo():\n    z = x + y".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    z = x + y";
+        let fixture = FunctionFixture::new(source, data_flow_fixture!("test_binary_op_uses_tracked"), None);
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![AstNode::Assignment {
-                target: Box::new(AstNode::Identifier {
-                    name: "z".to_string(),
-                    line: 2,
-                    col: 5,
-                    end_line: 2,
-                    end_col: 6,
-                }),
-                value: Box::new(AstNode::BinaryOp {
-                    left: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 2,
-                        col: 9,
-                        end_line: 2,
-                        end_col: 10,
-                    }),
-                    op: beacon_parser::BinaryOperator::Add,
-                    right: Box::new(AstNode::Identifier {
-                        name: "y".to_string(),
-                        line: 2,
-                        col: 13,
-                        end_line: 2,
-                        end_col: 14,
-                    }),
-                    line: 2,
-                    end_line: 2,
-                    col: 11,
-                    end_col: 11,
-                }),
-                line: 2,
-                end_line: 2,
-                col: 5,
-                end_col: 5,
-            }],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-
-            let cfg = builder.build();
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let result = analyzer.find_use_before_def();
-
-            assert!(result.iter().any(|e| e.var_name == "x"));
-            assert!(result.iter().any(|e| e.var_name == "y"));
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        assert!(result.iter().any(|e| e.var_name == "x"));
+        assert!(result.iter().any(|e| e.var_name == "y"));
     }
 
     #[test]
     fn test_sequential_assignments_no_error() {
-        let source = "def foo():\n    x = 1\n    y = x".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    x = 1\n    y = x";
+        let fixture = FunctionFixture::new(source, data_flow_fixture!("test_sequential_assignments_no_error"), None);
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 2,
-                    }),
-                    value: Box::new(AstNode::Literal {
-                        value: beacon_parser::LiteralValue::Integer(1),
-                        line: 2,
-                        end_line: 2,
-                        col: 9,
-                        end_col: 9,
-                    }),
-                    line: 2,
-                    end_line: 2,
-                    col: 5,
-                    end_col: 5,
-                },
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "y".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 2,
-                    }),
-                    value: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 3,
-                        col: 9,
-                        end_line: 3,
-                        end_col: 10,
-                    }),
-                    line: 3,
-                    end_line: 3,
-                    col: 5,
-                    end_col: 5,
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-
-            let cfg = builder.build();
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let result = analyzer.find_use_before_def();
-
-            assert!(!result.iter().any(|e| e.var_name == "x" && e.line == 3));
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        assert!(!result.iter().any(|e| e.var_name == "x" && e.line == 3));
     }
 
     #[test]
     fn test_constant_propagation_boolean() {
-        let source = "def foo():\n    DEBUG = False\n    x = 1".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    DEBUG = False\n    x = 1";
+        let fixture = FunctionFixture::new(source, data_flow_fixture!("test_constant_propagation_boolean"), None);
+        let analyzer = fixture.analyzer(None);
+        let debug_identifier =
+            AstNode::Identifier { name: "DEBUG".to_string(), line: 2, col: 13, end_line: 2, end_col: 18 };
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "DEBUG".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 6,
-                    }),
-                    value: Box::new(AstNode::Literal {
-                        value: beacon_parser::LiteralValue::Boolean(false),
-                        line: 2,
-                        end_line: 2,
-                        col: 13,
-                        end_col: 13,
-                    }),
-                    line: 2,
-                    end_line: 2,
-                    col: 5,
-                    end_col: 5,
-                },
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 2,
-                    }),
-                    value: Box::new(AstNode::Literal {
-                        value: beacon_parser::LiteralValue::Integer(1),
-                        line: 3,
-                        end_line: 3,
-                        col: 9,
-                        end_col: 9,
-                    }),
-                    line: 3,
-                    end_line: 3,
-                    col: 5,
-                    end_col: 5,
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
-        };
+        let mut test_constants = FxHashMap::default();
+        test_constants.insert("DEBUG".to_string(), ConstantValue::Bool(false));
 
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-
-            let cfg = builder.build();
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let debug_identifier =
-                AstNode::Identifier { name: "DEBUG".to_string(), line: 2, col: 13, end_line: 2, end_col: 18 };
-
-            let mut test_constants = FxHashMap::default();
-            test_constants.insert("DEBUG".to_string(), ConstantValue::Bool(false));
-
-            let result = analyzer.evaluate_condition(&debug_identifier, &test_constants);
-            assert_eq!(result, ConditionResult::AlwaysFalse);
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        let result = analyzer.evaluate_condition(&debug_identifier, &test_constants);
+        assert_eq!(result, ConditionResult::AlwaysFalse);
     }
 
     #[test]
     fn test_constant_propagation_integer_arithmetic() {
-        let source = "def foo():\n    x = 5\n    y = x + 3".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    x = 5\n    y = x + 3";
+        let fixture = FunctionFixture::new(
+            source,
+            data_flow_fixture!("test_constant_propagation_integer_arithmetic"),
+            None,
+        );
+        let analyzer = fixture.analyzer(None);
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 2,
-                    }),
-                    value: Box::new(AstNode::Literal {
-                        value: beacon_parser::LiteralValue::Integer(5),
-                        line: 2,
-                        end_line: 2,
-                        col: 9,
-                        end_col: 9,
-                    }),
-                    line: 2,
-                    end_line: 2,
-                    col: 5,
-                    end_col: 5,
-                },
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "y".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 2,
-                    }),
-                    value: Box::new(AstNode::BinaryOp {
-                        left: Box::new(AstNode::Identifier {
-                            name: "x".to_string(),
-                            line: 3,
-                            col: 9,
-                            end_line: 3,
-                            end_col: 10,
-                        }),
-                        op: beacon_parser::BinaryOperator::Add,
-                        right: Box::new(AstNode::Literal {
-                            value: beacon_parser::LiteralValue::Integer(3),
-                            line: 3,
-                            end_line: 3,
-                            col: 13,
-                            end_col: 13,
-                        }),
-                        line: 3,
-                        end_line: 3,
-                        col: 11,
-                        end_col: 11,
-                    }),
-                    line: 3,
-                    end_line: 3,
-                    col: 5,
-                    end_col: 5,
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
+        let mut test_constants = FxHashMap::default();
+        test_constants.insert("x".to_string(), ConstantValue::Integer(5));
+
+        let expr = AstNode::BinaryOp {
+            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 3, col: 9, end_line: 3, end_col: 10 }),
+            op: beacon_parser::BinaryOperator::Add,
+            right: Box::new(AstNode::Literal {
+                value: beacon_parser::LiteralValue::Integer(3),
+                line: 3,
+                col: 13,
+                end_line: 3,
+                end_col: 14,
+            }),
+            line: 3,
+            col: 11,
+            end_line: 3,
+            end_col: 11,
         };
 
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-
-            let mut test_constants = FxHashMap::default();
-            test_constants.insert("x".to_string(), ConstantValue::Integer(5));
-
-            let expr = AstNode::BinaryOp {
-                left: Box::new(AstNode::Identifier {
-                    name: "x".to_string(),
-                    line: 3,
-                    col: 9,
-                    end_line: 3,
-                    end_col: 10,
-                }),
-                op: beacon_parser::BinaryOperator::Add,
-                right: Box::new(AstNode::Literal {
-                    value: beacon_parser::LiteralValue::Integer(3),
-                    line: 3,
-                    col: 13,
-                    end_line: 3,
-                    end_col: 14,
-                }),
-                line: 3,
-                col: 11,
-                end_line: 3,
-                end_col: 11,
-            };
-
-            let result = analyzer.evaluate_to_constant(&expr, &test_constants);
-            assert_eq!(result, ConstantValue::Integer(8));
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        let result = analyzer.evaluate_to_constant(&expr, &test_constants);
+        assert_eq!(result, ConstantValue::Integer(8));
     }
 
     #[test]
     fn test_evaluate_condition_with_comparison() {
-        let source = "def foo():\n    x = 10".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    x = 10";
+        let fixture = FunctionFixture::new(
+            source,
+            data_flow_fixture!("test_evaluate_condition_with_comparison"),
+            None,
+        );
+        let analyzer = fixture.analyzer(None);
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![AstNode::Assignment {
-                target: Box::new(AstNode::Identifier {
-                    name: "x".to_string(),
-                    line: 2,
-                    col: 5,
-                    end_line: 2,
-                    end_col: 6,
-                }),
-                value: Box::new(AstNode::Literal {
-                    value: beacon_parser::LiteralValue::Integer(10),
-                    line: 2,
-                    col: 9,
-                    end_line: 2,
-                    end_col: 10,
-                }),
+        let mut test_constants = FxHashMap::default();
+        test_constants.insert("x".to_string(), ConstantValue::Integer(10));
+
+        let expr = AstNode::Compare {
+            left: Box::new(AstNode::Identifier { name: "x".to_string(), line: 2, col: 9, end_line: 2, end_col: 10 }),
+            ops: vec![beacon_parser::CompareOperator::Eq],
+            comparators: vec![AstNode::Literal {
+                value: beacon_parser::LiteralValue::Integer(10),
                 line: 2,
+                col: 15,
                 end_line: 2,
-                col: 5,
-                end_col: 5,
+                end_col: 17,
             }],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
+            line: 2,
+            col: 11,
+            end_line: 2,
+            end_col: 11,
         };
 
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-
-            let mut test_constants = FxHashMap::default();
-            test_constants.insert("x".to_string(), ConstantValue::Integer(10));
-
-            let condition = AstNode::Compare {
-                left: Box::new(AstNode::Identifier {
-                    name: "x".to_string(),
-                    line: 2,
-                    col: 9,
-                    end_line: 2,
-                    end_col: 10,
-                }),
-                ops: vec![beacon_parser::CompareOperator::Gt],
-                comparators: vec![AstNode::Literal {
-                    value: beacon_parser::LiteralValue::Integer(5),
-                    line: 2,
-                    end_line: 2,
-                    col: 13,
-                    end_col: 13,
-                }],
-                line: 2,
-                col: 11,
-                end_line: 2,
-                end_col: 11,
-            };
-
-            let result = analyzer.evaluate_condition(&condition, &test_constants);
-            assert_eq!(result, ConditionResult::AlwaysTrue);
-
-            let condition2 = AstNode::Compare {
-                left: Box::new(AstNode::Identifier {
-                    name: "x".to_string(),
-                    line: 2,
-                    col: 9,
-                    end_line: 2,
-                    end_col: 10,
-                }),
-                ops: vec![beacon_parser::CompareOperator::Lt],
-                comparators: vec![AstNode::Literal {
-                    value: beacon_parser::LiteralValue::Integer(5),
-                    line: 2,
-                    end_line: 2,
-                    col: 13,
-                    end_col: 13,
-                }],
-                line: 2,
-                col: 11,
-                end_line: 2,
-                end_col: 11,
-            };
-
-            let result2 = analyzer.evaluate_condition(&condition2, &test_constants);
-            assert_eq!(result2, ConditionResult::AlwaysFalse);
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        let result = analyzer.evaluate_condition(&expr, &test_constants);
+        assert_eq!(result, ConditionResult::AlwaysTrue);
     }
 
     #[test]
     fn test_constant_propagation_string_concat() {
-        let source = "def foo():\n    s = 'hello'".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    s = 'hello'";
+        let fixture = FunctionFixture::new(
+            source,
+            data_flow_fixture!("test_constant_propagation_string_concat"),
+            None,
+        );
+        let analyzer = fixture.analyzer(None);
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![AstNode::Assignment {
-                target: Box::new(AstNode::Identifier {
-                    name: "s".to_string(),
-                    line: 1,
-                    col: 1,
-                    end_line: 1,
-                    end_col: 2,
-                }),
-                value: Box::new(AstNode::Literal {
-                    value: beacon_parser::LiteralValue::String { value: "hello".to_string(), prefix: String::new() },
-                    line: 2,
-                    end_line: 2,
-                    col: 9,
-                    end_col: 9,
-                }),
+        let mut test_constants = FxHashMap::default();
+        test_constants.insert("s".to_string(), ConstantValue::String("hello".to_string()));
+
+        let expr = AstNode::BinaryOp {
+            left: Box::new(AstNode::Identifier { name: "s".to_string(), line: 2, col: 9, end_line: 2, end_col: 10 }),
+            op: beacon_parser::BinaryOperator::Add,
+            right: Box::new(AstNode::Literal {
+                value: beacon_parser::LiteralValue::String { value: " world".to_string(), prefix: String::new() },
                 line: 2,
+                col: 13,
                 end_line: 2,
-                col: 5,
-                end_col: 5,
-            }],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
+                end_col: 21,
+            }),
+            line: 2,
+            col: 11,
+            end_line: 2,
+            end_col: 11,
         };
 
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-
-            let mut test_constants = FxHashMap::default();
-            test_constants.insert("s".to_string(), ConstantValue::String("hello".to_string()));
-
-            let expr = AstNode::BinaryOp {
-                left: Box::new(AstNode::Identifier {
-                    name: "s".to_string(),
-                    line: 2,
-                    col: 9,
-                    end_line: 2,
-                    end_col: 10,
-                }),
-                op: beacon_parser::BinaryOperator::Add,
-                right: Box::new(AstNode::Literal {
-                    value: beacon_parser::LiteralValue::String { value: " world".to_string(), prefix: String::new() },
-                    line: 2,
-                    col: 13,
-                    end_line: 2,
-                    end_col: 20,
-                }),
-                line: 2,
-                col: 11,
-                end_line: 2,
-                end_col: 11,
-            };
-
-            let result = analyzer.evaluate_to_constant(&expr, &test_constants);
-            assert_eq!(result, ConstantValue::String("hello world".to_string()));
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        let result = analyzer.evaluate_to_constant(&expr, &test_constants);
+        assert_eq!(result, ConstantValue::String("hello world".to_string()));
     }
 
     #[test]
@@ -2581,517 +1588,135 @@ mod tests {
 
     #[test]
     fn test_evaluate_boolean_operators() {
-        let source = "def foo():\n    pass".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    pass";
+        let fixture = FunctionFixture::new(source, data_flow_fixture!("test_evaluate_boolean_operators"), None);
+        let analyzer = fixture.analyzer(None);
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![AstNode::Pass { line: 2, end_line: 2, col: 5, end_col: 5 }],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
+        let mut test_constants = FxHashMap::default();
+        test_constants.insert("a".to_string(), ConstantValue::Bool(true));
+        test_constants.insert("b".to_string(), ConstantValue::Bool(false));
+
+        let and_expr = AstNode::BinaryOp {
+            left: Box::new(AstNode::Identifier { name: "a".to_string(), line: 2, end_line: 2, col: 5, end_col: 5 }),
+            op: beacon_parser::BinaryOperator::And,
+            right: Box::new(AstNode::Identifier { name: "b".to_string(), line: 2, col: 11, end_line: 2, end_col: 11 }),
+            line: 2,
+            col: 9,
+            end_line: 2,
+            end_col: 9,
         };
+        assert_eq!(
+            analyzer.evaluate_condition(&and_expr, &test_constants),
+            ConditionResult::AlwaysFalse
+        );
 
-        resolver.resolve(&ast).unwrap();
+        let or_expr = AstNode::BinaryOp {
+            left: Box::new(AstNode::Identifier { name: "a".to_string(), line: 2, col: 5, end_line: 2, end_col: 5 }),
+            op: beacon_parser::BinaryOperator::Or,
+            right: Box::new(AstNode::Identifier { name: "b".to_string(), line: 2, col: 11, end_line: 2, end_col: 11 }),
+            line: 2,
+            col: 9,
+            end_line: 2,
+            end_col: 9,
+        };
+        assert_eq!(
+            analyzer.evaluate_condition(&or_expr, &test_constants),
+            ConditionResult::AlwaysTrue
+        );
 
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-
-            let mut test_constants = FxHashMap::default();
-            test_constants.insert("a".to_string(), ConstantValue::Bool(true));
-            test_constants.insert("b".to_string(), ConstantValue::Bool(false));
-
-            let and_expr = AstNode::BinaryOp {
-                left: Box::new(AstNode::Identifier { name: "a".to_string(), line: 2, end_line: 2, col: 5, end_col: 5 }),
-                op: beacon_parser::BinaryOperator::And,
-                right: Box::new(AstNode::Identifier {
-                    name: "b".to_string(),
-                    line: 2,
-                    end_line: 2,
-                    col: 11,
-                    end_col: 11,
-                }),
-                line: 2,
-                col: 9,
-                end_line: 2,
-                end_col: 9,
-            };
-            let and_result = analyzer.evaluate_condition(&and_expr, &test_constants);
-            assert_eq!(and_result, ConditionResult::AlwaysFalse);
-
-            let or_expr = AstNode::BinaryOp {
-                left: Box::new(AstNode::Identifier { name: "a".to_string(), line: 2, col: 5, end_line: 2, end_col: 5 }),
-                op: beacon_parser::BinaryOperator::Or,
-                right: Box::new(AstNode::Identifier {
-                    name: "b".to_string(),
-                    line: 2,
-                    col: 10,
-                    end_line: 2,
-                    end_col: 10,
-                }),
-                line: 2,
-                col: 8,
-                end_line: 2,
-                end_col: 8,
-            };
-            let or_result = analyzer.evaluate_condition(&or_expr, &test_constants);
-            assert_eq!(or_result, ConditionResult::AlwaysTrue);
-
-            let not_expr = AstNode::UnaryOp {
-                op: beacon_parser::UnaryOperator::Not,
-                operand: Box::new(AstNode::Identifier {
-                    name: "b".to_string(),
-                    line: 2,
-                    col: 9,
-                    end_line: 2,
-                    end_col: 9,
-                }),
-                line: 2,
-                col: 5,
-                end_line: 2,
-                end_col: 5,
-            };
-            let not_result = analyzer.evaluate_condition(&not_expr, &test_constants);
-            assert_eq!(not_result, ConditionResult::AlwaysTrue);
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        let not_expr = AstNode::UnaryOp {
+            op: beacon_parser::UnaryOperator::Not,
+            operand: Box::new(AstNode::Identifier { name: "b".to_string(), line: 2, col: 9, end_line: 2, end_col: 9 }),
+            line: 2,
+            col: 5,
+            end_line: 2,
+            end_col: 5,
+        };
+        assert_eq!(
+            analyzer.evaluate_condition(&not_expr, &test_constants),
+            ConditionResult::AlwaysTrue
+        );
     }
 
     #[test]
     fn test_import_hoisting() {
-        let source = "def foo():\n    from bar import baz\n    result = baz()".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    from bar import baz\n    result = baz()";
+        let fixture = FunctionFixture::new(source, data_flow_fixture!("test_import_hoisting"), None);
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![
-                AstNode::ImportFrom {
-                    module: "bar".to_string(),
-                    names: vec!["baz".to_string()],
-                    line: 2,
-                    col: 5,
-                    end_line: 2,
-                    end_col: 5,
-                },
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "result".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 7,
-                    }),
-                    value: Box::new(AstNode::Call {
-                        function: Box::new(AstNode::Identifier {
-                            name: "baz".to_string(),
-                            line: 1,
-                            col: 1,
-                            end_line: 1,
-                            end_col: 4,
-                        }),
-                        args: vec![],
-                        line: 3,
-                        end_line: 3,
-                        col: 14,
-                        end_col: 14,
-                        keywords: Vec::new(),
-                    }),
-                    line: 3,
-                    end_line: 3,
-                    col: 5,
-                    end_col: 5,
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let result = analyzer.find_use_before_def();
-
-            let baz_errors: Vec<_> = result.iter().filter(|e| e.var_name == "baz").collect();
-            assert!(
-                baz_errors.is_empty(),
-                "Imported name 'baz' should not be flagged as use-before-def due to import hoisting, found: {baz_errors:?}"
-            );
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        let baz_errors: Vec<_> = result.iter().filter(|e| e.var_name == "baz").collect();
+        assert!(
+            baz_errors.is_empty(),
+            "Imported name 'baz' should not be flagged as use-before-def due to import hoisting"
+        );
     }
 
     #[test]
     fn test_simple_import_hoisting() {
-        let source = "def foo():\n    import os\n    path = os.path".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    import os\n    path = os.path";
+        let fixture = FunctionFixture::new(source, data_flow_fixture!("test_simple_import_hoisting"), None);
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![
-                AstNode::Import {
-                    module: "os".to_string(),
-                    alias: None,
-                    extra_modules: Vec::new(),
-                    line: 2,
-                    col: 5,
-                    end_line: 2,
-                    end_col: 5,
-                },
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "path".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 5,
-                    }),
-                    value: Box::new(AstNode::Attribute {
-                        object: Box::new(AstNode::Identifier {
-                            name: "os".to_string(),
-                            line: 3,
-                            col: 12,
-                            end_line: 3,
-                            end_col: 12,
-                        }),
-                        attribute: "path".to_string(),
-                        line: 3,
-                        end_line: 3,
-                        col: 12,
-                        end_col: 12,
-                    }),
-                    line: 3,
-                    end_line: 3,
-                    col: 5,
-                    end_col: 5,
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let result = analyzer.find_use_before_def();
-
-            let os_errors: Vec<_> = result.iter().filter(|e| e.var_name == "os").collect();
-            assert!(
-                os_errors.is_empty(),
-                "Imported module 'os' should not be flagged as use-before-def due to import hoisting, found: {os_errors:?}"
-            );
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        let os_errors: Vec<_> = result.iter().filter(|e| e.var_name == "os").collect();
+        assert!(
+            os_errors.is_empty(),
+            "Imported module 'os' should not be flagged as use-before-def due to import hoisting"
+        );
     }
 
     #[test]
     fn test_import_with_alias_hoisting() {
-        let source = "def foo():\n    import numpy as np\n    arr = np.array([1, 2, 3])".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def foo():\n    import numpy as np\n    arr = np.array([1, 2, 3])";
+        let fixture = FunctionFixture::new(source, data_flow_fixture!("test_import_with_alias_hoisting"), None);
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
 
-        let ast = AstNode::FunctionDef {
-            name: "foo".to_string(),
-            args: vec![],
-            body: vec![
-                AstNode::Import {
-                    module: "numpy".to_string(),
-                    alias: Some("np".to_string()),
-                    extra_modules: Vec::new(),
-                    line: 2,
-                    col: 5,
-                    end_line: 2,
-                    end_col: 5,
-                },
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "arr".to_string(),
-                        line: 3,
-                        col: 5,
-                        end_line: 3,
-                        end_col: 8,
-                    }),
-                    value: Box::new(AstNode::Call {
-                        function: Box::new(AstNode::Attribute {
-                            object: Box::new(AstNode::Identifier {
-                                name: "np".to_string(),
-                                line: 3,
-                                col: 11,
-                                end_line: 3,
-                                end_col: 13,
-                            }),
-                            attribute: "array".to_string(),
-                            line: 3,
-                            col: 11,
-                            end_line: 3,
-                            end_col: 19,
-                        }),
-                        args: vec![AstNode::Literal {
-                            value: beacon_parser::LiteralValue::Integer(1),
-                            line: 3,
-                            end_line: 3,
-                            col: 19,
-                            end_col: 19,
-                        }],
-                        line: 3,
-                        end_line: 3,
-                        col: 11,
-                        end_col: 11,
-                        keywords: Vec::new(),
-                    }),
-                    line: 3,
-                    end_line: 3,
-                    col: 5,
-                    end_col: 5,
-                },
-            ],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        resolver.resolve(&ast).unwrap();
-
-        if let AstNode::FunctionDef { body, .. } = &ast {
-            let mut builder = CfgBuilder::new();
-            builder.build_function(body);
-            let cfg = builder.build();
-
-            let scope_id = find_function_scope(&resolver.symbol_table);
-            let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
-            let result = analyzer.find_use_before_def();
-
-            let np_errors: Vec<_> = result.iter().filter(|e| e.var_name == "np").collect();
-            assert!(
-                np_errors.is_empty(),
-                "Imported alias 'np' should not be flagged as use-before-def due to import hoisting, found: {np_errors:?}"
-            );
-
-            let numpy_errors: Vec<_> = result.iter().filter(|e| e.var_name == "numpy").collect();
-            assert!(
-                numpy_errors.is_empty(),
-                "Module name 'numpy' should not be flagged, found: {numpy_errors:?}"
-            );
-        } else {
-            panic!("Expected FunctionDef");
-        }
+        let np_errors: Vec<_> = result.iter().filter(|e| e.var_name == "np").collect();
+        assert!(
+            np_errors.is_empty(),
+            "Alias 'np' should not be flagged as use-before-def due to import hoisting"
+        );
     }
 
     #[test]
     fn test_module_level_class_available_in_function() {
-        let source = "class MyClass:\n    pass\n\ndef factory():\n    return MyClass()".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "class MyClass:\n    pass\n\ndef factory():\n    return MyClass()";
+        let fixture = FunctionFixture::new(
+            source,
+            data_flow_fixture!("test_module_level_class_available_in_function"),
+            Some("factory"),
+        );
+        let module_body = fixture.module_body().expect("module fixture expected");
+        let module_hoisted = DataFlowAnalyzer::collect_hoisted_definitions(module_body);
+        let analyzer = fixture.analyzer(Some(&module_hoisted));
+        let result = analyzer.find_use_before_def();
 
-        let class_def = AstNode::ClassDef {
-            name: "MyClass".to_string(),
-            bases: vec![],
-            metaclass: None,
-            body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
-            docstring: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        let func_def = AstNode::FunctionDef {
-            name: "factory".to_string(),
-            args: vec![],
-            body: vec![AstNode::Return {
-                value: Some(Box::new(AstNode::Call {
-                    function: Box::new(AstNode::Identifier {
-                        name: "MyClass".to_string(),
-                        line: 5,
-                        col: 12,
-                        end_line: 5,
-                        end_col: 19,
-                    }),
-                    args: vec![],
-                    line: 5,
-                    end_line: 5,
-                    col: 12,
-                    end_col: 12,
-                    keywords: Vec::new(),
-                })),
-                line: 5,
-                end_line: 5,
-                col: 5,
-                end_col: 5,
-            }],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 4,
-            col: 1,
-            is_async: false,
-            end_line: 4,
-            end_col: 1,
-        };
-
-        let module = AstNode::Module { body: vec![class_def, func_def], docstring: None };
-
-        resolver.resolve(&module).unwrap();
-
-        if let AstNode::Module { body, .. } = &module {
-            let module_hoisted = DataFlowAnalyzer::collect_hoisted_definitions(body);
-            assert!(
-                module_hoisted.contains("MyClass"),
-                "Module-level class should be in hoisted definitions"
-            );
-
-            if let AstNode::FunctionDef { body: func_body, .. } = &body[1] {
-                let mut builder = CfgBuilder::new();
-                builder.build_function(func_body);
-                let cfg = builder.build();
-
-                let scope_id = find_function_scope(&resolver.symbol_table);
-                let analyzer =
-                    DataFlowAnalyzer::new(&cfg, func_body, &resolver.symbol_table, scope_id, Some(&module_hoisted));
-                let result = analyzer.find_use_before_def();
-
-                let class_errors: Vec<_> = result.iter().filter(|e| e.var_name == "MyClass").collect();
-                assert!(
-                    class_errors.is_empty(),
-                    "Module-level class 'MyClass' should not be flagged as use-before-def in function, found: {class_errors:?}"
-                );
-            } else {
-                panic!("Expected FunctionDef as second element");
-            }
-        } else {
-            panic!("Expected Module");
-        }
+        let class_errors: Vec<_> = result.iter().filter(|e| e.var_name == "MyClass").collect();
+        assert!(
+            class_errors.is_empty(),
+            "Module-level class 'MyClass' should not be flagged as use-before-def"
+        );
     }
 
     #[test]
     fn test_module_level_function_available_in_another_function() {
-        let source = "def helper():\n    pass\n\ndef main():\n    helper()".to_string();
-        let mut resolver = NameResolver::new(source);
+        let source = "def helper():\n    pass\n\ndef main():\n    helper()";
+        let fixture = FunctionFixture::new(
+            source,
+            data_flow_fixture!("test_module_level_function_available_in_another_function"),
+            Some("main"),
+        );
+        let module_body = fixture.module_body().expect("module fixture expected");
+        let module_hoisted = DataFlowAnalyzer::collect_hoisted_definitions(module_body);
+        let analyzer = fixture.analyzer(Some(&module_hoisted));
+        let result = analyzer.find_use_before_def();
 
-        let helper_def = AstNode::FunctionDef {
-            name: "helper".to_string(),
-            args: vec![],
-            body: vec![AstNode::Pass { line: 2, col: 5, end_line: 2, end_col: 9 }],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 1,
-            col: 1,
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        let main_def = AstNode::FunctionDef {
-            name: "main".to_string(),
-            args: vec![],
-            body: vec![AstNode::Call {
-                function: Box::new(AstNode::Identifier {
-                    name: "helper".to_string(),
-                    line: 5,
-                    col: 5,
-                    end_line: 5,
-                    end_col: 11,
-                }),
-                args: vec![],
-                line: 5,
-                col: 5,
-                end_line: 5,
-                end_col: 5,
-                keywords: Vec::new(),
-            }],
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            line: 4,
-            col: 1,
-            is_async: false,
-            end_line: 4,
-            end_col: 1,
-        };
-
-        let module = AstNode::Module { body: vec![helper_def, main_def], docstring: None };
-
-        resolver.resolve(&module).unwrap();
-
-        if let AstNode::Module { body, .. } = &module {
-            let module_hoisted = DataFlowAnalyzer::collect_hoisted_definitions(body);
-            assert!(
-                module_hoisted.contains("helper"),
-                "Module-level function should be in hoisted definitions"
-            );
-
-            if let AstNode::FunctionDef { body: main_body, .. } = &body[1] {
-                let mut builder = CfgBuilder::new();
-                builder.build_function(main_body);
-                let cfg = builder.build();
-
-                let scope_id = resolver
-                    .symbol_table
-                    .scopes
-                    .values()
-                    .filter(|scope| scope.kind == ScopeKind::Function)
-                    .nth(1)
-                    .map(|scope| scope.id)
-                    .unwrap_or(resolver.symbol_table.root_scope);
-
-                let analyzer =
-                    DataFlowAnalyzer::new(&cfg, main_body, &resolver.symbol_table, scope_id, Some(&module_hoisted));
-                let result = analyzer.find_use_before_def();
-
-                let helper_errors: Vec<_> = result.iter().filter(|e| e.var_name == "helper").collect();
-                assert!(
-                    helper_errors.is_empty(),
-                    "Module-level function 'helper' should not be flagged as use-before-def in main(), found: {helper_errors:?}"
-                );
-            } else {
-                panic!("Expected FunctionDef as second element");
-            }
-        } else {
-            panic!("Expected Module");
-        }
+        let helper_errors: Vec<_> = result.iter().filter(|e| e.var_name == "helper").collect();
+        assert!(
+            helper_errors.is_empty(),
+            "Module-level function 'helper' should not be flagged as use-before-def"
+        );
     }
 }
