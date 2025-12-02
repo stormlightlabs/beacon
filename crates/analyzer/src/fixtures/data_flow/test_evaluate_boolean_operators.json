@@ -5,15 +5,7 @@
       "type": "FunctionDef",
       "name": "foo",
       "args": [],
-      "body": [
-        {
-          "type": "Pass",
-          "line": 2,
-          "col": 5,
-          "end_line": 2,
-          "end_col": 9
-        }
-      ],
+      "body": [{ "type": "Pass", "line": 2, "col": 5, "end_line": 2, "end_col": 9 }],
       "docstring": null,
       "return_type": null,
       "decorators": [],

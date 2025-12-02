@@ -8,20 +8,10 @@
       "body": [
         {
           "type": "Assignment",
-          "target": {
-            "type": "Identifier",
-            "name": "DEBUG",
-            "line": 2,
-            "col": 5,
-            "end_line": 2,
-            "end_col": 10
-          },
+          "target": { "type": "Identifier", "name": "DEBUG", "line": 2, "col": 5, "end_line": 2, "end_col": 10 },
           "value": {
             "type": "Literal",
-            "value": {
-              "kind": "Boolean",
-              "data": false
-            },
+            "value": { "kind": "Boolean", "data": false },
             "line": 2,
             "col": 13,
             "end_line": 2,
@@ -34,20 +24,10 @@
         },
         {
           "type": "Assignment",
-          "target": {
-            "type": "Identifier",
-            "name": "x",
-            "line": 3,
-            "col": 5,
-            "end_line": 3,
-            "end_col": 6
-          },
+          "target": { "type": "Identifier", "name": "x", "line": 3, "col": 5, "end_line": 3, "end_col": 6 },
           "value": {
             "type": "Literal",
-            "value": {
-              "kind": "Integer",
-              "data": 1
-            },
+            "value": { "kind": "Integer", "data": 1 },
             "line": 3,
             "col": 9,
             "end_line": 3,

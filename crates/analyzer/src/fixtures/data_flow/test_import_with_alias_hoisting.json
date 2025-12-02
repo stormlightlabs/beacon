@@ -18,26 +18,12 @@
         },
         {
           "type": "Assignment",
-          "target": {
-            "type": "Identifier",
-            "name": "arr",
-            "line": 3,
-            "col": 5,
-            "end_line": 3,
-            "end_col": 8
-          },
+          "target": { "type": "Identifier", "name": "arr", "line": 3, "col": 5, "end_line": 3, "end_col": 8 },
           "value": {
             "type": "Call",
             "function": {
               "type": "Attribute",
-              "object": {
-                "type": "Identifier",
-                "name": "np",
-                "line": 3,
-                "col": 11,
-                "end_line": 3,
-                "end_col": 13
-              },
+              "object": { "type": "Identifier", "name": "np", "line": 3, "col": 11, "end_line": 3, "end_col": 13 },
               "attribute": "array",
               "line": 3,
               "col": 11,
@@ -50,10 +36,7 @@
                 "elements": [
                   {
                     "type": "Literal",
-                    "value": {
-                      "kind": "Integer",
-                      "data": 1
-                    },
+                    "value": { "kind": "Integer", "data": 1 },
                     "line": 3,
                     "col": 21,
                     "end_line": 3,
@@ -61,10 +44,7 @@
                   },
                   {
                     "type": "Literal",
-                    "value": {
-                      "kind": "Integer",
-                      "data": 2
-                    },
+                    "value": { "kind": "Integer", "data": 2 },
                     "line": 3,
                     "col": 24,
                     "end_line": 3,
@@ -72,10 +52,7 @@
                   },
                   {
                     "type": "Literal",
-                    "value": {
-                      "kind": "Integer",
-                      "data": 3
-                    },
+                    "value": { "kind": "Integer", "data": 3 },
                     "line": 3,
                     "col": 27,
                     "end_line": 3,

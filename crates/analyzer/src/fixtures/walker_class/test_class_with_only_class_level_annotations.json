@@ -9,14 +9,7 @@
       "body": [
         {
           "type": "AnnotatedAssignment",
-          "target": {
-            "type": "Identifier",
-            "name": "name",
-            "line": 2,
-            "col": 5,
-            "end_line": 2,
-            "end_col": 9
-          },
+          "target": { "type": "Identifier", "name": "name", "line": 2, "col": 5, "end_line": 2, "end_col": 9 },
           "type_annotation": "str",
           "value": null,
           "line": 2,
@@ -26,14 +19,7 @@
         },
         {
           "type": "AnnotatedAssignment",
-          "target": {
-            "type": "Identifier",
-            "name": "count",
-            "line": 3,
-            "col": 5,
-            "end_line": 3,
-            "end_col": 10
-          },
+          "target": { "type": "Identifier", "name": "count", "line": 3, "col": 5, "end_line": 3, "end_col": 10 },
           "type_annotation": "int",
           "value": null,
           "line": 3,

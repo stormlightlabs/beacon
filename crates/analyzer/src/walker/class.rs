@@ -258,7 +258,7 @@ pub fn extract_enum_members(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beacon_parser::SymbolTable;
+    use beacon_parser::{AstNode, SymbolTable};
     use serde_json;
 
     macro_rules! walker_class_fixture {
@@ -275,20 +275,28 @@ mod tests {
 
     struct ClassFixture {
         ast: AstNode,
+        class_name: String,
     }
 
     impl ClassFixture {
-        fn new(source: &str, ast: AstNode) -> Self {
+        fn new(source: &str, ast: AstNode, class_name: &str) -> Self {
             let _ = source;
-            Self { ast }
+            Self { ast, class_name: class_name.to_string() }
+        }
+
+        fn class_node(&self) -> &AstNode {
+            match &self.ast {
+                AstNode::ClassDef { name, .. } if name == &self.class_name => &self.ast,
+                AstNode::Module { body, .. } => body
+                    .iter()
+                    .find(|node| matches!(node, AstNode::ClassDef { name, .. } if name == &self.class_name))
+                    .expect("Fixture module does not contain the requested class"),
+                _ => panic!("Expected ClassDef or Module root in walker_class fixture"),
+            }
         }
 
         fn class_body(&self) -> &[AstNode] {
-            if let AstNode::ClassDef { body, .. } = &self.ast {
-                body
-            } else {
-                panic!("Expected top-level ClassDef in walker_class fixture");
-            }
+            if let AstNode::ClassDef { body, .. } = self.class_node() { body } else { unreachable!() }
         }
     }
 
@@ -328,7 +336,7 @@ mod tests {
     #[test]
     fn test_synthesize_dataclass_init() {
         let source = "class Point:\n    x: int\n    y: str";
-        let fixture = ClassFixture::new(source, walker_class_fixture!("test_synthesize_dataclass_init"));
+        let fixture = ClassFixture::new(source, walker_class_fixture!("test_synthesize_dataclass_init"), "Point");
         let symbol_table = SymbolTable::new();
         let mut env = crate::type_env::TypeEnvironment::from_symbol_table(
             &symbol_table,
@@ -339,12 +347,10 @@ mod tests {
         assert!(metadata.init_type.is_none());
 
         synthesize_dataclass_init(&mut metadata, &mut env);
-
         assert!(
             metadata.init_type.is_some(),
             "Dataclass should have synthesized __init__"
         );
-
         if let Some(Type::Fun(params, ret_ty)) = &metadata.init_type {
             assert!(!params.is_empty(), "__init__ should have at least self parameter");
             assert!(
@@ -362,6 +368,7 @@ mod tests {
         let fixture = ClassFixture::new(
             source,
             walker_class_fixture!("test_synthesize_dataclass_init_respects_explicit_init"),
+            "CustomPoint",
         );
         let symbol_table = SymbolTable::new();
         let mut env = crate::type_env::TypeEnvironment::from_symbol_table(
@@ -370,15 +377,20 @@ mod tests {
         );
 
         let mut metadata = extract_class_metadata("CustomPoint", fixture.class_body(), &mut env);
+        assert!(metadata.init_type.is_some());
+
         let original_init = metadata.init_type.clone();
         synthesize_dataclass_init(&mut metadata, &mut env);
-        assert_eq!(metadata.init_type, original_init);
+        assert_eq!(
+            metadata.init_type, original_init,
+            "Should not override explicit __init__"
+        );
     }
 
     #[test]
     fn test_extract_enum_members() {
         let source = "class Color:\n    RED = 1\n    GREEN = 2\n    BLUE = 3";
-        let fixture = ClassFixture::new(source, walker_class_fixture!("test_extract_enum_members"));
+        let fixture = ClassFixture::new(source, walker_class_fixture!("test_extract_enum_members"), "Color");
         let symbol_table = SymbolTable::new();
         let mut env = crate::type_env::TypeEnvironment::from_symbol_table(
             &symbol_table,
@@ -397,7 +409,6 @@ mod tests {
             metadata.fields.contains_key("BLUE"),
             "Should extract BLUE as enum member"
         );
-
         if let Some(red_type) = metadata.fields.get("RED") {
             match red_type {
                 Type::Con(TypeCtor::Class(name)) => {
@@ -414,6 +425,7 @@ mod tests {
         let fixture = ClassFixture::new(
             source,
             walker_class_fixture!("test_extract_enum_members_ignores_methods"),
+            "Color",
         );
         let symbol_table = SymbolTable::new();
         let mut env = crate::type_env::TypeEnvironment::from_symbol_table(
@@ -440,6 +452,7 @@ mod tests {
         let fixture = ClassFixture::new(
             source,
             walker_class_fixture!("test_extract_enum_members_ignores_private"),
+            "Color",
         );
         let symbol_table = SymbolTable::new();
         let mut env = crate::type_env::TypeEnvironment::from_symbol_table(
@@ -463,6 +476,7 @@ mod tests {
         let fixture = ClassFixture::new(
             source,
             walker_class_fixture!("test_class_with_only_class_level_annotations"),
+            "Data",
         );
         let symbol_table = SymbolTable::new();
         let mut env = crate::type_env::TypeEnvironment::from_symbol_table(
@@ -481,6 +495,7 @@ mod tests {
         let fixture = ClassFixture::new(
             source,
             walker_class_fixture!("test_class_with_both_class_and_instance_fields"),
+            "Config",
         );
         let symbol_table = SymbolTable::new();
         let mut env = crate::type_env::TypeEnvironment::from_symbol_table(
@@ -499,6 +514,7 @@ mod tests {
         let fixture = ClassFixture::new(
             source,
             walker_class_fixture!("test_class_with_non_annotated_class_assignments"),
+            "Service",
         );
         let symbol_table = SymbolTable::new();
         let mut env = crate::type_env::TypeEnvironment::from_symbol_table(
@@ -517,6 +533,7 @@ mod tests {
         let fixture = ClassFixture::new(
             source,
             walker_class_fixture!("test_class_level_fields_dont_conflict_with_nested_classes"),
+            "Outer",
         );
         let symbol_table = SymbolTable::new();
         let mut env = crate::type_env::TypeEnvironment::from_symbol_table(

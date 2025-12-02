@@ -5,15 +5,7 @@
       "type": "FunctionDef",
       "name": "helper",
       "args": [],
-      "body": [
-        {
-          "type": "Pass",
-          "line": 2,
-          "col": 5,
-          "end_line": 2,
-          "end_col": 9
-        }
-      ],
+      "body": [{ "type": "Pass", "line": 2, "col": 5, "end_line": 2, "end_col": 9 }],
       "docstring": null,
       "return_type": null,
       "decorators": [],
@@ -30,14 +22,7 @@
       "body": [
         {
           "type": "Call",
-          "function": {
-            "type": "Identifier",
-            "name": "helper",
-            "line": 5,
-            "col": 5,
-            "end_line": 5,
-            "end_col": 11
-          },
+          "function": { "type": "Identifier", "name": "helper", "line": 5, "col": 5, "end_line": 5, "end_col": 11 },
           "args": [],
           "keywords": [],
           "line": 5,

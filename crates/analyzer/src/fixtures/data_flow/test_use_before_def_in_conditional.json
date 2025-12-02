@@ -18,31 +18,14 @@
       "body": [
         {
           "type": "If",
-          "test": {
-            "type": "Identifier",
-            "name": "cond",
-            "line": 2,
-            "col": 8,
-            "end_line": 2,
-            "end_col": 12
-          },
+          "test": { "type": "Identifier", "name": "cond", "line": 2, "col": 8, "end_line": 2, "end_col": 12 },
           "body": [
             {
               "type": "Assignment",
-              "target": {
-                "type": "Identifier",
-                "name": "x",
-                "line": 3,
-                "col": 9,
-                "end_line": 3,
-                "end_col": 10
-              },
+              "target": { "type": "Identifier", "name": "x", "line": 3, "col": 9, "end_line": 3, "end_col": 10 },
               "value": {
                 "type": "Literal",
-                "value": {
-                  "kind": "Integer",
-                  "data": 1
-                },
+                "value": { "kind": "Integer", "data": 1 },
                 "line": 3,
                 "col": 13,
                 "end_line": 3,
@@ -63,24 +46,8 @@
         },
         {
           "type": "Call",
-          "function": {
-            "type": "Identifier",
-            "name": "print",
-            "line": 4,
-            "col": 5,
-            "end_line": 4,
-            "end_col": 10
-          },
-          "args": [
-            {
-              "type": "Identifier",
-              "name": "x",
-              "line": 4,
-              "col": 11,
-              "end_line": 4,
-              "end_col": 12
-            }
-          ],
+          "function": { "type": "Identifier", "name": "print", "line": 4, "col": 5, "end_line": 4, "end_col": 10 },
+          "args": [{ "type": "Identifier", "name": "x", "line": 4, "col": 11, "end_line": 4, "end_col": 12 }],
           "keywords": [],
           "line": 4,
           "col": 5,

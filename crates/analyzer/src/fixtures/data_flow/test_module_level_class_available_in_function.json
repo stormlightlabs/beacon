@@ -6,15 +6,7 @@
       "name": "MyClass",
       "bases": [],
       "metaclass": null,
-      "body": [
-        {
-          "type": "Pass",
-          "line": 2,
-          "col": 5,
-          "end_line": 2,
-          "end_col": 9
-        }
-      ],
+      "body": [{ "type": "Pass", "line": 2, "col": 5, "end_line": 2, "end_col": 9 }],
       "docstring": null,
       "decorators": [],
       "line": 1,
@@ -31,14 +23,7 @@
           "type": "Return",
           "value": {
             "type": "Call",
-            "function": {
-              "type": "Identifier",
-              "name": "MyClass",
-              "line": 5,
-              "col": 12,
-              "end_line": 5,
-              "end_col": 19
-            },
+            "function": { "type": "Identifier", "name": "MyClass", "line": 5, "col": 12, "end_line": 5, "end_col": 19 },
             "args": [],
             "keywords": [],
             "line": 5,

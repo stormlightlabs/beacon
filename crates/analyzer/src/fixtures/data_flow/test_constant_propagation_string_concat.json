@@ -8,23 +8,10 @@
       "body": [
         {
           "type": "Assignment",
-          "target": {
-            "type": "Identifier",
-            "name": "s",
-            "line": 2,
-            "col": 5,
-            "end_line": 2,
-            "end_col": 6
-          },
+          "target": { "type": "Identifier", "name": "s", "line": 2, "col": 5, "end_line": 2, "end_col": 6 },
           "value": {
             "type": "Literal",
-            "value": {
-              "kind": "String",
-              "data": {
-                "value": "hello",
-                "prefix": ""
-              }
-            },
+            "value": { "kind": "String", "data": { "value": "hello", "prefix": "" } },
             "line": 2,
             "col": 9,
             "end_line": 2,

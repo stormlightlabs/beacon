@@ -6,37 +6,13 @@
       "name": "foo",
       "args": [],
       "body": [
-        {
-          "type": "ImportFrom",
-          "module": "bar",
-          "names": [
-            "baz"
-          ],
-          "line": 2,
-          "col": 5,
-          "end_line": 2,
-          "end_col": 24
-        },
+        { "type": "ImportFrom", "module": "bar", "names": ["baz"], "line": 2, "col": 5, "end_line": 2, "end_col": 24 },
         {
           "type": "Assignment",
-          "target": {
-            "type": "Identifier",
-            "name": "result",
-            "line": 3,
-            "col": 5,
-            "end_line": 3,
-            "end_col": 11
-          },
+          "target": { "type": "Identifier", "name": "result", "line": 3, "col": 5, "end_line": 3, "end_col": 11 },
           "value": {
             "type": "Call",
-            "function": {
-              "type": "Identifier",
-              "name": "baz",
-              "line": 3,
-              "col": 14,
-              "end_line": 3,
-              "end_col": 17
-            },
+            "function": { "type": "Identifier", "name": "baz", "line": 3, "col": 14, "end_line": 3, "end_col": 17 },
             "args": [],
             "keywords": [],
             "line": 3,

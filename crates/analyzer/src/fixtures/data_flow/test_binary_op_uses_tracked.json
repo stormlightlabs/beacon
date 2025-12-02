@@ -8,33 +8,12 @@
       "body": [
         {
           "type": "Assignment",
-          "target": {
-            "type": "Identifier",
-            "name": "z",
-            "line": 2,
-            "col": 5,
-            "end_line": 2,
-            "end_col": 6
-          },
+          "target": { "type": "Identifier", "name": "z", "line": 2, "col": 5, "end_line": 2, "end_col": 6 },
           "value": {
             "type": "BinaryOp",
-            "left": {
-              "type": "Identifier",
-              "name": "x",
-              "line": 2,
-              "col": 9,
-              "end_line": 2,
-              "end_col": 10
-            },
+            "left": { "type": "Identifier", "name": "x", "line": 2, "col": 9, "end_line": 2, "end_col": 10 },
             "op": "Add",
-            "right": {
-              "type": "Identifier",
-              "name": "y",
-              "line": 2,
-              "col": 13,
-              "end_line": 2,
-              "end_col": 14
-            },
+            "right": { "type": "Identifier", "name": "y", "line": 2, "col": 13, "end_line": 2, "end_col": 14 },
             "line": 2,
             "col": 9,
             "end_line": 2,

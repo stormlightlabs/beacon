@@ -9,14 +9,7 @@
       "body": [
         {
           "type": "AnnotatedAssignment",
-          "target": {
-            "type": "Identifier",
-            "name": "version",
-            "line": 2,
-            "col": 5,
-            "end_line": 2,
-            "end_col": 12
-          },
+          "target": { "type": "Identifier", "name": "version", "line": 2, "col": 5, "end_line": 2, "end_col": 12 },
           "type_annotation": "int",
           "value": null,
           "line": 2,
@@ -43,14 +36,7 @@
               "type": "Assignment",
               "target": {
                 "type": "Attribute",
-                "object": {
-                  "type": "Identifier",
-                  "name": "self",
-                  "line": 5,
-                  "col": 9,
-                  "end_line": 5,
-                  "end_col": 13
-                },
+                "object": { "type": "Identifier", "name": "self", "line": 5, "col": 9, "end_line": 5, "end_col": 13 },
                 "attribute": "enabled",
                 "line": 5,
                 "col": 9,
@@ -59,10 +45,7 @@
               },
               "value": {
                 "type": "Literal",
-                "value": {
-                  "kind": "Boolean",
-                  "data": false
-                },
+                "value": { "kind": "Boolean", "data": false },
                 "line": 5,
                 "col": 24,
                 "end_line": 5,
