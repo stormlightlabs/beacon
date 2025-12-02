@@ -1,0 +1,95 @@
+{
+  "type": "Module",
+  "body": [
+    {
+      "type": "FunctionDef",
+      "name": "foo",
+      "args": [],
+      "body": [
+        {
+          "type": "For",
+          "target": {
+            "type": "Identifier",
+            "name": "i",
+            "line": 2,
+            "col": 9,
+            "end_line": 2,
+            "end_col": 10
+          },
+          "iter": {
+            "type": "Call",
+            "function": {
+              "type": "Identifier",
+              "name": "range",
+              "line": 2,
+              "col": 14,
+              "end_line": 2,
+              "end_col": 19
+            },
+            "args": [
+              {
+                "type": "Literal",
+                "value": {
+                  "kind": "Integer",
+                  "data": 10
+                },
+                "line": 2,
+                "col": 20,
+                "end_line": 2,
+                "end_col": 22
+              }
+            ],
+            "keywords": [],
+            "line": 2,
+            "col": 14,
+            "end_line": 2,
+            "end_col": 23
+          },
+          "body": [
+            {
+              "type": "Call",
+              "function": {
+                "type": "Identifier",
+                "name": "print",
+                "line": 3,
+                "col": 9,
+                "end_line": 3,
+                "end_col": 14
+              },
+              "args": [
+                {
+                  "type": "Identifier",
+                  "name": "i",
+                  "line": 3,
+                  "col": 15,
+                  "end_line": 3,
+                  "end_col": 16
+                }
+              ],
+              "keywords": [],
+              "line": 3,
+              "col": 9,
+              "end_line": 3,
+              "end_col": 17
+            }
+          ],
+          "else_body": null,
+          "is_async": false,
+          "line": 2,
+          "col": 5,
+          "end_line": 3,
+          "end_col": 17
+        }
+      ],
+      "docstring": null,
+      "return_type": null,
+      "decorators": [],
+      "is_async": false,
+      "line": 1,
+      "col": 1,
+      "end_line": 3,
+      "end_col": 17
+    }
+  ],
+  "docstring": null
+}

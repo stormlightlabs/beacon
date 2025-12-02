@@ -1,0 +1,66 @@
+{
+  "type": "Module",
+  "body": [
+    {
+      "type": "ClassDef",
+      "name": "MyClass",
+      "bases": [],
+      "metaclass": null,
+      "body": [
+        {
+          "type": "Pass",
+          "line": 2,
+          "col": 5,
+          "end_line": 2,
+          "end_col": 9
+        }
+      ],
+      "docstring": null,
+      "decorators": [],
+      "line": 1,
+      "col": 1,
+      "end_line": 2,
+      "end_col": 9
+    },
+    {
+      "type": "FunctionDef",
+      "name": "factory",
+      "args": [],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "Call",
+            "function": {
+              "type": "Identifier",
+              "name": "MyClass",
+              "line": 5,
+              "col": 12,
+              "end_line": 5,
+              "end_col": 19
+            },
+            "args": [],
+            "keywords": [],
+            "line": 5,
+            "col": 12,
+            "end_line": 5,
+            "end_col": 21
+          },
+          "line": 5,
+          "col": 5,
+          "end_line": 5,
+          "end_col": 21
+        }
+      ],
+      "docstring": null,
+      "return_type": null,
+      "decorators": [],
+      "is_async": false,
+      "line": 4,
+      "col": 1,
+      "end_line": 5,
+      "end_col": 21
+    }
+  ],
+  "docstring": null
+}

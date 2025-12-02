@@ -1,0 +1,65 @@
+{
+  "type": "Module",
+  "body": [
+    {
+      "type": "FunctionDef",
+      "name": "foo",
+      "args": [],
+      "body": [
+        {
+          "type": "Return",
+          "value": {
+            "type": "Literal",
+            "value": {
+              "kind": "Integer",
+              "data": 1
+            },
+            "line": 2,
+            "col": 12,
+            "end_line": 2,
+            "end_col": 13
+          },
+          "line": 2,
+          "col": 5,
+          "end_line": 2,
+          "end_col": 13
+        },
+        {
+          "type": "Assignment",
+          "target": {
+            "type": "Identifier",
+            "name": "x",
+            "line": 3,
+            "col": 5,
+            "end_line": 3,
+            "end_col": 6
+          },
+          "value": {
+            "type": "Literal",
+            "value": {
+              "kind": "Integer",
+              "data": 2
+            },
+            "line": 3,
+            "col": 9,
+            "end_line": 3,
+            "end_col": 10
+          },
+          "line": 3,
+          "col": 5,
+          "end_line": 3,
+          "end_col": 10
+        }
+      ],
+      "docstring": null,
+      "return_type": null,
+      "decorators": [],
+      "is_async": false,
+      "line": 1,
+      "col": 1,
+      "end_line": 3,
+      "end_col": 10
+    }
+  ],
+  "docstring": null
+}

@@ -1,0 +1,62 @@
+{
+  "type": "Module",
+  "body": [
+    {
+      "type": "FunctionDef",
+      "name": "foo",
+      "args": [],
+      "body": [
+        {
+          "type": "Import",
+          "module": "os",
+          "alias": null,
+          "extra_modules": [],
+          "line": 2,
+          "col": 5,
+          "end_line": 2,
+          "end_col": 14
+        },
+        {
+          "type": "Assignment",
+          "target": {
+            "type": "Identifier",
+            "name": "path",
+            "line": 3,
+            "col": 5,
+            "end_line": 3,
+            "end_col": 9
+          },
+          "value": {
+            "type": "Attribute",
+            "object": {
+              "type": "Identifier",
+              "name": "os",
+              "line": 3,
+              "col": 12,
+              "end_line": 3,
+              "end_col": 14
+            },
+            "attribute": "path",
+            "line": 3,
+            "col": 12,
+            "end_line": 3,
+            "end_col": 19
+          },
+          "line": 3,
+          "col": 5,
+          "end_line": 3,
+          "end_col": 19
+        }
+      ],
+      "docstring": null,
+      "return_type": null,
+      "decorators": [],
+      "is_async": false,
+      "line": 1,
+      "col": 1,
+      "end_line": 3,
+      "end_col": 19
+    }
+  ],
+  "docstring": null
+}

@@ -1,0 +1,54 @@
+{
+  "type": "Module",
+  "body": [
+    {
+      "type": "FunctionDef",
+      "name": "foo",
+      "args": [
+        {
+          "name": "param",
+          "line": 1,
+          "col": 9,
+          "end_line": 1,
+          "end_col": 14,
+          "type_annotation": null,
+          "default_value": null
+        }
+      ],
+      "body": [
+        {
+          "type": "Assignment",
+          "target": {
+            "type": "Identifier",
+            "name": "x",
+            "line": 2,
+            "col": 5,
+            "end_line": 2,
+            "end_col": 6
+          },
+          "value": {
+            "type": "Identifier",
+            "name": "param",
+            "line": 2,
+            "col": 9,
+            "end_line": 2,
+            "end_col": 14
+          },
+          "line": 2,
+          "col": 5,
+          "end_line": 2,
+          "end_col": 14
+        }
+      ],
+      "docstring": null,
+      "return_type": null,
+      "decorators": [],
+      "is_async": false,
+      "line": 1,
+      "col": 1,
+      "end_line": 2,
+      "end_col": 14
+    }
+  ],
+  "docstring": null
+}
