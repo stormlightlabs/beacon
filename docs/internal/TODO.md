@@ -13,8 +13,8 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 - [x] Cross-module CFG construction
 - [x] Handle circular dependencies in CFG gracefully (SCC detection in CallGraph.reachable_functions)
 - [x] Cross-file reachability analysis
-- [ ] Transitive type propagation across module boundaries
-- [ ] Taint analysis across file boundaries
+- [x] Transitive type propagation across module boundaries
+- [x] Taint analysis across file boundaries
 
 ### Enhanced Import/Export Analysis
 
@@ -43,6 +43,7 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 - [ ] Performance benchmarks for multi-file analysis
 - [ ] Memory profiling for workspace-wide analysis
 - [ ] Integration tests for cross-file CFG
+- [ ] Integration tests for cross-file taint analysis
 - [ ] Stress testing with large multi-module projects
 
 ## Linter Tech Debt

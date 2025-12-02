@@ -18,6 +18,7 @@ pub mod linter;
 pub mod loader;
 pub mod pattern;
 pub mod rules;
+pub mod taint;
 pub mod type_env;
 pub mod walker;
 pub mod workspace;
@@ -36,6 +37,10 @@ pub use loader::{
     StubCache, StubFile, StubTypeContext, new_class_registry_with_stdlib, new_typevar_registry_with_stdlib,
 };
 pub use rules::{DiagnosticMessage, Rule, RuleKind, RuleSeverity};
+pub use taint::{
+    CrossModuleTaintAnalyzer, CrossModuleTaintResult, CrossModuleTaintViolation, IntraModuleTaintAnalyzer,
+    TaintAnalysisResult, TaintSink, TaintSinkKind, TaintSource, TaintSourceKind, TaintViolation,
+};
 pub use type_env::TypeEnvironment;
 pub use walker::generate_constraints;
 pub use workspace::{ModuleTypeInfo, WorkspaceTypeEnvironment, WorkspaceTypeEnvironmentBuilder};
