@@ -417,7 +417,7 @@ pub struct ConstraintGenContext<'a> {
     /// Reference to the symbol table for scope lookups
     symbol_table: Option<&'a beacon_parser::SymbolTable>,
     /// Source code for calculating byte offsets from line/col positions
-    source: Option<&'a str>,
+    pub source: Option<&'a str>,
 }
 
 impl<'a> ConstraintGenContext<'a> {

@@ -8,7 +8,7 @@
 from typing import Union
 
 
-# Example 1: Wildcard pattern before specific patterns
+# Example 1: Wildcard pattern before specific patterns & Multiple unreachable patterns
 def example_wildcard_before_specific(value: int | str) -> str:
     match value:
         case _:  # This subsumes all patterns below
@@ -30,20 +30,7 @@ def example_general_before_specific(value: int | None) -> str:
             return "none"
 
 
-# Example 3: Multiple unreachable patterns
-def example_multiple_unreachable(value: int) -> str:
-    match value:
-        case _:  # Catches everything
-            return "wildcard"
-        case 1:  # PM002: Unreachable
-            return "one"
-        case 2:  # PM002: Unreachable
-            return "two"
-        case int():  # PM002: Unreachable
-            return "integer"
-
-
-# Example 4: Union type with overlapping patterns
+# Example 3: Union type with overlapping patterns
 def example_union_overlap(value: str | int) -> str:
     match value:
         case str() | int():  # Catches both types
@@ -52,7 +39,7 @@ def example_union_overlap(value: str | int) -> str:
             return "string"
 
 
-# Example 5: Nested type patterns
+# Example 4: Nested type patterns
 class Point:
     x: int
     y: int
@@ -72,7 +59,7 @@ def example_nested_types(value: Point | Point3D) -> str:
             return "point3d"
 
 
-# Example 6: Correct ordering (no PM002)
+# Example 5: Correct ordering (no PM002)
 def example_correct_ordering(value: int | str | None) -> str:
     match value:
         case 42:  # Specific pattern first
@@ -87,7 +74,7 @@ def example_correct_ordering(value: int | str | None) -> str:
             return "other"
 
 
-# Example 7: Boolean patterns
+# Example 6: Boolean patterns
 def example_boolean_patterns(value: bool | int) -> str:
     match value:
         case int():  # Matches all integers (bools are ints in Python)
@@ -98,7 +85,7 @@ def example_boolean_patterns(value: bool | int) -> str:
             return "false"
 
 
-# Example 8: List patterns
+# Example 7: List patterns
 def example_list_patterns(value: list[int]) -> str:
     match value:
         case [*_]:  # Matches any list
