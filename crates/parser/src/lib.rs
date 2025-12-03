@@ -527,6 +527,10 @@ pub struct MatchCase {
     pub pattern: Pattern,
     pub guard: Option<AstNode>,
     pub body: Vec<AstNode>,
+    pub pattern_line: usize,
+    pub pattern_col: usize,
+    pub pattern_end_line: usize,
+    pub pattern_end_col: usize,
     pub line: usize,
     pub col: usize,
     pub end_line: usize,
@@ -2185,6 +2189,12 @@ impl PythonParser {
             .children(&mut cursor)
             .find(|child| child.kind() == "case_pattern")
             .ok_or_else(|| ParseError::TreeSitterError("Missing case pattern".to_string()))?;
+        let pattern_start = pattern_node.start_position();
+        let pattern_end = pattern_node.end_position();
+        let pattern_line = pattern_start.row + 1;
+        let pattern_col = pattern_start.column + 1;
+        let pattern_end_line = pattern_end.row + 1;
+        let pattern_end_col = pattern_end.column + 1;
         let pattern = self.extract_pattern(&pattern_node, source)?;
 
         let body_node = node
@@ -2205,7 +2215,19 @@ impl PythonParser {
         let end_line = end_position.row + 1;
         let end_col = end_position.column + 1;
 
-        Ok(MatchCase { pattern, guard, body, line, col, end_line, end_col })
+        Ok(MatchCase {
+            pattern,
+            guard,
+            body,
+            pattern_line,
+            pattern_col,
+            pattern_end_line,
+            pattern_end_col,
+            line,
+            col,
+            end_line,
+            end_col,
+        })
     }
 
     fn extract_pattern(&self, node: &Node, source: &str) -> Result<Pattern> {

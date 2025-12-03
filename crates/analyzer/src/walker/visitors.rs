@@ -67,6 +67,7 @@ fn extract_guard_variables_recursive(node: &AstNode, vars: &mut Vec<String>) {
     }
 }
 
+/// Extract the span for a pattern from a match case
 /// Extract type parameters from Generic[T1, T2, ...] or Protocol[T1, T2, ...] base class notation by
 /// parsing strings like "Generic[T_co]", "Protocol[T_co]", "Generic[T_co, T_contra]" and looks up the
 /// [TypeVar] instances in the environment to get their variance information.
@@ -498,10 +499,18 @@ pub fn visit_match(
             let mut previous_patterns = Vec::new();
             for case in cases {
                 let case_span = Span::with_end(case.line, case.col, case.end_line, case.end_col);
+
+                let pattern_span = Span::with_end(
+                    case.pattern_line,
+                    case.pattern_col,
+                    case.pattern_end_line,
+                    case.pattern_end_col,
+                );
+
                 ctx.constraints.push(Constraint::PatternReachable(
                     case.pattern.clone(),
                     previous_patterns.clone(),
-                    case_span,
+                    pattern_span,
                 ));
 
                 ctx.constraints.push(Constraint::PatternTypeCompatible(

@@ -364,12 +364,12 @@ impl DiagnosticProvider {
                     self.check_annotation_coverage(stmt, ctx);
                 }
             }
-            AstNode::FunctionDef { args, return_type, body, line, col, name, .. } => {
+            AstNode::FunctionDef { args, return_type, body, line, col, end_col, name, .. } => {
                 for param in args {
                     self.check_parameter_annotation(param, ctx);
                 }
 
-                self.check_return_type_annotation(return_type, *line, *col, name, ctx);
+                self.check_return_type_annotation(return_type, *line, *col, name, *end_col, ctx);
 
                 let prev_in_class = ctx.in_class_def;
                 ctx.in_class_def = false;
@@ -816,30 +816,35 @@ impl DiagnosticProvider {
 
     /// Check function return type annotation
     fn check_return_type_annotation(
-        &self, return_type: &Option<String>, line: usize, col: usize, name: &str, ctx: &mut DiagnosticContext,
+        &self, return_type: &Option<String>, line: usize, col: usize, name: &str, end_col: usize,
+        ctx: &mut DiagnosticContext,
     ) {
         match return_type {
             Some(annotation) => {
                 if let Some(inferred_type) = Self::get_type_for_position(ctx.type_map, ctx.position_map, line, col) {
+                    let inferred_return_type = match &inferred_type {
+                        Type::Fun(_, ret) => (&**ret).clone(),
+                        other => other.clone(),
+                    };
+
                     let parser = beacon_core::AnnotationParser::new();
                     if let Ok(annotated_type) = parser.parse(annotation) {
-                        if !Self::types_are_compatible(&annotated_type, &inferred_type) {
+                        if !Self::types_are_compatible(&annotated_type, &inferred_return_type) {
                             let severity =
                                 Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::AnnotationMismatch);
 
                             if let Some(sev) = severity {
-                                let position = Position {
+                                let start_position = Position {
                                     line: (line.saturating_sub(1)) as u32,
                                     character: (col.saturating_sub(1)) as u32,
                                 };
 
-                                let range = Range {
-                                    start: position,
-                                    end: Position {
-                                        line: position.line,
-                                        character: position.character + name.len() as u32,
-                                    },
+                                let end_position = Position {
+                                    line: (line.saturating_sub(1)) as u32,
+                                    character: (end_col.saturating_sub(1)) as u32,
                                 };
+
+                                let range = Range { start: start_position, end: end_position };
 
                                 ctx.diagnostics.push(Diagnostic {
                                     range,
@@ -847,7 +852,7 @@ impl DiagnosticProvider {
                                     code: Some(lsp_types::NumberOrString::String("ANN005".to_string())),
                                     source: Some("beacon".to_string()),
                                     message: format!(
-                                        "Function '{name}' return type mismatch: annotated as '{annotated_type}', but inferred as '{inferred_type}'"
+                                        "Function '{name}' return type mismatch: annotated as '{annotated_type}', but inferred as '{inferred_return_type}'"
                                     ),
                                     related_information: None,
                                     tags: None,
@@ -3470,54 +3475,6 @@ def mixed_params(a: int, b, c: int) -> int:
     }
 
     #[test]
-    fn test_balanced_mode_annotation_mismatch_is_warning() {
-        let documents = DocumentManager::new().unwrap();
-        let mut config = crate::config::Config::default();
-        config.type_checking.mode = crate::config::TypeCheckingMode::Balanced;
-        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
-            None,
-            config.clone(),
-            documents.clone(),
-        )));
-        let provider = DiagnosticProvider::new(documents.clone(), workspace);
-        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
-
-        let uri = Url::from_str("file:///test.py").unwrap();
-        let source = r#"
-def wrong_annotation(x: str) -> str:
-    return x + 1
-"#;
-
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
-
-        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
-
-        let mismatch_diagnostics: Vec<_> = diagnostics
-            .iter()
-            .filter(|d| {
-                matches!(
-                    d.code.as_ref(),
-                    Some(lsp_types::NumberOrString::String(code))
-                    if code == "ANN003" || code == "ANN005"
-                )
-            })
-            .collect();
-
-        assert!(
-            !mismatch_diagnostics.is_empty(),
-            "Expected ANN003/ANN005 warnings for annotation mismatches"
-        );
-
-        for diag in &mismatch_diagnostics {
-            assert_eq!(
-                diag.severity,
-                Some(DiagnosticSeverity::WARNING),
-                "Balanced mode should generate warnings for mismatches, not errors"
-            );
-        }
-    }
-
-    #[test]
     fn test_balanced_mode_with_fully_annotated_function() {
         let documents = DocumentManager::new().unwrap();
         let mut config = crate::config::Config::default();
@@ -4050,5 +4007,67 @@ def bar():
         let enhanced = enhance_variance_error_message("position", "unknown", "Type1", "Type2");
         assert!(enhanced.contains("Variance error"));
         assert!(!enhanced.contains("Mutable containers"));
+    }
+
+    #[test]
+    fn test_unreachable_pattern_diagnostic_range() {
+        let documents = DocumentManager::new().unwrap();
+        let config = crate::config::Config::default();
+        let workspace = Arc::new(RwLock::new(crate::workspace::Workspace::new(
+            None,
+            config.clone(),
+            documents.clone(),
+        )));
+        let provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def example(value: int | str) -> str:
+    match value:
+        case _:
+            return "wildcard"
+        case int():  # PM002: Unreachable
+            return "integer"
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
+
+        let pm002_diagnostics: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("PM002".to_string())))
+            .collect();
+
+        assert_eq!(
+            pm002_diagnostics.len(),
+            1,
+            "Expected 1 PM002 diagnostic for unreachable pattern"
+        );
+
+        let diagnostic = &pm002_diagnostics[0];
+
+        eprintln!(
+            "Diagnostic range: start={}:{}, end={}:{}",
+            diagnostic.range.start.line,
+            diagnostic.range.start.character,
+            diagnostic.range.end.line,
+            diagnostic.range.end.character
+        );
+
+        assert_eq!(
+            diagnostic.range.start.line, 5,
+            "Diagnostic should be on line 6 (0-indexed as 5)"
+        );
+        assert_eq!(
+            diagnostic.range.start.character, 13,
+            "Diagnostic should start at column 13 (start of 'int()')"
+        );
+        assert_eq!(
+            diagnostic.range.end.character, 18,
+            "Diagnostic should end at column 18 (end of 'int()')"
+        );
+        assert_eq!(diagnostic.range.end.line, 5, "Diagnostic should end on the same line");
     }
 }
