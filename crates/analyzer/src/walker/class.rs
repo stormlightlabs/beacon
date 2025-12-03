@@ -106,8 +106,7 @@ pub fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnviro
 /// Recursively extract field assignments from statement nodes by looking for patterns like
 /// `self.field = value` or `self.field: Type = value` and registers the field in ClassMetadata.
 ///
-/// This function traverses control flow constructs (if, for, while, try, with) to find all
-/// possible field assignments within the method body.
+/// This function traverses control flow constructs (if, for, while, try, with) to find all possible field assignments within the method body.
 pub fn extract_field_assignments(stmt: &AstNode, metadata: &mut ClassMetadata, env: &mut TypeEnvironment) {
     match stmt {
         AstNode::Assignment { target, .. } => {

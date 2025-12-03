@@ -560,15 +560,48 @@ impl Default for AnalysisCache {
     }
 }
 
+/// Represents the definition of a symbol in a module
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolDefinition {
+    /// URI of the file where this symbol is defined
+    pub uri: Url,
+    /// Symbol name
+    pub name: String,
+    /// Symbol kind (Function, Class, Variable, etc.)
+    pub kind: beacon_parser::SymbolKind,
+    /// Line where the symbol is defined
+    pub line: usize,
+    /// Column where the symbol is defined
+    pub col: usize,
+    /// Scope ID where the symbol is defined
+    pub scope_id: beacon_parser::ScopeId,
+}
+
+impl SymbolDefinition {
+    pub fn new(
+        uri: Url, name: String, kind: beacon_parser::SymbolKind, line: usize, col: usize,
+        scope_id: beacon_parser::ScopeId,
+    ) -> Self {
+        Self { uri, name, kind, line, col, scope_id }
+    }
+}
+
 /// Import dependency tracker for selective invalidation
+///
+/// Tracks both import relationships (for invalidation) and all symbol definitions (for workspace-wide symbol resolution).
 #[derive(Debug, Clone, Default)]
 pub struct ImportDependencyTracker {
+    /// Import tracking: (from_uri, symbol) -> set of importer_uris
     symbol_importers: FxHashMap<(Url, String), FxHashSet<Url>>,
+    /// Symbol definitions: (uri, symbol_name) -> SymbolDefinition
+    symbol_definitions: FxHashMap<(Url, String), SymbolDefinition>,
+    /// All symbols defined in each file: uri -> set of symbol names
+    file_symbols: FxHashMap<Url, FxHashSet<String>>,
 }
 
 impl ImportDependencyTracker {
     pub fn new() -> Self {
-        Self { symbol_importers: FxHashMap::default() }
+        Self::default()
     }
 
     /// Record that `importer_uri` imports `symbol` from `from_uri`
@@ -618,6 +651,67 @@ impl ImportDependencyTracker {
     /// Clear all tracking data
     pub fn clear(&mut self) {
         self.symbol_importers.clear();
+        self.symbol_definitions.clear();
+        self.file_symbols.clear();
+    }
+
+    /// Add a symbol definition for a file
+    ///
+    /// Records that `symbol_name` is defined in `uri` with the given properties.
+    pub fn add_symbol_definition(&mut self, definition: SymbolDefinition) {
+        tracing::debug!(
+            "ImportDependencyTracker: Adding symbol definition {} in {} at line {}",
+            definition.name,
+            definition.uri,
+            definition.line
+        );
+        let key = (definition.uri.clone(), definition.name.clone());
+
+        self.file_symbols
+            .entry(definition.uri.clone())
+            .or_default()
+            .insert(definition.name.clone());
+
+        self.symbol_definitions.insert(key, definition);
+    }
+
+    /// Get the definition of a symbol in a specific file
+    pub fn get_symbol_definition(&self, uri: &Url, symbol_name: &str) -> Option<&SymbolDefinition> {
+        let key = (uri.clone(), symbol_name.to_string());
+        self.symbol_definitions.get(&key)
+    }
+
+    /// Get all symbols defined in a file
+    pub fn get_file_symbols(&self, uri: &Url) -> Vec<&SymbolDefinition> {
+        self.file_symbols
+            .get(uri)
+            .map(|symbols| {
+                symbols
+                    .iter()
+                    .filter_map(|name| {
+                        let key = (uri.clone(), name.clone());
+                        self.symbol_definitions.get(&key)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Clear all symbol definitions for a file (when it's being re-analyzed)
+    pub fn clear_symbol_definitions(&mut self, uri: &Url) {
+        tracing::debug!("ImportDependencyTracker: Clearing symbol definitions for {}", uri);
+
+        if let Some(symbols) = self.file_symbols.remove(uri) {
+            for symbol_name in symbols {
+                let key = (uri.clone(), symbol_name);
+                self.symbol_definitions.remove(&key);
+            }
+        }
+    }
+
+    /// Get all symbol definitions across all files
+    pub fn all_symbol_definitions(&self) -> Vec<&SymbolDefinition> {
+        self.symbol_definitions.values().collect()
     }
 }
 
@@ -680,6 +774,7 @@ impl CacheManager {
 
         if let Ok(mut tracker) = self.import_tracker.write() {
             tracker.clear_imports_from(uri);
+            tracker.clear_symbol_definitions(uri);
         }
     }
 
@@ -737,11 +832,138 @@ impl CacheManager {
     pub fn scope_stats(&self) -> ScopeCacheStats {
         self.scope_cache.stats()
     }
+
+    /// Add a symbol definition to the tracker
+    pub fn add_symbol_definition(&self, definition: SymbolDefinition) {
+        if let Ok(mut tracker) = self.import_tracker.write() {
+            tracker.add_symbol_definition(definition);
+        }
+    }
+
+    /// Get a symbol definition from a specific file
+    pub fn get_symbol_definition(&self, uri: &Url, symbol_name: &str) -> Option<SymbolDefinition> {
+        self.import_tracker
+            .read()
+            .ok()
+            .and_then(|tracker| tracker.get_symbol_definition(uri, symbol_name).cloned())
+    }
+
+    /// Get all symbols defined in a file
+    pub fn get_file_symbols(&self, uri: &Url) -> Vec<SymbolDefinition> {
+        self.import_tracker
+            .read()
+            .ok()
+            .map(|tracker| tracker.get_file_symbols(uri).into_iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Get all symbol definitions across all files
+    pub fn all_symbol_definitions(&self) -> Vec<SymbolDefinition> {
+        self.import_tracker
+            .read()
+            .ok()
+            .map(|tracker| tracker.all_symbol_definitions().into_iter().cloned().collect())
+            .unwrap_or_default()
+    }
 }
 
 impl Default for CacheManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Workspace-wide symbol table for cross-file symbol resolution
+///
+/// Combines symbol definitions from all files with module resolution to enable
+/// looking up symbols across the entire workspace. This supports features like:
+/// - Workspace-wide symbol search
+/// - Cross-module goto definition
+/// - Import resolution and validation
+pub struct WorkspaceSymbolTable {
+    cache_manager: Arc<CacheManager>,
+    /// Module name to URI mapping for resolving imports
+    module_to_uri: Arc<RwLock<FxHashMap<String, Url>>>,
+}
+
+impl WorkspaceSymbolTable {
+    /// Create a new workspace symbol table
+    pub fn new(cache_manager: Arc<CacheManager>) -> Self {
+        Self { cache_manager, module_to_uri: Arc::new(RwLock::new(FxHashMap::default())) }
+    }
+
+    /// Register a module name to URI mapping
+    ///
+    /// This is used to resolve imports like "from foo.bar import baz" to the actual file URI.
+    pub fn register_module(&self, module_name: String, uri: Url) {
+        if let Ok(mut mapping) = self.module_to_uri.write() {
+            tracing::debug!("WorkspaceSymbolTable: Registering module {} -> {}", module_name, uri);
+            mapping.insert(module_name, uri);
+        }
+    }
+
+    /// Resolve a module name to its URI
+    pub fn resolve_module(&self, module_name: &str) -> Option<Url> {
+        self.module_to_uri
+            .read()
+            .ok()
+            .and_then(|mapping| mapping.get(module_name).cloned())
+    }
+
+    /// Resolve a symbol from a module
+    ///
+    /// Given a module name and symbol name, returns the symbol definition if found.
+    /// This handles the full resolution chain: module_name -> URI -> symbol definition.
+    pub fn resolve_symbol(&self, module_name: &str, symbol_name: &str) -> Option<SymbolDefinition> {
+        let uri = self.resolve_module(module_name)?;
+        self.cache_manager.get_symbol_definition(&uri, symbol_name)
+    }
+
+    /// Get all symbols in a module by module name
+    pub fn get_module_symbols(&self, module_name: &str) -> Vec<SymbolDefinition> {
+        if let Some(uri) = self.resolve_module(module_name) {
+            self.cache_manager.get_file_symbols(&uri)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get all symbols defined in a file by URI
+    pub fn get_file_symbols(&self, uri: &Url) -> Vec<SymbolDefinition> {
+        self.cache_manager.get_file_symbols(uri)
+    }
+
+    /// Search for symbols matching a query across the entire workspace
+    ///
+    /// Returns all symbols whose name contains the query string (case-insensitive).
+    pub fn search_symbols(&self, query: &str) -> Vec<SymbolDefinition> {
+        let query_lower = query.to_lowercase();
+        self.cache_manager
+            .all_symbol_definitions()
+            .into_iter()
+            .filter(|def| def.name.to_lowercase().contains(&query_lower))
+            .collect()
+    }
+
+    /// Add a symbol definition to the workspace
+    pub fn add_symbol_definition(&self, definition: SymbolDefinition) {
+        self.cache_manager.add_symbol_definition(definition);
+    }
+
+    /// Get all registered modules
+    pub fn all_modules(&self) -> Vec<(String, Url)> {
+        self.module_to_uri
+            .read()
+            .ok()
+            .map(|mapping| mapping.iter().map(|(name, uri)| (name.clone(), uri.clone())).collect())
+            .unwrap_or_default()
+    }
+
+    /// Clear module mappings (useful for workspace re-initialization)
+    pub fn clear_modules(&self) {
+        if let Ok(mut mapping) = self.module_to_uri.write() {
+            mapping.clear();
+        }
     }
 }
 
@@ -1449,5 +1671,304 @@ mod tests {
 
         assert_eq!(manager.stats().capacity, 75);
         assert_eq!(manager.scope_stats().capacity, 150);
+    }
+
+    #[test]
+    fn test_symbol_definition_creation() {
+        let uri = Url::parse("file:///test.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+        let definition = SymbolDefinition::new(
+            uri.clone(),
+            "my_function".to_string(),
+            beacon_parser::SymbolKind::Function,
+            10,
+            4,
+            scope_id,
+        );
+
+        assert_eq!(definition.uri, uri);
+        assert_eq!(definition.name, "my_function");
+        assert_eq!(definition.kind, beacon_parser::SymbolKind::Function);
+        assert_eq!(definition.line, 10);
+        assert_eq!(definition.col, 4);
+        assert_eq!(definition.scope_id, scope_id);
+    }
+
+    #[test]
+    fn test_import_tracker_add_symbol_definition() {
+        let mut tracker = ImportDependencyTracker::new();
+        let uri = Url::parse("file:///module.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        let definition = SymbolDefinition::new(
+            uri.clone(),
+            "MyClass".to_string(),
+            beacon_parser::SymbolKind::Class,
+            5,
+            0,
+            scope_id,
+        );
+
+        tracker.add_symbol_definition(definition.clone());
+
+        let retrieved = tracker.get_symbol_definition(&uri, "MyClass");
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap(), &definition);
+    }
+
+    #[test]
+    fn test_import_tracker_get_file_symbols() {
+        let mut tracker = ImportDependencyTracker::new();
+        let uri = Url::parse("file:///module.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        let def1 = SymbolDefinition::new(
+            uri.clone(),
+            "func1".to_string(),
+            beacon_parser::SymbolKind::Function,
+            1,
+            0,
+            scope_id,
+        );
+
+        let def2 = SymbolDefinition::new(
+            uri.clone(),
+            "func2".to_string(),
+            beacon_parser::SymbolKind::Function,
+            5,
+            0,
+            scope_id,
+        );
+
+        tracker.add_symbol_definition(def1.clone());
+        tracker.add_symbol_definition(def2.clone());
+
+        let symbols = tracker.get_file_symbols(&uri);
+        assert_eq!(symbols.len(), 2);
+        assert!(symbols.contains(&&def1));
+        assert!(symbols.contains(&&def2));
+    }
+
+    #[test]
+    fn test_import_tracker_clear_symbol_definitions() {
+        let mut tracker = ImportDependencyTracker::new();
+        let uri = Url::parse("file:///module.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        let definition = SymbolDefinition::new(
+            uri.clone(),
+            "MyClass".to_string(),
+            beacon_parser::SymbolKind::Class,
+            5,
+            0,
+            scope_id,
+        );
+
+        tracker.add_symbol_definition(definition);
+        assert_eq!(tracker.get_file_symbols(&uri).len(), 1);
+
+        tracker.clear_symbol_definitions(&uri);
+        assert_eq!(tracker.get_file_symbols(&uri).len(), 0);
+    }
+
+    #[test]
+    fn test_import_tracker_all_symbol_definitions() {
+        let mut tracker = ImportDependencyTracker::new();
+        let uri1 = Url::parse("file:///module1.py").unwrap();
+        let uri2 = Url::parse("file:///module2.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        tracker.add_symbol_definition(SymbolDefinition::new(
+            uri1.clone(),
+            "func1".to_string(),
+            beacon_parser::SymbolKind::Function,
+            1,
+            0,
+            scope_id,
+        ));
+
+        tracker.add_symbol_definition(SymbolDefinition::new(
+            uri2.clone(),
+            "func2".to_string(),
+            beacon_parser::SymbolKind::Function,
+            1,
+            0,
+            scope_id,
+        ));
+
+        let all_symbols = tracker.all_symbol_definitions();
+        assert_eq!(all_symbols.len(), 2);
+    }
+
+    #[test]
+    fn test_cache_manager_symbol_definitions() {
+        let manager = CacheManager::new();
+        let uri = Url::parse("file:///test.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        let definition = SymbolDefinition::new(
+            uri.clone(),
+            "test_func".to_string(),
+            beacon_parser::SymbolKind::Function,
+            10,
+            0,
+            scope_id,
+        );
+
+        manager.add_symbol_definition(definition.clone());
+
+        let retrieved = manager.get_symbol_definition(&uri, "test_func");
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().name, "test_func");
+
+        let file_symbols = manager.get_file_symbols(&uri);
+        assert_eq!(file_symbols.len(), 1);
+        assert_eq!(file_symbols[0].name, "test_func");
+    }
+
+    #[test]
+    fn test_workspace_symbol_table_module_registration() {
+        let manager = Arc::new(CacheManager::new());
+        let table = WorkspaceSymbolTable::new(manager);
+
+        let uri = Url::parse("file:///src/mymodule.py").unwrap();
+        table.register_module("mymodule".to_string(), uri.clone());
+
+        let resolved = table.resolve_module("mymodule");
+        assert_eq!(resolved, Some(uri));
+    }
+
+    #[test]
+    fn test_workspace_symbol_table_resolve_symbol() {
+        let manager = Arc::new(CacheManager::new());
+        let table = WorkspaceSymbolTable::new(manager.clone());
+
+        let uri = Url::parse("file:///src/mymodule.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        table.register_module("mymodule".to_string(), uri.clone());
+
+        let definition = SymbolDefinition::new(
+            uri.clone(),
+            "MyClass".to_string(),
+            beacon_parser::SymbolKind::Class,
+            5,
+            0,
+            scope_id,
+        );
+
+        table.add_symbol_definition(definition.clone());
+
+        let resolved = table.resolve_symbol("mymodule", "MyClass");
+        assert!(resolved.is_some());
+        assert_eq!(resolved.unwrap().name, "MyClass");
+    }
+
+    #[test]
+    fn test_workspace_symbol_table_search() {
+        let manager = Arc::new(CacheManager::new());
+        let table = WorkspaceSymbolTable::new(manager.clone());
+
+        let uri = Url::parse("file:///test.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        table.add_symbol_definition(SymbolDefinition::new(
+            uri.clone(),
+            "calculate_sum".to_string(),
+            beacon_parser::SymbolKind::Function,
+            1,
+            0,
+            scope_id,
+        ));
+
+        table.add_symbol_definition(SymbolDefinition::new(
+            uri.clone(),
+            "calculate_product".to_string(),
+            beacon_parser::SymbolKind::Function,
+            10,
+            0,
+            scope_id,
+        ));
+
+        table.add_symbol_definition(SymbolDefinition::new(
+            uri.clone(),
+            "other_func".to_string(),
+            beacon_parser::SymbolKind::Function,
+            20,
+            0,
+            scope_id,
+        ));
+
+        let results = table.search_symbols("calculate");
+        assert_eq!(results.len(), 2);
+
+        let names: Vec<String> = results.iter().map(|d| d.name.clone()).collect();
+        assert!(names.contains(&"calculate_sum".to_string()));
+        assert!(names.contains(&"calculate_product".to_string()));
+    }
+
+    #[test]
+    fn test_workspace_symbol_table_get_module_symbols() {
+        let manager = Arc::new(CacheManager::new());
+        let table = WorkspaceSymbolTable::new(manager.clone());
+
+        let uri = Url::parse("file:///src/mymodule.py").unwrap();
+        let scope_id = beacon_parser::ScopeId::from_raw(0);
+
+        table.register_module("mymodule".to_string(), uri.clone());
+
+        table.add_symbol_definition(SymbolDefinition::new(
+            uri.clone(),
+            "func1".to_string(),
+            beacon_parser::SymbolKind::Function,
+            1,
+            0,
+            scope_id,
+        ));
+
+        table.add_symbol_definition(SymbolDefinition::new(
+            uri.clone(),
+            "func2".to_string(),
+            beacon_parser::SymbolKind::Function,
+            10,
+            0,
+            scope_id,
+        ));
+
+        let symbols = table.get_module_symbols("mymodule");
+        assert_eq!(symbols.len(), 2);
+    }
+
+    #[test]
+    fn test_workspace_symbol_table_all_modules() {
+        let manager = Arc::new(CacheManager::new());
+        let table = WorkspaceSymbolTable::new(manager);
+
+        let uri1 = Url::parse("file:///module1.py").unwrap();
+        let uri2 = Url::parse("file:///module2.py").unwrap();
+
+        table.register_module("module1".to_string(), uri1.clone());
+        table.register_module("module2".to_string(), uri2.clone());
+
+        let modules = table.all_modules();
+        assert_eq!(modules.len(), 2);
+
+        let names: Vec<String> = modules.iter().map(|(name, _)| name.clone()).collect();
+        assert!(names.contains(&"module1".to_string()));
+        assert!(names.contains(&"module2".to_string()));
+    }
+
+    #[test]
+    fn test_workspace_symbol_table_clear_modules() {
+        let manager = Arc::new(CacheManager::new());
+        let table = WorkspaceSymbolTable::new(manager);
+
+        let uri = Url::parse("file:///module.py").unwrap();
+        table.register_module("module".to_string(), uri);
+
+        assert_eq!(table.all_modules().len(), 1);
+
+        table.clear_modules();
+        assert_eq!(table.all_modules().len(), 0);
     }
 }

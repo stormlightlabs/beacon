@@ -108,6 +108,11 @@ impl Analyzer {
         &self.config
     }
 
+    /// Get a reference to the analyzer's cache manager
+    pub fn cache(&self) -> &CacheManager {
+        &self.cache
+    }
+
     /// Extract scopes from the symbol table and get their source content
     fn extract_scopes_with_content(&self, symbol_table: &SymbolTable, source: &str) -> Vec<(ScopeId, String, Scope)> {
         let mut scopes = Vec::new();
@@ -301,6 +306,8 @@ impl Analyzer {
 
         self.cache.analysis_cache.insert(uri.clone(), version, cached_result);
 
+        self.extract_and_store_symbol_definitions(uri, &symbol_table);
+
         let elapsed = start_time.elapsed();
         tracing::info!(
             uri = %uri,
@@ -312,6 +319,36 @@ impl Analyzer {
         );
 
         Ok(AnalysisResult { uri: uri.clone(), version, type_map, position_map, type_errors, static_analysis })
+    }
+
+    /// Extract symbol definitions from a symbol table and store them in the cache
+    fn extract_and_store_symbol_definitions(&self, uri: &Url, symbol_table: &SymbolTable) {
+        tracing::debug!(uri = %uri, "Extracting symbol definitions");
+
+        for (scope_id, scope) in &symbol_table.scopes {
+            for symbol in scope.symbols.values() {
+                if symbol.kind == beacon_parser::SymbolKind::BuiltinVar {
+                    continue;
+                }
+
+                let definition = crate::cache::SymbolDefinition::new(
+                    uri.clone(),
+                    symbol.name.clone(),
+                    symbol.kind.clone(),
+                    symbol.line,
+                    symbol.col,
+                    *scope_id,
+                );
+
+                self.cache.add_symbol_definition(definition);
+            }
+        }
+
+        tracing::debug!(
+            uri = %uri,
+            symbol_count = self.cache.get_file_symbols(uri).len(),
+            "Symbol definitions stored"
+        );
     }
 
     /// Get the inferred type at a specific position by analyzing the document and looks up the type at the specified position.
