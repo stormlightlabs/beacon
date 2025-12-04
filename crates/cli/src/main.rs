@@ -1440,6 +1440,10 @@ fn format_typecheck_results_compact(
 /// Find the actual span to highlight in a diagnostic
 /// Returns (column, length) both 1-indexed
 fn find_diagnostic_span(line: &str, diagnostic: &DiagnosticMessage) -> (usize, usize) {
+    if diagnostic.end_col > diagnostic.col {
+        return (diagnostic.col, diagnostic.end_col.saturating_sub(diagnostic.col));
+    }
+
     if let Some(start) = diagnostic.message.find('\'') {
         if let Some(end) = diagnostic.message[start + 1..].find('\'') {
             let identifier = &diagnostic.message[start + 1..start + 1 + end];
@@ -1468,12 +1472,18 @@ fn format_lint_results_human(diagnostics: &[(PathBuf, String, DiagnosticMessage)
             beacon_analyzer::RuleKind::UndefinedName | beacon_analyzer::RuleKind::DuplicateArgument
         );
 
+        let col_display = if diagnostic.end_col > diagnostic.col {
+            format!("{}-{}", diagnostic.col, diagnostic.end_col)
+        } else {
+            diagnostic.col.to_string()
+        };
+
         println!(
             "{} {}:{}:{} [{}]",
             "▸".bright_red(),
             file_path.display().to_string().cyan(),
             diagnostic.line.to_string().yellow(),
-            diagnostic.col.to_string().yellow(),
+            col_display.yellow(),
             diagnostic.rule.code().dimmed()
         );
         println!("  {}", diagnostic.message.bright_white());
@@ -1498,19 +1508,24 @@ fn format_lint_results_human(diagnostics: &[(PathBuf, String, DiagnosticMessage)
     }
 }
 
-fn format_lint_results_json(diagnostics: &[(PathBuf, String, DiagnosticMessage)]) -> Result<()> {
-    let json_diagnostics: Vec<serde_json::Value> = diagnostics
+fn lint_diagnostics_to_json(diagnostics: &[(PathBuf, String, DiagnosticMessage)]) -> Vec<serde_json::Value> {
+    diagnostics
         .iter()
         .map(|(file, _source, diagnostic)| {
             json!({
                 "file": file.display().to_string(),
                 "line": diagnostic.line,
                 "col": diagnostic.col,
+                "end_col": diagnostic.end_col,
                 "rule": diagnostic.rule.code(),
                 "message": diagnostic.message,
             })
         })
-        .collect();
+        .collect()
+}
+
+fn format_lint_results_json(diagnostics: &[(PathBuf, String, DiagnosticMessage)]) -> Result<()> {
+    let json_diagnostics = lint_diagnostics_to_json(diagnostics);
 
     println!("{}", serde_json::to_string_pretty(&json_diagnostics)?);
     Ok(())
@@ -1518,11 +1533,16 @@ fn format_lint_results_json(diagnostics: &[(PathBuf, String, DiagnosticMessage)]
 
 fn format_lint_results_compact(diagnostics: &[(PathBuf, String, DiagnosticMessage)]) {
     for (file_path, _source, diagnostic) in diagnostics {
+        let col_display = if diagnostic.end_col > diagnostic.col {
+            format!("{}-{}", diagnostic.col, diagnostic.end_col)
+        } else {
+            diagnostic.col.to_string()
+        };
         println!(
             "{}:{}:{}: [{}] {}",
             file_path.display(),
             diagnostic.line,
-            diagnostic.col,
+            col_display,
             diagnostic.rule.code(),
             diagnostic.message
         );
@@ -1853,6 +1873,40 @@ mod tests {
             output.push('\n');
             format_scope_for_test(table, child_id, depth + 1, verbose, output);
         }
+    }
+
+    #[test]
+    fn test_find_diagnostic_span_prefers_explicit_end_col() {
+        let line = "def foo(): pass";
+        let diag = DiagnosticMessage {
+            rule: beacon_analyzer::RuleKind::UndefinedName,
+            message: "dummy".to_string(),
+            filename: "test.py".to_string(),
+            line: 1,
+            col: 5,
+            end_col: 9,
+        };
+
+        let (col, len) = find_diagnostic_span(line, &diag);
+        assert_eq!((col, len), (5, 4));
+    }
+
+    #[test]
+    fn test_lint_diagnostics_json_includes_end_col() {
+        let diag = DiagnosticMessage {
+            rule: beacon_analyzer::RuleKind::UndefinedName,
+            message: "oops".to_string(),
+            filename: "test.py".to_string(),
+            line: 2,
+            col: 3,
+            end_col: 7,
+        };
+        let diagnostics = vec![(PathBuf::from("test.py"), "".to_string(), diag)];
+        let json_values = lint_diagnostics_to_json(&diagnostics);
+        assert_eq!(json_values.len(), 1);
+        let value = &json_values[0];
+        assert_eq!(value["end_col"].as_u64(), Some(7));
+        assert_eq!(value["col"].as_u64(), Some(3));
     }
 
     #[test]

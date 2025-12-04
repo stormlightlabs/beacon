@@ -127,6 +127,8 @@ pub struct Linter<'a> {
     symbol_table: &'a SymbolTable,
     /// Source filename
     filename: String,
+    /// Full source split into lines for span calculations
+    source_lines: Vec<String>,
     /// Suppression map for filtering diagnostics
     suppression_map: SuppressionMap,
 }
@@ -135,7 +137,15 @@ impl<'a> Linter<'a> {
     /// Create a new linter for the given AST and symbol table
     pub fn new(symbol_table: &'a SymbolTable, filename: String, source: &str) -> Self {
         let suppression_map = SuppressionMap::from_source(source);
-        Self { diagnostics: Vec::new(), ctx: LinterContext::new(), symbol_table, filename, suppression_map }
+        let source_lines = source.lines().map(|line| line.to_string()).collect();
+        Self {
+            diagnostics: Vec::new(),
+            ctx: LinterContext::new(),
+            symbol_table,
+            filename,
+            source_lines,
+            suppression_map,
+        }
     }
 
     /// Analyze the AST and return collected diagnostics
@@ -154,6 +164,28 @@ impl<'a> Linter<'a> {
     fn report(&mut self, rule: RuleKind, message: String, line: usize, col: usize, end_col: usize) {
         self.diagnostics
             .push(DiagnosticMessage { rule, message, filename: self.filename.clone(), line, col, end_col });
+    }
+
+    fn get_line_text(&self, line: usize) -> Option<&str> {
+        self.source_lines.get(line.checked_sub(1)?).map(|s| s.as_str())
+    }
+
+    fn find_return_type_col(&self, line: usize, annotation: &str) -> Option<usize> {
+        let line_text = self.get_line_text(line)?;
+        let arrow_pos = line_text.find("->")?;
+        let after_arrow = arrow_pos + 2;
+        if after_arrow >= line_text.len() {
+            return None;
+        }
+
+        let remaining = &line_text[after_arrow..];
+        let type_start = remaining.find(|c: char| !c.is_whitespace())?;
+        let type_pos = after_arrow + type_start;
+        if line_text[type_pos..].starts_with(annotation) {
+            Some(type_pos + 1)
+        } else {
+            None
+        }
     }
 
     /// Visit an AST node and check all applicable rules
@@ -297,7 +329,13 @@ impl<'a> Linter<'a> {
         }
 
         if let Some(ret_type) = return_type {
-            self.check_forward_annotation_syntax(ret_type, line, 0, ret_type.len());
+            let (ret_col, ret_end_col) = if let Some(col) = self.find_return_type_col(line, ret_type) {
+                let end_col = col + ret_type.len();
+                (col, end_col)
+            } else {
+                (1, 2)
+            };
+            self.check_forward_annotation_syntax(ret_type, line, ret_col, ret_end_col);
         }
 
         self.ctx.enter_function();
@@ -1166,6 +1204,19 @@ mod tests {
         let (ast, symbol_table) = parser.parse_and_resolve(source).unwrap();
         let mut linter = Linter::new(&symbol_table, "test.py".to_string(), source);
         linter.analyze(&ast)
+    }
+
+    #[test]
+    fn test_forward_annotation_error_span_matches_return_position() {
+        let source = "def foo() -> \"list[\":\n    return 1";
+        let diagnostics = lint_source(source);
+        let diag = diagnostics
+            .iter()
+            .find(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError)
+            .expect("expected forward annotation diagnostic");
+        assert_eq!(diag.line, 1);
+        assert_eq!(diag.col, 14);
+        assert_eq!(diag.end_col, 21);
     }
 
     #[test]
