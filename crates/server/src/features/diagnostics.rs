@@ -381,7 +381,10 @@ impl DiagnosticProvider {
                 }
             }
             AstNode::FunctionDef { args, return_type, body, line, col, end_col, name, .. } => {
-                for param in args {
+                for (idx, param) in args.iter().enumerate() {
+                    if idx == 0 && ctx.in_class_def && (param.name == "self" || param.name == "cls") {
+                        continue;
+                    }
                     self.check_parameter_annotation(param, ctx);
                 }
 

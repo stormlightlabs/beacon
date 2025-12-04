@@ -380,10 +380,13 @@ impl SymbolTable {
     /// - Names starting with underscore (convention for unused)
     /// - Parameters (often intentionally unused)
     /// - Class and function definitions (their "use" is being defined)
+    /// - Class-level variables (dataclass fields, protocol fields, class attributes)
     pub fn find_unused_symbols(&self) -> Vec<&Symbol> {
         let mut unused = Vec::new();
 
         for scope in self.scopes.values() {
+            let is_class_scope = scope.kind == ScopeKind::Class;
+
             for symbol in scope.symbols.values() {
                 if symbol.kind == SymbolKind::BuiltinVar {
                     continue;
@@ -398,6 +401,10 @@ impl SymbolTable {
                 }
 
                 if symbol.kind == SymbolKind::Class || symbol.kind == SymbolKind::Function {
+                    continue;
+                }
+
+                if is_class_scope && symbol.kind == SymbolKind::Variable {
                     continue;
                 }
 
@@ -1200,6 +1207,27 @@ impl NameResolver {
                 self.visit_node(value)?;
 
                 for name in target.extract_target_names() {
+                    if name == "__all__" {
+                        if let AstNode::List { elements, .. } = value.as_ref() {
+                            for elem in elements {
+                                if let AstNode::Literal {
+                                    value: crate::LiteralValue::String { value: ref_name, .. },
+                                    ..
+                                } = elem
+                                {
+                                    self.symbol_table.add_reference(
+                                        ref_name,
+                                        self.current_scope,
+                                        *line,
+                                        *col,
+                                        *col,
+                                        ReferenceKind::Read,
+                                    );
+                                }
+                            }
+                        }
+                    }
+
                     if let Some(scope) = self.symbol_table.scopes.get(&self.current_scope) {
                         if scope.symbols.contains_key(&name) {
                             let end_col = *col + name.len();
@@ -1302,21 +1330,23 @@ impl NameResolver {
                     },
                 )
             }
-            AstNode::ImportFrom { names, .. } => {
-                for import_name in names {
-                    self.symbol_table.add_symbol(
-                        self.current_scope,
-                        Symbol {
-                            name: import_name.name.clone(),
-                            kind: SymbolKind::Import,
-                            line: import_name.line,
-                            col: import_name.col,
-                            end_col: import_name.end_col,
-                            scope_id: self.current_scope,
-                            docstring: None,
-                            references: Vec::new(),
-                        },
-                    );
+            AstNode::ImportFrom { module, names, .. } => {
+                if module != "__future__" {
+                    for import_name in names {
+                        self.symbol_table.add_symbol(
+                            self.current_scope,
+                            Symbol {
+                                name: import_name.name.clone(),
+                                kind: SymbolKind::Import,
+                                line: import_name.line,
+                                col: import_name.col,
+                                end_col: import_name.end_col,
+                                scope_id: self.current_scope,
+                                docstring: None,
+                                references: Vec::new(),
+                            },
+                        );
+                    }
                 }
             }
             AstNode::Attribute { object, .. } => self.visit_node(object)?,
