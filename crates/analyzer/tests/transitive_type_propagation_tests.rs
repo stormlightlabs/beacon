@@ -35,7 +35,7 @@ fn test_simple_cross_module_call() {
     let call_site = CallSite::new(BlockId(1), 0, Some(func_a_add), CallKind::Direct, 5, 10);
     workspace_cfg
         .call_graph_mut()
-        .add_call_site(func_b_calculate, call_site);
+        .add_call_site(func_b_calculate, &call_site);
 
     let ctx_a = ConstraintGenContext::new();
     let constraints_a = beacon_constraint::ConstraintResult(
@@ -97,12 +97,12 @@ fn test_mutual_recursion_across_modules() {
 
     workspace_cfg.call_graph_mut().add_call_site(
         func_a_is_even.clone(),
-        CallSite::new(BlockId(1), 0, Some(func_b_is_odd.clone()), CallKind::Direct, 5, 10),
+        &CallSite::new(BlockId(1), 0, Some(func_b_is_odd.clone()), CallKind::Direct, 5, 10),
     );
 
     workspace_cfg.call_graph_mut().add_call_site(
         func_b_is_odd.clone(),
-        CallSite::new(BlockId(1), 0, Some(func_a_is_even.clone()), CallKind::Direct, 5, 10),
+        &CallSite::new(BlockId(1), 0, Some(func_a_is_even.clone()), CallKind::Direct, 5, 10),
     );
 
     let sccs = workspace_cfg.call_graph().strongly_connected_components();
@@ -145,12 +145,7 @@ fn test_mutual_recursion_across_modules() {
         .build();
 
     workspace_env.add_import(uri_a.clone(), "is_odd".to_string(), uri_b.clone(), ScopeId::from_raw(1));
-    workspace_env.add_import(
-        uri_b,
-        "is_even".to_string(),
-        uri_a,
-        ScopeId::from_raw(1),
-    );
+    workspace_env.add_import(uri_b, "is_even".to_string(), uri_a, ScopeId::from_raw(1));
 
     let mut resolver = CrossModuleTypeResolver::new(&workspace_cfg, &mut workspace_env).with_max_iterations(20);
 
@@ -180,11 +175,11 @@ fn test_transitive_type_flow() {
 
     workspace_cfg.call_graph_mut().add_call_site(
         func_b_get_number.clone(),
-        CallSite::new(BlockId(1), 0, Some(func_a_get_int.clone()), CallKind::Direct, 3, 10),
+        &CallSite::new(BlockId(1), 0, Some(func_a_get_int.clone()), CallKind::Direct, 3, 10),
     );
     workspace_cfg.call_graph_mut().add_call_site(
         func_c_compute.clone(),
-        CallSite::new(BlockId(1), 0, Some(func_b_get_number.clone()), CallKind::Direct, 3, 10),
+        &CallSite::new(BlockId(1), 0, Some(func_b_get_number.clone()), CallKind::Direct, 3, 10),
     );
 
     let callees_b = workspace_cfg.call_graph().get_callees(&func_b_get_number);
@@ -243,18 +238,8 @@ fn test_transitive_type_flow() {
         )
         .build();
 
-    workspace_env.add_import(
-        uri_b.clone(),
-        "get_int".to_string(),
-        uri_a,
-        ScopeId::from_raw(1),
-    );
-    workspace_env.add_import(
-        uri_c,
-        "get_number".to_string(),
-        uri_b,
-        ScopeId::from_raw(1),
-    );
+    workspace_env.add_import(uri_b.clone(), "get_int".to_string(), uri_a, ScopeId::from_raw(1));
+    workspace_env.add_import(uri_c, "get_number".to_string(), uri_b, ScopeId::from_raw(1));
 
     let mut resolver = CrossModuleTypeResolver::new(&workspace_cfg, &mut workspace_env);
     let result = resolver.propagate_types().expect("Type propagation failed");

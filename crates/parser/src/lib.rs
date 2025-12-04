@@ -848,6 +848,30 @@ impl PythonParser {
                     })
                 }
             }
+            "augmented_assignment" => {
+                let target = self.extract_assignment_target(&node, source)?;
+                let right = self.extract_assignment_value(&node, source)?;
+                let operator = self.extract_augmented_assignment_operator(&node, source)?;
+
+                let augmented_value = AstNode::BinaryOp {
+                    left: Box::new(target.clone()),
+                    op: operator,
+                    right: Box::new(right),
+                    line,
+                    col,
+                    end_line,
+                    end_col,
+                };
+
+                Ok(AstNode::Assignment {
+                    target: Box::new(target),
+                    value: Box::new(augmented_value),
+                    line,
+                    col,
+                    end_line,
+                    end_col,
+                })
+            }
             "call" => {
                 let function = self.extract_call_function(&node, source)?;
                 let InfoArgsKwargs(args, keywords) = self.extract_call_args_and_kwargs(&node, source)?;
@@ -1345,6 +1369,28 @@ impl PythonParser {
             .ok_or_else(|| ParseError::TreeSitterError("Missing assignment value".to_string()))?;
 
         self.node_to_ast(right_node, source)
+    }
+
+    fn extract_augmented_assignment_operator(&self, node: &Node, source: &str) -> Result<BinaryOperator> {
+        if let Some(op_node) = node.child_by_field_name("operator") {
+            let op = op_node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
+            return self.parse_binary_operator(op.trim_end_matches('='));
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.is_named() {
+                continue;
+            }
+
+            if let Ok(text) = child.utf8_text(source.as_bytes()) {
+                if text.ends_with('=') && text != "=" {
+                    return self.parse_binary_operator(text.trim_end_matches('='));
+                }
+            }
+        }
+
+        Err(ParseError::TreeSitterError("Missing augmented assignment operator".to_string()).into())
     }
 
     fn extract_call_function(&self, node: &Node, source: &str) -> Result<AstNode> {

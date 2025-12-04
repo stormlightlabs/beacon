@@ -1290,6 +1290,20 @@ mod tests {
     }
 
     #[test]
+    fn test_augmented_assignment_not_use_before_def() {
+        let source = "def foo():\n    count = 0\n    count += 1\n    return count";
+        let ast = parse_source_to_ast(source);
+        let fixture = FunctionFixture::new(source, ast, None);
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
+
+        assert!(
+            !result.iter().any(|e| e.var_name == "count"),
+            "Augmented assignments should not trigger use-before-def: {result:?}"
+        );
+    }
+
+    #[test]
     fn test_constant_propagation_boolean() {
         let source = "def foo():\n    DEBUG = False\n    x = 1";
         let fixture = FunctionFixture::new(source, data_flow_fixture!("test_constant_propagation_boolean"), None);
@@ -1789,9 +1803,8 @@ mod tests {
         let analyzer = fixture.analyzer(None);
         let result = analyzer.find_use_before_def();
 
-        let baz_errors: Vec<_> = result.iter().filter(|e| e.var_name == "baz").collect();
         assert!(
-            baz_errors.is_empty(),
+            !result.iter().any(|e| e.var_name == "baz"),
             "Imported name 'baz' should not be flagged as use-before-def due to import hoisting"
         );
     }
@@ -1803,9 +1816,8 @@ mod tests {
         let analyzer = fixture.analyzer(None);
         let result = analyzer.find_use_before_def();
 
-        let os_errors: Vec<_> = result.iter().filter(|e| e.var_name == "os").collect();
         assert!(
-            os_errors.is_empty(),
+            !result.iter().any(|e| e.var_name == "os"),
             "Imported module 'os' should not be flagged as use-before-def due to import hoisting"
         );
     }
@@ -1817,9 +1829,8 @@ mod tests {
         let analyzer = fixture.analyzer(None);
         let result = analyzer.find_use_before_def();
 
-        let np_errors: Vec<_> = result.iter().filter(|e| e.var_name == "np").collect();
         assert!(
-            np_errors.is_empty(),
+            !result.iter().any(|e| e.var_name == "np"),
             "Alias 'np' should not be flagged as use-before-def due to import hoisting"
         );
     }
@@ -1837,9 +1848,8 @@ mod tests {
         let analyzer = fixture.analyzer(Some(&module_hoisted));
         let result = analyzer.find_use_before_def();
 
-        let class_errors: Vec<_> = result.iter().filter(|e| e.var_name == "MyClass").collect();
         assert!(
-            class_errors.is_empty(),
+            !result.iter().any(|e| e.var_name == "MyClass"),
             "Module-level class 'MyClass' should not be flagged as use-before-def"
         );
     }
@@ -1857,9 +1867,8 @@ mod tests {
         let analyzer = fixture.analyzer(Some(&module_hoisted));
         let result = analyzer.find_use_before_def();
 
-        let helper_errors: Vec<_> = result.iter().filter(|e| e.var_name == "helper").collect();
         assert!(
-            helper_errors.is_empty(),
+            !result.iter().any(|e| e.var_name == "helper"),
             "Module-level function 'helper' should not be flagged as use-before-def"
         );
     }

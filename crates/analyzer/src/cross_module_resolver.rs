@@ -294,7 +294,7 @@ mod tests {
 
         let call_site = CallSite::new(BlockId(0), 0, Some(func_b), CallKind::Direct, 10, 5);
 
-        workspace_cfg.call_graph_mut().add_call_site(func_a.clone(), call_site);
+        workspace_cfg.call_graph_mut().add_call_site(func_a.clone(), &call_site);
 
         let call_sites = workspace_cfg.call_graph().get_call_sites(&func_a);
         assert!(call_sites.is_some());

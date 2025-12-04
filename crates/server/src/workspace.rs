@@ -85,6 +85,8 @@ impl ModuleInfo {
     }
 }
 
+type ImportURIs = (Url, Vec<String>, Vec<SymbolImport>, Option<Vec<String>>);
+
 /// Index of all Python modules in the workspace
 #[derive(Debug)]
 pub struct WorkspaceIndex {
@@ -205,7 +207,7 @@ impl Workspace {
                     for func_id in module_cfg.function_ids() {
                         if let Some(cfg) = module_cfg.get_function_cfg(func_id.scope_id) {
                             if cfg.blocks.contains_key(&call_site.block_id) {
-                                call_graph.add_call_site(func_id.clone(), call_site.clone());
+                                call_graph.add_call_site(func_id.clone(), &call_site.clone());
                                 break;
                             }
                         }
@@ -245,7 +247,7 @@ impl Workspace {
     /// Uses [rayon] for parallel processing of files.
     fn build_dependency_graph(&mut self) {
         let uris: Vec<Url> = self.index.modules.keys().cloned().collect();
-        let imports: Vec<(Url, Vec<String>, Vec<SymbolImport>, Option<Vec<String>>)> = uris
+        let imports: Vec<ImportURIs> = uris
             .par_iter()
             .filter_map(|uri| {
                 let module_imports = self.extract_imports(uri)?;

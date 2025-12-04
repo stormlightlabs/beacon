@@ -617,6 +617,13 @@ impl DiagnosticProvider {
                         .iter()
                         .all(|b_ty| a_types.iter().any(|a_ty| Self::types_are_compatible(a_ty, b_ty)))
             }
+            (Type::Tuple(a_items), Type::Tuple(b_items)) => {
+                a_items.len() == b_items.len()
+                    && a_items
+                        .iter()
+                        .zip(b_items.iter())
+                        .all(|(a_ty, b_ty)| Self::types_are_compatible(a_ty, b_ty))
+            }
             (Record(a_fields, _), Record(b_fields, _)) => {
                 a_fields.len() == b_fields.len()
                     && a_fields.iter().all(|(a_name, a_ty)| {
@@ -1712,13 +1719,13 @@ impl DiagnosticProvider {
 
     /// Find the __all__ assignment in the AST and report inconsistencies
     fn find_all_assignment_location(
-        node: &AstNode, all_exports: &[String], module_symbols: &rustc_hash::FxHashSet<String>,
+        node: &AstNode, _all_exports: &[String], module_symbols: &rustc_hash::FxHashSet<String>,
         diagnostics: &mut Vec<Diagnostic>,
     ) {
         match node {
             AstNode::Module { body, .. } => {
                 for stmt in body {
-                    Self::find_all_assignment_location(stmt, all_exports, module_symbols, diagnostics);
+                    Self::find_all_assignment_location(stmt, _all_exports, module_symbols, diagnostics);
                 }
             }
             AstNode::Assignment { target, value, line, col, .. } => {
@@ -3861,6 +3868,16 @@ def bar():
 
         assert!(DiagnosticProvider::types_are_compatible(&union1, &union2));
         assert!(!DiagnosticProvider::types_are_compatible(&union1, &union3));
+    }
+
+    #[test]
+    fn test_types_are_compatible_tuple() {
+        let tuple1 = Type::Tuple(vec![Type::Con(TypeCtor::Int), Type::Con(TypeCtor::String)]);
+        let tuple2 = Type::Tuple(vec![Type::Con(TypeCtor::Int), Type::Con(TypeCtor::String)]);
+        let tuple3 = Type::Tuple(vec![Type::Con(TypeCtor::Int), Type::Con(TypeCtor::Bool)]);
+
+        assert!(DiagnosticProvider::types_are_compatible(&tuple1, &tuple2));
+        assert!(!DiagnosticProvider::types_are_compatible(&tuple1, &tuple3));
     }
 
     #[test]

@@ -104,6 +104,26 @@ impl Unifier {
         }
     }
 
+    fn contains_type_var(ty: &Type) -> bool {
+        match ty {
+            Type::Var(_) => true,
+            Type::App(ctor, arg) => Self::contains_type_var(ctor) || Self::contains_type_var(arg),
+            Type::Fun(args, ret) => {
+                args.iter().any(|(_, arg)| Self::contains_type_var(arg)) || Self::contains_type_var(ret)
+            }
+            Type::Union(types) => types.iter().any(Self::contains_type_var),
+            Type::Intersection(types) => types.iter().any(Self::contains_type_var),
+            Type::Record(fields, row) => {
+                fields.iter().any(|(_, field_ty)| Self::contains_type_var(field_ty)) || row.is_some()
+            }
+            Type::Tuple(elements) => elements.iter().any(Self::contains_type_var),
+            Type::BoundMethod(receiver, _, method) => {
+                Self::contains_type_var(receiver) || Self::contains_type_var(method)
+            }
+            _ => false,
+        }
+    }
+
     fn unify_impl(
         t1: &Type, t2: &Type, registry: &TypeVarConstraintRegistry, class_registry: Option<&ClassRegistry>,
     ) -> Result<Subst> {
@@ -122,11 +142,16 @@ impl Unifier {
 
                 match variance {
                     Variance::Invariant => {
+                        let has_type_var =
+                            Self::contains_type_var(&applied_a1) || Self::contains_type_var(&applied_a2);
+
                         if applied_a1 != applied_a2 {
                             match Self::unify_impl(&applied_a1, &applied_a2, registry, class_registry) {
                                 Ok(s2) => Ok(s2.compose(s1)),
                                 Err(_)
-                                    if !matches!(applied_a1, Type::Var(_)) && !matches!(applied_a2, Type::Var(_)) =>
+                                    if !matches!(applied_a1, Type::Var(_))
+                                        && !matches!(applied_a2, Type::Var(_))
+                                        && !has_type_var =>
                                 {
                                     Err(TypeError::VarianceError {
                                         position: Self::get_type_constructor_name(f1),
@@ -136,6 +161,7 @@ impl Unifier {
                                     }
                                     .into())
                                 }
+                                Err(_) if has_type_var => Ok(s1),
                                 Err(e) => Err(e),
                             }
                         } else {
@@ -1431,5 +1457,23 @@ mod tests {
 
         let result_cross = Unifier::unify(&Type::Var(tv1.clone()), &vehicle, &registry);
         assert!(result_cross.is_err(), "Should fail to unify T1:Animal with Vehicle");
+    }
+
+    #[test]
+    fn test_invariant_types_allow_unresolved_typevars() {
+        let registry = TypeVarConstraintRegistry::new();
+        let tv = TypeVar::new(42);
+
+        let actual_value = Type::union(vec![Type::Var(tv), Type::int(), Type::bool()]);
+        let annotated_value = Type::union(vec![Type::int(), Type::bool()]);
+
+        let actual = Type::dict(Type::int(), actual_value);
+        let annotated = Type::dict(Type::int(), annotated_value);
+
+        let result = Unifier::unify(&actual, &annotated, &registry);
+        assert!(
+            result.is_ok(),
+            "Invariant containers with unresolved type vars should not raise variance errors"
+        );
     }
 }
