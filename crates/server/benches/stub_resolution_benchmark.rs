@@ -27,16 +27,15 @@ fn create_workspace_with_custom_stubs(stub_count: usize) -> (Workspace, TempDir,
     let custom_stubs_dir = TempDir::new().unwrap();
 
     for i in 0..stub_count {
-        let module_name = format!("custom_module_{}", i);
-        let stub_path = custom_stubs_dir.path().join(format!("{}.pyi", module_name));
+        let module_name = format!("custom_module_{i}");
+        let stub_path = custom_stubs_dir.path().join(format!("{module_name}.pyi"));
         let stub_content = format!(
             r#"
-# Custom stub for {}
-def custom_function_{}() -> str: ...
-class CustomClass_{}:
+# Custom stub for {module_name}
+def custom_function_{i}() -> str: ...
+class CustomClass_{i}:
     def method(self) -> None: ...
-"#,
-            module_name, i, i
+"#
         );
         fs::write(&stub_path, stub_content).unwrap();
     }
@@ -106,8 +105,8 @@ fn bench_multiple_stub_paths(c: &mut Criterion) {
 
             for i in 0..count {
                 let stub_dir = TempDir::new().unwrap();
-                let stub_path = stub_dir.path().join(format!("module_{}.pyi", i));
-                fs::write(&stub_path, format!("# Stub {}", i)).unwrap();
+                let stub_path = stub_dir.path().join(format!("module_{i}.pyi"));
+                fs::write(&stub_path, format!("# Stub {i}")).unwrap();
                 stub_paths.push(stub_dir.path().to_path_buf());
                 stub_dirs.push(stub_dir);
             }
@@ -224,7 +223,7 @@ fn bench_large_project_stub_overhead(c: &mut Criterion) {
             let modules: Vec<String> = (0..count)
                 .map(|i| {
                     if i % 3 == 0 {
-                        format!("custom_module_{}", i)
+                        format!("custom_module_{i}")
                     } else if i % 3 == 1 {
                         "builtins".to_string()
                     } else {

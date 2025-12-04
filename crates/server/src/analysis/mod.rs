@@ -23,7 +23,7 @@ use beacon_core::{
     SuppressionMap, Type, TypeVarGen,
     errors::{AnalysisError, Result},
 };
-use beacon_parser::{AstNode, ScopeId, SymbolTable, resolve::Scope};
+use beacon_parser::{AstNode, Pattern, ScopeId, SymbolTable, resolve::Scope};
 use lsp_types::Position;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{collections::HashSet, sync::Arc};
@@ -78,6 +78,46 @@ impl Analyzer {
             documents,
             position_maps: FxHashMap::default(),
             stub_cache: Some(stub_cache),
+        }
+    }
+
+    fn collect_pattern_binding_names(pattern: &Pattern) -> FxHashSet<String> {
+        match pattern {
+            Pattern::MatchValue(_) => FxHashSet::default(),
+            Pattern::MatchSequence(patterns) => patterns.iter().flat_map(Self::collect_pattern_binding_names).collect(),
+            Pattern::MatchMapping { patterns, .. } => {
+                patterns.iter().flat_map(Self::collect_pattern_binding_names).collect()
+            }
+            Pattern::MatchClass { patterns, .. } => {
+                patterns.iter().flat_map(Self::collect_pattern_binding_names).collect()
+            }
+            Pattern::MatchAs { pattern: Some(sub), name } => {
+                let mut names = Self::collect_pattern_binding_names(sub);
+                if let Some(alias) = name {
+                    names.insert(alias.clone());
+                }
+                names
+            }
+            Pattern::MatchAs { pattern: None, name } => {
+                let mut names = FxHashSet::default();
+                if let Some(alias) = name {
+                    names.insert(alias.clone());
+                }
+                names
+            }
+            Pattern::MatchOr(alternatives) => {
+                if alternatives.is_empty() {
+                    FxHashSet::default()
+                } else {
+                    let mut iter = alternatives.iter();
+                    let mut names = Self::collect_pattern_binding_names(iter.next().unwrap());
+                    for alt in iter {
+                        let alt_names = Self::collect_pattern_binding_names(alt);
+                        names.retain(|name| alt_names.contains(name));
+                    }
+                    names
+                }
+            }
         }
     }
 
@@ -605,7 +645,8 @@ impl Analyzer {
         };
 
         let mut unbound = Vec::new();
-        Self::collect_unbound_in_node(&ast, &symbol_table, &text, &mut unbound);
+        let extra = FxHashSet::default();
+        Self::collect_unbound_in_node(&ast, &symbol_table, &text, &mut unbound, &extra);
 
         unbound
     }
@@ -613,10 +654,11 @@ impl Analyzer {
     /// Recursively collect unbound variables in an AST node using position-based scope resolution
     fn collect_unbound_in_node(
         node: &AstNode, symbol_table: &SymbolTable, text: &str, unbound: &mut Vec<(String, usize, usize)>,
+        extra_bound: &FxHashSet<String>,
     ) {
         match node {
             AstNode::Identifier { name, line, col, .. } => {
-                if !Self::is_valid_identifier(name) {
+                if !Self::is_valid_identifier(name) || extra_bound.contains(name) {
                     return;
                 }
                 let ln = (*line as u32).saturating_sub(1);
@@ -630,165 +672,172 @@ impl Analyzer {
             }
             AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } | AstNode::Module { body, .. } => {
                 for stmt in body {
-                    Self::collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(stmt, symbol_table, text, unbound, extra_bound);
                 }
             }
             AstNode::Call { args, .. } => {
                 for arg in args {
-                    Self::collect_unbound_in_node(arg, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(arg, symbol_table, text, unbound, extra_bound);
                 }
             }
-            AstNode::Assignment { value, .. } => Self::collect_unbound_in_node(value, symbol_table, text, unbound),
+            AstNode::Assignment { value, .. } => {
+                Self::collect_unbound_in_node(value, symbol_table, text, unbound, extra_bound)
+            }
             AstNode::AnnotatedAssignment { value, .. } => {
                 if let Some(val) = value {
-                    Self::collect_unbound_in_node(val, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(val, symbol_table, text, unbound, extra_bound);
                 }
             }
             AstNode::Return { value, .. } => {
                 if let Some(val) = value {
-                    Self::collect_unbound_in_node(val, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(val, symbol_table, text, unbound, extra_bound);
                 }
             }
-            AstNode::Attribute { object, .. } => Self::collect_unbound_in_node(object, symbol_table, text, unbound),
+            AstNode::Attribute { object, .. } => {
+                Self::collect_unbound_in_node(object, symbol_table, text, unbound, extra_bound)
+            }
             AstNode::Import { .. } | AstNode::ImportFrom { .. } | AstNode::Literal { .. } => {}
             AstNode::If { test, body, elif_parts, else_body, .. } => {
-                Self::collect_unbound_in_node(test, symbol_table, text, unbound);
+                Self::collect_unbound_in_node(test, symbol_table, text, unbound, extra_bound);
                 for stmt in body {
-                    Self::collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(stmt, symbol_table, text, unbound, extra_bound);
                 }
                 for (elif_test, elif_body) in elif_parts {
-                    Self::collect_unbound_in_node(elif_test, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(elif_test, symbol_table, text, unbound, extra_bound);
                     for stmt in elif_body {
-                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound, extra_bound);
                     }
                 }
                 if let Some(else_stmts) = else_body {
                     for stmt in else_stmts {
-                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound, extra_bound);
                     }
                 }
             }
             AstNode::For { iter, body, else_body, .. } => {
-                Self::collect_unbound_in_node(iter, symbol_table, text, unbound);
+                Self::collect_unbound_in_node(iter, symbol_table, text, unbound, extra_bound);
                 for stmt in body {
-                    Self::collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(stmt, symbol_table, text, unbound, extra_bound);
                 }
                 if let Some(else_stmts) = else_body {
                     for stmt in else_stmts {
-                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound, extra_bound);
                     }
                 }
             }
             AstNode::While { test, body, else_body, .. } => {
-                Self::collect_unbound_in_node(test, symbol_table, text, unbound);
+                Self::collect_unbound_in_node(test, symbol_table, text, unbound, extra_bound);
                 for stmt in body {
-                    Self::collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(stmt, symbol_table, text, unbound, extra_bound);
                 }
                 if let Some(else_stmts) = else_body {
                     for stmt in else_stmts {
-                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound, extra_bound);
                     }
                 }
             }
             AstNode::Try { body, handlers, else_body, finally_body, .. } => {
                 for stmt in body {
-                    Self::collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(stmt, symbol_table, text, unbound, extra_bound);
                 }
                 for handler in handlers {
                     for stmt in &handler.body {
-                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound, extra_bound);
                     }
                 }
                 if let Some(else_stmts) = else_body {
                     for stmt in else_stmts {
-                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound, extra_bound);
                     }
                 }
                 if let Some(finally_stmts) = finally_body {
                     for stmt in finally_stmts {
-                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound, extra_bound);
                     }
                 }
             }
             AstNode::With { items, body, .. } => {
                 for item in items {
-                    Self::collect_unbound_in_node(&item.context_expr, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(&item.context_expr, symbol_table, text, unbound, extra_bound);
                 }
                 for stmt in body {
-                    Self::collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(stmt, symbol_table, text, unbound, extra_bound);
                 }
             }
             AstNode::ListComp { element, generators, .. }
             | AstNode::SetComp { element, generators, .. }
             | AstNode::GeneratorExp { element, generators, .. } => {
-                Self::collect_unbound_in_node(element, symbol_table, text, unbound);
+                Self::collect_unbound_in_node(element, symbol_table, text, unbound, extra_bound);
                 for generator in generators {
-                    Self::collect_unbound_in_node(&generator.iter, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(&generator.iter, symbol_table, text, unbound, extra_bound);
                     for if_clause in &generator.ifs {
-                        Self::collect_unbound_in_node(if_clause, symbol_table, text, unbound);
+                        Self::collect_unbound_in_node(if_clause, symbol_table, text, unbound, extra_bound);
                     }
                 }
             }
             AstNode::DictComp { key, value, generators, .. } => {
-                Self::collect_unbound_in_node(key, symbol_table, text, unbound);
-                Self::collect_unbound_in_node(value, symbol_table, text, unbound);
+                Self::collect_unbound_in_node(key, symbol_table, text, unbound, extra_bound);
+                Self::collect_unbound_in_node(value, symbol_table, text, unbound, extra_bound);
                 for generator in generators {
-                    Self::collect_unbound_in_node(&generator.iter, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(&generator.iter, symbol_table, text, unbound, extra_bound);
                     for if_clause in &generator.ifs {
-                        Self::collect_unbound_in_node(if_clause, symbol_table, text, unbound);
+                        Self::collect_unbound_in_node(if_clause, symbol_table, text, unbound, extra_bound);
                     }
                 }
             }
             AstNode::NamedExpr { value, .. } => {
-                Self::collect_unbound_in_node(value, symbol_table, text, unbound);
+                Self::collect_unbound_in_node(value, symbol_table, text, unbound, extra_bound);
             }
             AstNode::BinaryOp { left, right, .. } => {
-                Self::collect_unbound_in_node(left, symbol_table, text, unbound);
-                Self::collect_unbound_in_node(right, symbol_table, text, unbound);
+                Self::collect_unbound_in_node(left, symbol_table, text, unbound, extra_bound);
+                Self::collect_unbound_in_node(right, symbol_table, text, unbound, extra_bound);
             }
             AstNode::UnaryOp { operand, .. } => {
-                Self::collect_unbound_in_node(operand, symbol_table, text, unbound);
+                Self::collect_unbound_in_node(operand, symbol_table, text, unbound, extra_bound);
             }
             AstNode::Compare { left, comparators, .. } => {
-                Self::collect_unbound_in_node(left, symbol_table, text, unbound);
+                Self::collect_unbound_in_node(left, symbol_table, text, unbound, extra_bound);
                 for comp in comparators {
-                    Self::collect_unbound_in_node(comp, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(comp, symbol_table, text, unbound, extra_bound);
                 }
             }
             AstNode::Lambda { body, .. } => {
-                Self::collect_unbound_in_node(body, symbol_table, text, unbound);
+                Self::collect_unbound_in_node(body, symbol_table, text, unbound, extra_bound);
             }
             AstNode::Subscript { value, slice, .. } => {
-                Self::collect_unbound_in_node(value, symbol_table, text, unbound);
-                Self::collect_unbound_in_node(slice, symbol_table, text, unbound);
+                Self::collect_unbound_in_node(value, symbol_table, text, unbound, extra_bound);
+                Self::collect_unbound_in_node(slice, symbol_table, text, unbound, extra_bound);
             }
             AstNode::Match { subject, cases, .. } => {
-                Self::collect_unbound_in_node(subject, symbol_table, text, unbound);
+                Self::collect_unbound_in_node(subject, symbol_table, text, unbound, extra_bound);
                 for case in cases {
+                    let mut case_extra: FxHashSet<String> = extra_bound.iter().cloned().collect();
+                    let bindings = Self::collect_pattern_binding_names(&case.pattern);
+                    case_extra.extend(bindings);
                     if let Some(guard) = &case.guard {
-                        Self::collect_unbound_in_node(guard, symbol_table, text, unbound);
+                        Self::collect_unbound_in_node(guard, symbol_table, text, unbound, &case_extra);
                     }
                     for stmt in &case.body {
-                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound);
+                        Self::collect_unbound_in_node(stmt, symbol_table, text, unbound, &case_extra);
                     }
                 }
             }
             AstNode::Raise { exc, .. } => {
                 if let Some(exception) = exc {
-                    Self::collect_unbound_in_node(exception, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(exception, symbol_table, text, unbound, extra_bound);
                 }
             }
             AstNode::List { elements, .. } | AstNode::Set { elements, .. } => {
                 for element in elements {
-                    Self::collect_unbound_in_node(element, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(element, symbol_table, text, unbound, extra_bound);
                 }
             }
             AstNode::Dict { keys, values, .. } => {
                 for key in keys {
-                    Self::collect_unbound_in_node(key, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(key, symbol_table, text, unbound, extra_bound);
                 }
                 for value in values {
-                    Self::collect_unbound_in_node(value, symbol_table, text, unbound);
+                    Self::collect_unbound_in_node(value, symbol_table, text, unbound, extra_bound);
                 }
             }
             AstNode::Yield { .. }
@@ -802,7 +851,7 @@ impl Analyzer {
             | AstNode::Continue { .. } => {}
             AstNode::Assert { .. } | AstNode::Starred { .. } => {}
             AstNode::ParenthesizedExpression { expression, .. } => {
-                Self::collect_unbound_in_node(expression, symbol_table, text, unbound);
+                Self::collect_unbound_in_node(expression, symbol_table, text, unbound, extra_bound);
             }
         }
     }
@@ -1088,6 +1137,30 @@ print(x)
         assert!(
             non_builtins.is_empty(),
             "Found unexpected unbound variables: {non_builtins:?}"
+        );
+    }
+
+    #[test]
+    fn test_match_guard_bindings_not_unbound() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let analyzer = Analyzer::new(config, documents.clone());
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"
+def describe(value: object) -> str:
+    match value:
+        case int() as n if n > 0:
+            return f"positive {n}"
+        case _:
+            return "other"
+"#;
+
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        let unbound = analyzer.find_unbound_variables(&uri);
+        assert!(
+            !unbound.iter().any(|(name, _, _)| name == "n"),
+            "pattern binding 'n' should not be reported as unbound: {unbound:?}"
         );
     }
 

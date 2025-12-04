@@ -248,6 +248,8 @@ pub struct DataFlowAnalyzer<'a> {
     scope_id: ScopeId,
     /// Function and class names defined at the top level of this scope (hoisted definitions)
     hoisted_definitions: FxHashSet<String>,
+    /// All symbols defined in this scope (used to detect builtin shadowing)
+    defined_symbols: FxHashSet<String>,
 }
 
 impl<'a> DataFlowAnalyzer<'a> {
@@ -266,76 +268,83 @@ impl<'a> DataFlowAnalyzer<'a> {
             hoisted_definitions.extend(parent.iter().cloned());
         }
 
-        Self { cfg, all_statements, symbol_table, scope_id, hoisted_definitions }
+        let defined_symbols = symbol_table
+            .get_scope(scope_id)
+            .map(|scope| scope.symbols.keys().cloned().collect())
+            .unwrap_or_default();
+
+        Self { cfg, all_statements, symbol_table, scope_id, hoisted_definitions, defined_symbols }
     }
 
     /// Recursively collect all statements including nested ones
     fn collect_all_statements(node: &'a AstNode, statements: &mut Vec<&'a AstNode>) {
         match node {
             AstNode::If { body, elif_parts, else_body, .. } => {
+                statements.push(node);
                 for stmt in body {
-                    statements.push(stmt);
+                    Self::collect_all_statements(stmt, statements);
                 }
 
                 for (_, elif_body) in elif_parts {
                     for stmt in elif_body {
-                        statements.push(stmt);
+                        Self::collect_all_statements(stmt, statements);
                     }
                 }
 
                 if let Some(else_stmts) = else_body {
                     for stmt in else_stmts {
-                        statements.push(stmt);
+                        Self::collect_all_statements(stmt, statements);
                     }
                 }
             }
             AstNode::For { body, else_body, .. } | AstNode::While { body, else_body, .. } => {
                 statements.push(node);
                 for stmt in body {
-                    statements.push(stmt);
+                    Self::collect_all_statements(stmt, statements);
                 }
                 if let Some(else_stmts) = else_body {
                     for stmt in else_stmts {
-                        statements.push(stmt);
+                        Self::collect_all_statements(stmt, statements);
                     }
                 }
             }
             AstNode::Try { body, handlers, else_body, finally_body, .. } => {
                 for stmt in body {
-                    statements.push(stmt);
+                    Self::collect_all_statements(stmt, statements);
                 }
 
                 for handler in handlers {
                     for stmt in &handler.body {
-                        statements.push(stmt);
+                        Self::collect_all_statements(stmt, statements);
                     }
                 }
 
                 if let Some(else_stmts) = else_body {
                     for stmt in else_stmts {
-                        statements.push(stmt);
+                        Self::collect_all_statements(stmt, statements);
                     }
                 }
 
                 if let Some(finally_stmts) = finally_body {
                     for stmt in finally_stmts {
-                        statements.push(stmt);
+                        Self::collect_all_statements(stmt, statements);
                     }
                 }
             }
             AstNode::With { body, .. } => {
+                statements.push(node);
                 for stmt in body {
-                    statements.push(stmt);
+                    Self::collect_all_statements(stmt, statements);
                 }
             }
             AstNode::Match { cases, .. } => {
+                statements.push(node);
                 for case in cases {
                     for stmt in &case.body {
-                        statements.push(stmt);
+                        Self::collect_all_statements(stmt, statements);
                     }
                 }
             }
-            AstNode::FunctionDef { .. } | AstNode::ClassDef { .. } => {}
             _ => {
                 statements.push(node);
             }
@@ -449,11 +458,7 @@ impl<'a> DataFlowAnalyzer<'a> {
     fn find_use_before_def(&self) -> Vec<UseBeforeDef> {
         let mut def_in: FxHashMap<BlockId, FxHashSet<String>> = FxHashMap::default();
         let mut def_out: FxHashMap<BlockId, FxHashSet<String>> = FxHashMap::default();
-
-        for block_id in self.cfg.blocks.keys() {
-            def_in.insert(*block_id, FxHashSet::default());
-            def_out.insert(*block_id, FxHashSet::default());
-        }
+        let mut initialized_blocks: FxHashSet<BlockId> = FxHashSet::default();
 
         let builtins = get_builtins();
         let parameters = self.get_parameters();
@@ -464,19 +469,30 @@ impl<'a> DataFlowAnalyzer<'a> {
 
             let new_def_in = if block.predecessors.is_empty() {
                 let mut initial_defs = self.hoisted_definitions.clone();
-                initial_defs.extend(builtins.iter().cloned());
+                initial_defs.extend(builtins.iter().filter(|name| !self.scope_defines(name)).cloned());
                 initial_defs.extend(parameters.iter().cloned());
                 initial_defs
             } else {
-                let first_pred = block.predecessors[0].0;
-                let mut result = def_out.get(&first_pred).cloned().unwrap_or_default();
+                let mut result_opt: Option<FxHashSet<String>> = None;
+                for &(pred_id, _) in &block.predecessors {
+                    if !initialized_blocks.contains(&pred_id) {
+                        continue;
+                    }
 
-                for &(pred_id, _) in &block.predecessors[1..] {
                     if let Some(pred_def_out) = def_out.get(&pred_id) {
-                        result.retain(|var| pred_def_out.contains(var));
+                        match &mut result_opt {
+                            Some(res) => res.retain(|var| pred_def_out.contains(var)),
+                            None => {
+                                result_opt = Some(pred_def_out.clone());
+                            }
+                        }
                     }
                 }
-                result
+
+                match result_opt {
+                    Some(set) => set,
+                    None => continue,
+                }
             };
 
             let mut new_def_out = new_def_in.clone();
@@ -493,9 +509,10 @@ impl<'a> DataFlowAnalyzer<'a> {
 
             let old_def_in = def_in.get(&block_id).cloned().unwrap_or_default();
             let old_def_out = def_out.get(&block_id).cloned().unwrap_or_default();
-            if new_def_in != old_def_in || new_def_out != old_def_out {
+            if new_def_in != old_def_in || new_def_out != old_def_out || !initialized_blocks.contains(&block_id) {
                 def_in.insert(block_id, new_def_in);
                 def_out.insert(block_id, new_def_out);
+                initialized_blocks.insert(block_id);
 
                 for &(succ_id, _) in &block.successors {
                     if !worklist.contains(&succ_id) {
@@ -515,6 +532,10 @@ impl<'a> DataFlowAnalyzer<'a> {
                     let (uses, defs) = self.get_uses_and_defs(stmt);
 
                     for (var_name, line, col) in uses {
+                        if is_builtin(&var_name) && !self.scope_defines(&var_name) {
+                            continue;
+                        }
+
                         if !current_def_in.contains(&var_name) && !self.is_parameter(&var_name) {
                             errors.push(UseBeforeDef { var_name, line, col });
                         }
@@ -640,6 +661,10 @@ impl<'a> DataFlowAnalyzer<'a> {
         } else {
             false
         }
+    }
+
+    fn scope_defines(&self, name: &str) -> bool {
+        self.defined_symbols.contains(name)
     }
 
     /// Get all function parameters for this scope
@@ -915,18 +940,8 @@ impl<'a> DataFlowAnalyzer<'a> {
 mod tests {
     use super::*;
     use crate::cfg::{CfgBuilder, ControlFlowGraph};
-    use beacon_parser::{NameResolver, ScopeId, ScopeKind, SymbolTable};
+    use beacon_parser::{NameResolver, PythonParser, ScopeId, ScopeKind};
     use serde_json;
-
-    /// Helper to find the first function scope in the symbol table (for tests)
-    fn find_function_scope(symbol_table: &SymbolTable) -> ScopeId {
-        symbol_table
-            .scopes
-            .values()
-            .find(|scope| scope.kind == ScopeKind::Function)
-            .map(|scope| scope.id)
-            .expect("No function scope found in symbol table")
-    }
 
     macro_rules! data_flow_fixture {
         ($name:literal) => {{
@@ -957,7 +972,20 @@ mod tests {
             let body = Self::function_body(&ast, function_name);
             builder.build_function(body);
             let cfg = builder.build();
-            let scope_id = find_function_scope(&resolver.symbol_table);
+            let function_node = Self::select_function(&ast, function_name);
+            let (line, col) = match function_node {
+                AstNode::FunctionDef { line, col, .. } => (*line, *col),
+                _ => unreachable!("selected node must be a function"),
+            };
+            let byte_offset = line_col_to_byte_offset(source, line, col);
+            let scope_id = resolver.symbol_table.find_scope_at_position(byte_offset);
+            debug_assert!(
+                resolver
+                    .symbol_table
+                    .get_scope(scope_id)
+                    .is_some_and(|scope| scope.kind == ScopeKind::Function),
+                "expected function scope at line {line}, col {col}"
+            );
 
             Self { ast, resolver, cfg, scope_id, function_name: function_name.map(|name| name.to_string()) }
         }
@@ -1022,6 +1050,35 @@ mod tests {
         fn module_body(&self) -> Option<&[AstNode]> {
             if let AstNode::Module { body, .. } = &self.ast { Some(body) } else { None }
         }
+    }
+
+    fn parse_source_to_ast(source: &str) -> AstNode {
+        let mut parser = PythonParser::new().expect("failed to initialize parser");
+        let parsed = parser.parse(source).expect("failed to parse source");
+        parser.to_ast(&parsed).expect("failed to convert parse tree to AST")
+    }
+
+    fn line_col_to_byte_offset(source: &str, line: usize, col: usize) -> usize {
+        let mut current_line = 1;
+        let mut current_col = 1;
+        let mut offset = 0;
+
+        for ch in source.chars() {
+            if current_line == line && current_col == col {
+                return offset;
+            }
+
+            if ch == '\n' {
+                current_line += 1;
+                current_col = 1;
+            } else {
+                current_col += 1;
+            }
+
+            offset += ch.len_utf8();
+        }
+
+        offset
     }
 
     #[test]
@@ -1136,6 +1193,90 @@ mod tests {
 
         assert!(result.iter().any(|e| e.var_name == "x"));
         assert!(result.iter().any(|e| e.var_name == "y"));
+    }
+
+    #[test]
+    fn test_builtins_not_flagged_without_local_assignment() {
+        let source = "def controls(n):\n    try:\n        for i in range(n):\n            pass\n    except Exception as e:\n        print(e)";
+        let ast = parse_source_to_ast(source);
+        let fixture = FunctionFixture::new(source, ast, None);
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
+
+        assert!(
+            !result.iter().any(|e| e.var_name == "range"),
+            "builtin 'range' incorrectly flagged: {result:?}"
+        );
+        assert!(
+            !result.iter().any(|e| e.var_name == "print"),
+            "builtin 'print' incorrectly flagged: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_builtin_shadowing_reports_use_before_def() {
+        let source = "def foo():\n    print('hi')\n    print = lambda *args, **kwargs: None\n    print('bye')";
+        let ast = parse_source_to_ast(source);
+        let fixture = FunctionFixture::new(source, ast, None);
+        let scope = fixture
+            .resolver
+            .symbol_table
+            .get_scope(fixture.scope_id)
+            .expect("function scope missing");
+        assert!(
+            scope.symbols.contains_key("print"),
+            "expected assignment to register symbol, found symbols: {:?}",
+            scope.symbols.keys().collect::<Vec<_>>()
+        );
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
+
+        assert!(
+            result.iter().any(|e| e.var_name == "print" && e.line == 2),
+            "expected builtin shadowing to be reported: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_try_preserves_prior_assignments() {
+        let source = "def foo():\n    results = []\n    try:\n        pass\n    except Exception:\n        pass\n    return results";
+        let ast = parse_source_to_ast(source);
+        let fixture = FunctionFixture::new(source, ast, None);
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
+
+        assert!(
+            !result.iter().any(|e| e.var_name == "results"),
+            "assignment before try should be visible at return: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_controls_sample_not_flagged() {
+        let source = r#"def controls(n: int) -> list[int]:
+    results = []
+    try:
+        for i in range(n):
+            if i % 2 == 0:
+                results.append(i)
+            else:
+                results.append(i * 2)
+        count = 0
+        while count < 3:
+            results.append(count + n)
+            count += 1
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    return results"#;
+        let ast = parse_source_to_ast(source);
+        let fixture = FunctionFixture::new(source, ast, None);
+        let analyzer = fixture.analyzer(None);
+        let result = analyzer.find_use_before_def();
+
+        assert!(
+            !result.iter().any(|e| e.var_name == "results"),
+            "controls() sample should not produce use-before-def: {result:?}"
+        );
     }
 
     #[test]
@@ -1266,7 +1407,7 @@ mod tests {
     fn test_function_def_hoisting() {
         let source =
             "def outer():\n    result = inner()\n    def inner():\n        return 42\n    return result".to_string();
-        let mut resolver = NameResolver::new(source);
+        let mut resolver = NameResolver::new(source.clone());
 
         let ast = AstNode::FunctionDef {
             name: "outer".to_string(),
@@ -1351,12 +1492,13 @@ mod tests {
 
         resolver.resolve(&ast).unwrap();
 
-        if let AstNode::FunctionDef { body, .. } = &ast {
+        if let AstNode::FunctionDef { body, line, col, .. } = &ast {
             let mut builder = CfgBuilder::new();
             builder.build_function(body);
 
             let cfg = builder.build();
-            let scope_id = find_function_scope(&resolver.symbol_table);
+            let byte_offset = line_col_to_byte_offset(&source, *line, *col);
+            let scope_id = resolver.symbol_table.find_scope_at_position(byte_offset);
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
             let inner_errors: Vec<_> = result.iter().filter(|e| e.var_name == "inner").collect();
@@ -1373,7 +1515,7 @@ mod tests {
     fn test_class_def_hoisting() {
         let source =
             "def factory():\n    obj = MyClass()\n    class MyClass:\n        pass\n    return obj".to_string();
-        let mut resolver = NameResolver::new(source);
+        let mut resolver = NameResolver::new(source.clone());
 
         let ast = AstNode::FunctionDef {
             name: "factory".to_string(),
@@ -1445,12 +1587,13 @@ mod tests {
 
         resolver.resolve(&ast).unwrap();
 
-        if let AstNode::FunctionDef { body, .. } = &ast {
+        if let AstNode::FunctionDef { body, line, col, .. } = &ast {
             let mut builder = CfgBuilder::new();
             builder.build_function(body);
             let cfg = builder.build();
 
-            let scope_id = find_function_scope(&resolver.symbol_table);
+            let byte_offset = line_col_to_byte_offset(&source, *line, *col);
+            let scope_id = resolver.symbol_table.find_scope_at_position(byte_offset);
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
             let class_errors: Vec<_> = result.iter().filter(|e| e.var_name == "MyClass").collect();
@@ -1468,7 +1611,7 @@ mod tests {
         let source =
             "def outer():\n    result = helper()\n    if True:\n        def helper():\n            return 1\n    return result"
                 .to_string();
-        let mut resolver = NameResolver::new(source);
+        let mut resolver = NameResolver::new(source.clone());
 
         let ast = AstNode::FunctionDef {
             name: "outer".to_string(),
@@ -1568,12 +1711,13 @@ mod tests {
 
         resolver.resolve(&ast).unwrap();
 
-        if let AstNode::FunctionDef { body, .. } = &ast {
+        if let AstNode::FunctionDef { body, line, col, .. } = &ast {
             let mut builder = CfgBuilder::new();
             builder.build_function(body);
             let cfg = builder.build();
 
-            let scope_id = find_function_scope(&resolver.symbol_table);
+            let byte_offset = line_col_to_byte_offset(&source, *line, *col);
+            let scope_id = resolver.symbol_table.find_scope_at_position(byte_offset);
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
             let helper_errors: Vec<_> = result.iter().filter(|e| e.var_name == "helper").collect();

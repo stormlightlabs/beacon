@@ -502,13 +502,13 @@ impl NameResolver {
     }
 
     fn decorator_columns(line_text: &str, decorator: &str) -> Option<(usize, usize)> {
-        let trimmed = line_text.trim_start_matches(|c: char| c == ' ' || c == '\t');
+        let trimmed = line_text.trim_start_matches([' ', '\t']);
         if !trimmed.starts_with('@') {
             return None;
         }
 
         let after_at = &trimmed[1..];
-        let trimmed_after = after_at.trim_start_matches(|c: char| c == ' ' || c == '\t');
+        let trimmed_after = after_at.trim_start_matches([' ', '\t']);
         if !trimmed_after.starts_with(decorator) {
             return None;
         }
@@ -689,14 +689,9 @@ impl NameResolver {
                 let byte_offset = resolver.line_col_to_byte_offset(start_line, start_col);
                 let scope = resolver.symbol_table.find_scope_at_position(byte_offset);
                 let end_col = start_col + word.chars().count();
-                resolver.symbol_table.add_reference(
-                    word,
-                    scope,
-                    start_line,
-                    start_col,
-                    end_col,
-                    ReferenceKind::Read,
-                );
+                resolver
+                    .symbol_table
+                    .add_reference(word, scope, start_line, start_col, end_col, ReferenceKind::Read);
             }
 
             word.clear();

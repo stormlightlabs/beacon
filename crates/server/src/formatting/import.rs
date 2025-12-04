@@ -520,20 +520,8 @@ mod tests {
         let node = AstNode::ImportFrom {
             module: "os".to_string(),
             names: vec![
-                beacon_parser::ImportName {
-                    name: "path".to_string(),
-                    line: 1,
-                    col: 0,
-                    end_line: 1,
-                    end_col: 4,
-                },
-                beacon_parser::ImportName {
-                    name: "environ".to_string(),
-                    line: 1,
-                    col: 6,
-                    end_line: 1,
-                    end_col: 13,
-                },
+                beacon_parser::ImportName { name: "path".to_string(), line: 1, col: 0, end_line: 1, end_col: 4 },
+                beacon_parser::ImportName { name: "environ".to_string(), line: 1, col: 6, end_line: 1, end_col: 13 },
             ],
             line: 1,
             col: 0,

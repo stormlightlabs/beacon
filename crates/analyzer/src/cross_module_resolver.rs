@@ -289,10 +289,10 @@ mod tests {
         let uri_a = Url::parse("file:///module_a.py").unwrap();
         let uri_b = Url::parse("file:///module_b.py").unwrap();
 
-        let func_a = FunctionId::new(uri_a.clone(), ScopeId::from_raw(1), "func_a".to_string());
-        let func_b = FunctionId::new(uri_b.clone(), ScopeId::from_raw(1), "func_b".to_string());
+        let func_a = FunctionId::new(uri_a, ScopeId::from_raw(1), "func_a".to_string());
+        let func_b = FunctionId::new(uri_b, ScopeId::from_raw(1), "func_b".to_string());
 
-        let call_site = CallSite::new(BlockId(0), 0, Some(func_b.clone()), CallKind::Direct, 10, 5);
+        let call_site = CallSite::new(BlockId(0), 0, Some(func_b), CallKind::Direct, 10, 5);
 
         workspace_cfg.call_graph_mut().add_call_site(func_a.clone(), call_site);
 
@@ -310,7 +310,7 @@ mod tests {
         let uri_a = Url::parse("file:///module_a.py").unwrap();
         let uri_b = Url::parse("file:///module_b.py").unwrap();
 
-        let func_a = FunctionId::new(uri_a.clone(), ScopeId::from_raw(1), "caller".to_string());
+        let func_a = FunctionId::new(uri_a, ScopeId::from_raw(1), "caller".to_string());
         let func_b = FunctionId::new(uri_b.clone(), ScopeId::from_raw(2), "callee".to_string());
 
         let mut symbol_table_b = SymbolTable::new();
@@ -363,7 +363,7 @@ mod tests {
 
         let workspace_cfg = WorkspaceCFG::new();
         let mut workspace_env = WorkspaceTypeEnvironment::new();
-        workspace_env.add_module(uri_b.clone(), module_info_b);
+        workspace_env.add_module(uri_b, module_info_b);
 
         let mut resolver = CrossModuleTypeResolver::new(&workspace_cfg, &mut workspace_env);
         let changed = resolver.resolve_cross_module_call(&func_a, &func_b).unwrap();
@@ -390,8 +390,8 @@ mod tests {
         let uri_a = Url::parse("file:///module_a.py").unwrap();
         let uri_b = Url::parse("file:///module_b.py").unwrap();
 
-        let func_a = FunctionId::new(uri_a.clone(), ScopeId::from_raw(1), "caller".to_string());
-        let func_b = FunctionId::new(uri_b.clone(), ScopeId::from_raw(2), "callee".to_string());
+        let func_a = FunctionId::new(uri_a, ScopeId::from_raw(1), "caller".to_string());
+        let func_b = FunctionId::new(uri_b, ScopeId::from_raw(2), "callee".to_string());
 
         let workspace_cfg = WorkspaceCFG::new();
         let mut workspace_env = WorkspaceTypeEnvironment::new();
@@ -409,8 +409,8 @@ mod tests {
         let uri_a = Url::parse("file:///module_a.py").unwrap();
         let uri_b = Url::parse("file:///module_b.py").unwrap();
 
-        let func_a = FunctionId::new(uri_a.clone(), ScopeId::from_raw(1), "caller".to_string());
-        let func_b = FunctionId::new(uri_b.clone(), ScopeId::from_raw(2), "callee".to_string());
+        let func_a = FunctionId::new(uri_a, ScopeId::from_raw(1), "caller".to_string());
+        let func_b = FunctionId::new(uri_b, ScopeId::from_raw(2), "callee".to_string());
 
         let workspace_cfg = WorkspaceCFG::new();
         let mut workspace_env = WorkspaceTypeEnvironment::new();

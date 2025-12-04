@@ -201,7 +201,7 @@ impl Workspace {
         if let Ok(mut workspace_cfg) = self.workspace_cfg.write() {
             let call_graph = workspace_cfg.call_graph_mut();
             for call_site in &module_cfg.call_sites {
-                if let Some(_) = &call_site.receiver {
+                if call_site.receiver.is_some() {
                     for func_id in module_cfg.function_ids() {
                         if let Some(cfg) = module_cfg.get_function_cfg(func_id.scope_id) {
                             if cfg.blocks.contains_key(&call_site.block_id) {
@@ -1540,47 +1540,44 @@ impl Workspace {
     fn collect_module_symbols(node: &beacon_parser::AstNode) -> FxHashSet<String> {
         let mut symbols = FxHashSet::default();
 
-        match node {
-            AstNode::Module { body, .. } => {
-                for stmt in body {
-                    match stmt {
-                        AstNode::FunctionDef { name, .. } => {
-                            symbols.insert(name.clone());
-                        }
-                        AstNode::ClassDef { name, .. } => {
-                            symbols.insert(name.clone());
-                        }
-                        AstNode::Assignment { target, .. } => {
-                            let target_name = target.target_to_string();
-                            if !target_name.is_empty() {
-                                symbols.insert(target_name);
-                            }
-                        }
-                        AstNode::AnnotatedAssignment { target, .. } => {
-                            let target_name = target.target_to_string();
-                            if !target_name.is_empty() {
-                                symbols.insert(target_name);
-                            }
-                        }
-                        AstNode::Import { module, alias, extra_modules, .. } => {
-                            let import_name = alias.clone().unwrap_or_else(|| module.clone());
-                            symbols.insert(import_name);
-
-                            for (extra_module, extra_alias) in extra_modules {
-                                let name = extra_alias.clone().unwrap_or_else(|| extra_module.clone());
-                                symbols.insert(name);
-                            }
-                        }
-                        AstNode::ImportFrom { names, .. } => {
-                            for name in names {
-                                symbols.insert(name.name.clone());
-                            }
-                        }
-                        _ => {}
+        if let AstNode::Module { body, .. } = node {
+            for stmt in body {
+                match stmt {
+                    AstNode::FunctionDef { name, .. } => {
+                        symbols.insert(name.clone());
                     }
+                    AstNode::ClassDef { name, .. } => {
+                        symbols.insert(name.clone());
+                    }
+                    AstNode::Assignment { target, .. } => {
+                        let target_name = target.target_to_string();
+                        if !target_name.is_empty() {
+                            symbols.insert(target_name);
+                        }
+                    }
+                    AstNode::AnnotatedAssignment { target, .. } => {
+                        let target_name = target.target_to_string();
+                        if !target_name.is_empty() {
+                            symbols.insert(target_name);
+                        }
+                    }
+                    AstNode::Import { module, alias, extra_modules, .. } => {
+                        let import_name = alias.clone().unwrap_or_else(|| module.clone());
+                        symbols.insert(import_name);
+
+                        for (extra_module, extra_alias) in extra_modules {
+                            let name = extra_alias.clone().unwrap_or_else(|| extra_module.clone());
+                            symbols.insert(name);
+                        }
+                    }
+                    AstNode::ImportFrom { names, .. } => {
+                        for name in names {
+                            symbols.insert(name.name.clone());
+                        }
+                    }
+                    _ => {}
                 }
             }
-            _ => {}
         }
 
         symbols

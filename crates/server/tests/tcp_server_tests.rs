@@ -52,7 +52,7 @@ async fn test_tcp_server_binds_to_address() {
 
     let connect_result = tokio::time::timeout(
         Duration::from_secs(2),
-        tokio::task::spawn_blocking(move || TcpStream::connect(format!("127.0.0.1:{}", port))),
+        tokio::task::spawn_blocking(move || TcpStream::connect(format!("127.0.0.1:{port}"))),
     )
     .await;
 
@@ -76,7 +76,7 @@ async fn test_tcp_server_accepts_connection() {
     sleep(Duration::from_millis(200)).await;
 
     let test_result = tokio::time::timeout(Duration::from_secs(5), async {
-        let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Should connect");
+        let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).expect("Should connect");
         stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
         stream.set_write_timeout(Some(Duration::from_secs(2))).ok();
 
@@ -113,14 +113,14 @@ async fn test_tcp_server_multiple_sequential_connections() {
 
     let test_result = tokio::time::timeout(Duration::from_secs(5), async {
         {
-            let stream = TcpStream::connect(format!("127.0.0.1:{}", port)).expect("First connection should succeed");
+            let stream = TcpStream::connect(format!("127.0.0.1:{port}")).expect("First connection should succeed");
             drop(stream);
         }
 
         sleep(Duration::from_millis(100)).await;
 
         {
-            let stream = TcpStream::connect(format!("127.0.0.1:{}", port)).expect("Second connection should succeed");
+            let stream = TcpStream::connect(format!("127.0.0.1:{port}")).expect("Second connection should succeed");
             drop(stream);
         }
     })

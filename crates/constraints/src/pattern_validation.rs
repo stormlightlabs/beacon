@@ -11,7 +11,7 @@ use beacon_parser::{AstNode, LiteralValue, Pattern};
 pub fn validate_pattern_type_compatibility(
     pattern: &Pattern, subject_type: &Type, class_registry: &ClassRegistry,
 ) -> Result<(), TypeError> {
-    if matches!(subject_type, Type::Var(_)) {
+    if matches!(subject_type, Type::Var(_)) || is_open_subject_type(subject_type) {
         return Ok(());
     }
 
@@ -35,6 +35,10 @@ pub fn validate_pattern_type_compatibility(
 
 /// Validate that a literal pattern matches the subject type
 fn validate_literal_pattern_type(literal: &AstNode, subject_type: &Type) -> Result<(), TypeError> {
+    if is_open_subject_type(subject_type) {
+        return Ok(());
+    }
+
     let pattern_type = match literal {
         AstNode::Literal { value, .. } => match value {
             LiteralValue::Integer(_) => Type::int(),
@@ -64,6 +68,9 @@ fn validate_literal_pattern_type(literal: &AstNode, subject_type: &Type) -> Resu
 fn validate_class_pattern_type(
     cls: &str, subject_type: &Type, class_registry: &ClassRegistry,
 ) -> Result<(), TypeError> {
+    if is_open_subject_type(subject_type) {
+        return Ok(());
+    }
     if class_pattern_matches_type(cls, subject_type, class_registry) {
         return Ok(());
     }
@@ -114,6 +121,9 @@ fn class_pattern_matches_type(cls: &str, ty: &Type, class_registry: &ClassRegist
 
 /// Validate that a mapping pattern can match the subject type
 fn validate_mapping_pattern_type(subject_type: &Type) -> Result<(), TypeError> {
+    if is_open_subject_type(subject_type) {
+        return Ok(());
+    }
     match subject_type {
         Type::Union(variants) => {
             if variants.iter().any(is_mapping_type) {
@@ -136,6 +146,9 @@ fn validate_mapping_pattern_type(subject_type: &Type) -> Result<(), TypeError> {
 
 /// Validate that a sequence pattern can match the subject type
 fn validate_sequence_pattern_type(subject_type: &Type) -> Result<(), TypeError> {
+    if is_open_subject_type(subject_type) {
+        return Ok(());
+    }
     match subject_type {
         Type::Union(variants) => {
             if variants.iter().any(is_sequence_type) {
@@ -153,6 +166,14 @@ fn validate_sequence_pattern_type(subject_type: &Type) -> Result<(), TypeError> 
             pattern_type: "sequence pattern".to_string(),
             subject_type: subject_type.to_string(),
         }),
+    }
+}
+
+fn is_open_subject_type(subject_type: &Type) -> bool {
+    match subject_type {
+        Type::Con(TypeCtor::Any) | Type::Con(TypeCtor::Top) => true,
+        Type::Con(TypeCtor::Class(class_name)) if class_name == "object" => true,
+        _ => false,
     }
 }
 

@@ -839,7 +839,7 @@ impl DiagnosticProvider {
             Some(annotation) => {
                 if let Some(inferred_type) = Self::get_type_for_position(ctx.type_map, ctx.position_map, line, col) {
                     let inferred_return_type = match &inferred_type {
-                        Type::Fun(_, ret) => (&**ret).clone(),
+                        Type::Fun(_, ret) => (**ret).clone(),
                         other => other.clone(),
                     };
 
@@ -1751,8 +1751,7 @@ impl DiagnosticProvider {
                                         code: Some(lsp_types::NumberOrString::String("BEA031".to_string())),
                                         source: Some("beacon-linter".to_string()),
                                         message: format!(
-                                            "Symbol '{}' is exported in __all__ but not defined in module",
-                                            symbol_name
+                                            "Symbol '{symbol_name}' is exported in __all__ but not defined in module"
                                         ),
                                         related_information: None,
                                         tags: None,

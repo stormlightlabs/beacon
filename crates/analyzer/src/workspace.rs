@@ -202,7 +202,7 @@ mod tests {
         let function_id = FunctionId::new(uri, ScopeId::from_raw(1), "test_func".to_string());
         let type_scheme = TypeScheme::mono(Type::int());
 
-        env.set_function_type(function_id.clone(), type_scheme.clone());
+        env.set_function_type(function_id.clone(), type_scheme);
 
         let retrieved = env.get_function_type(&function_id);
         assert!(retrieved.is_some());

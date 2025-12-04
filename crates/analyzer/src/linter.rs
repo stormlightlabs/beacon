@@ -181,11 +181,7 @@ impl<'a> Linter<'a> {
         let remaining = &line_text[after_arrow..];
         let type_start = remaining.find(|c: char| !c.is_whitespace())?;
         let type_pos = after_arrow + type_start;
-        if line_text[type_pos..].starts_with(annotation) {
-            Some(type_pos + 1)
-        } else {
-            None
-        }
+        if line_text[type_pos..].starts_with(annotation) { Some(type_pos + 1) } else { None }
     }
 
     /// Visit an AST node and check all applicable rules

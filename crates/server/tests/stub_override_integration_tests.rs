@@ -180,7 +180,7 @@ def custom_type_check() -> bool: ...
     fs::write(&stub_path, stub_content).unwrap();
 
     let config = Config::default();
-    let root_uri = Url::from_directory_path(&project_path).unwrap();
+    let root_uri = Url::from_directory_path(project_path).unwrap();
     let documents = DocumentManager::new().unwrap();
     let workspace = Workspace::new(Some(root_uri), config, documents);
 
@@ -212,7 +212,7 @@ def hello() -> str: ...
     fs::write(&pyi_file, pyi_content).unwrap();
 
     let config = Config::default();
-    let root_uri = Url::from_directory_path(&project_path).unwrap();
+    let root_uri = Url::from_directory_path(project_path).unwrap();
     let documents = DocumentManager::new().unwrap();
     let _workspace = Workspace::new(Some(root_uri), config, documents);
 

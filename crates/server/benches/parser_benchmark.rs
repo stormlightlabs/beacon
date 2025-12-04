@@ -261,7 +261,7 @@ fn bench_incremental_reparse(c: &mut Criterion) {
     let mut parser = LspParser::new().unwrap();
 
     let _initial_result = parser.parse(MEDIUM_FILE).unwrap();
-    let modified = format!("{}\n\nresult2 = add(30, 40)\n", MEDIUM_FILE);
+    let modified = format!("{MEDIUM_FILE}\n\nresult2 = add(30, 40)\n");
 
     group.bench_function("small_edit", |b| {
         b.iter(|| {

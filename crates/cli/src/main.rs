@@ -2568,7 +2568,7 @@ result = obj.method(10)
 
     #[test]
     fn test_lsp_command_default_stdio() {
-        let cli = Cli::try_parse_from(&["beacon", "lsp"]);
+        let cli = Cli::try_parse_from(["beacon", "lsp"]);
         assert!(cli.is_ok());
 
         if let Commands::Lsp { stdio, tcp, host, port, .. } = cli.unwrap().command {
@@ -2583,7 +2583,7 @@ result = obj.method(10)
 
     #[test]
     fn test_lsp_command_explicit_stdio() {
-        let cli = Cli::try_parse_from(&["beacon", "lsp", "--stdio"]);
+        let cli = Cli::try_parse_from(["beacon", "lsp", "--stdio"]);
         assert!(cli.is_ok());
 
         if let Commands::Lsp { stdio, tcp, .. } = cli.unwrap().command {
@@ -2596,7 +2596,7 @@ result = obj.method(10)
 
     #[test]
     fn test_lsp_command_tcp_mode() {
-        let cli = Cli::try_parse_from(&["beacon", "lsp", "--tcp"]);
+        let cli = Cli::try_parse_from(["beacon", "lsp", "--tcp"]);
         assert!(cli.is_ok());
 
         if let Commands::Lsp { stdio, tcp, host, port, .. } = cli.unwrap().command {
@@ -2611,7 +2611,7 @@ result = obj.method(10)
 
     #[test]
     fn test_lsp_command_tcp_custom_config() {
-        let cli = Cli::try_parse_from(&["beacon", "lsp", "--tcp", "--host", "0.0.0.0", "--port", "8080"]);
+        let cli = Cli::try_parse_from(["beacon", "lsp", "--tcp", "--host", "0.0.0.0", "--port", "8080"]);
         assert!(cli.is_ok());
 
         if let Commands::Lsp { tcp, host, port, .. } = cli.unwrap().command {
@@ -2625,7 +2625,7 @@ result = obj.method(10)
 
     #[test]
     fn test_lsp_command_conflicts() {
-        let result = Cli::try_parse_from(&["beacon", "lsp", "--stdio", "--tcp"]);
+        let result = Cli::try_parse_from(["beacon", "lsp", "--stdio", "--tcp"]);
         assert!(
             result.is_err(),
             "Expected error when both --stdio and --tcp are specified"
@@ -2634,10 +2634,10 @@ result = obj.method(10)
 
     #[test]
     fn test_lsp_command_requires_tcp() {
-        let result = Cli::try_parse_from(&["beacon", "lsp", "--host", "0.0.0.0"]);
+        let result = Cli::try_parse_from(["beacon", "lsp", "--host", "0.0.0.0"]);
         assert!(result.is_err(), "Expected error when --host is used without --tcp");
 
-        let result = Cli::try_parse_from(&["beacon", "lsp", "--port", "8080"]);
+        let result = Cli::try_parse_from(["beacon", "lsp", "--port", "8080"]);
         assert!(result.is_err(), "Expected error when --port is used without --tcp");
     }
 }
