@@ -22,7 +22,7 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 - [x] Build workspace symbol table with full module resolution
 - [x] Inconsistent export detection (`__all__` mismatches)
 - [x] Conflicting stub definitions across files
-- [ ] Star import resolution (`from foo import *`)
+- [x] Star import resolution (`from foo import *`)
 - [ ] Unused import detection across workspace
 
 ### Cross-File LSP Features

@@ -789,11 +789,25 @@ impl Workspace {
 
         let import_names = self.extract_imports(uri).unwrap_or_default();
         let symbol_imports = self.extract_symbol_imports(uri).unwrap_or_default();
+        let all_exports = self.extract_all_exports(uri);
         let from_module = self.uri_to_module_name(uri).unwrap_or_default();
+
+        if !self.index.modules.contains_key(uri) {
+            let source_root = uri
+                .to_file_path()
+                .ok()
+                .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                .unwrap_or_default();
+            let module_name = from_module.clone();
+            let is_package = false;
+            let module_info = ModuleInfo::new(uri.clone(), module_name, source_root, is_package);
+            self.index.insert(module_info);
+        }
 
         if let Some(module_info) = self.index.modules.get_mut(uri) {
             tracing::debug!("Workspace: Updated {} symbol imports for {}", symbol_imports.len(), uri);
             module_info.symbol_imports = symbol_imports;
+            module_info.all_exports = all_exports;
         }
 
         for import_name in import_names {
@@ -1538,6 +1552,33 @@ impl Workspace {
         Self::collect_module_symbols(&parse_result.ast)
     }
 
+    /// Resolve a star import to concrete symbol names
+    ///
+    /// For `from module import *`, returns all symbols that should be imported:
+    /// - If __all__ is defined, use those symbols
+    /// - Otherwise, use all public symbols (not starting with _)
+    pub fn resolve_star_import(&self, module_uri: &Url) -> Vec<String> {
+        if let Some(all_exports) = self.get_all_exports(module_uri) {
+            tracing::debug!(
+                module = %module_uri,
+                count = all_exports.len(),
+                "Resolved star import using __all__"
+            );
+            return all_exports;
+        }
+
+        let all_symbols = self.get_module_symbols(module_uri);
+        let public_symbols: Vec<String> = all_symbols.into_iter().filter(|name| !name.starts_with('_')).collect();
+
+        tracing::debug!(
+            module = %module_uri,
+            count = public_symbols.len(),
+            "Resolved star import using public symbols"
+        );
+
+        public_symbols
+    }
+
     /// Collect module-level symbol definitions from AST
     fn collect_module_symbols(node: &beacon_parser::AstNode) -> FxHashSet<String> {
         let mut symbols = FxHashSet::default();
@@ -1988,7 +2029,8 @@ fn extract_all_list(node: &AstNode) -> Option<Vec<String>> {
                     names.push(value.clone());
                 }
             }
-            if names.is_empty() { None } else { Some(names) }
+
+            Some(names)
         }
         _ => None,
     }

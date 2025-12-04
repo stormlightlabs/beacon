@@ -1373,7 +1373,9 @@ impl PythonParser {
 
     fn extract_augmented_assignment_operator(&self, node: &Node, source: &str) -> Result<BinaryOperator> {
         if let Some(op_node) = node.child_by_field_name("operator") {
-            let op = op_node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
+            let op = op_node
+                .utf8_text(source.as_bytes())
+                .map_err(|_| ParseError::InvalidUtf8)?;
             return self.parse_binary_operator(op.trim_end_matches('='));
         }
 

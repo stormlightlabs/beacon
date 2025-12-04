@@ -373,7 +373,20 @@ impl LanguageServer for Backend {
         let mut resolved_imports = Vec::new();
         for import in &symbol_imports {
             if let Some(resolved_uri) = workspace.resolve_import(&import.from_module) {
-                resolved_imports.push((resolved_uri, import.symbol.clone()));
+                if import.symbol == "*" {
+                    let symbols = workspace.resolve_star_import(&resolved_uri);
+                    tracing::debug!(
+                        from_module = %import.from_module,
+                        resolved_uri = %resolved_uri,
+                        symbol_count = symbols.len(),
+                        "Expanding star import"
+                    );
+                    for symbol in symbols {
+                        resolved_imports.push((resolved_uri.clone(), symbol));
+                    }
+                } else {
+                    resolved_imports.push((resolved_uri, import.symbol.clone()));
+                }
             }
         }
         drop(workspace);
@@ -412,7 +425,14 @@ impl LanguageServer for Backend {
                 let mut resolved_imports = Vec::new();
                 for import in &symbol_imports {
                     if let Some(resolved_uri) = workspace.resolve_import(&import.from_module) {
-                        resolved_imports.push((resolved_uri, import.symbol.clone()));
+                        if import.symbol == "*" {
+                            let symbols = workspace.resolve_star_import(&resolved_uri);
+                            for symbol in symbols {
+                                resolved_imports.push((resolved_uri.clone(), symbol));
+                            }
+                        } else {
+                            resolved_imports.push((resolved_uri, import.symbol.clone()));
+                        }
                     }
                 }
                 if !resolved_imports.is_empty() {

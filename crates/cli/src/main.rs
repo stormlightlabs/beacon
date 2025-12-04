@@ -8,6 +8,7 @@ use beacon_lsp::{
     analysis::Analyzer,
     document::DocumentManager,
     formatting::{Formatter, FormatterConfig},
+    workspace::Workspace,
 };
 use beacon_parser::{AstNode, PythonHighlighter, PythonParser};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -522,7 +523,8 @@ async fn typecheck_command(paths: Vec<PathBuf>, format: OutputFormat) -> Result<
     let files = helpers::discover_python_files(&paths)?;
     let documents = DocumentManager::new()?;
     let config = Config::default();
-    let mut analyzer = Analyzer::new(config, documents.clone());
+    let mut analyzer = Analyzer::new(config.clone(), documents.clone());
+    let mut workspace = Workspace::new(None, config, documents.clone());
 
     let mut all_errors = Vec::new();
     let mut failed_files = Vec::new();
@@ -535,6 +537,25 @@ async fn typecheck_command(paths: Vec<PathBuf>, format: OutputFormat) -> Result<
             .map_err(|_| anyhow::anyhow!("Failed to create URL for {}", file_path.display()))?;
 
         documents.open_document(uri.clone(), 1, source.clone())?;
+        workspace.update_dependencies(&uri);
+
+        let symbol_imports = workspace.get_symbol_imports(&uri);
+        let mut resolved_imports = Vec::new();
+        for import in &symbol_imports {
+            if let Some(resolved_uri) = workspace.resolve_import(&import.from_module) {
+                if import.symbol == "*" {
+                    let symbols = workspace.resolve_star_import(&resolved_uri);
+                    for symbol in symbols {
+                        resolved_imports.push((resolved_uri.clone(), symbol));
+                    }
+                } else {
+                    resolved_imports.push((resolved_uri, import.symbol.clone()));
+                }
+            }
+        }
+        if !resolved_imports.is_empty() {
+            analyzer.record_imports(&uri, &resolved_imports);
+        }
 
         match analyzer.analyze(&uri) {
             Ok(result) => {
@@ -1554,7 +1575,8 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
     let files = helpers::discover_python_files(&paths)?;
     let documents = DocumentManager::new()?;
     let config = Config::default();
-    let mut analyzer = Analyzer::new(config, documents.clone());
+    let mut analyzer = Analyzer::new(config.clone(), documents.clone());
+    let mut workspace = Workspace::new(None, config, documents.clone());
 
     println!(
         "{} Running comprehensive diagnostics on {} file(s)...\n",
@@ -1593,6 +1615,25 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
                         .map_err(|_| anyhow::anyhow!("Failed to create URL for {}", file_path.display()))?;
 
                     documents.open_document(uri.clone(), 1, source.clone())?;
+                    workspace.update_dependencies(&uri);
+
+                    let symbol_imports = workspace.get_symbol_imports(&uri);
+                    let mut resolved_imports = Vec::new();
+                    for import in &symbol_imports {
+                        if let Some(resolved_uri) = workspace.resolve_import(&import.from_module) {
+                            if import.symbol == "*" {
+                                let symbols = workspace.resolve_star_import(&resolved_uri);
+                                for symbol in symbols {
+                                    resolved_imports.push((resolved_uri.clone(), symbol));
+                                }
+                            } else {
+                                resolved_imports.push((resolved_uri, import.symbol.clone()));
+                            }
+                        }
+                    }
+                    if !resolved_imports.is_empty() {
+                        analyzer.record_imports(&uri, &resolved_imports);
+                    }
 
                     match analyzer.analyze(&uri) {
                         Ok(result) => {

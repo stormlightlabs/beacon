@@ -142,8 +142,7 @@ impl Unifier {
 
                 match variance {
                     Variance::Invariant => {
-                        let has_type_var =
-                            Self::contains_type_var(&applied_a1) || Self::contains_type_var(&applied_a2);
+                        let has_type_var = Self::contains_type_var(&applied_a1) || Self::contains_type_var(&applied_a2);
 
                         if applied_a1 != applied_a2 {
                             match Self::unify_impl(&applied_a1, &applied_a2, registry, class_registry) {
