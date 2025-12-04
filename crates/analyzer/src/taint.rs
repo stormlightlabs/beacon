@@ -394,11 +394,13 @@ impl<'a> IntraModuleTaintAnalyzer<'a> {
                     if let Some(sink) = self.check_taint_sink(stmt) {
                         if self.sink_receives_taint(stmt, &current_taint) {
                             for tainted_var in &current_taint {
-                                if let Some(source) = sources.iter().find(|s| &s.var_name == tainted_var) { violations.push(TaintViolation {
-                                    source: source.clone(),
-                                    sink: sink.clone(),
-                                    flow_path: vec![tainted_var.clone()],
-                                }) }
+                                if let Some(source) = sources.iter().find(|s| &s.var_name == tainted_var) {
+                                    violations.push(TaintViolation {
+                                        source: source.clone(),
+                                        sink: sink.clone(),
+                                        flow_path: vec![tainted_var.clone()],
+                                    })
+                                }
                             }
                         }
                     }

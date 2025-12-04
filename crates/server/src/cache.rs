@@ -473,6 +473,10 @@ pub struct CachedAnalysisResult {
     pub type_map: FxHashMap<usize, beacon_core::Type>,
     /// Map from source positions to node IDs
     pub position_map: FxHashMap<(usize, usize), usize>,
+    /// Map from node IDs to their spans
+    pub node_spans: FxHashMap<usize, beacon_constraint::Span>,
+    /// Nodes where unsafe Any diagnostics should be suppressed
+    pub safe_any_nodes: FxHashSet<usize>,
     /// Type errors encountered during analysis
     pub type_errors: Vec<beacon_constraint::TypeErrorInfo>,
     /// Static analysis results (data flow analysis)
@@ -1103,6 +1107,8 @@ mod tests {
         let cached_result = CachedAnalysisResult {
             type_map: type_map.clone(),
             position_map: FxHashMap::default(),
+            node_spans: FxHashMap::default(),
+            safe_any_nodes: FxHashSet::default(),
             type_errors: vec![],
             static_analysis: None,
         };
@@ -1126,6 +1132,8 @@ mod tests {
         let cached_result = CachedAnalysisResult {
             type_map: FxHashMap::default(),
             position_map: FxHashMap::default(),
+            node_spans: FxHashMap::default(),
+            safe_any_nodes: FxHashSet::default(),
             type_errors: vec![],
             static_analysis: None,
         };
@@ -1144,6 +1152,8 @@ mod tests {
         let cached_result = CachedAnalysisResult {
             type_map: FxHashMap::default(),
             position_map: FxHashMap::default(),
+            node_spans: FxHashMap::default(),
+            safe_any_nodes: FxHashSet::default(),
             type_errors: vec![],
             static_analysis: None,
         };
@@ -1171,6 +1181,8 @@ mod tests {
         let cached_result = CachedAnalysisResult {
             type_map: FxHashMap::default(),
             position_map: FxHashMap::default(),
+            node_spans: FxHashMap::default(),
+            safe_any_nodes: FxHashSet::default(),
             type_errors: vec![],
             static_analysis: None,
         };
@@ -1202,6 +1214,8 @@ mod tests {
         let cached_result = CachedAnalysisResult {
             type_map: FxHashMap::default(),
             position_map: FxHashMap::default(),
+            node_spans: FxHashMap::default(),
+            safe_any_nodes: FxHashSet::default(),
             type_errors: vec![],
             static_analysis: None,
         };
@@ -1591,6 +1605,8 @@ mod tests {
         let result = CachedAnalysisResult {
             type_map: FxHashMap::default(),
             position_map: FxHashMap::default(),
+            node_spans: FxHashMap::default(),
+            safe_any_nodes: FxHashSet::default(),
             type_errors: vec![],
             static_analysis: None,
         };

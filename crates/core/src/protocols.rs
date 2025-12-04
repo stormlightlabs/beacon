@@ -302,7 +302,11 @@ impl ProtocolChecker {
             (Type::App(ctor, _), ProtocolName::Iterable) => {
                 matches!(
                     ctor.as_ref(),
-                    Type::Con(TypeCtor::List) | Type::Con(TypeCtor::Set) | Type::Con(TypeCtor::Tuple)
+                    Type::Con(TypeCtor::List)
+                        | Type::Con(TypeCtor::Set)
+                        | Type::Con(TypeCtor::Tuple)
+                        | Type::Con(TypeCtor::Iterable)
+                        | Type::Con(TypeCtor::Iterator)
                 ) || matches!(ctor.as_ref(), Type::App(inner, _) if matches!(inner.as_ref(), Type::Con(TypeCtor::Dict)))
             }
             (Type::App(ctor, _), ProtocolName::Sequence) => {

@@ -1373,7 +1373,9 @@ impl PythonParser {
 
     fn extract_augmented_assignment_operator(&self, node: &Node, source: &str) -> Result<BinaryOperator> {
         if let Some(op_node) = node.child_by_field_name("operator") {
-            let op = op_node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
+            let op = op_node
+                .utf8_text(source.as_bytes())
+                .map_err(|_| ParseError::InvalidUtf8)?;
             return self.parse_binary_operator(op.trim_end_matches('='));
         }
 
@@ -1450,6 +1452,39 @@ impl PythonParser {
         Ok(InfoArgsKwargs(args, keywords))
     }
 
+    /// Parse Python float literals, handling underscores and leading zeros
+    ///
+    /// Python allows underscores in float literals and leading zeros before the decimal point.
+    fn parse_python_float(&self, text: &str) -> Result<f64> {
+        let cleaned = text.replace('_', "");
+
+        Ok(cleaned
+            .parse::<f64>()
+            .map_err(|e| ParseError::TreeSitterError(format!("Invalid float literal: {e}")))?)
+    }
+
+    /// Parse Python integer literals including hex (0x), octal (0o), binary (0b), and decimal
+    ///
+    /// Note: Python supports arbitrary precision integers, but we use i64.
+    /// For integers that exceed i64 range, we clamp to i64::MAX/i64::MIN to allow parsing to continue.
+    fn parse_python_integer(&self, text: &str) -> Result<i64> {
+        let cleaned = text.replace('_', "");
+
+        let value = if let Some(hex_str) = cleaned.strip_prefix("0x").or_else(|| cleaned.strip_prefix("0X")) {
+            i64::from_str_radix(hex_str, 16).unwrap_or(i64::MAX)
+        } else if let Some(oct_str) = cleaned.strip_prefix("0o").or_else(|| cleaned.strip_prefix("0O")) {
+            i64::from_str_radix(oct_str, 8).unwrap_or(i64::MAX)
+        } else if let Some(bin_str) = cleaned.strip_prefix("0b").or_else(|| cleaned.strip_prefix("0B")) {
+            i64::from_str_radix(bin_str, 2).unwrap_or(i64::MAX)
+        } else {
+            cleaned
+                .parse::<i64>()
+                .unwrap_or_else(|_| if cleaned.starts_with('-') { i64::MIN } else { i64::MAX })
+        };
+
+        Ok(value)
+    }
+
     fn extract_literal_value(&self, node: &Node, source: &str) -> Result<LiteralValue> {
         let text = node.utf8_text(source.as_bytes()).map_err(|_| ParseError::InvalidUtf8)?;
 
@@ -1475,15 +1510,11 @@ impl PythonParser {
                 Ok(LiteralValue::String { value: content, prefix })
             }
             "integer" => {
-                let value = text
-                    .parse::<i64>()
-                    .map_err(|e| ParseError::TreeSitterError(format!("Invalid integer: {e}")))?;
+                let value = self.parse_python_integer(text)?;
                 Ok(LiteralValue::Integer(value))
             }
             "float" => {
-                let value = text
-                    .parse::<f64>()
-                    .map_err(|e| ParseError::TreeSitterError(format!("Invalid float: {e}")))?;
+                let value = self.parse_python_float(text)?;
                 Ok(LiteralValue::Float(value))
             }
             "true" => Ok(LiteralValue::Boolean(true)),
@@ -1509,8 +1540,7 @@ impl PythonParser {
 
     /// Extract variable names from global or nonlocal statement
     ///
-    /// Tree-sitter parses `global x, y, z` as:
-    /// - global_statement or nonlocal_statement containing identifier nodes
+    /// Tree-sitter parses `global x, y, z` as global_statement or nonlocal_statement containing identifier nodes
     fn extract_global_or_nonlocal_names(&self, node: &Node, source: &str) -> Result<Vec<String>> {
         let mut names = Vec::new();
         let mut cursor = node.walk();

@@ -18,7 +18,7 @@ use crate::document::DocumentManager;
 use crate::utils;
 use crate::workspace::Workspace;
 
-use beacon_constraint::{ConstraintResult, TypeErrorInfo};
+use beacon_constraint::{ConstraintResult, Span, TypeErrorInfo};
 use beacon_core::{
     SuppressionMap, Type, TypeVarGen,
     errors::{AnalysisError, Result},
@@ -40,6 +40,10 @@ pub struct AnalysisResult {
     pub type_map: FxHashMap<usize, Type>,
     /// Map from source positions to node IDs
     pub position_map: FxHashMap<(usize, usize), usize>,
+    /// Map from node IDs to their source spans
+    pub node_spans: FxHashMap<usize, Span>,
+    /// Nodes where unsafe Any diagnostics should be suppressed
+    pub safe_any_nodes: FxHashSet<usize>,
     /// Type errors encountered during analysis
     pub type_errors: Vec<TypeErrorInfo>,
     /// Static analysis results (data flow analysis)
@@ -54,6 +58,8 @@ pub struct Analyzer {
     documents: DocumentManager,
     /// Map from document URI to position maps for type-at-position queries
     position_maps: FxHashMap<Url, FxHashMap<(usize, usize), usize>>,
+    /// Map from document URI to node span maps
+    node_span_maps: FxHashMap<Url, FxHashMap<usize, Span>>,
     /// Stub cache for type resolution (shared with workspace)
     stub_cache: Option<Arc<std::sync::RwLock<beacon_analyzer::StubCache>>>,
 }
@@ -77,6 +83,7 @@ impl Analyzer {
             _type_var_gen: TypeVarGen::new(),
             documents,
             position_maps: FxHashMap::default(),
+            node_span_maps: FxHashMap::default(),
             stub_cache: Some(stub_cache),
         }
     }
@@ -131,6 +138,7 @@ impl Analyzer {
             _type_var_gen: TypeVarGen::new(),
             documents,
             position_maps: FxHashMap::default(),
+            node_span_maps: FxHashMap::default(),
             stub_cache,
         }
     }
@@ -256,11 +264,14 @@ impl Analyzer {
         if let Some(cached) = self.cache.analysis_cache.get(uri, version) {
             tracing::debug!(uri = %uri, version, "Using cached analysis result");
             self.position_maps.insert(uri.clone(), cached.position_map.clone());
+            self.node_span_maps.insert(uri.clone(), cached.node_spans.clone());
             return Ok(AnalysisResult {
                 uri: uri.clone(),
                 version,
                 type_map: cached.type_map,
                 position_map: cached.position_map,
+                node_spans: cached.node_spans.clone(),
+                safe_any_nodes: cached.safe_any_nodes.clone(),
                 type_errors: cached.type_errors,
                 static_analysis: cached.static_analysis,
             });
@@ -285,6 +296,8 @@ impl Analyzer {
             constraints,
             mut type_map,
             position_map,
+            node_spans,
+            safe_any_nodes,
             class_registry,
             node_to_scope,
             scope_dependencies,
@@ -315,6 +328,7 @@ impl Analyzer {
         }
 
         self.position_maps.insert(uri.clone(), position_map.clone());
+        self.node_span_maps.insert(uri.clone(), node_spans.clone());
 
         let static_analysis = self.perform_static_analysis(&ast, &symbol_table, &source);
 
@@ -340,6 +354,8 @@ impl Analyzer {
         let cached_result = crate::cache::CachedAnalysisResult {
             type_map: type_map.clone(),
             position_map: position_map.clone(),
+            node_spans: node_spans.clone(),
+            safe_any_nodes: safe_any_nodes.clone(),
             type_errors: type_errors.clone(),
             static_analysis: static_analysis.clone(),
         };
@@ -358,7 +374,16 @@ impl Analyzer {
             "Analysis completed"
         );
 
-        Ok(AnalysisResult { uri: uri.clone(), version, type_map, position_map, type_errors, static_analysis })
+        Ok(AnalysisResult {
+            uri: uri.clone(),
+            version,
+            type_map,
+            position_map,
+            node_spans,
+            safe_any_nodes,
+            type_errors,
+            static_analysis,
+        })
     }
 
     /// Extract symbol definitions from a symbol table and store them in the cache
@@ -412,6 +437,7 @@ impl Analyzer {
         tracing::debug!(uri = %uri, "Invalidating cached analysis");
         self.cache.invalidate_document(uri);
         self.position_maps.remove(uri);
+        self.node_span_maps.remove(uri);
     }
 
     /// Perform selective invalidation based on changed scopes
@@ -453,6 +479,7 @@ impl Analyzer {
 
         self.cache.invalidate_selective(uri, &changed_scopes);
         self.position_maps.remove(uri);
+        self.node_span_maps.remove(uri);
 
         changed_scopes
     }

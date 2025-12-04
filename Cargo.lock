@@ -180,6 +180,7 @@ dependencies = [
  "chrono",
  "clap",
  "ignore",
+ "lsp-types",
  "owo-colors",
  "predicates",
  "regex",

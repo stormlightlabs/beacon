@@ -7,6 +7,7 @@
 //! - Error recovery and diagnostics
 
 use crate::utils;
+
 use beacon_core::{Result, errors};
 use beacon_parser::{AstNode, ParsedFile, PythonParser, SymbolTable};
 use lsp_types::{Position, Range};

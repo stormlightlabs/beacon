@@ -157,6 +157,8 @@ pub struct ConstraintResult(
     pub ConstraintSet,
     pub FxHashMap<usize, Type>,
     pub FxHashMap<(usize, usize), usize>,
+    pub FxHashMap<usize, Span>,
+    pub FxHashSet<usize>,
     pub ClassRegistry,
     pub FxHashMap<usize, ScopeId>,
     pub FxHashMap<ScopeId, FxHashSet<ScopeId>>,
@@ -401,6 +403,8 @@ pub struct ConstraintGenContext<'a> {
     pub node_counter: usize,
     pub type_map: FxHashMap<usize, Type>,
     pub position_map: FxHashMap<(usize, usize), usize>,
+    pub node_spans: FxHashMap<usize, Span>,
+    pub safe_any_nodes: FxHashSet<usize>,
     pub class_registry: ClassRegistry,
     /// Control flow context for flow-sensitive type narrowing
     pub control_flow: ControlFlowContext,
@@ -478,16 +482,93 @@ impl<'a> ConstraintGenContext<'a> {
 
     /// Record a type for a node at a specific position, returning the node ID
     pub fn record_type(&mut self, line: usize, col: usize, ty: Type) -> usize {
+        self.record_type_with_end(line, col, line, col + 1, ty)
+    }
+
+    /// Record a type for a node with explicit span information
+    pub fn record_type_with_end(
+        &mut self, line: usize, col: usize, end_line: usize, end_col: usize, ty: Type,
+    ) -> usize {
+        let span = Self::normalized_span(line, col, end_line, end_col);
+        self.record_type_with_span(span, ty)
+    }
+
+    /// Record a type for a node given a span
+    pub fn record_type_with_span(&mut self, span: Span, ty: Type) -> usize {
         let node_id = self.node_counter;
         self.node_counter += 1;
         self.type_map.insert(node_id, ty);
-        self.position_map.insert((line, col), node_id);
+        self.position_map.insert((span.line, span.col), node_id);
+        self.node_spans.insert(node_id, span);
 
         if let Some(&scope_id) = self.scope_stack.last() {
             self.node_to_scope.insert(node_id, scope_id);
         }
 
         node_id
+    }
+
+    /// Override the recorded span for a node without altering its primary position
+    pub fn override_span(&mut self, node_id: usize, span: Span) {
+        self.node_spans.insert(node_id, span);
+    }
+
+    /// Mark a node to suppress unsafe Any diagnostics
+    pub fn mark_safe_any_node(&mut self, node_id: usize) {
+        self.safe_any_nodes.insert(node_id);
+    }
+
+    fn line_text(&self, line: usize) -> Option<&str> {
+        let source = self.source?;
+        let idx = line.checked_sub(1)?;
+        source.lines().nth(idx)
+    }
+
+    fn column_to_byte(line_text: &str, column: usize) -> usize {
+        if column <= 1 {
+            return 0;
+        }
+        let mut chars_seen = 1;
+        for (byte_idx, _) in line_text.char_indices() {
+            if chars_seen == column {
+                return byte_idx;
+            }
+            chars_seen += 1;
+        }
+        line_text.len()
+    }
+
+    fn byte_to_column(line_text: &str, byte_idx: usize) -> usize {
+        line_text[..byte_idx].chars().count() + 1
+    }
+
+    /// Calculate a span that tightly wraps the identifier for definitions
+    pub fn span_for_identifier(&self, line: usize, column_hint: usize, name: &str) -> Span {
+        let name_width = name.chars().count().max(1);
+        let fallback_end = column_hint + name_width;
+
+        if let Some(line_text) = self.line_text(line) {
+            let search_start = Self::column_to_byte(line_text, column_hint);
+            if search_start <= line_text.len() {
+                if let Some(rel_idx) = line_text[search_start..].find(name) {
+                    let byte_idx = search_start + rel_idx;
+                    let start_col = Self::byte_to_column(line_text, byte_idx);
+                    let end_col = start_col + name_width;
+                    return Span::with_end(line, start_col, line, end_col);
+                }
+            }
+        }
+
+        Span::with_end(line, column_hint, line, fallback_end)
+    }
+
+    fn normalized_span(line: usize, col: usize, end_line: usize, end_col: usize) -> Span {
+        let normalized_end_line = end_line.max(line);
+        let mut normalized_end_col = end_col;
+        if normalized_end_line == line && normalized_end_col <= col {
+            normalized_end_col = col + 1;
+        }
+        Span::with_end(line, col, normalized_end_line, normalized_end_col)
     }
 
     /// Push a scope onto the scope stack when entering a new scope (module, function, class, block)
@@ -514,6 +595,8 @@ impl<'a> Default for ConstraintGenContext<'a> {
             node_counter: 0,
             type_map: FxHashMap::default(),
             position_map: FxHashMap::default(),
+            node_spans: FxHashMap::default(),
+            safe_any_nodes: FxHashSet::default(),
             class_registry: ClassRegistry::new(),
             control_flow: ControlFlowContext::new(),
             loaded_stub_modules: FxHashSet::default(),

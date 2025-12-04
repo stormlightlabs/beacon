@@ -8,6 +8,7 @@ use crate::features::completion::algorithms::{FuzzyMatcher, StringSimilarity};
 use crate::parser::{self, ParseError};
 use crate::workspace::Workspace;
 
+use beacon_constraint::Span;
 use beacon_core::BeaconError;
 use beacon_core::TypeError;
 use beacon_core::{Type, TypeCtor};
@@ -37,6 +38,13 @@ struct DiagnosticContext<'a> {
     mode: config::TypeCheckingMode,
     diagnostics: &'a mut Vec<Diagnostic>,
     in_class_def: bool,
+    source_lines: Vec<String>,
+}
+
+impl<'a> DiagnosticContext<'a> {
+    fn range_for_name(&self, line: usize, col_hint: usize, name: &str) -> Range {
+        DiagnosticProvider::identifier_range(line, col_hint, name, &self.source_lines)
+    }
 }
 
 pub struct DiagnosticProvider {
@@ -46,6 +54,46 @@ pub struct DiagnosticProvider {
 }
 
 impl DiagnosticProvider {
+    fn identifier_range(line: usize, col_hint: usize, name: &str, lines: &[String]) -> Range {
+        fn column_to_byte(line_text: &str, column: usize) -> usize {
+            if column <= 1 {
+                return 0;
+            }
+            let mut chars_seen = 1;
+            for (idx, _) in line_text.char_indices() {
+                if chars_seen == column {
+                    return idx;
+                }
+                chars_seen += 1;
+            }
+            line_text.len()
+        }
+
+        fn byte_to_column(line_text: &str, byte_idx: usize) -> usize {
+            line_text[..byte_idx].chars().count() + 1
+        }
+
+        let fallback_start =
+            Position { line: line.saturating_sub(1) as u32, character: col_hint.saturating_sub(1) as u32 };
+        let fallback_end =
+            Position { line: fallback_start.line, character: fallback_start.character + name.chars().count() as u32 };
+
+        if let Some(line_text) = line.checked_sub(1).and_then(|idx| lines.get(idx)).map(|s| s.as_str()) {
+            let search_start = column_to_byte(line_text, col_hint);
+            if search_start <= line_text.len() {
+                if let Some(rel_idx) = line_text[search_start..].find(name) {
+                    let byte_idx = search_start + rel_idx;
+                    let start_col = byte_to_column(line_text, byte_idx);
+                    let end_col = start_col + name.chars().count();
+                    let start = Position { line: (line - 1) as u32, character: (start_col - 1) as u32 };
+                    let end = Position { line: start.line, character: (end_col - 1) as u32 };
+                    return Range { start, end };
+                }
+            }
+        }
+
+        Range { start: fallback_start, end: fallback_end }
+    }
     pub fn new(documents: DocumentManager, workspace: Arc<RwLock<Workspace>>) -> Self {
         Self { documents, workspace, fuzzy_matcher: FuzzyMatcher::new() }
     }
@@ -56,6 +104,21 @@ impl DiagnosticProvider {
             config::DiagnosticSeverity::Error => lsp_types::DiagnosticSeverity::ERROR,
             config::DiagnosticSeverity::Warning => lsp_types::DiagnosticSeverity::WARNING,
             config::DiagnosticSeverity::Info => lsp_types::DiagnosticSeverity::INFORMATION,
+        }
+    }
+
+    /// Convert a constraint span to an LSP range, ensuring at least one highlighted character
+    fn span_to_range(span: &Span) -> Range {
+        let start_line = span.line.saturating_sub(1) as u32;
+        let start_col = span.col.saturating_sub(1) as u32;
+        let end_line = span.end_line.unwrap_or(span.line);
+        let mut end_col = span.end_col.unwrap_or_else(|| span.col + 1);
+        if end_line == span.line && end_col <= span.col {
+            end_col = span.col + 1;
+        }
+        Range {
+            start: Position::new(start_line, start_col),
+            end: Position::new(end_line.saturating_sub(1) as u32, end_col.saturating_sub(1) as u32),
         }
     }
 
@@ -298,32 +361,35 @@ impl DiagnosticProvider {
         };
 
         for (node_id, ty) in &result.type_map {
+            if result.safe_any_nodes.contains(node_id) {
+                continue;
+            }
             if Self::contains_any_type(ty, 0) {
-                if let Some((line, col)) = result
+                let range = if let Some(span) = result.node_spans.get(node_id) {
+                    Self::span_to_range(span)
+                } else if let Some((line, col)) = result
                     .position_map
                     .iter()
                     .find_map(|((l, c), id)| (*id == *node_id).then_some((*l, *c)))
                 {
-                    let position =
+                    let start =
                         Position { line: (line.saturating_sub(1)) as u32, character: (col.saturating_sub(1)) as u32 };
+                    Range { start, end: Position { line: start.line, character: start.character + 10 } }
+                } else {
+                    continue;
+                };
 
-                    let range = Range {
-                        start: position,
-                        end: Position { line: position.line, character: position.character + 10 },
-                    };
-
-                    diagnostics.push(Diagnostic {
-                        range,
-                        severity: Some(DiagnosticSeverity::WARNING),
-                        code: Some(lsp_types::NumberOrString::String("ANY001".to_string())),
-                        source: Some("beacon".to_string()),
-                        message: "Type 'Any' detected - this reduces type safety".to_string(),
-                        related_information: None,
-                        tags: None,
-                        data: None,
-                        code_description: None,
-                    });
-                }
+                diagnostics.push(Diagnostic {
+                    range,
+                    severity: Some(DiagnosticSeverity::WARNING),
+                    code: Some(lsp_types::NumberOrString::String("ANY001".to_string())),
+                    source: Some("beacon".to_string()),
+                    message: "Type 'Any' detected - this reduces type safety".to_string(),
+                    related_information: None,
+                    tags: None,
+                    data: None,
+                    code_description: None,
+                });
             }
         }
     }
@@ -360,12 +426,14 @@ impl DiagnosticProvider {
 
         self.documents.get_document(uri, |doc| {
             if let Some(ast) = doc.ast() {
+                let source_lines = doc.text().lines().map(|s| s.to_string()).collect();
                 let mut ctx = DiagnosticContext {
                     type_map: &result.type_map,
                     position_map: &result.position_map,
                     mode,
                     diagnostics,
                     in_class_def: false,
+                    source_lines,
                 };
                 self.check_annotation_coverage(ast, &mut ctx);
             }
@@ -381,7 +449,10 @@ impl DiagnosticProvider {
                 }
             }
             AstNode::FunctionDef { args, return_type, body, line, col, end_col, name, .. } => {
-                for param in args {
+                for (idx, param) in args.iter().enumerate() {
+                    if idx == 0 && ctx.in_class_def && (param.name == "self" || param.name == "cls") {
+                        continue;
+                    }
                     self.check_parameter_annotation(param, ctx);
                 }
 
@@ -407,8 +478,10 @@ impl DiagnosticProvider {
                     self.check_annotation_match(type_annotation, &inferred_type, *line, *col, target, ctx);
                 }
             }
-            AstNode::Assignment { target, line, col, .. } => {
-                if ctx.in_class_def && ctx.mode == config::TypeCheckingMode::Strict {
+            AstNode::Assignment { target, value, line, col, .. } => {
+                if Self::is_typevar_assignment(value) {
+                    // Skip annotation requirements for TypeVar declarations
+                } else if ctx.in_class_def && ctx.mode == config::TypeCheckingMode::Strict {
                     self.check_class_attribute_annotation(target, *line, *col, ctx);
                 } else if ctx.mode != config::TypeCheckingMode::Relaxed {
                     if let Some(inferred_type) =
@@ -498,14 +571,8 @@ impl DiagnosticProvider {
             let severity = Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::AnnotationMismatch);
 
             if let Some(sev) = severity {
-                let position =
-                    Position { line: (line.saturating_sub(1)) as u32, character: (col.saturating_sub(1)) as u32 };
-
                 let target_name = Self::extract_target_name(target);
-                let range = Range {
-                    start: position,
-                    end: Position { line: position.line, character: position.character + target_name.len() as u32 },
-                };
+                let range = ctx.range_for_name(line, col, &target_name);
 
                 ctx.diagnostics.push(Diagnostic {
                     range,
@@ -535,14 +602,8 @@ impl DiagnosticProvider {
         let severity = Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::MissingAnnotation);
 
         if let Some(sev) = severity {
-            let position =
-                Position { line: (line.saturating_sub(1)) as u32, character: (col.saturating_sub(1)) as u32 };
-
             let target_name = Self::extract_target_name(target);
-            let range = Range {
-                start: position,
-                end: Position { line: position.line, character: position.character + target_name.len() as u32 },
-            };
+            let range = ctx.range_for_name(line, col, &target_name);
 
             ctx.diagnostics.push(Diagnostic {
                 range,
@@ -561,13 +622,8 @@ impl DiagnosticProvider {
     /// Check for missing annotations on class attributes in strict mode
     /// In strict mode, all class attributes must have explicit type annotations
     fn check_class_attribute_annotation(&self, target: &AstNode, line: usize, col: usize, ctx: &mut DiagnosticContext) {
-        let position = Position { line: (line.saturating_sub(1)) as u32, character: (col.saturating_sub(1)) as u32 };
-
         let target_name = Self::extract_target_name(target);
-        let range = Range {
-            start: position,
-            end: Position { line: position.line, character: position.character + target_name.len() as u32 },
-        };
+        let range = ctx.range_for_name(line, col, &target_name);
 
         ctx.diagnostics.push(Diagnostic {
             range,
@@ -590,6 +646,15 @@ impl DiagnosticProvider {
             AstNode::Identifier { name, .. } => name.clone(),
             AstNode::Attribute { attribute, .. } => attribute.clone(),
             _ => "variable".to_string(),
+        }
+    }
+
+    fn is_typevar_assignment(value: &AstNode) -> bool {
+        if let AstNode::Call { function, .. } = value {
+            let func_name = function.function_to_string();
+            func_name == "TypeVar" || func_name.ends_with(".TypeVar")
+        } else {
+            false
         }
     }
 
@@ -889,13 +954,7 @@ impl DiagnosticProvider {
             }
             None => {
                 if ctx.mode == config::TypeCheckingMode::Strict {
-                    let position =
-                        Position { line: (line.saturating_sub(1)) as u32, character: (col.saturating_sub(1)) as u32 };
-
-                    let range = Range {
-                        start: position,
-                        end: Position { line: position.line, character: position.character + name.len() as u32 },
-                    };
+                    let range = ctx.range_for_name(line, col, name);
 
                     ctx.diagnostics.push(Diagnostic {
                         range,
@@ -924,18 +983,7 @@ impl DiagnosticProvider {
                                 Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::ImplicitAny);
 
                             if let Some(sev) = severity {
-                                let position = Position {
-                                    line: (line.saturating_sub(1)) as u32,
-                                    character: (col.saturating_sub(1)) as u32,
-                                };
-
-                                let range = Range {
-                                    start: position,
-                                    end: Position {
-                                        line: position.line,
-                                        character: position.character + name.len() as u32,
-                                    },
-                                };
+                                let range = ctx.range_for_name(line, col, name);
 
                                 ctx.diagnostics.push(Diagnostic {
                                     range,
@@ -960,18 +1008,7 @@ impl DiagnosticProvider {
                                 Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::MissingAnnotation);
 
                             if let Some(sev) = severity {
-                                let position = Position {
-                                    line: (line.saturating_sub(1)) as u32,
-                                    character: (col.saturating_sub(1)) as u32,
-                                };
-
-                                let range = Range {
-                                    start: position,
-                                    end: Position {
-                                        line: position.line,
-                                        character: position.character + name.len() as u32,
-                                    },
-                                };
+                                let range = ctx.range_for_name(line, col, name);
 
                                 ctx.diagnostics.push(Diagnostic {
                                     range,
@@ -993,18 +1030,7 @@ impl DiagnosticProvider {
                                 Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::ImplicitAny);
 
                             if let Some(sev) = severity {
-                                let position = Position {
-                                    line: (line.saturating_sub(1)) as u32,
-                                    character: (col.saturating_sub(1)) as u32,
-                                };
-
-                                let range = Range {
-                                    start: position,
-                                    end: Position {
-                                        line: position.line,
-                                        character: position.character + name.len() as u32,
-                                    },
-                                };
+                                let range = ctx.range_for_name(line, col, name);
 
                                 ctx.diagnostics.push(Diagnostic {
                                     range,
@@ -1077,12 +1103,32 @@ impl DiagnosticProvider {
         match node {
             AstNode::If { test, body, line, col, .. } => {
                 if Self::is_name_main_check(test) {
-                    let position = Position { line: (*line - 1) as u32, character: (*col - 1) as u32 };
+                    let range = if let AstNode::Compare {
+                        line: cmp_line,
+                        col: cmp_col,
+                        end_line: cmp_end_line,
+                        end_col: cmp_end_col,
+                        ..
+                    } = test.as_ref()
+                    {
+                        Range {
+                            start: Position {
+                                line: (cmp_line.saturating_sub(1)) as u32,
+                                character: (cmp_col.saturating_sub(1)) as u32,
+                            },
+                            end: Position {
+                                line: (cmp_end_line.saturating_sub(1)) as u32,
+                                character: (cmp_end_col.saturating_sub(1)) as u32,
+                            },
+                        }
+                    } else {
+                        Range {
+                            start: Position { line: (*line - 1) as u32, character: (*col - 1) as u32 },
+                            end: Position { line: (*line - 1) as u32, character: (*col - 1) as u32 + 10 },
+                        }
+                    };
                     diagnostics.push(Diagnostic {
-                        range: Range {
-                            start: position,
-                            end: Position { line: position.line, character: position.character + 10 },
-                        },
+                        range,
                         severity: Some(DiagnosticSeverity::HINT),
                         code: Some(lsp_types::NumberOrString::String("DUNDER_INFO".to_string())),
                         source: Some("beacon".to_string()),
@@ -1984,18 +2030,17 @@ fn enhance_protocol_error_message(ty: &str, protocol: &str) -> String {
 fn enhance_attribute_error_message(ty: &str, attr: &str) -> String {
     let base = format!("Attribute '{attr}' not found on type {ty}");
 
-    if attr == "splitlines" && ty.contains("int") {
-        format!("{base}. Did you mean to use a string? splitlines() is a string method.")
-    } else if attr == "write_text" && !ty.contains("Path") {
-        format!("{base}. Did you mean to use a Path object from pathlib?")
-    } else if attr == "get" && !ty.contains("dict") {
-        format!("{base}. The get() method is available on dictionaries, not {ty}.")
-    } else if (attr == "append" || attr == "extend") && !ty.contains("list") {
-        format!("{base}. The {attr}() method is available on lists, not {ty}.")
-    } else if attr == "load" {
-        format!("{base}. Ensure the object has been properly initialized with the expected type.")
-    } else {
-        format!("{base}. Check that the type is correct or that you've imported the necessary modules.")
+    match attr {
+        "splitlines" if ty.contains("int") => {
+            format!("{base}. Did you mean to use a string? splitlines() is a string method.")
+        }
+        "write_text" if !ty.contains("Path") => format!("{base}. Did you mean to use a Path object from pathlib?"),
+        "get" if !ty.contains("dict") => format!("{base}. The get() method is available on dictionaries, not {ty}."),
+        "append" | "extend" if !ty.contains("list") => {
+            format!("{base}. The {attr}() method is available on lists, not {ty}.")
+        }
+        "load" => format!("{base}. Ensure the object has been properly initialized with the expected type."),
+        _ => format!("{base}. Check that the type is correct or that you've imported the necessary modules."),
     }
 }
 

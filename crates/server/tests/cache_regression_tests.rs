@@ -8,7 +8,7 @@ use beacon_lsp::cache::{
     ScopeCacheKey, TypeCache,
 };
 use beacon_lsp::introspection::IntrospectionResult;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tempfile::tempdir;
 use url::Url;
 
@@ -282,6 +282,8 @@ fn test_analysis_cache_multiple_versions_same_document() {
     let result1 = CachedAnalysisResult {
         type_map: type_map1.clone(),
         position_map: FxHashMap::default(),
+        node_spans: FxHashMap::default(),
+        safe_any_nodes: FxHashSet::default(),
         type_errors: vec![],
         static_analysis: None,
     };
@@ -289,6 +291,8 @@ fn test_analysis_cache_multiple_versions_same_document() {
     let result2 = CachedAnalysisResult {
         type_map: type_map2.clone(),
         position_map: FxHashMap::default(),
+        node_spans: FxHashMap::default(),
+        safe_any_nodes: FxHashSet::default(),
         type_errors: vec![],
         static_analysis: None,
     };
@@ -311,6 +315,8 @@ fn test_analysis_cache_invalidation_removes_all_versions() {
     let result = CachedAnalysisResult {
         type_map: FxHashMap::default(),
         position_map: FxHashMap::default(),
+        node_spans: FxHashMap::default(),
+        safe_any_nodes: FxHashSet::default(),
         type_errors: vec![],
         static_analysis: None,
     };
@@ -340,6 +346,8 @@ fn test_cache_manager_coordinated_invalidation() {
     let result = CachedAnalysisResult {
         type_map: FxHashMap::default(),
         position_map: FxHashMap::default(),
+        node_spans: FxHashMap::default(),
+        safe_any_nodes: FxHashSet::default(),
         type_errors: vec![],
         static_analysis: None,
     };
@@ -399,6 +407,8 @@ fn test_cache_manager_clear_all() {
     let result = CachedAnalysisResult {
         type_map: FxHashMap::default(),
         position_map: FxHashMap::default(),
+        node_spans: FxHashMap::default(),
+        safe_any_nodes: FxHashSet::default(),
         type_errors: vec![],
         static_analysis: None,
     };
@@ -431,6 +441,8 @@ fn test_lru_eviction_preserves_most_recent() {
     let result = CachedAnalysisResult {
         type_map: FxHashMap::default(),
         position_map: FxHashMap::default(),
+        node_spans: FxHashMap::default(),
+        safe_any_nodes: FxHashSet::default(),
         type_errors: vec![],
         static_analysis: None,
     };
@@ -459,6 +471,8 @@ fn test_cache_stats_accuracy() {
     let result = CachedAnalysisResult {
         type_map: FxHashMap::default(),
         position_map: FxHashMap::default(),
+        node_spans: FxHashMap::default(),
+        safe_any_nodes: FxHashSet::default(),
         type_errors: vec![],
         static_analysis: None,
     };

@@ -12,6 +12,14 @@ use beacon_parser::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
+/// Source position with line and column information
+#[derive(Debug, Clone, Copy)]
+struct SourcePosition {
+    line: usize,
+    col: usize,
+    end_col: usize,
+}
+
 /// Tracks a global or nonlocal declaration
 #[derive(Debug, Clone)]
 struct GlobalOrNonlocalDecl {
@@ -131,6 +139,8 @@ pub struct Linter<'a> {
     source_lines: Vec<String>,
     /// Suppression map for filtering diagnostics
     suppression_map: SuppressionMap,
+    /// __all__ exports list for checking re-exported imports
+    all_exports: Option<Vec<String>>,
 }
 
 impl<'a> Linter<'a> {
@@ -145,11 +155,13 @@ impl<'a> Linter<'a> {
             filename,
             source_lines,
             suppression_map,
+            all_exports: None,
         }
     }
 
     /// Analyze the AST and return collected diagnostics
     pub fn analyze(&mut self, ast: &AstNode) -> Vec<DiagnosticMessage> {
+        self.all_exports = Self::extract_all_exports(ast);
         self.visit_node(ast);
         self.check_symbol_table_rules();
         let diagnostics = std::mem::take(&mut self.diagnostics);
@@ -204,10 +216,12 @@ impl<'a> Linter<'a> {
                 self.visit_while_loop(test, body, else_body);
             }
             AstNode::If { test, body, elif_parts, else_body, line, col, end_col, .. } => {
-                self.visit_if_statement(test, body, elif_parts, else_body, *line, *col, *end_col);
+                let pos = SourcePosition { line: *line, col: *col, end_col: *end_col };
+                self.visit_if_statement(test, body, elif_parts, else_body, pos);
             }
             AstNode::Try { body, handlers, else_body, finally_body, line, col, end_col, .. } => {
-                self.visit_try_statement(body, handlers, else_body, finally_body, *line, *col, *end_col);
+                let pos = SourcePosition { line: *line, col: *col, end_col: *end_col };
+                self.visit_try_statement(body, handlers, else_body, finally_body, pos);
             }
             AstNode::Raise { exc, line, col, end_col, .. } => self.visit_raise(exc.as_deref(), *line, *col, *end_col),
             AstNode::Compare { left, ops, comparators, line, col, end_col, .. } => {
@@ -409,9 +423,9 @@ impl<'a> Linter<'a> {
 
     fn visit_if_statement(
         &mut self, test: &AstNode, body: &[AstNode], elif_parts: &[(AstNode, Vec<AstNode>)],
-        else_body: &Option<Vec<AstNode>>, line: usize, col: usize, end_col: usize,
+        else_body: &Option<Vec<AstNode>>, pos: SourcePosition,
     ) {
-        self.check_if_tuple(test, line, col, end_col);
+        self.check_if_tuple(test, pos.line, pos.col, pos.end_col);
         self.visit_node(test);
         self.check_redundant_pass(body);
         self.visit_body(body);
@@ -430,9 +444,9 @@ impl<'a> Linter<'a> {
 
     fn visit_try_statement(
         &mut self, body: &[AstNode], handlers: &[ExceptHandler], else_body: &Option<Vec<AstNode>>,
-        finally_body: &Option<Vec<AstNode>>, line: usize, col: usize, end_col: usize,
+        finally_body: &Option<Vec<AstNode>>, pos: SourcePosition,
     ) {
-        self.check_default_except_not_last(handlers, line, col, end_col);
+        self.check_default_except_not_last(handlers, pos.line, pos.col, pos.end_col);
         self.check_redundant_pass(body);
         self.visit_body(body);
 
@@ -1057,6 +1071,40 @@ impl<'a> Linter<'a> {
         self.ctx.assigned_vars.contains(var_name)
     }
 
+    /// Extract __all__ exports list from the module AST
+    fn extract_all_exports(node: &AstNode) -> Option<Vec<String>> {
+        match node {
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    if let AstNode::Assignment { target, value, .. } = stmt {
+                        let target_name = target.target_to_string();
+                        if target_name == "__all__" {
+                            return Self::extract_list_literals(value);
+                        }
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract string literals from a list node
+    fn extract_list_literals(node: &AstNode) -> Option<Vec<String>> {
+        match node {
+            AstNode::List { elements, .. } | AstNode::Tuple { elements, .. } => {
+                let mut exports = Vec::new();
+                for elem in elements {
+                    if let AstNode::Literal { value: LiteralValue::String { value, .. }, .. } = elem {
+                        exports.push(value.clone());
+                    }
+                }
+                Some(exports)
+            }
+            _ => None,
+        }
+    }
+
     /// Check rules that require symbol table analysis
     ///
     /// Called after AST traversal to check for issues detected via symbol usage patterns
@@ -1069,6 +1117,11 @@ impl<'a> Linter<'a> {
     /// BEA015: UnusedImport
     ///
     /// Check for imports that are never read
+    ///
+    /// This checks if an import is:
+    /// 1. Never referenced locally (no Read references)
+    /// 2. Not re-exported via __all__
+    /// 3. Not a future import or private name
     fn check_unused_imports(&mut self) {
         const FUTURE_IMPORTS: &[&str] = &["annotations", "barry_as_FLUFL"];
 
@@ -1089,6 +1142,12 @@ impl<'a> Linter<'a> {
                 let has_read = symbol.references.iter().any(|r| r.kind == ReferenceKind::Read);
 
                 if !has_read {
+                    if let Some(ref all_exports) = self.all_exports {
+                        if all_exports.contains(&symbol.name) {
+                            continue;
+                        }
+                    }
+
                     self.report(
                         RuleKind::UnusedImport,
                         format!("'{}' imported but never used", symbol.name),
@@ -2255,6 +2314,129 @@ except:
                 .iter()
                 .any(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError),
             "Whitespace in annotations should be handled correctly"
+        );
+    }
+
+    #[test]
+    fn test_unused_import_with_all_export() {
+        let source = r#"
+import os
+import sys
+
+__all__ = ["os"]
+
+x = 5
+"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::UnusedImport && d.message.contains("os")),
+            "os should not be flagged as unused because it's in __all__"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::UnusedImport && d.message.contains("sys")),
+            "sys should be flagged as unused because it's not in __all__ and not used"
+        );
+    }
+
+    #[test]
+    fn test_unused_import_with_empty_all() {
+        let source = r#"
+import os
+
+__all__ = []
+
+x = 5
+"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::UnusedImport && d.message.contains("os")),
+            "os should be flagged as unused because __all__ is empty"
+        );
+    }
+
+    #[test]
+    fn test_unused_import_without_all() {
+        let source = r#"
+import os
+
+x = 5
+"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::UnusedImport && d.message.contains("os")),
+            "os should be flagged as unused because it's not used and there's no __all__"
+        );
+    }
+
+    #[test]
+    fn test_multiple_imports_with_all_export() {
+        let source = r#"
+import os
+import sys
+import json
+from typing import List
+
+__all__ = ["os", "List"]
+
+x = sys.platform
+"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::UnusedImport && d.message.contains("os")),
+            "os should not be flagged as unused (in __all__)"
+        );
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::UnusedImport && d.message.contains("List")),
+            "List should not be flagged as unused (in __all__)"
+        );
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::UnusedImport && d.message.contains("sys")),
+            "sys should not be flagged as unused (used locally)"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::UnusedImport && d.message.contains("json")),
+            "json should be flagged as unused (not in __all__ and not used)"
+        );
+    }
+
+    #[test]
+    fn test_all_export_with_tuple() {
+        let source = r#"
+import os
+import sys
+
+__all__ = ("os",)
+
+x = 5
+"#;
+        let diagnostics = lint_source(source);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::UnusedImport && d.message.contains("os")),
+            "os should not be flagged as unused (in __all__ tuple)"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.rule == RuleKind::UnusedImport && d.message.contains("sys")),
+            "sys should be flagged as unused"
         );
     }
 }

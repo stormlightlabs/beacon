@@ -425,3 +425,77 @@ fn test_mixed_import_operations() {
     assert_eq!(tracker.get_symbol_importers(&base_module, "NewClass").len(), 1);
     assert_eq!(tracker.get_symbol_importers(&util_module, "calculate").len(), 1);
 }
+
+#[test]
+fn test_star_import_expansion_with_all() {
+    let mut tracker = ImportDependencyTracker::new();
+    let module = file_uri("src/utils.py");
+    let importer = file_uri("src/app.py");
+
+    tracker.add_import(&module, "func1", &importer);
+    tracker.add_import(&module, "Class1", &importer);
+
+    assert_eq!(tracker.get_symbol_importers(&module, "func1").len(), 1);
+    assert_eq!(tracker.get_symbol_importers(&module, "Class1").len(), 1);
+    assert_eq!(tracker.get_symbol_importers(&module, "_private").len(), 0);
+}
+
+#[test]
+fn test_star_import_expansion_without_all() {
+    let mut tracker = ImportDependencyTracker::new();
+    let module = file_uri("src/helpers.py");
+    let importer = file_uri("src/main.py");
+
+    tracker.add_import(&module, "public_func", &importer);
+    tracker.add_import(&module, "PublicClass", &importer);
+    tracker.add_import(&module, "PUBLIC_VAR", &importer);
+
+    assert_eq!(tracker.get_symbol_importers(&module, "public_func").len(), 1);
+    assert_eq!(tracker.get_symbol_importers(&module, "PublicClass").len(), 1);
+    assert_eq!(tracker.get_symbol_importers(&module, "PUBLIC_VAR").len(), 1);
+    assert_eq!(tracker.get_symbol_importers(&module, "_private_func").len(), 0);
+}
+
+#[test]
+fn test_multiple_files_star_import_same_module() {
+    let mut tracker = ImportDependencyTracker::new();
+    let module = file_uri("src/constants.py");
+    let importer1 = file_uri("src/app.py");
+    let importer2 = file_uri("src/tests.py");
+    let importer3 = file_uri("src/cli.py");
+
+    for symbol in ["MAX_SIZE", "DEFAULT_TIMEOUT", "VERSION"] {
+        tracker.add_import(&module, symbol, &importer1);
+        tracker.add_import(&module, symbol, &importer2);
+        tracker.add_import(&module, symbol, &importer3);
+    }
+
+    assert_eq!(tracker.get_symbol_importers(&module, "MAX_SIZE").len(), 3);
+    assert_eq!(tracker.get_symbol_importers(&module, "DEFAULT_TIMEOUT").len(), 3);
+    assert_eq!(tracker.get_symbol_importers(&module, "VERSION").len(), 3);
+}
+
+#[test]
+fn test_star_import_invalidation() {
+    let mut tracker = ImportDependencyTracker::new();
+    let module = file_uri("src/utils.py");
+    let importer = file_uri("src/app.py");
+
+    tracker.add_import(&module, "func1", &importer);
+    tracker.add_import(&module, "func2", &importer);
+
+    assert_eq!(tracker.get_symbol_importers(&module, "func1").len(), 1);
+    assert_eq!(tracker.get_symbol_importers(&module, "func2").len(), 1);
+
+    tracker.clear_imports_from(&importer);
+
+    assert_eq!(tracker.get_symbol_importers(&module, "func1").len(), 0);
+    assert_eq!(tracker.get_symbol_importers(&module, "func2").len(), 0);
+
+    tracker.add_import(&module, "func1", &importer);
+    tracker.add_import(&module, "func3", &importer);
+
+    assert_eq!(tracker.get_symbol_importers(&module, "func1").len(), 1);
+    assert_eq!(tracker.get_symbol_importers(&module, "func2").len(), 0);
+    assert_eq!(tracker.get_symbol_importers(&module, "func3").len(), 1);
+}
