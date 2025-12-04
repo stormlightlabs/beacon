@@ -1183,9 +1183,9 @@ mod tests {
             .iter()
             .filter(|c| matches!(c, Constraint::Equal(_, _, _)))
             .count();
-        assert!(
-            equal_constraints >= 3,
-            "Should have equality constraints for unifying element types"
+        assert_eq!(
+            equal_constraints, 0,
+            "Literal lists should not require explicit equality constraints for element types"
         );
     }
 
@@ -1254,9 +1254,9 @@ mod tests {
             .iter()
             .filter(|c| matches!(c, Constraint::Equal(_, _, _)))
             .count();
-        assert!(
-            equal_constraints >= 4,
-            "Should have equality constraints for unifying key and value types"
+        assert_eq!(
+            equal_constraints, 0,
+            "Literal dicts should not require explicit equality constraints for keys/values"
         );
     }
 
@@ -1292,10 +1292,149 @@ mod tests {
             .iter()
             .filter(|c| matches!(c, Constraint::Equal(_, _, _)))
             .count();
-        assert!(
-            equal_constraints >= 3,
-            "Should have equality constraints for unifying element types"
+        assert_eq!(
+            equal_constraints, 0,
+            "Literal sets should not require explicit equality constraints for element types"
         );
+    }
+
+    #[test]
+    fn test_list_literal_mixed_types_creates_union() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let list_node = AstNode::List {
+            elements: vec![
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 6, end_line: 1, end_col: 6 },
+                AstNode::Literal { value: LiteralValue::Boolean(true), line: 1, col: 9, end_line: 1, end_col: 9 },
+            ],
+            line: 1,
+            col: 5,
+            end_line: 1,
+            end_col: 5,
+        };
+        let list_ty = visit_node_with_env(&list_node, &mut env, &mut ctx, None).unwrap();
+
+        match &list_ty {
+            Type::App(list_ctor, elem_ty) => {
+                assert!(
+                    matches!(**list_ctor, Type::Con(TypeCtor::List)),
+                    "Expected list constructor, got {list_ctor:?}"
+                );
+                match elem_ty.as_ref() {
+                    Type::Union(types) => {
+                        assert_eq!(types.len(), 2, "Expected int | bool union for element type");
+                        assert!(types.iter().any(|ty| matches!(ty, Type::Con(TypeCtor::Int))));
+                        assert!(types.iter().any(|ty| matches!(ty, Type::Con(TypeCtor::Bool))));
+                    }
+                    other => panic!("Expected union element type, got {other:?}"),
+                }
+            }
+            other => panic!("Expected list type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_dict_literal_mixed_value_types_creates_union() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let dict_node = AstNode::Dict {
+            keys: vec![
+                AstNode::Literal {
+                    value: LiteralValue::String { value: "a".to_string(), prefix: "".to_string() },
+                    line: 1,
+                    col: 6,
+                    end_line: 1,
+                    end_col: 6,
+                },
+                AstNode::Literal {
+                    value: LiteralValue::String { value: "b".to_string(), prefix: "".to_string() },
+                    line: 1,
+                    col: 15,
+                    end_line: 1,
+                    end_col: 15,
+                },
+            ],
+            values: vec![
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 11, end_line: 1, end_col: 11 },
+                AstNode::Literal { value: LiteralValue::Boolean(true), line: 1, col: 20, end_line: 1, end_col: 20 },
+            ],
+            line: 1,
+            col: 5,
+            end_line: 1,
+            end_col: 5,
+        };
+        let dict_ty = visit_node_with_env(&dict_node, &mut env, &mut ctx, None).unwrap();
+
+        match dict_ty {
+            Type::App(dict_app, value_ty) => match dict_app.as_ref() {
+                Type::App(dict_ctor, _key_ty) => {
+                    assert!(
+                        matches!(dict_ctor.as_ref(), Type::Con(TypeCtor::Dict)),
+                        "Expected dict constructor, got {dict_ctor:?}"
+                    );
+                    match value_ty.as_ref() {
+                        Type::Union(types) => {
+                            assert_eq!(types.len(), 2, "Expected int | bool value union");
+                            assert!(types.iter().any(|ty| matches!(ty, Type::Con(TypeCtor::Int))));
+                            assert!(types.iter().any(|ty| matches!(ty, Type::Con(TypeCtor::Bool))));
+                        }
+                        other => panic!("Expected union value type, got {other:?}"),
+                    }
+                }
+                other => panic!("Expected nested dict constructor, got {other:?}"),
+            },
+            other => panic!("Expected dict type, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_set_literal_mixed_types_creates_union() {
+        let mut ctx = beacon_constraint::ConstraintGenContext::new();
+        let symbol_table = SymbolTable::new();
+        let mut env = super::super::type_env::TypeEnvironment::from_symbol_table(
+            &symbol_table,
+            &AstNode::Module { body: vec![], docstring: None },
+        );
+
+        let set_node = AstNode::Set {
+            elements: vec![
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 6, end_line: 1, end_col: 6 },
+                AstNode::Literal { value: LiteralValue::Boolean(true), line: 1, col: 9, end_line: 1, end_col: 9 },
+            ],
+            line: 1,
+            col: 5,
+            end_line: 1,
+            end_col: 5,
+        };
+        let set_ty = visit_node_with_env(&set_node, &mut env, &mut ctx, None).unwrap();
+
+        match &set_ty {
+            Type::App(set_ctor, elem_ty) => {
+                assert!(
+                    matches!(**set_ctor, Type::Con(TypeCtor::Set)),
+                    "Expected set constructor, got {set_ctor:?}"
+                );
+                match elem_ty.as_ref() {
+                    Type::Union(types) => {
+                        assert_eq!(types.len(), 2, "Expected int | bool union for set element type");
+                        assert!(types.iter().any(|ty| matches!(ty, Type::Con(TypeCtor::Int))));
+                        assert!(types.iter().any(|ty| matches!(ty, Type::Con(TypeCtor::Bool))));
+                    }
+                    other => panic!("Expected union element type, got {other:?}"),
+                }
+            }
+            other => panic!("Expected set type, got {other:?}"),
+        }
     }
 
     #[test]
