@@ -18,10 +18,10 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
 ### Enhanced Import/Export Analysis
 
-- [ ] Extend ImportDependencyTracker to track all symbol definitions (not just imports)
-- [ ] Build workspace symbol table with full module resolution
-- [ ] Inconsistent export detection (`__all__` mismatches)
-- [ ] Conflicting stub definitions across files
+- [x] Extend ImportDependencyTracker to track all symbol definitions (not just imports)
+- [x] Build workspace symbol table with full module resolution
+- [x] Inconsistent export detection (`__all__` mismatches)
+- [x] Conflicting stub definitions across files
 - [ ] Star import resolution (`from foo import *`)
 - [ ] Unused import detection across workspace
 

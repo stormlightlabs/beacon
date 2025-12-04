@@ -151,6 +151,22 @@ impl DiagnosticProvider {
             start.elapsed()
         );
 
+        let start = std::time::Instant::now();
+        self.add_inconsistent_export_diagnostics(uri, &mut diagnostics);
+        tracing::trace!(
+            "Inconsistent export diagnostics: {} ({:?})",
+            diagnostics.len(),
+            start.elapsed()
+        );
+
+        let start = std::time::Instant::now();
+        self.add_conflicting_stub_diagnostics(uri, &mut diagnostics);
+        tracing::trace!(
+            "Conflicting stub diagnostics: {} ({:?})",
+            diagnostics.len(),
+            start.elapsed()
+        );
+
         tracing::info!(
             "Generated {} total diagnostics for {} (mode: {})",
             diagnostics.len(),
@@ -1668,6 +1684,132 @@ impl DiagnosticProvider {
                 format!("Module '{module}' not found - did you mean '{suggestion}'?")
             } else {
                 format!("Module '{module}' not found")
+            }
+        }
+    }
+
+    /// Add inconsistent export diagnostics
+    ///
+    /// Reports symbols in __all__ that are not defined in the module
+    fn add_inconsistent_export_diagnostics(&self, uri: &Url, diagnostics: &mut Vec<Diagnostic>) {
+        let Ok(workspace) = self.workspace.try_read() else {
+            return;
+        };
+
+        let all_exports = match workspace.get_all_exports(uri) {
+            Some(exports) => exports,
+            None => return,
+        };
+
+        let module_symbols = workspace.get_module_symbols(uri);
+
+        self.documents.get_document(uri, |doc| {
+            if let Some(ast) = doc.ast() {
+                Self::find_all_assignment_location(ast, &all_exports, &module_symbols, diagnostics);
+            }
+        });
+    }
+
+    /// Find the __all__ assignment in the AST and report inconsistencies
+    fn find_all_assignment_location(
+        node: &AstNode, all_exports: &[String], module_symbols: &rustc_hash::FxHashSet<String>,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        match node {
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    Self::find_all_assignment_location(stmt, all_exports, module_symbols, diagnostics);
+                }
+            }
+            AstNode::Assignment { target, value, line, col, .. } => {
+                let target_name = target.target_to_string();
+                if target_name == "__all__" {
+                    if let AstNode::List { elements, .. } = value.as_ref() {
+                        for (idx, element) in elements.iter().enumerate() {
+                            if let AstNode::Literal {
+                                value: beacon_parser::LiteralValue::String { value: symbol_name, .. },
+                                ..
+                            } = element
+                            {
+                                if !module_symbols.contains(symbol_name) {
+                                    let position = Position {
+                                        line: (*line - 1) as u32,
+                                        character: (*col + idx * (symbol_name.len() + 4)) as u32,
+                                    };
+
+                                    let range = Range {
+                                        start: position,
+                                        end: Position {
+                                            line: position.line,
+                                            character: position.character + symbol_name.len() as u32 + 2,
+                                        },
+                                    };
+
+                                    diagnostics.push(Diagnostic {
+                                        range,
+                                        severity: Some(DiagnosticSeverity::WARNING),
+                                        code: Some(lsp_types::NumberOrString::String("BEA031".to_string())),
+                                        source: Some("beacon-linter".to_string()),
+                                        message: format!(
+                                            "Symbol '{}' is exported in __all__ but not defined in module",
+                                            symbol_name
+                                        ),
+                                        related_information: None,
+                                        tags: None,
+                                        data: None,
+                                        code_description: None,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Add conflicting stub definition diagnostics
+    ///
+    /// Reports cases where multiple stub files define the same symbol with different types
+    fn add_conflicting_stub_diagnostics(&self, uri: &Url, diagnostics: &mut Vec<Diagnostic>) {
+        let Ok(workspace) = self.workspace.try_read() else {
+            return;
+        };
+
+        let module_name = match workspace.uri_to_module_name(uri) {
+            Some(name) => name,
+            None => return,
+        };
+
+        let conflicts = workspace.get_conflicting_stub_definitions(&module_name);
+
+        if conflicts.is_empty() {
+            return;
+        }
+
+        for (symbol_name, type_definitions) in conflicts {
+            if type_definitions.len() > 1 {
+                let type_list: Vec<String> = type_definitions
+                    .iter()
+                    .map(|(ty, path)| format!("{} (from {})", ty, path.display()))
+                    .collect();
+
+                diagnostics.push(Diagnostic {
+                    range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 0, character: 1 } },
+                    severity: Some(DiagnosticSeverity::WARNING),
+                    code: Some(lsp_types::NumberOrString::String("BEA032".to_string())),
+                    source: Some("beacon-linter".to_string()),
+                    message: format!(
+                        "Symbol '{}' has conflicting type definitions across stub files: {}",
+                        symbol_name,
+                        type_list.join(", ")
+                    ),
+                    related_information: None,
+                    tags: None,
+                    data: None,
+                    code_description: None,
+                });
             }
         }
     }

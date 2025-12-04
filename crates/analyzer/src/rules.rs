@@ -66,6 +66,10 @@ pub enum RuleKind {
     RedundantPass,
     /// BEA030
     EmptyExcept,
+    /// BEA031
+    InconsistentExport,
+    /// BEA032
+    ConflictingStubDefinition,
     Unknown,
 }
 
@@ -103,6 +107,8 @@ impl RuleKind {
             RuleKind::UnreachableCode => "BEA028",
             RuleKind::RedundantPass => "BEA029",
             RuleKind::EmptyExcept => "BEA030",
+            RuleKind::InconsistentExport => "BEA031",
+            RuleKind::ConflictingStubDefinition => "BEA032",
             RuleKind::Unknown => "BEA000",
         }
     }
@@ -381,6 +387,20 @@ impl RuleEngine {
                 kind: RuleKind::EmptyExcept,
                 name: "EmptyExcept",
                 description: "except: with no handling code (silent failure)",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::InconsistentExport,
+                name: "InconsistentExport",
+                description: "__all__ exports symbol that is not defined in module",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::ConflictingStubDefinition,
+                name: "ConflictingStubDefinition",
+                description: "Conflicting type definitions for the same symbol across stub files",
                 default_severity: RuleSeverity::Warning,
                 enabled: true,
             },
