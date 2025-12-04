@@ -78,7 +78,7 @@ impl ImportStatement {
                 category: categorize_import(module),
                 module: module.clone(),
                 alias: None,
-                names: names.clone(),
+                names: names.iter().map(|n| n.name.clone()).collect(),
                 is_from_import: true,
                 line: *line,
             }],
@@ -519,7 +519,22 @@ mod tests {
     fn test_import_from_ast_from_import() {
         let node = AstNode::ImportFrom {
             module: "os".to_string(),
-            names: vec!["path".to_string(), "environ".to_string()],
+            names: vec![
+                beacon_parser::ImportName {
+                    name: "path".to_string(),
+                    line: 1,
+                    col: 0,
+                    end_line: 1,
+                    end_col: 4,
+                },
+                beacon_parser::ImportName {
+                    name: "environ".to_string(),
+                    line: 1,
+                    col: 6,
+                    end_line: 1,
+                    end_col: 13,
+                },
+            ],
             line: 1,
             col: 0,
             end_line: 1,
@@ -659,7 +674,13 @@ mod tests {
 
         sorter.add_import(&AstNode::ImportFrom {
             module: "sys".to_string(),
-            names: vec!["argv".to_string()],
+            names: vec![beacon_parser::ImportName {
+                name: "argv".to_string(),
+                line: 2,
+                col: 0,
+                end_line: 2,
+                end_col: 4,
+            }],
             line: 2,
             col: 0,
             end_line: 2,

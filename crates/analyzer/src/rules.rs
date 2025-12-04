@@ -140,6 +140,7 @@ pub struct DiagnosticMessage {
     pub filename: String,
     pub line: usize,
     pub col: usize,
+    pub end_col: usize,
 }
 
 /// Conversion to LSP diagnostic
@@ -147,8 +148,8 @@ impl From<&DiagnosticMessage> for Diagnostic {
     fn from(msg: &DiagnosticMessage) -> Self {
         Diagnostic {
             range: Range {
-                start: Position::new(msg.line.saturating_sub(1) as u32, msg.col as u32),
-                end: Position::new(msg.line.saturating_sub(1) as u32, msg.col as u32 + 1),
+                start: Position::new(msg.line.saturating_sub(1) as u32, msg.col.saturating_sub(1) as u32),
+                end: Position::new(msg.line.saturating_sub(1) as u32, msg.end_col.saturating_sub(1) as u32),
             },
             severity: Some(match msg.rule {
                 RuleKind::UndefinedName
@@ -429,6 +430,7 @@ mod tests {
             filename: "main.py".to_string(),
             line: 3,
             col: 5,
+            end_col: 7,
         }
     }
 
@@ -449,7 +451,7 @@ mod tests {
         assert_eq!(diagnostic.source.as_deref(), Some("beacon-linter"));
         assert_eq!(
             diagnostic.range,
-            Range { start: Position::new(2, 5), end: Position::new(2, 6) }
+            Range { start: Position::new(2, 4), end: Position::new(2, 6) }
         );
         assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::WARNING));
     }
@@ -472,6 +474,7 @@ mod tests {
             filename: "example.py".into(),
             line: 10,
             col: 2,
+            end_col: 5,
         };
         let diagnostic: lsp_types::Diagnostic = (&msg).into();
         assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::ERROR));

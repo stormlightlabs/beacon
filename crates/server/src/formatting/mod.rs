@@ -595,7 +595,13 @@ impl Formatter {
                     if import_stmt.is_from_import {
                         sorted_body.push(AstNode::ImportFrom {
                             module: import_stmt.module,
-                            names: import_stmt.names,
+                            names: import_stmt.names.into_iter().map(|name| beacon_parser::ImportName {
+                                name,
+                                line: import_stmt.line,
+                                col: 0,
+                                end_line: import_stmt.line,
+                                end_col: 0,
+                            }).collect(),
                             line: import_stmt.line,
                             col: 0,
                             end_line: import_stmt.line,

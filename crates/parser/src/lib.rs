@@ -37,6 +37,17 @@ pub struct Parameter {
     pub default_value: Option<Box<AstNode>>,
 }
 
+/// Imported name with position information
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportName {
+    pub name: String,
+    pub line: usize,
+    pub col: usize,
+    pub end_line: usize,
+    pub end_col: usize,
+}
+
 /// Basic AST node types for Python
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(tag = "type"))]
@@ -131,7 +142,7 @@ pub enum AstNode {
     /// Import from statement: from module import names
     ImportFrom {
         module: String,
-        names: Vec<String>,
+        names: Vec<ImportName>,
         line: usize,
         col: usize,
         end_line: usize,
@@ -1566,7 +1577,7 @@ impl PythonParser {
         }
     }
 
-    fn extract_import_from_info(&self, node: &Node, source: &str) -> Result<(String, Vec<String>)> {
+    fn extract_import_from_info(&self, node: &Node, source: &str) -> Result<(String, Vec<ImportName>)> {
         let module_node = node
             .child_by_field_name("module_name")
             .ok_or_else(|| ParseError::TreeSitterError("Missing module name in import from".to_string()))?;
@@ -1584,7 +1595,15 @@ impl PythonParser {
                     if child.id() != module_node.id() {
                         if let Ok(name) = child.utf8_text(source.as_bytes()) {
                             if name != "from" && name != "import" {
-                                names.push(name.to_string());
+                                let start_pos = child.start_position();
+                                let end_pos = child.end_position();
+                                names.push(ImportName {
+                                    name: name.to_string(),
+                                    line: start_pos.row + 1,
+                                    col: start_pos.column + 1,
+                                    end_line: end_pos.row + 1,
+                                    end_col: end_pos.column + 1,
+                                });
                             }
                         }
                     }
@@ -1592,7 +1611,15 @@ impl PythonParser {
                 "aliased_import" => {
                     if let Some(name_node) = child.child_by_field_name("name") {
                         if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
-                            names.push(name.to_string());
+                            let start_pos = name_node.start_position();
+                            let end_pos = name_node.end_position();
+                            names.push(ImportName {
+                                name: name.to_string(),
+                                line: start_pos.row + 1,
+                                col: start_pos.column + 1,
+                                end_line: end_pos.row + 1,
+                                end_col: end_pos.column + 1,
+                            });
                         }
                     }
                 }
@@ -1603,7 +1630,7 @@ impl PythonParser {
         Ok((module, names))
     }
 
-    fn extract_future_import_names(&self, node: &Node, source: &str) -> Vec<String> {
+    fn extract_future_import_names(&self, node: &Node, source: &str) -> Vec<ImportName> {
         let mut names = Vec::new();
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
@@ -1611,7 +1638,15 @@ impl PythonParser {
                 "dotted_name" | "identifier" => {
                     if let Ok(text) = child.utf8_text(source.as_bytes()) {
                         if text != "__future__" && text != "from" && text != "import" {
-                            names.push(text.to_string());
+                            let start_pos = child.start_position();
+                            let end_pos = child.end_position();
+                            names.push(ImportName {
+                                name: text.to_string(),
+                                line: start_pos.row + 1,
+                                col: start_pos.column + 1,
+                                end_line: end_pos.row + 1,
+                                end_col: end_pos.column + 1,
+                            });
                         }
                     }
                 }
@@ -3033,8 +3068,8 @@ class MyClass:
                 match &body[0] {
                     AstNode::ImportFrom { module, names, .. } => {
                         assert_eq!(module, "math");
-                        assert!(names.contains(&"sqrt".to_string()));
-                        assert!(names.contains(&"pi".to_string()));
+                        assert!(names.iter().any(|n| n.name == "sqrt"));
+                        assert!(names.iter().any(|n| n.name == "pi"));
                     }
                     _ => panic!("Expected ImportFrom node"),
                 }
@@ -3262,7 +3297,8 @@ def foo():
             AstNode::Module { body, .. } => match &body[0] {
                 AstNode::ImportFrom { module, names, .. } => {
                     assert_eq!(module, "__future__");
-                    assert_eq!(names, &["annotations".to_string()]);
+                    assert_eq!(names.len(), 1);
+                    assert_eq!(names[0].name, "annotations");
                 }
                 _ => panic!("Expected ImportFrom node"),
             },

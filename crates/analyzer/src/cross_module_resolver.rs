@@ -333,6 +333,7 @@ mod tests {
                 kind: SymbolKind::Function,
                 line: 10,
                 col: 5,
+                end_col: 11,
                 scope_id: scope_id_b,
                 docstring: None,
                 references: vec![],

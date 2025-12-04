@@ -370,8 +370,8 @@ impl<'a> DataFlowAnalyzer<'a> {
                 hoisted.insert(name.clone());
             }
             AstNode::ImportFrom { names, .. } => {
-                for name in names {
-                    hoisted.insert(name.clone());
+                for iname in names {
+                    hoisted.insert(iname.name.clone());
                 }
             }
             AstNode::If { body, elif_parts, else_body, .. } => {

@@ -6,7 +6,15 @@
       "name": "foo",
       "args": [],
       "body": [
-        { "type": "ImportFrom", "module": "bar", "names": ["baz"], "line": 2, "col": 5, "end_line": 2, "end_col": 24 },
+        {
+          "type": "ImportFrom",
+          "module": "bar",
+          "names": [{ "name": "baz", "line": 2, "col": 21, "end_line": 2, "end_col": 24 }],
+          "line": 2,
+          "col": 5,
+          "end_line": 2,
+          "end_col": 24
+        },
         {
           "type": "Assignment",
           "target": { "type": "Identifier", "name": "result", "line": 3, "col": 5, "end_line": 3, "end_col": 11 },

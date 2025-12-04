@@ -409,7 +409,7 @@ impl Workspace {
             }
             AstNode::ImportFrom { module, names, .. } => {
                 for name in names {
-                    symbol_imports.push(SymbolImport { from_module: module.clone(), symbol: name.clone() });
+                    symbol_imports.push(SymbolImport { from_module: module.clone(), symbol: name.name.clone() });
                 }
             }
             AstNode::FunctionDef { body, .. } => {
@@ -1573,7 +1573,7 @@ impl Workspace {
                         }
                         AstNode::ImportFrom { names, .. } => {
                             for name in names {
-                                symbols.insert(name.clone());
+                                symbols.insert(name.name.clone());
                             }
                         }
                         _ => {}
@@ -1944,9 +1944,9 @@ fn extract_stub_signatures(
         }
         AstNode::ImportFrom { module, names, .. } => {
             for name in names {
-                reexports.push(format!("{module}.{name}"));
+                reexports.push(format!("{module}.{}", name.name));
                 exports
-                    .entry(name.clone())
+                    .entry(name.name.clone())
                     .or_insert_with(|| Type::Con(TypeCtor::Module(module.clone())));
             }
         }

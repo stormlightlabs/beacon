@@ -562,6 +562,7 @@ fn test_call_resolver_direct_call() {
             kind: SymbolKind::Function,
             line: 1,
             col: 5,
+            end_col: 12,
             scope_id: func_scope,
             docstring: None,
             references: vec![],

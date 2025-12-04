@@ -832,23 +832,23 @@ pub fn visit_imports(
                             ctx.loaded_stub_modules.insert(module.clone());
                         }
                     }
-                    for name in names {
+                    for iname in names {
                         let ty = cache
                             .get(module)
-                            .and_then(|stub| stub.exports.get(name).cloned())
+                            .and_then(|stub| stub.exports.get(&iname.name).cloned())
                             .unwrap_or_else(|| Type::Var(env.fresh_var()));
-                        env.bind(name.clone(), TypeScheme::mono(ty));
+                        env.bind(iname.name.clone(), TypeScheme::mono(ty));
                     }
                 } else {
-                    for name in names {
+                    for iname in names {
                         let ty = Type::Var(env.fresh_var());
-                        env.bind(name.clone(), TypeScheme::mono(ty));
+                        env.bind(iname.name.clone(), TypeScheme::mono(ty));
                     }
                 }
             } else {
-                for name in names {
+                for iname in names {
                     let ty = Type::Var(env.fresh_var());
-                    env.bind(name.clone(), TypeScheme::mono(ty));
+                    env.bind(iname.name.clone(), TypeScheme::mono(ty));
                 }
             }
             let module_type = Type::Con(TypeCtor::Module(module.clone()));
