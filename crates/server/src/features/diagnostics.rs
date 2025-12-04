@@ -1984,18 +1984,17 @@ fn enhance_protocol_error_message(ty: &str, protocol: &str) -> String {
 fn enhance_attribute_error_message(ty: &str, attr: &str) -> String {
     let base = format!("Attribute '{attr}' not found on type {ty}");
 
-    if attr == "splitlines" && ty.contains("int") {
-        format!("{base}. Did you mean to use a string? splitlines() is a string method.")
-    } else if attr == "write_text" && !ty.contains("Path") {
-        format!("{base}. Did you mean to use a Path object from pathlib?")
-    } else if attr == "get" && !ty.contains("dict") {
-        format!("{base}. The get() method is available on dictionaries, not {ty}.")
-    } else if (attr == "append" || attr == "extend") && !ty.contains("list") {
-        format!("{base}. The {attr}() method is available on lists, not {ty}.")
-    } else if attr == "load" {
-        format!("{base}. Ensure the object has been properly initialized with the expected type.")
-    } else {
-        format!("{base}. Check that the type is correct or that you've imported the necessary modules.")
+    match attr {
+        "splitlines" if ty.contains("int") => {
+            format!("{base}. Did you mean to use a string? splitlines() is a string method.")
+        }
+        "write_text" if !ty.contains("Path") => format!("{base}. Did you mean to use a Path object from pathlib?"),
+        "get" if !ty.contains("dict") => format!("{base}. The get() method is available on dictionaries, not {ty}."),
+        "append" | "extend" if !ty.contains("list") => {
+            format!("{base}. The {attr}() method is available on lists, not {ty}.")
+        }
+        "load" => format!("{base}. Ensure the object has been properly initialized with the expected type."),
+        _ => format!("{base}. Check that the type is correct or that you've imported the necessary modules."),
     }
 }
 

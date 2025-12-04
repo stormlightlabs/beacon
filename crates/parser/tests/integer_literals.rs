@@ -41,7 +41,7 @@ fn test_hexadecimal_integers() {
         AstNode::Module { body, .. } => match &body[0] {
             AstNode::Assignment { value, .. } => match value.as_ref() {
                 AstNode::Literal { value: LiteralValue::Integer(4294967295), .. } => {}
-                v => panic!("Expected integer 4294967295, got {:?}", v),
+                v => panic!("Expected integer 4294967295, got {v:?}"),
             },
             _ => panic!("Expected assignment"),
         },
@@ -72,7 +72,7 @@ fn test_octal_integers() {
         AstNode::Module { body, .. } => match &body[0] {
             AstNode::Assignment { value, .. } => match value.as_ref() {
                 AstNode::Literal { value: LiteralValue::Integer(511), .. } => {}
-                v => panic!("Expected integer 511, got {:?}", v),
+                v => panic!("Expected integer 511, got {v:?}"),
             },
             _ => panic!("Expected assignment"),
         },
@@ -103,7 +103,7 @@ fn test_binary_integers() {
         AstNode::Module { body, .. } => match &body[0] {
             AstNode::Assignment { value, .. } => match value.as_ref() {
                 AstNode::Literal { value: LiteralValue::Integer(255), .. } => {}
-                v => panic!("Expected integer 255, got {:?}", v),
+                v => panic!("Expected integer 255, got {v:?}"),
             },
             _ => panic!("Expected assignment"),
         },
@@ -121,7 +121,7 @@ fn test_integers_with_underscores() {
         AstNode::Module { body, .. } => match &body[0] {
             AstNode::Assignment { value, .. } => match value.as_ref() {
                 AstNode::Literal { value: LiteralValue::Integer(123456789), .. } => {}
-                v => panic!("Expected integer 123456789, got {:?}", v),
+                v => panic!("Expected integer 123456789, got {v:?}"),
             },
             _ => panic!("Expected assignment"),
         },
@@ -134,7 +134,7 @@ fn test_integers_with_underscores() {
         AstNode::Module { body, .. } => match &body[0] {
             AstNode::Assignment { value, .. } => match value.as_ref() {
                 AstNode::Literal { value: LiteralValue::Integer(11256099), .. } => {}
-                v => panic!("Expected integer 11256099, got {:?}", v),
+                v => panic!("Expected integer 11256099, got {v:?}"),
             },
             _ => panic!("Expected assignment"),
         },
@@ -147,7 +147,7 @@ fn test_integers_with_underscores() {
         AstNode::Module { body, .. } => match &body[0] {
             AstNode::Assignment { value, .. } => match value.as_ref() {
                 AstNode::Literal { value: LiteralValue::Integer(2423), .. } => {}
-                v => panic!("Expected integer 2423, got {:?}", v),
+                v => panic!("Expected integer 2423, got {v:?}"),
             },
             _ => panic!("Expected assignment"),
         },
@@ -160,7 +160,7 @@ fn test_integers_with_underscores() {
         AstNode::Module { body, .. } => match &body[0] {
             AstNode::Assignment { value, .. } => match value.as_ref() {
                 AstNode::Literal { value: LiteralValue::Integer(13), .. } => {}
-                v => panic!("Expected integer 13, got {:?}", v),
+                v => panic!("Expected integer 13, got {v:?}"),
             },
             _ => panic!("Expected assignment"),
         },
@@ -178,7 +178,7 @@ fn test_large_integers() {
         AstNode::Module { body, .. } => match &body[0] {
             AstNode::Assignment { value, .. } => match value.as_ref() {
                 AstNode::Literal { value: LiteralValue::Integer(9223372036854775807), .. } => {}
-                v => panic!("Expected i64::MAX, got {:?}", v),
+                v => panic!("Expected i64::MAX, got {v:?}"),
             },
             _ => panic!("Expected assignment"),
         },
@@ -191,7 +191,7 @@ fn test_large_integers() {
         AstNode::Module { body, .. } => match &body[0] {
             AstNode::Assignment { value, .. } => match value.as_ref() {
                 AstNode::Literal { value: LiteralValue::Integer(9223372036854775807), .. } => {}
-                v => panic!("Expected i64::MAX, got {:?}", v),
+                v => panic!("Expected i64::MAX, got {v:?}"),
             },
             _ => panic!("Expected assignment"),
         },
