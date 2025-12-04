@@ -353,6 +353,8 @@ mod tests {
             beacon_constraint::ConstraintSet { constraints: vec![] },
             type_map_b,
             position_map_b,
+            FxHashMap::default(),
+            rustc_hash::FxHashSet::default(),
             ctx_b.class_registry,
             FxHashMap::default(),
             FxHashMap::default(),

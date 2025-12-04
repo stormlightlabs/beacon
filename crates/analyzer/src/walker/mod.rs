@@ -52,6 +52,8 @@ pub fn generate_constraints(
         ConstraintSet { constraints: ctx.constraints },
         ctx.type_map,
         ctx.position_map,
+        ctx.node_spans,
+        ctx.safe_any_nodes,
         ctx.class_registry,
         ctx.node_to_scope,
         ctx.scope_dependencies,
@@ -67,6 +69,18 @@ pub fn visit_node_with_env(
     stub_cache: Option<&visitors::TStubCache>,
 ) -> Result<Type> {
     visit_node_with_context(node, env, ctx, stub_cache, ExprContext::Value)
+}
+
+pub(super) fn bind_comprehension_target(env: &mut TypeEnvironment, target: &str, ty: &Type) {
+    let parts: Vec<&str> = if target.contains(',') { target.split(',').collect() } else { vec![target] };
+
+    for part in parts {
+        let name = part.trim().trim_matches(|c| matches!(c, '(' | ')' | '[' | ']'));
+        if name.is_empty() {
+            continue;
+        }
+        env.bind(name.to_string(), TypeScheme::mono(ty.clone()));
+    }
 }
 
 /// Internal visitor with expression context tracking
@@ -86,9 +100,9 @@ fn visit_node_with_context(
             visitors::visit_assignments(node, env, ctx, stub_cache)
         }
         AstNode::Call { .. } => visitors::visit_call(node, env, ctx, stub_cache),
-        AstNode::Identifier { name, line, col, .. } => {
+        AstNode::Identifier { name, line, col, end_line, end_col, .. } => {
             let ty = env.lookup(name).unwrap_or_else(|| Type::Var(env.fresh_var()));
-            ctx.record_type(*line, *col, ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, ty.clone());
 
             if let (Some(current_scope), Some(symbol_table)) = (ctx.scope_stack.last(), ctx.symbol_table()) {
                 if let Some(symbol) = symbol_table.lookup_symbol(name, *current_scope) {
@@ -101,7 +115,7 @@ fn visit_node_with_context(
 
             Ok(ty)
         }
-        AstNode::Literal { value, line, col, .. } => {
+        AstNode::Literal { value, line, col, end_line, end_col, .. } => {
             let ty = match value {
                 LiteralValue::Integer(_) => Type::int(),
                 LiteralValue::Float(_) => Type::float(),
@@ -109,7 +123,7 @@ fn visit_node_with_context(
                 LiteralValue::Boolean(_) => Type::bool(),
                 LiteralValue::None => Type::none(),
             };
-            ctx.record_type(*line, *col, ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, ty.clone());
             Ok(ty)
         }
         AstNode::Return { value, line, col, end_line, end_col, .. } => {
@@ -125,7 +139,7 @@ fn visit_node_with_context(
                     .push(Constraint::Equal(ty.clone(), expected_ret_ty.clone(), span));
             }
 
-            ctx.record_type(*line, *col, ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, ty.clone());
             Ok(ty)
         }
         AstNode::Yield { .. } | AstNode::YieldFrom { .. } => visitors::visit_yield(node, env, ctx, stub_cache),
@@ -140,7 +154,7 @@ fn visit_node_with_context(
                 attr_ty.clone(),
                 span,
             ));
-            ctx.record_type(*line, *col, attr_ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, attr_ty.clone());
 
             if let (Some(current_scope), Some(symbol_table)) = (ctx.scope_stack.last(), ctx.symbol_table()) {
                 if let Type::Con(TypeCtor::Class(class_name)) = &obj_ty {
@@ -179,7 +193,7 @@ fn visit_node_with_context(
                 span,
             ));
 
-            ctx.record_type(*line, *col, result_ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, result_ty.clone());
             Ok(result_ty)
         }
         AstNode::If { .. } => visitors::visit_if(node, env, ctx, stub_cache, expr_ctx),
@@ -191,20 +205,20 @@ fn visit_node_with_context(
         AstNode::Raise { .. } => visitors::visit_try_raise(node, env, ctx, stub_cache),
         AstNode::With { .. } => visitors::visit_with(node, env, ctx, stub_cache),
         AstNode::Lambda { .. } => visitors::visit_lambda(node, env, ctx, stub_cache),
-        AstNode::Compare { left, comparators, line, col, .. } => {
+        AstNode::Compare { left, comparators, line, col, end_line, end_col, .. } => {
             visit_node_with_env(left, env, ctx, stub_cache)?;
 
             for comp in comparators {
                 visit_node_with_env(comp, env, ctx, stub_cache)?;
             }
 
-            ctx.record_type(*line, *col, Type::bool());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, Type::bool());
             Ok(Type::bool())
         }
-        AstNode::NamedExpr { target, value, line, col, .. } => {
+        AstNode::NamedExpr { target, value, line, col, end_line, end_col, .. } => {
             let value_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
             env.bind(target.clone(), TypeScheme::mono(value_ty.clone()));
-            ctx.record_type(*line, *col, value_ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, value_ty.clone());
             Ok(value_ty)
         }
         AstNode::ListComp { .. } | AstNode::SetComp { .. } | AstNode::DictComp { .. } => {
@@ -225,7 +239,7 @@ fn visit_node_with_context(
                     span,
                 ));
 
-                comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
+                bind_comprehension_target(&mut comp_env, &generator.target, &element_ty);
 
                 for if_clause in &generator.ifs {
                     visit_node_with_env(if_clause, &mut comp_env, ctx, stub_cache)?;
@@ -235,7 +249,7 @@ fn visit_node_with_context(
             let elem_ty = visit_node_with_env(element, &mut comp_env, ctx, stub_cache)?;
             let generator_ty = Type::generator(elem_ty, Type::none(), Type::none());
 
-            ctx.record_type(*line, *col, generator_ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, generator_ty.clone());
             Ok(generator_ty)
         }
         AstNode::Tuple { .. } | AstNode::List { .. } | AstNode::Dict { .. } | AstNode::Set { .. } => {

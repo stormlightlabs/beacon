@@ -1,11 +1,14 @@
-use super::class::{
-    extract_class_metadata, extract_enum_members, has_enum_base, is_dataclass_decorator, is_special_class_decorator,
-    synthesize_dataclass_init,
+use super::{
+    bind_comprehension_target,
+    class::{
+        extract_class_metadata, extract_enum_members, has_enum_base, is_dataclass_decorator,
+        is_special_class_decorator, synthesize_dataclass_init,
+    },
+    function::{FunctionKind, analyze_return_paths, detect_function_kind},
+    guards::{detect_inverse_type_guard, detect_type_guard, extract_type_guard_info, extract_type_predicate},
+    loader::{self, StubCache},
+    utils::{get_node_position, is_docstring, is_main_guard, type_name_to_type},
 };
-use super::function::{FunctionKind, analyze_return_paths, detect_function_kind};
-use super::guards::{detect_inverse_type_guard, detect_type_guard, extract_type_guard_info, extract_type_predicate};
-use super::loader::{self, StubCache};
-use super::utils::{get_node_position, is_docstring, is_main_guard, type_name_to_type};
 
 use crate::pattern::extract_pattern_bindings;
 use crate::type_env::TypeEnvironment;
@@ -251,7 +254,9 @@ pub fn visit_class_def(
 
             env.bind(name.clone(), TypeScheme::mono(decorated_type.clone()));
 
-            ctx.record_type(*line, *col, decorated_type.clone());
+            let span = ctx.span_for_identifier(*line, *col, name);
+            let node_id = ctx.record_type_with_span(span, decorated_type.clone());
+            ctx.position_map.insert((*line, *col), node_id);
             Ok(decorated_type)
         }
         _ => {
@@ -286,7 +291,7 @@ pub fn visit_function(
                         .map(|ann| env.parse_annotation_or_any(ann))
                         .unwrap_or_else(|| Type::Var(env.fresh_var()));
 
-                    ctx.record_type(param.line, param.col, param_type.clone());
+                    ctx.record_type_with_end(param.line, param.col, param.end_line, param.end_col, param_type.clone());
 
                     (param.name.clone(), param_type)
                 })
@@ -411,7 +416,9 @@ pub fn visit_function(
 
             env.bind(name.clone(), TypeScheme::mono(decorated_type.clone()));
 
-            ctx.record_type(*line, *col, decorated_type.clone());
+            let span = ctx.span_for_identifier(*line, *col, name);
+            let node_id = ctx.record_type_with_span(span, decorated_type.clone());
+            ctx.position_map.insert((*line, *col), node_id);
             Ok(decorated_type)
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
@@ -424,6 +431,7 @@ pub fn visit_call(
     match node {
         AstNode::Call { function, args, keywords, line, col, end_line, end_col, .. } => {
             let function_name = function.function_to_string();
+            let is_enumerate_call = function_name == "enumerate";
             let func_ty = if function_name.contains('.') {
                 if let Some(last_dot_idx) = function_name.rfind('.') {
                     let (object_part, method_part) = function_name.split_at(last_dot_idx);
@@ -448,10 +456,14 @@ pub fn visit_call(
             };
 
             let mut positional_arg_types = Vec::new();
-            for arg in args {
+            let mut enumerate_start_arg = None;
+            for (idx, arg) in args.iter().enumerate() {
                 let arg_ty = visit_node_with_env(arg, env, ctx, stub_cache)?;
                 let (arg_line, arg_col, arg_end_line, arg_end_col) = get_node_position(arg);
                 let arg_span = Span::with_end(arg_line, arg_col, arg_end_line, arg_end_col);
+                if is_enumerate_call && idx == 1 {
+                    enumerate_start_arg = Some((arg_ty.clone(), arg_span));
+                }
                 positional_arg_types.push((arg_ty, arg_span));
             }
 
@@ -460,10 +472,19 @@ pub fn visit_call(
                 let kw_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
                 let (kw_line, kw_col, kw_end_line, kw_end_col) = get_node_position(value);
                 let kw_span = Span::with_end(kw_line, kw_col, kw_end_line, kw_end_col);
+                if is_enumerate_call && name == "start" {
+                    enumerate_start_arg = Some((kw_ty.clone(), kw_span));
+                }
                 keyword_arg_types.push((name.clone(), kw_ty, kw_span));
             }
 
-            let ret_ty = Type::Var(env.fresh_var());
+            let ret_ty = if is_enumerate_call {
+                let element_ty = Type::Var(env.fresh_var());
+                let tuple_ty = Type::tuple_heterogeneous(vec![Type::int(), element_ty]);
+                Type::App(Box::new(Type::Con(TypeCtor::Iterator)), Box::new(tuple_ty))
+            } else {
+                Type::Var(env.fresh_var())
+            };
             let span = Span::with_end(*line, *col, *end_line, *end_col);
             ctx.constraints.push(Constraint::Call(
                 func_ty,
@@ -473,7 +494,15 @@ pub fn visit_call(
                 span,
             ));
 
-            ctx.record_type(*line, *col, ret_ty.clone());
+            let node_id = ctx.record_type_with_span(span, ret_ty.clone());
+            if is_enumerate_call {
+                if let Some((start_ty, start_span)) = enumerate_start_arg {
+                    ctx.constraints
+                        .push(Constraint::Equal(start_ty, Type::int(), start_span));
+                }
+
+                ctx.mark_safe_any_node(node_id);
+            }
             Ok(ret_ty)
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
@@ -598,7 +627,7 @@ pub fn visit_match(
                 }
             }
 
-            ctx.record_type(*line, *col, Type::none());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, Type::none());
             Ok(Type::none())
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
@@ -650,15 +679,15 @@ pub fn visit_try_raise(
                 }
             }
 
-            ctx.record_type(*line, *col, Type::none());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, Type::none());
             Ok(Type::none())
         }
-        AstNode::Raise { exc, line, col, .. } => {
+        AstNode::Raise { exc, line, col, end_line, end_col, .. } => {
             if let Some(exception) = exc {
                 visit_node_with_env(exception, env, ctx, stub_cache)?;
             }
 
-            ctx.record_type(*line, *col, Type::never());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, Type::never());
             Ok(Type::never())
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
@@ -723,7 +752,7 @@ pub fn visit_while(
                 }
             }
 
-            ctx.record_type(*line, *col, Type::none());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, Type::none());
             Ok(Type::none())
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
@@ -762,7 +791,7 @@ pub fn visit_for(
                 }
             }
 
-            ctx.record_type(*line, *col, Type::none());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, Type::none());
             Ok(Type::none())
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
@@ -798,7 +827,7 @@ pub fn visit_await(
                 result_var
             };
 
-            ctx.record_type(*line, *col, result_ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, result_ty.clone());
             Ok(result_ty)
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
@@ -809,7 +838,7 @@ pub fn visit_imports(
     node: &AstNode, env: &mut TypeEnvironment, ctx: &mut ConstraintGenContext, stub_cache: Option<&TStubCache>,
 ) -> Result<Type> {
     match node {
-        AstNode::Import { module, alias, line, col, .. } => {
+        AstNode::Import { module, alias, line, col, end_line, end_col, .. } => {
             let module_name = alias.as_ref().unwrap_or(module);
             let module_type = Type::Con(TypeCtor::Module(module.clone()));
             if let Some(cache_arc) = stub_cache {
@@ -824,10 +853,10 @@ pub fn visit_imports(
             }
 
             env.bind(module_name.clone(), TypeScheme::mono(module_type.clone()));
-            ctx.record_type(*line, *col, module_type.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, module_type.clone());
             Ok(module_type)
         }
-        AstNode::ImportFrom { module, names, line, col, .. } => {
+        AstNode::ImportFrom { module, names, line, col, end_line, end_col, .. } => {
             if let Some(cache_arc) = stub_cache {
                 if let Ok(cache) = cache_arc.read() {
                     if let Some(stub) = cache.get(module) {
@@ -856,7 +885,7 @@ pub fn visit_imports(
                 }
             }
             let module_type = Type::Con(TypeCtor::Module(module.clone()));
-            ctx.record_type(*line, *col, module_type.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, module_type.clone());
             Ok(module_type)
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
@@ -884,7 +913,7 @@ pub fn visit_assignments(
     node: &AstNode, env: &mut TypeEnvironment, ctx: &mut ConstraintGenContext, stub_cache: Option<&TStubCache>,
 ) -> Result<Type> {
     match node {
-        AstNode::Assignment { target, value, line, col, .. } => {
+        AstNode::Assignment { target, value, line, col, end_line, end_col, .. } => {
             if let AstNode::Call { function, args, keywords, .. } = value.as_ref() {
                 let function_name = function.function_to_string();
                 if function_name == "TypeVar" || function_name.ends_with(".TypeVar") {
@@ -904,7 +933,7 @@ pub fn visit_assignments(
                     for name in target.extract_target_names() {
                         env.bind(name, TypeScheme::mono(type_var_ty.clone()));
                     }
-                    ctx.record_type(*line, *col, type_var_ty.clone());
+                    ctx.record_type_with_end(*line, *col, *end_line, *end_col, type_var_ty.clone());
                     return Ok(type_var_ty);
                 }
             }
@@ -913,7 +942,7 @@ pub fn visit_assignments(
             for name in target.extract_target_names() {
                 env.bind(name, TypeScheme::mono(value_ty.clone()));
             }
-            ctx.record_type(*line, *col, value_ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, value_ty.clone());
             Ok(value_ty)
         }
         AstNode::AnnotatedAssignment { target, type_annotation, value, line, col, end_line, end_col, .. } => {
@@ -927,7 +956,7 @@ pub fn visit_assignments(
             for name in target.extract_target_names() {
                 env.bind(name, TypeScheme::mono(annotated_ty.clone()));
             }
-            ctx.record_type(*line, *col, annotated_ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, annotated_ty.clone());
             Ok(annotated_ty)
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
@@ -952,7 +981,7 @@ pub fn visit_yield(
                 yielded_ty
             };
 
-            ctx.record_type(*line, *col, result_ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, result_ty.clone());
             Ok(result_ty)
         }
         AstNode::YieldFrom { value, line, col, end_line, end_col, .. } => {
@@ -979,7 +1008,7 @@ pub fn visit_yield(
                 Type::Var(env.fresh_var())
             };
 
-            ctx.record_type(*line, *col, result_ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, result_ty.clone());
             Ok(result_ty)
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
@@ -1005,7 +1034,7 @@ pub fn visit_comprehension(
                     span,
                 ));
 
-                comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
+                bind_comprehension_target(&mut comp_env, &generator.target, &element_ty);
 
                 for if_clause in &generator.ifs {
                     visit_node_with_env(if_clause, &mut comp_env, ctx, stub_cache)?;
@@ -1015,7 +1044,7 @@ pub fn visit_comprehension(
             let elem_ty = visit_node_with_env(element, &mut comp_env, ctx, stub_cache)?;
             let list_ty = Type::list(elem_ty);
 
-            ctx.record_type(*line, *col, list_ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, list_ty.clone());
             Ok(list_ty)
         }
         AstNode::SetComp { element, generators, line, col, end_col, end_line } => {
@@ -1033,7 +1062,7 @@ pub fn visit_comprehension(
                     span,
                 ));
 
-                comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
+                bind_comprehension_target(&mut comp_env, &generator.target, &element_ty);
 
                 for if_clause in &generator.ifs {
                     visit_node_with_env(if_clause, &mut comp_env, ctx, stub_cache)?;
@@ -1043,7 +1072,7 @@ pub fn visit_comprehension(
             let elem_ty = visit_node_with_env(element, &mut comp_env, ctx, stub_cache)?;
             let set_ty = Type::App(Box::new(Type::Con(TypeCtor::Set)), Box::new(elem_ty));
 
-            ctx.record_type(*line, *col, set_ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, set_ty.clone());
             Ok(set_ty)
         }
         AstNode::DictComp { key, value, generators, line, col, end_col, end_line } => {
@@ -1061,7 +1090,7 @@ pub fn visit_comprehension(
                     span,
                 ));
 
-                comp_env.bind(generator.target.clone(), TypeScheme::mono(element_ty));
+                bind_comprehension_target(&mut comp_env, &generator.target, &element_ty);
 
                 for if_clause in &generator.ifs {
                     visit_node_with_env(if_clause, &mut comp_env, ctx, stub_cache)?;
@@ -1072,7 +1101,7 @@ pub fn visit_comprehension(
             let val_ty = visit_node_with_env(value, &mut comp_env, ctx, stub_cache)?;
             let dict_ty = Type::dict(key_ty, val_ty);
 
-            ctx.record_type(*line, *col, dict_ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, dict_ty.clone());
             Ok(dict_ty)
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
@@ -1090,20 +1119,20 @@ pub fn visit_ops(
             match op {
                 BinaryOperator::And | BinaryOperator::Or => {
                     let result_ty = if left_ty == right_ty { left_ty } else { Type::union(vec![left_ty, right_ty]) };
-                    ctx.record_type(*line, *col, result_ty.clone());
+                    ctx.record_type_with_end(*line, *col, *end_line, *end_col, result_ty.clone());
                     Ok(result_ty)
                 }
                 _ => {
                     let span = Span::with_end(*line, *col, *end_line, *end_col);
                     ctx.constraints.push(Constraint::Equal(left_ty.clone(), right_ty, span));
-                    ctx.record_type(*line, *col, left_ty.clone());
+                    ctx.record_type_with_end(*line, *col, *end_line, *end_col, left_ty.clone());
                     Ok(left_ty)
                 }
             }
         }
-        AstNode::UnaryOp { operand, line, col, .. } => {
+        AstNode::UnaryOp { operand, line, col, end_line, end_col, .. } => {
             let ty = visit_node_with_env(operand, env, ctx, stub_cache)?;
-            ctx.record_type(*line, *col, ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, ty.clone());
             Ok(ty)
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
@@ -1150,7 +1179,7 @@ pub fn visit_with(
                 visit_node_with_context(stmt, env, ctx, stub_cache, ExprContext::Void)?;
             }
 
-            ctx.record_type(*line, *col, Type::none());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, Type::none());
             Ok(Type::none())
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
@@ -1161,7 +1190,7 @@ pub fn visit_lambda(
     node: &AstNode, env: &mut TypeEnvironment, ctx: &mut ConstraintGenContext, stub_cache: Option<&TStubCache>,
 ) -> Result<Type> {
     match node {
-        AstNode::Lambda { args, body, line, col, .. } => {
+        AstNode::Lambda { args, body, line, col, end_line, end_col, .. } => {
             let params: Vec<(String, Type)> = args
                 .iter()
                 .enumerate()
@@ -1184,7 +1213,7 @@ pub fn visit_lambda(
             let body_ty = visit_node_with_env(body, &mut lambda_env, ctx, stub_cache)?;
             let lambda_ty = Type::fun(params, body_ty);
 
-            ctx.record_type(*line, *col, lambda_ty.clone());
+            ctx.record_type_with_end(*line, *col, *end_line, *end_col, lambda_ty.clone());
             Ok(lambda_ty)
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
@@ -1341,11 +1370,11 @@ pub fn visit_collections(
     node: &AstNode, env: &mut TypeEnvironment, ctx: &mut ConstraintGenContext, stub_cache: Option<&TStubCache>,
 ) -> Result<Type> {
     match node {
-        AstNode::Tuple { elements, line, col, .. } => {
+        AstNode::Tuple { elements, line, col, end_line, end_col, .. } => {
             if elements.is_empty() {
                 let elem_ty = Type::Var(env.fresh_var());
                 let tuple_ty = Type::tuple(elem_ty);
-                ctx.record_type(*line, *col, tuple_ty.clone());
+                ctx.record_type_with_end(*line, *col, *end_line, *end_col, tuple_ty.clone());
                 Ok(tuple_ty)
             } else {
                 let element_types = elements
@@ -1359,15 +1388,15 @@ pub fn visit_collections(
                     Type::tuple_heterogeneous(element_types)
                 };
 
-                ctx.record_type(*line, *col, tuple_ty.clone());
+                ctx.record_type_with_end(*line, *col, *end_line, *end_col, tuple_ty.clone());
                 Ok(tuple_ty)
             }
         }
-        AstNode::List { elements, line, col, .. } => {
+        AstNode::List { elements, line, col, end_line, end_col, .. } => {
             if elements.is_empty() {
                 let elem_ty = Type::Var(env.fresh_var());
                 let list_ty = Type::list(elem_ty);
-                ctx.record_type(*line, *col, list_ty.clone());
+                ctx.record_type_with_end(*line, *col, *end_line, *end_col, list_ty.clone());
                 Ok(list_ty)
             } else {
                 let element_types = elements
@@ -1377,16 +1406,16 @@ pub fn visit_collections(
 
                 let unified_ty = Type::union(element_types);
                 let list_ty = Type::list(unified_ty);
-                ctx.record_type(*line, *col, list_ty.clone());
+                ctx.record_type_with_end(*line, *col, *end_line, *end_col, list_ty.clone());
                 Ok(list_ty)
             }
         }
-        AstNode::Dict { keys, values, line, col, .. } => {
+        AstNode::Dict { keys, values, line, col, end_line, end_col, .. } => {
             if keys.is_empty() {
                 let key_ty = Type::Var(env.fresh_var());
                 let value_ty = Type::Var(env.fresh_var());
                 let dict_ty = Type::dict(key_ty, value_ty);
-                ctx.record_type(*line, *col, dict_ty.clone());
+                ctx.record_type_with_end(*line, *col, *end_line, *end_col, dict_ty.clone());
                 Ok(dict_ty)
             } else {
                 let key_types = keys
@@ -1402,15 +1431,15 @@ pub fn visit_collections(
                 let unified_key_ty = Type::union(key_types);
                 let unified_value_ty = Type::union(value_types);
                 let dict_ty = Type::dict(unified_key_ty, unified_value_ty);
-                ctx.record_type(*line, *col, dict_ty.clone());
+                ctx.record_type_with_end(*line, *col, *end_line, *end_col, dict_ty.clone());
                 Ok(dict_ty)
             }
         }
-        AstNode::Set { elements, line, col, .. } => {
+        AstNode::Set { elements, line, col, end_line, end_col, .. } => {
             if elements.is_empty() {
                 let elem_ty = Type::Var(env.fresh_var());
                 let set_ty = Type::set(elem_ty);
-                ctx.record_type(*line, *col, set_ty.clone());
+                ctx.record_type_with_end(*line, *col, *end_line, *end_col, set_ty.clone());
                 Ok(set_ty)
             } else {
                 let element_types = elements
@@ -1420,7 +1449,7 @@ pub fn visit_collections(
 
                 let unified_ty = Type::union(element_types);
                 let set_ty = Type::set(unified_ty);
-                ctx.record_type(*line, *col, set_ty.clone());
+                ctx.record_type_with_end(*line, *col, *end_line, *end_col, set_ty.clone());
                 Ok(set_ty)
             }
         }

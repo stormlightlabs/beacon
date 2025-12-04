@@ -1709,7 +1709,7 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
                             } else {
                                 "~".repeat(highlight_len).cyan().to_string()
                             };
-                            println!("    {}{}", spaces, squiggle_str);
+                            println!("    {spaces}{squiggle_str}");
                         }
                     }
                 }
