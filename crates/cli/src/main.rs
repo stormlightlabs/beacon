@@ -7,12 +7,14 @@ use beacon_lsp::{
     Config,
     analysis::Analyzer,
     document::DocumentManager,
+    features::DiagnosticProvider,
     formatting::{Formatter, FormatterConfig},
     workspace::Workspace,
 };
 use beacon_parser::{AstNode, PythonHighlighter, PythonParser};
 use clap::{Parser, Subcommand, ValueEnum};
 use formatters::{format_compact, format_human, format_json, print_parse_errors, print_symbol_table};
+use lsp_types::{DiagnosticSeverity, NumberOrString};
 use owo_colors::OwoColorize;
 use serde_json::json;
 use std::fs;
@@ -1576,7 +1578,11 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
     let documents = DocumentManager::new()?;
     let config = Config::default();
     let mut analyzer = Analyzer::new(config.clone(), documents.clone());
+
     let mut workspace = Workspace::new(None, config, documents.clone());
+    workspace.initialize()?;
+    let workspace = std::sync::Arc::new(tokio::sync::RwLock::new(workspace));
+    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace.clone());
 
     println!(
         "{} Running comprehensive diagnostics on {} file(s)...\n",
@@ -1584,9 +1590,7 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
         files.len().to_string().cyan()
     );
 
-    let mut all_parse_errors = Vec::new();
-    let mut all_lint_diagnostics = Vec::new();
-    let mut all_type_errors = Vec::new();
+    let mut all_diagnostics: Vec<(PathBuf, String, lsp_types::Diagnostic)> = Vec::new();
     let mut failed_files = Vec::new();
 
     for file_path in &files {
@@ -1596,54 +1600,45 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
         let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
 
         match parser.parse(&source) {
-            Ok(parsed) => {
-                let root = parsed.tree.root_node();
-                if root.has_error() {
-                    all_parse_errors.push(file_path.clone());
-                }
-
-                if let Ok((ast, symbol_table)) = parser.parse_and_resolve(&source) {
-                    let filename = file_path.display().to_string();
-                    let mut linter = Linter::new(&symbol_table, filename, &source);
-                    let diagnostics = linter.analyze(&ast);
-
-                    for diagnostic in diagnostics {
-                        all_lint_diagnostics.push((file_path.clone(), source.clone(), diagnostic));
-                    }
-
+            Ok(_parsed) => {
+                if let Ok((_ast, _symbol_table)) = parser.parse_and_resolve(&source) {
                     let uri = Url::from_file_path(file_path)
                         .map_err(|_| anyhow::anyhow!("Failed to create URL for {}", file_path.display()))?;
 
                     documents.open_document(uri.clone(), 1, source.clone())?;
-                    workspace.update_dependencies(&uri);
 
-                    let symbol_imports = workspace.get_symbol_imports(&uri);
-                    let mut resolved_imports = Vec::new();
-                    for import in &symbol_imports {
-                        if let Some(resolved_uri) = workspace.resolve_import(&import.from_module) {
-                            if import.symbol == "*" {
-                                let symbols = workspace.resolve_star_import(&resolved_uri);
-                                for symbol in symbols {
-                                    resolved_imports.push((resolved_uri.clone(), symbol));
+                    {
+                        let mut ws = workspace.write().await;
+                        ws.update_dependencies(&uri);
+
+                        let symbol_imports = ws.get_symbol_imports(&uri);
+                        let mut resolved_imports = Vec::new();
+                        for import in &symbol_imports {
+                            if let Some(resolved_uri) = ws.resolve_import(&import.from_module) {
+                                if import.symbol == "*" {
+                                    let symbols = ws.resolve_star_import(&resolved_uri);
+                                    for symbol in symbols {
+                                        resolved_imports.push((resolved_uri.clone(), symbol));
+                                    }
+                                } else {
+                                    resolved_imports.push((resolved_uri, import.symbol.clone()));
                                 }
-                            } else {
-                                resolved_imports.push((resolved_uri, import.symbol.clone()));
                             }
                         }
-                    }
-                    if !resolved_imports.is_empty() {
-                        analyzer.record_imports(&uri, &resolved_imports);
+                        if !resolved_imports.is_empty() {
+                            analyzer.record_imports(&uri, &resolved_imports);
+                        }
                     }
 
-                    match analyzer.analyze(&uri) {
-                        Ok(result) => {
-                            for error in result.type_errors {
-                                all_type_errors.push((file_path.clone(), source.clone(), error));
+                    let diagnostics = diagnostic_provider.generate_diagnostics(&uri, &mut analyzer);
+
+                    for diagnostic in diagnostics {
+                        if let Some(NumberOrString::String(code)) = &diagnostic.code {
+                            if code == "MODE_INFO" {
+                                continue;
                             }
                         }
-                        Err(e) => {
-                            failed_files.push((file_path.clone(), e.to_string()));
-                        }
+                        all_diagnostics.push((file_path.clone(), source.clone(), diagnostic));
                     }
                 }
             }
@@ -1655,105 +1650,72 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
 
     match format {
         OutputFormat::Human => {
-            if !all_parse_errors.is_empty() {
+            if !all_diagnostics.is_empty() {
                 println!(
-                    "{} {} Parse Errors",
+                    "{} {} Diagnostic(s) Found\n",
                     "✗".red().bold(),
-                    all_parse_errors.len().to_string().yellow()
+                    all_diagnostics.len().to_string().yellow()
                 );
-                for file in &all_parse_errors {
-                    println!("  {} {}", "▸".red(), file.display().to_string().cyan());
-                }
-                println!();
-            } else {
-                println!("{} {} Parse Errors", "✓".green().bold(), "0".green());
-                println!();
-            }
 
-            if !all_lint_diagnostics.is_empty() {
-                println!(
-                    "{} {} Lint Issues",
-                    "✗".red().bold(),
-                    all_lint_diagnostics.len().to_string().yellow()
-                );
-                for (file, source, diagnostic) in &all_lint_diagnostics {
-                    let is_error = matches!(
-                        diagnostic.rule,
-                        beacon_analyzer::RuleKind::UndefinedName | beacon_analyzer::RuleKind::DuplicateArgument
-                    );
+                for (file, source, diagnostic) in &all_diagnostics {
+                    let code_str = match &diagnostic.code {
+                        Some(NumberOrString::String(s)) => s.clone(),
+                        Some(NumberOrString::Number(n)) => n.to_string(),
+                        None => "unknown".to_string(),
+                    };
+
+                    let is_error = matches!(diagnostic.severity, Some(DiagnosticSeverity::ERROR));
+                    let is_warning = matches!(diagnostic.severity, Some(DiagnosticSeverity::WARNING));
+                    let is_info = matches!(diagnostic.severity, Some(DiagnosticSeverity::INFORMATION));
+
+                    let line = (diagnostic.range.start.line + 1) as usize;
+                    let col = (diagnostic.range.start.character + 1) as usize;
+
+                    let severity_str = if is_error {
+                        "▸".bright_red().to_string()
+                    } else if is_warning {
+                        "▸".yellow().to_string()
+                    } else if is_info {
+                        "▸".blue().to_string()
+                    } else {
+                        "▸".cyan().to_string()
+                    };
 
                     println!(
                         "  {} {}:{}:{} [{}] {}",
-                        "▸".bright_red(),
+                        severity_str,
                         file.display().to_string().cyan(),
-                        diagnostic.line.to_string().yellow(),
-                        diagnostic.col.to_string().yellow(),
-                        diagnostic.rule.code().dimmed(),
+                        line.to_string().yellow(),
+                        col.to_string().yellow(),
+                        code_str.dimmed(),
                         diagnostic.message
                     );
 
                     let lines: Vec<&str> = source.lines().collect();
-                    if diagnostic.line > 0 && diagnostic.line <= lines.len() {
-                        let line = lines[diagnostic.line - 1];
-                        println!("    {} {}", diagnostic.line.to_string().dimmed(), line.dimmed());
+                    if line > 0 && line <= lines.len() {
+                        let source_line = lines[line - 1];
+                        println!("    {} {}", line.to_string().dimmed(), source_line.dimmed());
 
-                        let (highlight_col, highlight_len) = find_diagnostic_span(line, diagnostic);
+                        let start_col = diagnostic.range.start.character as usize;
+                        let end_col = diagnostic.range.end.character as usize;
+                        let highlight_len = end_col.saturating_sub(start_col).max(1);
 
-                        if highlight_col > 0 {
-                            let spaces = " ".repeat(diagnostic.line.to_string().len() + 2 + highlight_col);
-                            if is_error {
-                                println!("    {}{}", spaces, "~".repeat(highlight_len).bright_red());
+                        if start_col < source_line.len() {
+                            let spaces = " ".repeat(line.to_string().len() + 1 + start_col);
+                            let squiggle_str = if is_error {
+                                "~".repeat(highlight_len).bright_red().to_string()
+                            } else if is_warning {
+                                "~".repeat(highlight_len).yellow().to_string()
                             } else {
-                                println!("    {}{}", spaces, "~".repeat(highlight_len).yellow());
-                            }
-                        }
-                    }
-                }
-                println!();
-            } else {
-                println!("{} {} Lint Issues", "✓".green().bold(), "0".green());
-                println!();
-            }
-
-            if !all_type_errors.is_empty() {
-                println!(
-                    "{} {} Type Errors",
-                    "✗".red().bold(),
-                    all_type_errors.len().to_string().yellow()
-                );
-                for (file, source, err) in &all_type_errors {
-                    println!(
-                        "  {} {}:{}:{} {}",
-                        "▸".bright_red(),
-                        file.display().to_string().cyan(),
-                        err.span.line.to_string().yellow(),
-                        err.span.col.to_string().yellow(),
-                        err.error
-                    );
-
-                    let lines: Vec<&str> = source.lines().collect();
-                    if err.span.line > 0 && err.span.line <= lines.len() {
-                        let line = lines[err.span.line - 1];
-                        println!("    {} {}", err.span.line.to_string().dimmed(), line.dimmed());
-                        if err.span.col > 0 {
-                            let spaces = " ".repeat(err.span.line.to_string().len() + 2 + err.span.col);
-                            let squiggly_len = if let Some(end_col) = err.span.end_col {
-                                if err.span.end_line.is_none() || err.span.end_line == Some(err.span.line) {
-                                    (end_col.saturating_sub(err.span.col)).max(1)
-                                } else {
-                                    1
-                                }
-                            } else {
-                                1
+                                "~".repeat(highlight_len).cyan().to_string()
                             };
-                            println!("    {}{}", spaces, "~".repeat(squiggly_len).bright_red());
+                            println!("    {}{}", spaces, squiggle_str);
                         }
                     }
                 }
                 println!();
             } else {
-                println!("{} {} Type Errors", "✓".green().bold(), "0".green());
-                println!();
+                println!("{} All checks passed!\n", "✓".green().bold());
             }
 
             if !failed_files.is_empty() {
@@ -1773,35 +1735,35 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
                 println!();
             }
 
-            let total_issues = all_parse_errors.len() + all_lint_diagnostics.len() + all_type_errors.len();
-            if total_issues == 0 && failed_files.is_empty() {
-                println!("{} All checks passed!", "✓".green().bold());
-            } else {
+            if !all_diagnostics.is_empty() || !failed_files.is_empty() {
                 println!(
                     "{} {} total issue(s) found",
                     "Summary:".bold(),
-                    total_issues.to_string().yellow()
+                    all_diagnostics.len().to_string().yellow()
                 );
             }
         }
         OutputFormat::Json => {
             let output = json!({
-                "parse_errors": all_parse_errors.iter().map(|f| f.display().to_string()).collect::<Vec<_>>(),
-                "lint_diagnostics": all_lint_diagnostics.iter().map(|(file, _source, diagnostic)| {
+                "diagnostics": all_diagnostics.iter().map(|(file, _source, diagnostic)| {
+                    let code_str = match &diagnostic.code {
+                        Some(NumberOrString::String(s)) => s.clone(),
+                        Some(NumberOrString::Number(n)) => n.to_string(),
+                        None => "unknown".to_string(),
+                    };
                     json!({
                         "file": file.display().to_string(),
-                        "line": diagnostic.line,
-                        "col": diagnostic.col,
-                        "rule": diagnostic.rule.code(),
+                        "line": diagnostic.range.start.line + 1,
+                        "col": diagnostic.range.start.character + 1,
+                        "code": code_str,
+                        "severity": match diagnostic.severity {
+                            Some(DiagnosticSeverity::ERROR) => "error",
+                            Some(DiagnosticSeverity::WARNING) => "warning",
+                            Some(DiagnosticSeverity::INFORMATION) => "info",
+                            Some(DiagnosticSeverity::HINT) => "hint",
+                            _ => "unknown",
+                        },
                         "message": diagnostic.message,
-                    })
-                }).collect::<Vec<_>>(),
-                "type_errors": all_type_errors.iter().map(|(file, _source, error)| {
-                    json!({
-                        "file": file.display().to_string(),
-                        "line": error.span.line,
-                        "col": error.span.col,
-                        "message": error.error.to_string(),
                     })
                 }).collect::<Vec<_>>(),
                 "failed_files": failed_files.iter().map(|(file, error)| {
@@ -1814,26 +1776,19 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
             println!("{}", serde_json::to_string_pretty(&output)?);
         }
         OutputFormat::Compact => {
-            for file in &all_parse_errors {
-                println!("{}:0:0: [PARSE] Parse error", file.display());
-            }
-            for (file, _source, diagnostic) in &all_lint_diagnostics {
+            for (file, _source, diagnostic) in &all_diagnostics {
+                let code_str = match &diagnostic.code {
+                    Some(NumberOrString::String(s)) => s.clone(),
+                    Some(NumberOrString::Number(n)) => n.to_string(),
+                    None => "unknown".to_string(),
+                };
                 println!(
                     "{}:{}:{}: [{}] {}",
                     file.display(),
-                    diagnostic.line,
-                    diagnostic.col,
-                    diagnostic.rule.code(),
+                    diagnostic.range.start.line + 1,
+                    diagnostic.range.start.character + 1,
+                    code_str,
                     diagnostic.message
-                );
-            }
-            for (file, _source, error) in &all_type_errors {
-                println!(
-                    "{}:{}:{}: [TYPE] {}",
-                    file.display(),
-                    error.span.line,
-                    error.span.col,
-                    error.error
                 );
             }
             for (file, error) in &failed_files {
@@ -1842,7 +1797,7 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
         }
     }
 
-    let total_issues = all_parse_errors.len() + all_lint_diagnostics.len() + all_type_errors.len();
+    let total_issues = all_diagnostics.len();
     if (total_issues > 0 || !failed_files.is_empty()) && !cfg!(test) {
         std::process::exit(1);
     }
