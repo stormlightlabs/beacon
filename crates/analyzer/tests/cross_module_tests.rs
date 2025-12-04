@@ -6,7 +6,7 @@ use beacon_parser::{AstNode, LiteralValue, ScopeId, ScopeKind, Symbol, SymbolKin
 use url::Url;
 
 fn test_uri(path: &str) -> Url {
-    Url::parse(&format!("file:///{}", path)).unwrap()
+    Url::parse(&format!("file:///{path}")).unwrap()
 }
 
 #[test]
@@ -26,7 +26,7 @@ fn test_function_id_equality() {
 
     let func1 = FunctionId::new(uri.clone(), scope_id, "foo".to_string());
     let func2 = FunctionId::new(uri.clone(), scope_id, "foo".to_string());
-    let func3 = FunctionId::new(uri.clone(), ScopeId::from_raw(2), "bar".to_string());
+    let func3 = FunctionId::new(uri, ScopeId::from_raw(2), "bar".to_string());
 
     assert_eq!(func1, func2);
     assert_ne!(func1, func3);
@@ -64,7 +64,7 @@ fn test_call_graph_add_call_site() {
 
     let call_site = CallSite::new(BlockId(1), 0, Some(callee.clone()), CallKind::Direct, 10, 5);
 
-    call_graph.add_call_site(caller.clone(), call_site);
+    call_graph.add_call_site(caller.clone(), &call_site);
 
     let sites = call_graph.get_call_sites(&caller).unwrap();
     assert_eq!(sites.len(), 1);
@@ -86,8 +86,8 @@ fn test_call_graph_multiple_call_sites() {
     let call1 = CallSite::new(BlockId(1), 0, Some(callee1.clone()), CallKind::Direct, 10, 5);
     let call2 = CallSite::new(BlockId(2), 1, Some(callee2.clone()), CallKind::Method, 15, 8);
 
-    call_graph.add_call_site(caller.clone(), call1);
-    call_graph.add_call_site(caller.clone(), call2);
+    call_graph.add_call_site(caller.clone(), &call1);
+    call_graph.add_call_site(caller.clone(), &call2);
 
     let sites = call_graph.get_call_sites(&caller).unwrap();
     assert_eq!(sites.len(), 2);
@@ -107,11 +107,11 @@ fn test_call_graph_get_callees_with_unresolved() {
 
     call_graph.add_call_site(
         caller.clone(),
-        CallSite::new(BlockId(1), 0, Some(callee.clone()), CallKind::Direct, 10, 5),
+        &CallSite::new(BlockId(1), 0, Some(callee.clone()), CallKind::Direct, 10, 5),
     );
     call_graph.add_call_site(
         caller.clone(),
-        CallSite::new(BlockId(2), 1, None, CallKind::Dynamic, 15, 8),
+        &CallSite::new(BlockId(2), 1, None, CallKind::Dynamic, 15, 8),
     );
 
     let callees = call_graph.get_callees(&caller);
@@ -129,11 +129,11 @@ fn test_call_graph_reachable_functions_simple_chain() {
 
     call_graph.add_call_site(
         func1.clone(),
-        CallSite::new(BlockId(1), 0, Some(func2.clone()), CallKind::Direct, 10, 5),
+        &CallSite::new(BlockId(1), 0, Some(func2.clone()), CallKind::Direct, 10, 5),
     );
     call_graph.add_call_site(
         func2.clone(),
-        CallSite::new(BlockId(1), 0, Some(func3.clone()), CallKind::Direct, 20, 5),
+        &CallSite::new(BlockId(1), 0, Some(func3.clone()), CallKind::Direct, 20, 5),
     );
 
     let reachable = call_graph.reachable_functions(&[func1.clone()]);
@@ -155,19 +155,19 @@ fn test_call_graph_reachable_functions_diamond() {
 
     call_graph.add_call_site(
         entry.clone(),
-        CallSite::new(BlockId(1), 0, Some(left.clone()), CallKind::Direct, 10, 5),
+        &CallSite::new(BlockId(1), 0, Some(left.clone()), CallKind::Direct, 10, 5),
     );
     call_graph.add_call_site(
         entry.clone(),
-        CallSite::new(BlockId(2), 1, Some(right.clone()), CallKind::Direct, 15, 5),
+        &CallSite::new(BlockId(2), 1, Some(right.clone()), CallKind::Direct, 15, 5),
     );
     call_graph.add_call_site(
         left.clone(),
-        CallSite::new(BlockId(1), 0, Some(bottom.clone()), CallKind::Direct, 20, 5),
+        &CallSite::new(BlockId(1), 0, Some(bottom.clone()), CallKind::Direct, 20, 5),
     );
     call_graph.add_call_site(
         right.clone(),
-        CallSite::new(BlockId(1), 0, Some(bottom.clone()), CallKind::Direct, 25, 5),
+        &CallSite::new(BlockId(1), 0, Some(bottom.clone()), CallKind::Direct, 25, 5),
     );
 
     let reachable = call_graph.reachable_functions(&[entry.clone()]);
@@ -189,15 +189,15 @@ fn test_call_graph_reachable_functions_cycle() {
 
     call_graph.add_call_site(
         func1.clone(),
-        CallSite::new(BlockId(1), 0, Some(func2.clone()), CallKind::Direct, 10, 5),
+        &CallSite::new(BlockId(1), 0, Some(func2.clone()), CallKind::Direct, 10, 5),
     );
     call_graph.add_call_site(
         func2.clone(),
-        CallSite::new(BlockId(1), 0, Some(func3.clone()), CallKind::Direct, 20, 5),
+        &CallSite::new(BlockId(1), 0, Some(func3.clone()), CallKind::Direct, 20, 5),
     );
     call_graph.add_call_site(
         func3.clone(),
-        CallSite::new(BlockId(1), 0, Some(func1.clone()), CallKind::Direct, 30, 5),
+        &CallSite::new(BlockId(1), 0, Some(func1.clone()), CallKind::Direct, 30, 5),
     );
 
     let reachable = call_graph.reachable_functions(&[func1.clone()]);
@@ -218,7 +218,7 @@ fn test_call_graph_unreachable_functions() {
 
     call_graph.add_call_site(
         func1.clone(),
-        CallSite::new(BlockId(1), 0, Some(func2.clone()), CallKind::Direct, 10, 5),
+        &CallSite::new(BlockId(1), 0, Some(func2.clone()), CallKind::Direct, 10, 5),
     );
 
     let reachable = call_graph.reachable_functions(&[func1.clone()]);
@@ -257,7 +257,7 @@ fn test_module_cfg_add_function() {
 #[test]
 fn test_module_cfg_add_call_site() {
     let uri = test_uri("test.py");
-    let mut module_cfg = ModuleCFG::new(uri.clone(), "test".to_string());
+    let mut module_cfg = ModuleCFG::new(uri, "test".to_string());
 
     let callee = FunctionId::new(test_uri("other.py"), ScopeId::from_raw(2), "foo".to_string());
     let call_site = CallSite::new(BlockId(1), 0, Some(callee), CallKind::Direct, 10, 5);
@@ -309,7 +309,7 @@ fn test_workspace_cfg_reachable_functions() {
     workspace_cfg.add_entry_point(func1.clone());
 
     let call_site = CallSite::new(BlockId(1), 0, Some(func2.clone()), CallKind::Direct, 10, 5);
-    workspace_cfg.call_graph_mut().add_call_site(func1.clone(), call_site);
+    workspace_cfg.call_graph_mut().add_call_site(func1.clone(), &call_site);
 
     let reachable = workspace_cfg.reachable_functions();
     assert_eq!(reachable.len(), 2);
@@ -327,11 +327,11 @@ fn test_workspace_cfg_cross_module_reachable_blocks() {
     let func1 = FunctionId::new(uri1.clone(), ScopeId::from_raw(1), "func1".to_string());
     let func2 = FunctionId::new(uri2.clone(), ScopeId::from_raw(2), "func2".to_string());
 
-    let mut module1 = ModuleCFG::new(uri1.clone(), "a".to_string());
+    let mut module1 = ModuleCFG::new(uri1, "a".to_string());
     let cfg1 = ControlFlowGraph::new();
     module1.add_function_cfg(ScopeId::from_raw(1), "func1".to_string(), cfg1);
 
-    let mut module2 = ModuleCFG::new(uri2.clone(), "b".to_string());
+    let mut module2 = ModuleCFG::new(uri2, "b".to_string());
     let cfg2 = ControlFlowGraph::new();
     module2.add_function_cfg(ScopeId::from_raw(2), "func2".to_string(), cfg2);
 
@@ -339,7 +339,7 @@ fn test_workspace_cfg_cross_module_reachable_blocks() {
     workspace_cfg.add_module(module2);
 
     let call_site = CallSite::new(BlockId(1), 0, Some(func2.clone()), CallKind::Direct, 10, 5);
-    workspace_cfg.call_graph_mut().add_call_site(func1.clone(), call_site);
+    workspace_cfg.call_graph_mut().add_call_site(func1.clone(), &call_site);
 
     let reachable = workspace_cfg.cross_module_reachable_blocks(&[func1.clone()]);
 
@@ -562,6 +562,7 @@ fn test_call_resolver_direct_call() {
             kind: SymbolKind::Function,
             line: 1,
             col: 5,
+            end_col: 12,
             scope_id: func_scope,
             docstring: None,
             references: vec![],
@@ -931,13 +932,13 @@ fn test_scc_no_cycles() {
     let uri = test_uri("test.py");
     let func_a = FunctionId::new(uri.clone(), ScopeId::from_raw(1), "a".to_string());
     let func_b = FunctionId::new(uri.clone(), ScopeId::from_raw(2), "b".to_string());
-    let func_c = FunctionId::new(uri.clone(), ScopeId::from_raw(3), "c".to_string());
+    let func_c = FunctionId::new(uri, ScopeId::from_raw(3), "c".to_string());
 
     let call_a_to_b = CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1);
-    let call_b_to_c = CallSite::new(BlockId(2), 0, Some(func_c.clone()), CallKind::Direct, 2, 1);
+    let call_b_to_c = CallSite::new(BlockId(2), 0, Some(func_c), CallKind::Direct, 2, 1);
 
-    call_graph.add_call_site(func_a.clone(), call_a_to_b);
-    call_graph.add_call_site(func_b.clone(), call_b_to_c);
+    call_graph.add_call_site(func_a, &call_a_to_b);
+    call_graph.add_call_site(func_b, &call_b_to_c);
 
     let sccs = call_graph.strongly_connected_components();
     assert_eq!(sccs.len(), 3);
@@ -951,13 +952,13 @@ fn test_scc_simple_cycle() {
 
     let uri = test_uri("test.py");
     let func_a = FunctionId::new(uri.clone(), ScopeId::from_raw(1), "a".to_string());
-    let func_b = FunctionId::new(uri.clone(), ScopeId::from_raw(2), "b".to_string());
+    let func_b = FunctionId::new(uri, ScopeId::from_raw(2), "b".to_string());
 
     let call_a_to_b = CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1);
     let call_b_to_a = CallSite::new(BlockId(2), 0, Some(func_a.clone()), CallKind::Direct, 2, 1);
 
-    call_graph.add_call_site(func_a.clone(), call_a_to_b);
-    call_graph.add_call_site(func_b.clone(), call_b_to_a);
+    call_graph.add_call_site(func_a.clone(), &call_a_to_b);
+    call_graph.add_call_site(func_b.clone(), &call_b_to_a);
 
     let sccs = call_graph.strongly_connected_components();
     assert_eq!(sccs.len(), 1);
@@ -975,11 +976,11 @@ fn test_scc_self_loop() {
     let mut call_graph = CallGraph::new();
 
     let uri = test_uri("test.py");
-    let func_a = FunctionId::new(uri.clone(), ScopeId::from_raw(1), "a".to_string());
+    let func_a = FunctionId::new(uri, ScopeId::from_raw(1), "a".to_string());
 
     let call_a_to_a = CallSite::new(BlockId(1), 0, Some(func_a.clone()), CallKind::Direct, 1, 1);
 
-    call_graph.add_call_site(func_a.clone(), call_a_to_a);
+    call_graph.add_call_site(func_a.clone(), &call_a_to_a);
 
     let sccs = call_graph.strongly_connected_components();
     assert_eq!(sccs.len(), 1);
@@ -997,23 +998,23 @@ fn test_scc_complex_cycle() {
     let func_b = FunctionId::new(uri.clone(), ScopeId::from_raw(2), "b".to_string());
     let func_c = FunctionId::new(uri.clone(), ScopeId::from_raw(3), "c".to_string());
     let func_d = FunctionId::new(uri.clone(), ScopeId::from_raw(4), "d".to_string());
-    let func_e = FunctionId::new(uri.clone(), ScopeId::from_raw(5), "e".to_string());
+    let func_e = FunctionId::new(uri, ScopeId::from_raw(5), "e".to_string());
 
     call_graph.add_call_site(
         func_a.clone(),
-        CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1),
+        &CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1),
     );
     call_graph.add_call_site(
         func_b.clone(),
-        CallSite::new(BlockId(2), 0, Some(func_c.clone()), CallKind::Direct, 2, 1),
+        &CallSite::new(BlockId(2), 0, Some(func_c.clone()), CallKind::Direct, 2, 1),
     );
     call_graph.add_call_site(
         func_c.clone(),
-        CallSite::new(BlockId(3), 0, Some(func_a.clone()), CallKind::Direct, 3, 1),
+        &CallSite::new(BlockId(3), 0, Some(func_a.clone()), CallKind::Direct, 3, 1),
     );
     call_graph.add_call_site(
         func_d.clone(),
-        CallSite::new(BlockId(4), 0, Some(func_e.clone()), CallKind::Direct, 4, 1),
+        &CallSite::new(BlockId(4), 0, Some(func_e.clone()), CallKind::Direct, 4, 1),
     );
 
     let sccs = call_graph.strongly_connected_components();
@@ -1042,24 +1043,24 @@ fn test_scc_multiple_cycles() {
     let func_a = FunctionId::new(uri.clone(), ScopeId::from_raw(1), "a".to_string());
     let func_b = FunctionId::new(uri.clone(), ScopeId::from_raw(2), "b".to_string());
     let func_c = FunctionId::new(uri.clone(), ScopeId::from_raw(3), "c".to_string());
-    let func_d = FunctionId::new(uri.clone(), ScopeId::from_raw(4), "d".to_string());
+    let func_d = FunctionId::new(uri, ScopeId::from_raw(4), "d".to_string());
 
     call_graph.add_call_site(
         func_a.clone(),
-        CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1),
+        &CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1),
     );
     call_graph.add_call_site(
-        func_b.clone(),
-        CallSite::new(BlockId(2), 0, Some(func_a.clone()), CallKind::Direct, 2, 1),
+        func_b,
+        &CallSite::new(BlockId(2), 0, Some(func_a), CallKind::Direct, 2, 1),
     );
 
     call_graph.add_call_site(
         func_c.clone(),
-        CallSite::new(BlockId(3), 0, Some(func_d.clone()), CallKind::Direct, 3, 1),
+        &CallSite::new(BlockId(3), 0, Some(func_d.clone()), CallKind::Direct, 3, 1),
     );
     call_graph.add_call_site(
-        func_d.clone(),
-        CallSite::new(BlockId(4), 0, Some(func_c.clone()), CallKind::Direct, 4, 1),
+        func_d,
+        &CallSite::new(BlockId(4), 0, Some(func_c), CallKind::Direct, 4, 1),
     );
 
     let sccs = call_graph.strongly_connected_components();
@@ -1080,23 +1081,23 @@ fn test_scc_nested_structure() {
     let func_a = FunctionId::new(uri.clone(), ScopeId::from_raw(1), "a".to_string());
     let func_b = FunctionId::new(uri.clone(), ScopeId::from_raw(2), "b".to_string());
     let func_c = FunctionId::new(uri.clone(), ScopeId::from_raw(3), "c".to_string());
-    let func_d = FunctionId::new(uri.clone(), ScopeId::from_raw(4), "d".to_string());
+    let func_d = FunctionId::new(uri, ScopeId::from_raw(4), "d".to_string());
 
     call_graph.add_call_site(
         func_a.clone(),
-        CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1),
+        &CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1),
     );
     call_graph.add_call_site(
         func_b.clone(),
-        CallSite::new(BlockId(2), 0, Some(func_c.clone()), CallKind::Direct, 2, 1),
+        &CallSite::new(BlockId(2), 0, Some(func_c.clone()), CallKind::Direct, 2, 1),
     );
     call_graph.add_call_site(
         func_c.clone(),
-        CallSite::new(BlockId(3), 0, Some(func_d.clone()), CallKind::Direct, 3, 1),
+        &CallSite::new(BlockId(3), 0, Some(func_d.clone()), CallKind::Direct, 3, 1),
     );
     call_graph.add_call_site(
         func_d.clone(),
-        CallSite::new(BlockId(4), 0, Some(func_b.clone()), CallKind::Direct, 4, 1),
+        &CallSite::new(BlockId(4), 0, Some(func_b.clone()), CallKind::Direct, 4, 1),
     );
 
     let sccs = call_graph.strongly_connected_components();
@@ -1122,23 +1123,23 @@ fn test_scc_reachability_with_cycles() {
     let func_a = FunctionId::new(uri.clone(), ScopeId::from_raw(1), "a".to_string());
     let func_b = FunctionId::new(uri.clone(), ScopeId::from_raw(2), "b".to_string());
     let func_c = FunctionId::new(uri.clone(), ScopeId::from_raw(3), "c".to_string());
-    let func_d = FunctionId::new(uri.clone(), ScopeId::from_raw(4), "d".to_string());
+    let func_d = FunctionId::new(uri, ScopeId::from_raw(4), "d".to_string());
 
     call_graph.add_call_site(
         func_a.clone(),
-        CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1),
+        &CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1),
     );
     call_graph.add_call_site(
         func_b.clone(),
-        CallSite::new(BlockId(2), 0, Some(func_c.clone()), CallKind::Direct, 2, 1),
+        &CallSite::new(BlockId(2), 0, Some(func_c.clone()), CallKind::Direct, 2, 1),
     );
     call_graph.add_call_site(
         func_c.clone(),
-        CallSite::new(BlockId(3), 0, Some(func_b.clone()), CallKind::Direct, 3, 1),
+        &CallSite::new(BlockId(3), 0, Some(func_b.clone()), CallKind::Direct, 3, 1),
     );
     call_graph.add_call_site(
         func_c.clone(),
-        CallSite::new(BlockId(4), 0, Some(func_d.clone()), CallKind::Direct, 4, 1),
+        &CallSite::new(BlockId(4), 0, Some(func_d.clone()), CallKind::Direct, 4, 1),
     );
 
     let reachable = call_graph.reachable_functions(&[func_a.clone()]);
@@ -1167,11 +1168,11 @@ fn test_scc_single_function_no_calls() {
     let mut call_graph = CallGraph::new();
 
     let uri = test_uri("test.py");
-    let func_a = FunctionId::new(uri.clone(), ScopeId::from_raw(1), "a".to_string());
+    let func_a = FunctionId::new(uri, ScopeId::from_raw(1), "a".to_string());
 
     call_graph.add_call_site(
         func_a.clone(),
-        CallSite::new(BlockId(1), 0, None, CallKind::Dynamic, 1, 1),
+        &CallSite::new(BlockId(1), 0, None, CallKind::Dynamic, 1, 1),
     );
 
     let sccs = call_graph.strongly_connected_components();
@@ -1194,11 +1195,11 @@ fn test_scc_cross_module_cycle() {
 
     call_graph.add_call_site(
         func_a.clone(),
-        CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1),
+        &CallSite::new(BlockId(1), 0, Some(func_b.clone()), CallKind::Direct, 1, 1),
     );
     call_graph.add_call_site(
         func_b.clone(),
-        CallSite::new(BlockId(1), 0, Some(func_a.clone()), CallKind::Direct, 1, 1),
+        &CallSite::new(BlockId(1), 0, Some(func_a.clone()), CallKind::Direct, 1, 1),
     );
 
     let sccs = call_graph.strongly_connected_components();

@@ -66,6 +66,10 @@ pub enum RuleKind {
     RedundantPass,
     /// BEA030
     EmptyExcept,
+    /// BEA031
+    InconsistentExport,
+    /// BEA032
+    ConflictingStubDefinition,
     Unknown,
 }
 
@@ -103,6 +107,8 @@ impl RuleKind {
             RuleKind::UnreachableCode => "BEA028",
             RuleKind::RedundantPass => "BEA029",
             RuleKind::EmptyExcept => "BEA030",
+            RuleKind::InconsistentExport => "BEA031",
+            RuleKind::ConflictingStubDefinition => "BEA032",
             RuleKind::Unknown => "BEA000",
         }
     }
@@ -134,6 +140,7 @@ pub struct DiagnosticMessage {
     pub filename: String,
     pub line: usize,
     pub col: usize,
+    pub end_col: usize,
 }
 
 /// Conversion to LSP diagnostic
@@ -141,8 +148,8 @@ impl From<&DiagnosticMessage> for Diagnostic {
     fn from(msg: &DiagnosticMessage) -> Self {
         Diagnostic {
             range: Range {
-                start: Position::new(msg.line.saturating_sub(1) as u32, msg.col as u32),
-                end: Position::new(msg.line.saturating_sub(1) as u32, msg.col as u32 + 1),
+                start: Position::new(msg.line.saturating_sub(1) as u32, msg.col.saturating_sub(1) as u32),
+                end: Position::new(msg.line.saturating_sub(1) as u32, msg.end_col.saturating_sub(1) as u32),
             },
             severity: Some(match msg.rule {
                 RuleKind::UndefinedName
@@ -384,6 +391,20 @@ impl RuleEngine {
                 default_severity: RuleSeverity::Warning,
                 enabled: true,
             },
+            Rule {
+                kind: RuleKind::InconsistentExport,
+                name: "InconsistentExport",
+                description: "__all__ exports symbol that is not defined in module",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::ConflictingStubDefinition,
+                name: "ConflictingStubDefinition",
+                description: "Conflicting type definitions for the same symbol across stub files",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
         ];
         Self { rules }
     }
@@ -409,6 +430,7 @@ mod tests {
             filename: "main.py".to_string(),
             line: 3,
             col: 5,
+            end_col: 7,
         }
     }
 
@@ -429,7 +451,7 @@ mod tests {
         assert_eq!(diagnostic.source.as_deref(), Some("beacon-linter"));
         assert_eq!(
             diagnostic.range,
-            Range { start: Position::new(2, 5), end: Position::new(2, 6) }
+            Range { start: Position::new(2, 4), end: Position::new(2, 6) }
         );
         assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::WARNING));
     }
@@ -452,6 +474,7 @@ mod tests {
             filename: "example.py".into(),
             line: 10,
             col: 2,
+            end_col: 5,
         };
         let diagnostic: lsp_types::Diagnostic = (&msg).into();
         assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::ERROR));

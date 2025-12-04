@@ -963,7 +963,7 @@ impl TokenGenerator {
 
                 for (i, name) in names.iter().enumerate() {
                     self.tokens
-                        .push(Token::Identifier { text: name.clone(), line: *line, col: *col });
+                        .push(Token::Identifier { text: name.name.clone(), line: name.line, col: name.col });
                     if i < names.len() - 1 {
                         self.tokens
                             .push(Token::Delimiter { text: ",".to_string(), line: *line, col: *col });

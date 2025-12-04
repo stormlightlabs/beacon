@@ -51,6 +51,8 @@ See [Suppressions](../format/suppressions.md) for complete documentation on supp
 | [BEA028](#bea028) | `UnreachableCode`                       | &#9888;  | Flow      | Code after a `return`, `raise`, or `break` is never executed.         |
 | [BEA029](#bea029) | `RedundantPass`                         | &#9432;  | Cleanup   | `pass` used in a block that already has content.                      |
 | [BEA030](#bea030) | `EmptyExcept`                           | &#9888;  | Exception | `except:` with no handling code (silent failure).                     |
+| [BEA031](#bea031) | `InconsistentExport`                    | &#9888;  | Imports   | `__all__` exports symbol that is not defined in module.               |
+| [BEA032](#bea032) | `ConflictingStubDefinition`             | &#9888;  | Typing    | Conflicting type definitions for the same symbol across stub files.   |
 
 ## Rules
 
@@ -375,6 +377,71 @@ except:
 #### Fix
 
 Handle exception or remove block.
+
+### BEA031
+
+#### Example
+
+```py
+def foo():
+    pass
+
+def bar():
+    pass
+
+__all__ = ["foo", "baz"]  # "baz" is not defined
+```
+
+#### Fix
+
+Either define the missing symbol or remove it from `__all__`:
+
+```py
+def foo():
+    pass
+
+def bar():
+    pass
+
+def baz():  # Define the missing symbol
+    pass
+
+__all__ = ["foo", "baz"]
+```
+
+Or:
+
+```py
+def foo():
+    pass
+
+def bar():
+    pass
+
+__all__ = ["foo"]  # Remove "baz" from exports
+```
+
+### BEA032
+
+#### Example
+
+When multiple stub files define the same module with conflicting types:
+
+**stubs1/mymodule.pyi:**
+
+```py
+def process(data: int) -> str: ...
+```
+
+**stubs2/mymodule.pyi:**
+
+```py
+def process(data: str) -> int: ...
+```
+
+#### Fix
+
+Resolve the conflict by ensuring consistent type signatures across all stub files. Remove duplicate stub definitions or consolidate them into a single authoritative stub file.
 
 ## Planned
 

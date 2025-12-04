@@ -14,7 +14,7 @@ use crate::walker::{ExprContext, visit_node_with_context, visit_node_with_env};
 use beacon_constraint::{Constraint, ConstraintGenContext, Span, TypePredicate};
 use beacon_core::{AnalysisError, BeaconError, TypeCtor, TypeVar, Variance};
 use beacon_core::{Type, TypeScheme, errors::Result};
-use beacon_parser::AstNode;
+use beacon_parser::{AstNode, BinaryOperator};
 use std::sync::Arc;
 
 pub type TStubCache = Arc<std::sync::RwLock<StubCache>>;
@@ -507,11 +507,13 @@ pub fn visit_match(
                     case.pattern_end_col,
                 );
 
-                ctx.constraints.push(Constraint::PatternReachable(
-                    case.pattern.clone(),
-                    previous_patterns.clone(),
-                    pattern_span,
-                ));
+                if case.guard.is_none() {
+                    ctx.constraints.push(Constraint::PatternReachable(
+                        case.pattern.clone(),
+                        previous_patterns.clone(),
+                        pattern_span,
+                    ));
+                }
 
                 ctx.constraints.push(Constraint::PatternTypeCompatible(
                     case.pattern.clone(),
@@ -591,7 +593,9 @@ pub fn visit_match(
 
                 ctx.control_flow.pop_scope();
 
-                previous_patterns.push(case.pattern.clone());
+                if case.guard.is_none() {
+                    previous_patterns.push(case.pattern.clone());
+                }
             }
 
             ctx.record_type(*line, *col, Type::none());
@@ -832,23 +836,23 @@ pub fn visit_imports(
                             ctx.loaded_stub_modules.insert(module.clone());
                         }
                     }
-                    for name in names {
+                    for iname in names {
                         let ty = cache
                             .get(module)
-                            .and_then(|stub| stub.exports.get(name).cloned())
+                            .and_then(|stub| stub.exports.get(&iname.name).cloned())
                             .unwrap_or_else(|| Type::Var(env.fresh_var()));
-                        env.bind(name.clone(), TypeScheme::mono(ty));
+                        env.bind(iname.name.clone(), TypeScheme::mono(ty));
                     }
                 } else {
-                    for name in names {
+                    for iname in names {
                         let ty = Type::Var(env.fresh_var());
-                        env.bind(name.clone(), TypeScheme::mono(ty));
+                        env.bind(iname.name.clone(), TypeScheme::mono(ty));
                     }
                 }
             } else {
-                for name in names {
+                for iname in names {
                     let ty = Type::Var(env.fresh_var());
-                    env.bind(name.clone(), TypeScheme::mono(ty));
+                    env.bind(iname.name.clone(), TypeScheme::mono(ty));
                 }
             }
             let module_type = Type::Con(TypeCtor::Module(module.clone()));
@@ -1079,13 +1083,23 @@ pub fn visit_ops(
     node: &AstNode, env: &mut TypeEnvironment, ctx: &mut ConstraintGenContext, stub_cache: Option<&TStubCache>,
 ) -> Result<Type> {
     match node {
-        AstNode::BinaryOp { left, right, line, col, end_col, end_line, .. } => {
+        AstNode::BinaryOp { left, right, line, col, end_col, end_line, op } => {
             let left_ty = visit_node_with_env(left, env, ctx, stub_cache)?;
             let right_ty = visit_node_with_env(right, env, ctx, stub_cache)?;
-            let span = Span::with_end(*line, *col, *end_line, *end_col);
-            ctx.constraints.push(Constraint::Equal(left_ty.clone(), right_ty, span));
-            ctx.record_type(*line, *col, left_ty.clone());
-            Ok(left_ty)
+
+            match op {
+                BinaryOperator::And | BinaryOperator::Or => {
+                    let result_ty = if left_ty == right_ty { left_ty } else { Type::union(vec![left_ty, right_ty]) };
+                    ctx.record_type(*line, *col, result_ty.clone());
+                    Ok(result_ty)
+                }
+                _ => {
+                    let span = Span::with_end(*line, *col, *end_line, *end_col);
+                    ctx.constraints.push(Constraint::Equal(left_ty.clone(), right_ty, span));
+                    ctx.record_type(*line, *col, left_ty.clone());
+                    Ok(left_ty)
+                }
+            }
         }
         AstNode::UnaryOp { operand, line, col, .. } => {
             let ty = visit_node_with_env(operand, env, ctx, stub_cache)?;
@@ -1349,9 +1363,7 @@ pub fn visit_collections(
                 Ok(tuple_ty)
             }
         }
-        AstNode::List { elements, line, col, end_line, end_col, .. } => {
-            let span = Span::with_end(*line, *col, *end_line, *end_col);
-
+        AstNode::List { elements, line, col, .. } => {
             if elements.is_empty() {
                 let elem_ty = Type::Var(env.fresh_var());
                 let list_ty = Type::list(elem_ty);
@@ -1363,20 +1375,13 @@ pub fn visit_collections(
                     .map(|elem| visit_node_with_env(elem, env, ctx, stub_cache))
                     .collect::<std::result::Result<Vec<Type>, _>>()?;
 
-                let unified_ty = Type::Var(env.fresh_var());
-                for elem_ty in &element_types {
-                    ctx.constraints
-                        .push(Constraint::Equal(elem_ty.clone(), unified_ty.clone(), span));
-                }
-
+                let unified_ty = Type::union(element_types);
                 let list_ty = Type::list(unified_ty);
                 ctx.record_type(*line, *col, list_ty.clone());
                 Ok(list_ty)
             }
         }
-        AstNode::Dict { keys, values, line, col, end_line, end_col, .. } => {
-            let span = Span::with_end(*line, *col, *end_line, *end_col);
-
+        AstNode::Dict { keys, values, line, col, .. } => {
             if keys.is_empty() {
                 let key_ty = Type::Var(env.fresh_var());
                 let value_ty = Type::Var(env.fresh_var());
@@ -1394,26 +1399,14 @@ pub fn visit_collections(
                     .map(|value| visit_node_with_env(value, env, ctx, stub_cache))
                     .collect::<std::result::Result<Vec<Type>, _>>()?;
 
-                let unified_key_ty = Type::Var(env.fresh_var());
-                let unified_value_ty = Type::Var(env.fresh_var());
-
-                for key_ty in &key_types {
-                    ctx.constraints
-                        .push(Constraint::Equal(key_ty.clone(), unified_key_ty.clone(), span));
-                }
-                for value_ty in &value_types {
-                    ctx.constraints
-                        .push(Constraint::Equal(value_ty.clone(), unified_value_ty.clone(), span));
-                }
-
+                let unified_key_ty = Type::union(key_types);
+                let unified_value_ty = Type::union(value_types);
                 let dict_ty = Type::dict(unified_key_ty, unified_value_ty);
                 ctx.record_type(*line, *col, dict_ty.clone());
                 Ok(dict_ty)
             }
         }
-        AstNode::Set { elements, line, col, end_col, end_line } => {
-            let span = Span::with_end(*line, *col, *end_line, *end_col);
-
+        AstNode::Set { elements, line, col, .. } => {
             if elements.is_empty() {
                 let elem_ty = Type::Var(env.fresh_var());
                 let set_ty = Type::set(elem_ty);
@@ -1425,12 +1418,7 @@ pub fn visit_collections(
                     .map(|elem| visit_node_with_env(elem, env, ctx, stub_cache))
                     .collect::<std::result::Result<Vec<Type>, _>>()?;
 
-                let unified_ty = Type::Var(env.fresh_var());
-                for elem_ty in &element_types {
-                    ctx.constraints
-                        .push(Constraint::Equal(elem_ty.clone(), unified_ty.clone(), span));
-                }
-
+                let unified_ty = Type::union(element_types);
                 let set_ty = Type::set(unified_ty);
                 ctx.record_type(*line, *col, set_ty.clone());
                 Ok(set_ty)

@@ -112,6 +112,7 @@ pub enum ReferenceKind {
 pub struct SymbolReference {
     pub line: usize,
     pub col: usize,
+    pub end_col: usize,
     pub kind: ReferenceKind,
 }
 
@@ -122,6 +123,7 @@ pub struct Symbol {
     pub kind: SymbolKind,
     pub line: usize,
     pub col: usize,
+    pub end_col: usize,
     pub scope_id: ScopeId,
     pub docstring: Option<String>,
     /// References to this symbol (reads and writes)
@@ -320,7 +322,7 @@ impl SymbolTable {
     /// Looks up the symbol from the given scope and adds a reference to it.
     /// Returns true if the symbol was found and the reference was added.
     pub fn add_reference(
-        &mut self, name: &str, from_scope: ScopeId, line: usize, col: usize, kind: ReferenceKind,
+        &mut self, name: &str, from_scope: ScopeId, line: usize, col: usize, end_col: usize, kind: ReferenceKind,
     ) -> bool {
         let mut current_scope = from_scope;
 
@@ -330,7 +332,7 @@ impl SymbolTable {
             if scope.symbols.contains_key(name) {
                 if let Some(scope_mut) = self.scopes.get_mut(&scope_id) {
                     if let Some(symbol) = scope_mut.symbols.get_mut(name) {
-                        symbol.references.push(SymbolReference { line, col, kind });
+                        symbol.references.push(SymbolReference { line, col, end_col, kind });
                         return true;
                     }
                 }
@@ -425,6 +427,7 @@ impl Default for SymbolTable {
                     kind: SymbolKind::BuiltinVar,
                     line: 0,
                     col: 0,
+                    end_col: dunder_name.len(),
                     scope_id: root_id,
                     docstring: None,
                     references: Vec::new(),
@@ -459,6 +462,78 @@ pub struct NameResolver {
 impl NameResolver {
     pub fn new(source: String) -> Self {
         Self { source, ..Default::default() }
+    }
+
+    fn compute_decorator_spans(&self, start_line: usize, decorators: &[String]) -> Vec<Option<(usize, usize, usize)>> {
+        if decorators.is_empty() {
+            return Vec::new();
+        }
+
+        let mut spans = vec![None; decorators.len()];
+        if start_line == 0 {
+            return spans;
+        }
+
+        let lines: Vec<&str> = self.source.lines().collect();
+        let mut search_line = start_line.saturating_sub(1);
+
+        for idx in (0..decorators.len()).rev() {
+            let decorator = &decorators[idx];
+            while search_line > 0 {
+                if let Some(line_text) = lines.get(search_line - 1) {
+                    if let Some((col, end_col)) = Self::decorator_columns(line_text, decorator) {
+                        spans[idx] = Some((search_line, col, end_col));
+                        if search_line == 1 {
+                            break;
+                        }
+                        search_line -= 1;
+                        break;
+                    }
+                }
+
+                if search_line == 1 {
+                    break;
+                }
+                search_line -= 1;
+            }
+        }
+
+        spans
+    }
+
+    fn decorator_columns(line_text: &str, decorator: &str) -> Option<(usize, usize)> {
+        let trimmed = line_text.trim_start_matches([' ', '\t']);
+        if !trimmed.starts_with('@') {
+            return None;
+        }
+
+        let after_at = &trimmed[1..];
+        let trimmed_after = after_at.trim_start_matches([' ', '\t']);
+        if !trimmed_after.starts_with(decorator) {
+            return None;
+        }
+
+        let decorator_char_len = decorator.chars().count();
+        let mut chars_iter = trimmed_after.chars();
+        for _ in 0..decorator_char_len {
+            chars_iter.next();
+        }
+        if let Some(next_char) = chars_iter.next() {
+            if next_char == '_' || next_char.is_alphanumeric() {
+                return None;
+            }
+        }
+
+        let leading_ws_bytes = line_text.len() - trimmed.len();
+        let spaces_after_at = after_at.len() - trimmed_after.len();
+        let start_byte = leading_ws_bytes + 1 + spaces_after_at;
+        if start_byte > line_text.len() {
+            return None;
+        }
+
+        let start_col = line_text[..start_byte].chars().count() + 1;
+        let end_col = start_col + decorator_char_len;
+        Some((start_col, end_col))
     }
 
     /// Convert line and column (1-indexed) to byte offset
@@ -560,8 +635,9 @@ impl NameResolver {
         if !base_id.is_empty() && (base_id.chars().next().unwrap().is_alphabetic() || base_id.starts_with('_')) {
             let byte_offset = self.line_col_to_byte_offset(line, col);
             let scope = self.symbol_table.find_scope_at_position(byte_offset);
+            let end_col = col + base_id.len();
             self.symbol_table
-                .add_reference(base_id, scope, line, col, ReferenceKind::Read);
+                .add_reference(base_id, scope, line, col, end_col, ReferenceKind::Read);
         }
 
         Ok(())
@@ -595,8 +671,43 @@ impl NameResolver {
         let mut current_word = String::new();
         let mut in_string = false;
         let mut string_char = '\0';
+        let mut current_line = line;
+        let mut current_col = col;
+        let mut word_start_line = line;
+        let mut word_start_col = col;
+
+        let flush_word = |resolver: &mut NameResolver,
+                          word: &mut String,
+                          start_line: usize,
+                          start_col: usize|
+         -> Result<()> {
+            if word.is_empty() {
+                return Ok(());
+            }
+
+            if !word.chars().next().unwrap().is_ascii_digit() && !BUILTINS.contains(&word.as_str()) {
+                let byte_offset = resolver.line_col_to_byte_offset(start_line, start_col);
+                let scope = resolver.symbol_table.find_scope_at_position(byte_offset);
+                let end_col = start_col + word.chars().count();
+                resolver
+                    .symbol_table
+                    .add_reference(word, scope, start_line, start_col, end_col, ReferenceKind::Read);
+            }
+
+            word.clear();
+            Ok(())
+        };
 
         for ch in type_ann.chars() {
+            if ch == '\n' {
+                if !in_string {
+                    flush_word(self, &mut current_word, word_start_line, word_start_col)?;
+                }
+                current_line += 1;
+                current_col = 1;
+                continue;
+            }
+
             match ch {
                 '"' | '\'' if !in_string => {
                     in_string = true;
@@ -606,34 +717,24 @@ impl NameResolver {
                     in_string = false;
                 }
                 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' if !in_string => {
+                    if current_word.is_empty() {
+                        word_start_line = current_line;
+                        word_start_col = current_col;
+                    }
                     current_word.push(ch);
                 }
                 _ if !in_string => {
-                    if !current_word.is_empty() {
-                        if !current_word.chars().next().unwrap().is_ascii_digit()
-                            && !BUILTINS.contains(&current_word.as_str())
-                        {
-                            let byte_offset = self.line_col_to_byte_offset(line, col);
-                            let scope = self.symbol_table.find_scope_at_position(byte_offset);
-                            self.symbol_table
-                                .add_reference(&current_word, scope, line, col, ReferenceKind::Read);
-                        }
-                        current_word.clear();
-                    }
+                    flush_word(self, &mut current_word, word_start_line, word_start_col)?;
                 }
                 _ => {}
             }
+
+            if ch != '\n' {
+                current_col += 1;
+            }
         }
 
-        if !current_word.is_empty()
-            && !current_word.chars().next().unwrap().is_ascii_digit()
-            && !BUILTINS.contains(&current_word.as_str())
-        {
-            let byte_offset = self.line_col_to_byte_offset(line, col);
-            let scope = self.symbol_table.find_scope_at_position(byte_offset);
-            self.symbol_table
-                .add_reference(&current_word, scope, line, col, ReferenceKind::Read);
-        }
+        flush_word(self, &mut current_word, word_start_line, word_start_col)?;
 
         Ok(())
     }
@@ -650,8 +751,13 @@ impl NameResolver {
                 }
             }
             AstNode::FunctionDef { args, return_type, body, decorators, line, col, .. } => {
-                for decorator in decorators {
-                    self.track_type_annotation_references(decorator, *line, *col)?;
+                let decorator_spans = self.compute_decorator_spans(*line, decorators);
+                for (decorator, span) in decorators.iter().zip(decorator_spans.iter()) {
+                    if let Some((dec_line, dec_col, _)) = span {
+                        self.track_type_annotation_references(decorator, *dec_line, *dec_col)?;
+                    } else {
+                        self.track_type_annotation_references(decorator, *line, *col)?;
+                    }
                 }
 
                 for param in args {
@@ -661,6 +767,7 @@ impl NameResolver {
                 }
 
                 if let Some(ret_type) = return_type {
+                    // TODO: capture precise ranges for return annotations when parser retains that metadata.
                     self.track_type_annotation_references(ret_type, *line, *col)?;
                 }
 
@@ -669,11 +776,17 @@ impl NameResolver {
                 }
             }
             AstNode::ClassDef { body, decorators, bases, line, col, .. } => {
-                for decorator in decorators {
-                    self.track_type_annotation_references(decorator, *line, *col)?;
+                let decorator_spans = self.compute_decorator_spans(*line, decorators);
+                for (decorator, span) in decorators.iter().zip(decorator_spans.iter()) {
+                    if let Some((dec_line, dec_col, _)) = span {
+                        self.track_type_annotation_references(decorator, *dec_line, *dec_col)?;
+                    } else {
+                        self.track_type_annotation_references(decorator, *line, *col)?;
+                    }
                 }
 
                 for base in bases {
+                    // TODO: capture precise spans for base expressions instead of defaulting to the class location.
                     self.track_type_annotation_references(base, *line, *col)?;
                 }
 
@@ -700,11 +813,11 @@ impl NameResolver {
                     self.track_references(value)?;
                 }
             }
-            AstNode::Identifier { name, line, col, .. } => {
+            AstNode::Identifier { name, line, col, end_col, .. } => {
                 let byte_offset = self.line_col_to_byte_offset(*line, *col);
                 let scope = self.symbol_table.find_scope_at_position(byte_offset);
                 self.symbol_table
-                    .add_reference(name, scope, *line, *col, ReferenceKind::Read);
+                    .add_reference(name, scope, *line, *col, *end_col, ReferenceKind::Read);
             }
             AstNode::Return { value, .. } => {
                 if let Some(val) = value {
@@ -1012,6 +1125,7 @@ impl NameResolver {
                     kind: SymbolKind::Function,
                     line: *line,
                     col: *col,
+                    end_col: *col + name.len(),
                     scope_id: self.current_scope,
                     docstring: docstring.clone(),
                     references: Vec::new(),
@@ -1037,6 +1151,7 @@ impl NameResolver {
                         kind: SymbolKind::Parameter,
                         line: param.line,
                         col: param.col,
+                        end_col: param.end_col,
                         scope_id: func_scope,
                         docstring: None,
                         references: Vec::new(),
@@ -1055,6 +1170,7 @@ impl NameResolver {
                     kind: SymbolKind::Class,
                     line: *line,
                     col: *col,
+                    end_col: *col + name.len(),
                     scope_id: self.current_scope,
                     docstring: docstring.clone(),
                     references: Vec::new(),
@@ -1086,19 +1202,23 @@ impl NameResolver {
                 for name in target.extract_target_names() {
                     if let Some(scope) = self.symbol_table.scopes.get(&self.current_scope) {
                         if scope.symbols.contains_key(&name) {
+                            let end_col = *col + name.len();
                             self.symbol_table.add_reference(
                                 &name,
                                 self.current_scope,
                                 *line,
                                 *col,
+                                end_col,
                                 ReferenceKind::Write,
                             );
                         } else {
+                            let end_col = *col + name.len();
                             let mut symbol = Symbol {
                                 name: name.clone(),
                                 kind: SymbolKind::Variable,
                                 line: *line,
                                 col: *col,
+                                end_col,
                                 scope_id: self.current_scope,
                                 docstring: None,
                                 references: Vec::new(),
@@ -1106,6 +1226,7 @@ impl NameResolver {
                             symbol.references.push(SymbolReference {
                                 line: *line,
                                 col: *col,
+                                end_col,
                                 kind: ReferenceKind::Write,
                             });
                             self.symbol_table.add_symbol(self.current_scope, symbol);
@@ -1117,19 +1238,23 @@ impl NameResolver {
                 for name in target.extract_target_names() {
                     if let Some(scope) = self.symbol_table.scopes.get(&self.current_scope) {
                         if scope.symbols.contains_key(&name) {
+                            let end_col = *col + name.len();
                             self.symbol_table.add_reference(
                                 &name,
                                 self.current_scope,
                                 *line,
                                 *col,
+                                end_col,
                                 ReferenceKind::Write,
                             );
                         } else {
+                            let end_col = *col + name.len();
                             let mut symbol = Symbol {
                                 name: name.clone(),
                                 kind: SymbolKind::Variable,
                                 line: *line,
                                 col: *col,
+                                end_col,
                                 scope_id: self.current_scope,
                                 docstring: None,
                                 references: Vec::new(),
@@ -1138,6 +1263,7 @@ impl NameResolver {
                                 symbol.references.push(SymbolReference {
                                     line: *line,
                                     col: *col,
+                                    end_col,
                                     kind: ReferenceKind::Write,
                                 });
                             }
@@ -1160,27 +1286,32 @@ impl NameResolver {
                     self.visit_node(val)?;
                 }
             }
-            AstNode::Import { module, alias, line, col, .. } => self.symbol_table.add_symbol(
-                self.current_scope,
-                Symbol {
-                    name: alias.as_ref().unwrap_or(module).clone(),
-                    kind: SymbolKind::Import,
-                    line: *line,
-                    col: *col,
-                    scope_id: self.current_scope,
-                    docstring: None,
-                    references: Vec::new(),
-                },
-            ),
-            AstNode::ImportFrom { names, line, col, .. } => {
-                for (i, name) in names.iter().enumerate() {
+            AstNode::Import { module, alias, line, col, .. } => {
+                let name = alias.as_ref().unwrap_or(module);
+                self.symbol_table.add_symbol(
+                    self.current_scope,
+                    Symbol {
+                        name: name.clone(),
+                        kind: SymbolKind::Import,
+                        line: *line,
+                        col: *col,
+                        end_col: *col + name.len(),
+                        scope_id: self.current_scope,
+                        docstring: None,
+                        references: Vec::new(),
+                    },
+                )
+            }
+            AstNode::ImportFrom { names, .. } => {
+                for import_name in names {
                     self.symbol_table.add_symbol(
                         self.current_scope,
                         Symbol {
-                            name: name.clone(),
+                            name: import_name.name.clone(),
                             kind: SymbolKind::Import,
-                            line: *line,
-                            col: *col + i,
+                            line: import_name.line,
+                            col: import_name.col,
+                            end_col: import_name.end_col,
                             scope_id: self.current_scope,
                             docstring: None,
                             references: Vec::new(),
@@ -1211,10 +1342,11 @@ impl NameResolver {
 
                 for var_name in target.extract_target_names() {
                     let symbol = Symbol {
-                        name: var_name,
+                        name: var_name.clone(),
                         kind: SymbolKind::Variable,
                         line: *line,
                         col: *col,
+                        end_col: *col + var_name.len(),
                         scope_id: self.current_scope,
                         docstring: None,
                         references: Vec::new(),
@@ -1253,6 +1385,7 @@ impl NameResolver {
                             kind: SymbolKind::Variable,
                             line: handler.line,
                             col: handler.col,
+                            end_col: handler.col + name.len(),
                             scope_id: self.current_scope,
                             docstring: None,
                             references: Vec::new(),
@@ -1284,6 +1417,7 @@ impl NameResolver {
                             kind: SymbolKind::Variable,
                             line: 0,
                             col: 0,
+                            end_col: var_name.len(),
                             scope_id: self.current_scope,
                             docstring: None,
                             references: Vec::new(),
@@ -1303,10 +1437,11 @@ impl NameResolver {
 
                     for var_name in Self::extract_comprehension_target_names(&generator.target) {
                         let symbol = Symbol {
-                            name: var_name,
+                            name: var_name.clone(),
                             kind: SymbolKind::Variable,
                             line: *line,
                             col: *col,
+                            end_col: *col + var_name.len(),
                             scope_id: self.current_scope,
                             docstring: None,
                             references: Vec::new(),
@@ -1326,10 +1461,11 @@ impl NameResolver {
 
                     for var_name in Self::extract_comprehension_target_names(&generator.target) {
                         let symbol = Symbol {
-                            name: var_name,
+                            name: var_name.clone(),
                             kind: SymbolKind::Variable,
                             line: *line,
                             col: *col,
+                            end_col: *col + var_name.len(),
                             scope_id: self.current_scope,
                             docstring: None,
                             references: Vec::new(),
@@ -1352,6 +1488,7 @@ impl NameResolver {
                     kind: SymbolKind::Variable,
                     line: *line,
                     col: *col,
+                    end_col: *col + target.len(),
                     scope_id: self.current_scope,
                     docstring: None,
                     references: Vec::new(),
@@ -1386,6 +1523,7 @@ impl NameResolver {
                         kind: SymbolKind::Parameter,
                         line: param.line,
                         col: param.col,
+                        end_col: param.end_col,
                         scope_id: lambda_scope,
                         docstring: None,
                         references: Vec::new(),
@@ -1513,6 +1651,7 @@ mod tests {
             kind: SymbolKind::Variable,
             line: 1,
             col: 1,
+            end_col: 11,
             scope_id: table.root_scope,
             docstring: None,
             references: Vec::new(),
@@ -1524,6 +1663,7 @@ mod tests {
             kind: SymbolKind::Variable,
             line: 2,
             col: 1,
+            end_col: 10,
             scope_id: func_scope,
             docstring: None,
             references: Vec::new(),
@@ -2780,6 +2920,27 @@ mod tests {
     }
 
     #[test]
+    fn test_decorator_reference_span_matches_decorator_line() {
+        let source = "from dataclasses import dataclass\n\n@dataclass\nclass Foo:\n    pass\n";
+        let mut parser = crate::PythonParser::new().unwrap();
+        let parsed = parser.parse(source).unwrap();
+        let ast = parser.to_ast(&parsed).unwrap();
+        let mut resolver = NameResolver::new(source.to_string());
+        resolver.resolve(&ast).unwrap();
+
+        let dataclass_symbol = resolver
+            .symbol_table
+            .lookup_symbol("dataclass", resolver.symbol_table.root_scope)
+            .expect("expected dataclass symbol");
+
+        assert_eq!(dataclass_symbol.references.len(), 1);
+        let reference = &dataclass_symbol.references[0];
+        assert_eq!(reference.line, 3);
+        assert_eq!(reference.col, 2);
+        assert_eq!(reference.end_col, 11);
+    }
+
+    #[test]
     fn test_add_reference_returns_true_on_success() {
         let mut table = SymbolTable::new();
         let func_scope = table.create_scope(ScopeKind::Function, table.root_scope, 10, 50);
@@ -2789,13 +2950,14 @@ mod tests {
             kind: SymbolKind::Variable,
             line: 1,
             col: 1,
+            end_col: 2,
             scope_id: func_scope,
             docstring: None,
             references: Vec::new(),
         };
         table.add_symbol(func_scope, symbol);
 
-        let result = table.add_reference("x", func_scope, 5, 10, ReferenceKind::Read);
+        let result = table.add_reference("x", func_scope, 5, 10, 11, ReferenceKind::Read);
         assert!(result);
 
         let x_symbol = table.lookup_symbol("x", func_scope).unwrap();
@@ -2808,7 +2970,7 @@ mod tests {
         let mut table = SymbolTable::new();
         let func_scope = table.create_scope(ScopeKind::Function, table.root_scope, 10, 50);
 
-        let result = table.add_reference("nonexistent", func_scope, 5, 10, ReferenceKind::Read);
+        let result = table.add_reference("nonexistent", func_scope, 5, 10, 21, ReferenceKind::Read);
         assert!(!result);
     }
 }

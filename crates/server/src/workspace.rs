@@ -67,6 +67,8 @@ pub struct ModuleInfo {
     pub symbol_imports: Vec<SymbolImport>,
     /// Whether this is a package (has __init__.py or is a directory)
     pub is_package: bool,
+    /// __all__ exports list if defined in the module
+    pub all_exports: Option<Vec<String>>,
 }
 
 impl ModuleInfo {
@@ -78,9 +80,12 @@ impl ModuleInfo {
             dependencies: FxHashSet::default(),
             symbol_imports: Vec::new(),
             is_package,
+            all_exports: None,
         }
     }
 }
+
+type ImportURIs = (Url, Vec<String>, Vec<SymbolImport>, Option<Vec<String>>);
 
 /// Index of all Python modules in the workspace
 #[derive(Debug)]
@@ -198,11 +203,11 @@ impl Workspace {
         if let Ok(mut workspace_cfg) = self.workspace_cfg.write() {
             let call_graph = workspace_cfg.call_graph_mut();
             for call_site in &module_cfg.call_sites {
-                if let Some(_) = &call_site.receiver {
+                if call_site.receiver.is_some() {
                     for func_id in module_cfg.function_ids() {
                         if let Some(cfg) = module_cfg.get_function_cfg(func_id.scope_id) {
                             if cfg.blocks.contains_key(&call_site.block_id) {
-                                call_graph.add_call_site(func_id.clone(), call_site.clone());
+                                call_graph.add_call_site(func_id.clone(), &call_site.clone());
                                 break;
                             }
                         }
@@ -242,20 +247,22 @@ impl Workspace {
     /// Uses [rayon] for parallel processing of files.
     fn build_dependency_graph(&mut self) {
         let uris: Vec<Url> = self.index.modules.keys().cloned().collect();
-        let imports: Vec<(Url, Vec<String>, Vec<SymbolImport>)> = uris
+        let imports: Vec<ImportURIs> = uris
             .par_iter()
             .filter_map(|uri| {
                 let module_imports = self.extract_imports(uri)?;
                 let symbol_imports = self.extract_symbol_imports(uri).unwrap_or_default();
-                Some((uri.clone(), module_imports, symbol_imports))
+                let all_exports = self.extract_all_exports(uri);
+                Some((uri.clone(), module_imports, symbol_imports, all_exports))
             })
             .collect();
 
-        for (from_uri, import_names, symbol_imports) in imports {
+        for (from_uri, import_names, symbol_imports, all_exports) in imports {
             let from_module = self.uri_to_module_name(&from_uri).unwrap_or_default();
 
             if let Some(module_info) = self.index.modules.get_mut(&from_uri) {
                 module_info.symbol_imports = symbol_imports;
+                module_info.all_exports = all_exports;
             }
 
             for import_name in import_names {
@@ -296,6 +303,15 @@ impl Workspace {
         Self::collect_symbol_imports_from_ast(&parse_result.ast, &mut symbol_imports);
 
         Some(symbol_imports)
+    }
+
+    /// Extract __all__ exports from a Python file
+    fn extract_all_exports(&self, uri: &Url) -> Option<Vec<String>> {
+        let text = self.documents.get_document(uri, |doc| doc.text())?;
+        let mut parser = crate::parser::LspParser::new().ok()?;
+        let parse_result = parser.parse(&text).ok()?;
+
+        Self::collect_all_exports_from_ast(&parse_result.ast)
     }
 
     /// Recursively collect imports from an AST node
@@ -395,7 +411,7 @@ impl Workspace {
             }
             AstNode::ImportFrom { module, names, .. } => {
                 for name in names {
-                    symbol_imports.push(SymbolImport { from_module: module.clone(), symbol: name.clone() });
+                    symbol_imports.push(SymbolImport { from_module: module.clone(), symbol: name.name.clone() });
                 }
             }
             AstNode::FunctionDef { body, .. } => {
@@ -459,6 +475,24 @@ impl Workspace {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Collect __all__ exports from AST (module-level only)
+    fn collect_all_exports_from_ast(node: &beacon_parser::AstNode) -> Option<Vec<String>> {
+        match node {
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    if let AstNode::Assignment { target, value, .. } = stmt {
+                        let target_name = target.target_to_string();
+                        if target_name == "__all__" {
+                            return extract_all_list(value);
+                        }
+                    }
+                }
+                None
+            }
+            _ => None,
         }
     }
 
@@ -1479,6 +1513,130 @@ impl Workspace {
             .unwrap_or_default()
     }
 
+    /// Get __all__ exports for a specific module
+    pub fn get_all_exports(&self, uri: &Url) -> Option<Vec<String>> {
+        self.index.modules.get(uri).and_then(|info| info.all_exports.clone())
+    }
+
+    /// Get all module-level symbol definitions (functions, classes, variables)
+    pub fn get_module_symbols(&self, uri: &Url) -> FxHashSet<String> {
+        let text = match self.documents.get_document(uri, |doc| doc.text()) {
+            Some(text) => text,
+            None => return FxHashSet::default(),
+        };
+
+        let mut parser = match crate::parser::LspParser::new() {
+            Ok(p) => p,
+            Err(_) => return FxHashSet::default(),
+        };
+
+        let parse_result = match parser.parse(&text) {
+            Ok(result) => result,
+            Err(_) => return FxHashSet::default(),
+        };
+
+        Self::collect_module_symbols(&parse_result.ast)
+    }
+
+    /// Collect module-level symbol definitions from AST
+    fn collect_module_symbols(node: &beacon_parser::AstNode) -> FxHashSet<String> {
+        let mut symbols = FxHashSet::default();
+
+        if let AstNode::Module { body, .. } = node {
+            for stmt in body {
+                match stmt {
+                    AstNode::FunctionDef { name, .. } => {
+                        symbols.insert(name.clone());
+                    }
+                    AstNode::ClassDef { name, .. } => {
+                        symbols.insert(name.clone());
+                    }
+                    AstNode::Assignment { target, .. } => {
+                        let target_name = target.target_to_string();
+                        if !target_name.is_empty() {
+                            symbols.insert(target_name);
+                        }
+                    }
+                    AstNode::AnnotatedAssignment { target, .. } => {
+                        let target_name = target.target_to_string();
+                        if !target_name.is_empty() {
+                            symbols.insert(target_name);
+                        }
+                    }
+                    AstNode::Import { module, alias, extra_modules, .. } => {
+                        let import_name = alias.clone().unwrap_or_else(|| module.clone());
+                        symbols.insert(import_name);
+
+                        for (extra_module, extra_alias) in extra_modules {
+                            let name = extra_alias.clone().unwrap_or_else(|| extra_module.clone());
+                            symbols.insert(name);
+                        }
+                    }
+                    AstNode::ImportFrom { names, .. } => {
+                        for name in names {
+                            symbols.insert(name.name.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        symbols
+    }
+
+    /// Detect conflicting stub definitions for a module
+    pub fn get_conflicting_stub_definitions(&self, module_name: &str) -> FxHashMap<String, Vec<(Type, PathBuf)>> {
+        let mut conflicts: FxHashMap<String, Vec<(Type, PathBuf)>> = FxHashMap::default();
+
+        let mut stubs_for_module: Vec<(StubFile, PathBuf)> = Vec::new();
+
+        if let Some(stub) = EMBEDDED_STDLIB_PARSED_STUBS.get(module_name) {
+            stubs_for_module.push((stub.clone(), PathBuf::from("<embedded>")));
+        }
+
+        for stub_path in &self.config.stub_paths {
+            if let Some(stub_file) = self.find_stub_in_directory(stub_path, module_name) {
+                let path = stub_file.path.clone();
+                stubs_for_module.push((stub_file, path));
+            }
+        }
+
+        if let Some(info) = self.index.get_by_name(module_name) {
+            let pyi_path = PathBuf::from(info.uri.path()).with_extension("pyi");
+            if pyi_path.exists() {
+                if let Ok(parsed) = self.parse_stub_file(&pyi_path) {
+                    stubs_for_module.push((parsed, pyi_path));
+                }
+            }
+        }
+
+        if stubs_for_module.len() > 1 {
+            for symbol_name in stubs_for_module
+                .iter()
+                .flat_map(|(stub, _)| stub.exports.keys())
+                .collect::<FxHashSet<_>>()
+            {
+                let mut types_for_symbol: Vec<(Type, PathBuf)> = Vec::new();
+
+                for (stub, path) in &stubs_for_module {
+                    if let Some(ty) = stub.exports.get(symbol_name) {
+                        types_for_symbol.push((ty.clone(), path.clone()));
+                    }
+                }
+
+                if types_for_symbol.len() > 1 {
+                    let first_type = &types_for_symbol[0].0;
+                    if !types_for_symbol.iter().all(|(ty, _)| ty == first_type) {
+                        conflicts.insert(symbol_name.clone(), types_for_symbol);
+                    }
+                }
+            }
+        }
+
+        conflicts
+    }
+
     /// Get configuration
     pub fn config(&self) -> &Config {
         &self.config
@@ -1785,9 +1943,9 @@ fn extract_stub_signatures(
         }
         AstNode::ImportFrom { module, names, .. } => {
             for name in names {
-                reexports.push(format!("{module}.{name}"));
+                reexports.push(format!("{module}.{}", name.name));
                 exports
-                    .entry(name.clone())
+                    .entry(name.name.clone())
                     .or_insert_with(|| Type::Con(TypeCtor::Module(module.clone())));
             }
         }
@@ -2571,6 +2729,189 @@ def test_function(x: str) -> bool: ...
         assert!(
             !file_paths.iter().any(|p| p.contains("node_modules/pkg.py")),
             "node_modules/pkg.py should be excluded (pattern with !)"
+        );
+    }
+
+    #[test]
+    fn test_extract_all_exports() {
+        let temp_dir = TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("test_module.py");
+
+        let source_code = r#"
+def foo():
+    pass
+
+def bar():
+    pass
+
+__all__ = ["foo", "bar", "baz"]
+"#;
+
+        fs::write(&test_file, source_code).unwrap();
+
+        let uri = Url::from_file_path(&test_file).unwrap();
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        documents
+            .open_document(uri.clone(), 1, source_code.to_string())
+            .unwrap();
+        let workspace = Workspace::new(Some(uri.clone()), config, documents);
+
+        let all_exports = workspace.extract_all_exports(&uri);
+        assert!(all_exports.is_some());
+        let exports = all_exports.unwrap();
+        assert_eq!(exports.len(), 3);
+        assert!(exports.contains(&"foo".to_string()));
+        assert!(exports.contains(&"bar".to_string()));
+        assert!(exports.contains(&"baz".to_string()));
+    }
+
+    #[test]
+    fn test_extract_all_exports_empty() {
+        let temp_dir = TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("test_module.py");
+
+        let source_code = r#"
+def foo():
+    pass
+"#;
+
+        fs::write(&test_file, source_code).unwrap();
+
+        let uri = Url::from_file_path(&test_file).unwrap();
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        documents
+            .open_document(uri.clone(), 1, source_code.to_string())
+            .unwrap();
+        let workspace = Workspace::new(Some(uri.clone()), config, documents);
+
+        let all_exports = workspace.extract_all_exports(&uri);
+        assert!(all_exports.is_none());
+    }
+
+    #[test]
+    fn test_get_module_symbols() {
+        let temp_dir = TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("test_module.py");
+
+        let source_code = r#"
+import os
+
+def foo():
+    pass
+
+class Bar:
+    pass
+
+my_var = 42
+"#;
+
+        fs::write(&test_file, source_code).unwrap();
+
+        let uri = Url::from_file_path(&test_file).unwrap();
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        documents
+            .open_document(uri.clone(), 1, source_code.to_string())
+            .unwrap();
+        let workspace = Workspace::new(Some(uri.clone()), config, documents);
+
+        let symbols = workspace.get_module_symbols(&uri);
+        assert!(symbols.contains("foo"));
+        assert!(symbols.contains("Bar"));
+        assert!(symbols.contains("my_var"));
+        assert!(symbols.contains("os"));
+    }
+
+    #[test]
+    fn test_inconsistent_export_detection() {
+        let temp_dir = TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("test_module.py");
+
+        let source_code = r#"
+def foo():
+    pass
+
+def bar():
+    pass
+
+__all__ = ["foo", "baz"]
+"#;
+
+        fs::write(&test_file, source_code).unwrap();
+
+        let file_uri = Url::from_file_path(&test_file).unwrap();
+        let root_uri = Url::from_directory_path(temp_dir.path()).unwrap();
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        documents
+            .open_document(file_uri.clone(), 1, source_code.to_string())
+            .unwrap();
+        let mut workspace = Workspace::new(Some(root_uri), config, documents);
+
+        workspace.initialize().unwrap();
+
+        let all_exports = workspace.get_all_exports(&file_uri);
+        assert!(
+            all_exports.is_some(),
+            "all_exports should be populated after initialize"
+        );
+
+        let exports = all_exports.unwrap();
+        let module_symbols = workspace.get_module_symbols(&file_uri);
+
+        assert!(exports.contains(&"foo".to_string()));
+        assert!(exports.contains(&"baz".to_string()));
+        assert!(module_symbols.contains("foo"));
+        assert!(module_symbols.contains("bar"));
+        assert!(!module_symbols.contains("baz"));
+    }
+
+    #[test]
+    fn test_conflicting_stub_definitions() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let workspace = Workspace::new(None, config, documents);
+
+        let stub1_content = r#"
+def my_function(x: int) -> str: ...
+class MyClass: ...
+my_var: int
+"#;
+
+        let stub2_content = r#"
+def my_function(x: str) -> int: ...
+class MyClass: ...
+my_var: str
+"#;
+
+        let stub1 = workspace.parse_stub_from_string("testmodule", stub1_content).unwrap();
+        let stub2 = workspace.parse_stub_from_string("testmodule", stub2_content).unwrap();
+
+        let mut conflicts: FxHashMap<String, Vec<Type>> = FxHashMap::default();
+
+        for symbol_name in stub1.exports.keys() {
+            if let (Some(ty1), Some(ty2)) = (stub1.exports.get(symbol_name), stub2.exports.get(symbol_name)) {
+                if ty1 != ty2 {
+                    conflicts.insert(symbol_name.clone(), vec![ty1.clone(), ty2.clone()]);
+                }
+            }
+        }
+
+        assert!(
+            conflicts.contains_key("my_function"),
+            "Should detect conflicting signatures for my_function"
+        );
+
+        assert!(
+            conflicts.contains_key("my_var"),
+            "Should detect conflicting types for my_var"
+        );
+
+        assert!(
+            !conflicts.contains_key("MyClass"),
+            "MyClass should not have conflicts (same type in both)"
         );
     }
 }

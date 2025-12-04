@@ -68,7 +68,7 @@ mod tests {
 
     #[test]
     fn test_args_default_stdio() {
-        let args = Args::parse_from(&["beacon-lsp"]);
+        let args = Args::parse_from(["beacon-lsp"]);
         assert!(!args.tcp);
         assert!(!args.stdio);
         assert_eq!(args.host, "127.0.0.1");
@@ -77,14 +77,14 @@ mod tests {
 
     #[test]
     fn test_args_explicit_stdio() {
-        let args = Args::parse_from(&["beacon-lsp", "--stdio"]);
+        let args = Args::parse_from(["beacon-lsp", "--stdio"]);
         assert!(!args.tcp);
         assert!(args.stdio);
     }
 
     #[test]
     fn test_args_tcp_mode() {
-        let args = Args::parse_from(&["beacon-lsp", "--tcp"]);
+        let args = Args::parse_from(["beacon-lsp", "--tcp"]);
         assert!(args.tcp);
         assert!(!args.stdio);
         assert_eq!(args.host, "127.0.0.1");
@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn test_args_tcp_custom_host() {
-        let args = Args::parse_from(&["beacon-lsp", "--tcp", "--host", "0.0.0.0"]);
+        let args = Args::parse_from(["beacon-lsp", "--tcp", "--host", "0.0.0.0"]);
         assert!(args.tcp);
         assert_eq!(args.host, "0.0.0.0");
         assert_eq!(args.port, 9350);
@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn test_args_tcp_custom_port() {
-        let args = Args::parse_from(&["beacon-lsp", "--tcp", "--port", "8080"]);
+        let args = Args::parse_from(["beacon-lsp", "--tcp", "--port", "8080"]);
         assert!(args.tcp);
         assert_eq!(args.host, "127.0.0.1");
         assert_eq!(args.port, 8080);
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn test_args_tcp_full_config() {
-        let args = Args::parse_from(&["beacon-lsp", "--tcp", "--host", "0.0.0.0", "--port", "8080"]);
+        let args = Args::parse_from(["beacon-lsp", "--tcp", "--host", "0.0.0.0", "--port", "8080"]);
         assert!(args.tcp);
         assert_eq!(args.host, "0.0.0.0");
         assert_eq!(args.port, 8080);
@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn test_args_conflicts_stdio_tcp() {
-        let result = Args::try_parse_from(&["beacon-lsp", "--stdio", "--tcp"]);
+        let result = Args::try_parse_from(["beacon-lsp", "--stdio", "--tcp"]);
         assert!(
             result.is_err(),
             "Expected error when both --stdio and --tcp are specified"

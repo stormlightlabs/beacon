@@ -18,6 +18,7 @@ struct GlobalOrNonlocalDecl {
     name: String,
     line: usize,
     col: usize,
+    end_col: usize,
     is_global: bool,
 }
 
@@ -75,14 +76,14 @@ impl LinterContext {
         self.assigned_vars.insert(var_name);
     }
 
-    fn add_global_decl(&mut self, name: String, line: usize, col: usize) {
+    fn add_global_decl(&mut self, name: String, line: usize, col: usize, end_col: usize) {
         self.global_nonlocal_decls
-            .push(GlobalOrNonlocalDecl { name, line, col, is_global: true });
+            .push(GlobalOrNonlocalDecl { name, line, col, end_col, is_global: true });
     }
 
-    fn add_nonlocal_decl(&mut self, name: String, line: usize, col: usize) {
+    fn add_nonlocal_decl(&mut self, name: String, line: usize, col: usize, end_col: usize) {
         self.global_nonlocal_decls
-            .push(GlobalOrNonlocalDecl { name, line, col, is_global: false });
+            .push(GlobalOrNonlocalDecl { name, line, col, end_col, is_global: false });
     }
 
     fn enter_loop(&mut self) {
@@ -126,6 +127,8 @@ pub struct Linter<'a> {
     symbol_table: &'a SymbolTable,
     /// Source filename
     filename: String,
+    /// Full source split into lines for span calculations
+    source_lines: Vec<String>,
     /// Suppression map for filtering diagnostics
     suppression_map: SuppressionMap,
 }
@@ -134,7 +137,15 @@ impl<'a> Linter<'a> {
     /// Create a new linter for the given AST and symbol table
     pub fn new(symbol_table: &'a SymbolTable, filename: String, source: &str) -> Self {
         let suppression_map = SuppressionMap::from_source(source);
-        Self { diagnostics: Vec::new(), ctx: LinterContext::new(), symbol_table, filename, suppression_map }
+        let source_lines = source.lines().map(|line| line.to_string()).collect();
+        Self {
+            diagnostics: Vec::new(),
+            ctx: LinterContext::new(),
+            symbol_table,
+            filename,
+            source_lines,
+            suppression_map,
+        }
     }
 
     /// Analyze the AST and return collected diagnostics
@@ -150,9 +161,27 @@ impl<'a> Linter<'a> {
     }
 
     /// Report a diagnostic message
-    fn report(&mut self, rule: RuleKind, message: String, line: usize, col: usize) {
+    fn report(&mut self, rule: RuleKind, message: String, line: usize, col: usize, end_col: usize) {
         self.diagnostics
-            .push(DiagnosticMessage { rule, message, filename: self.filename.clone(), line, col });
+            .push(DiagnosticMessage { rule, message, filename: self.filename.clone(), line, col, end_col });
+    }
+
+    fn get_line_text(&self, line: usize) -> Option<&str> {
+        self.source_lines.get(line.checked_sub(1)?).map(|s| s.as_str())
+    }
+
+    fn find_return_type_col(&self, line: usize, annotation: &str) -> Option<usize> {
+        let line_text = self.get_line_text(line)?;
+        let arrow_pos = line_text.find("->")?;
+        let after_arrow = arrow_pos + 2;
+        if after_arrow >= line_text.len() {
+            return None;
+        }
+
+        let remaining = &line_text[after_arrow..];
+        let type_start = remaining.find(|c: char| !c.is_whitespace())?;
+        let type_pos = after_arrow + type_start;
+        if line_text[type_pos..].starts_with(annotation) { Some(type_pos + 1) } else { None }
     }
 
     /// Visit an AST node and check all applicable rules
@@ -174,36 +203,36 @@ impl<'a> Linter<'a> {
             AstNode::While { test, body, else_body, .. } => {
                 self.visit_while_loop(test, body, else_body);
             }
-            AstNode::If { test, body, elif_parts, else_body, line, col, .. } => {
-                self.visit_if_statement(test, body, elif_parts, else_body, *line, *col);
+            AstNode::If { test, body, elif_parts, else_body, line, col, end_col, .. } => {
+                self.visit_if_statement(test, body, elif_parts, else_body, *line, *col, *end_col);
             }
-            AstNode::Try { body, handlers, else_body, finally_body, line, col, .. } => {
-                self.visit_try_statement(body, handlers, else_body, finally_body, *line, *col);
+            AstNode::Try { body, handlers, else_body, finally_body, line, col, end_col, .. } => {
+                self.visit_try_statement(body, handlers, else_body, finally_body, *line, *col, *end_col);
             }
-            AstNode::Raise { exc, line, col, .. } => self.visit_raise(exc.as_deref(), *line, *col),
-            AstNode::Compare { left, ops, comparators, line, col, .. } => {
-                self.visit_compare(left, ops, comparators, *line, *col);
+            AstNode::Raise { exc, line, col, end_col, .. } => self.visit_raise(exc.as_deref(), *line, *col, *end_col),
+            AstNode::Compare { left, ops, comparators, line, col, end_col, .. } => {
+                self.visit_compare(left, ops, comparators, *line, *col, *end_col);
             }
             AstNode::Import { module, alias, .. } => self.track_import(module, alias),
             AstNode::ImportFrom { module: _, names, line, col, .. } => {
                 self.visit_from_import(names, *line, *col);
             }
             AstNode::Pass { .. } => {}
-            AstNode::Global { names, line, col, .. } => {
-                self.visit_global(names, *line, *col);
+            AstNode::Global { names, line, col, end_col, .. } => {
+                self.visit_global(names, *line, *col, *end_col);
             }
-            AstNode::Nonlocal { names, line, col, .. } => {
-                self.visit_nonlocal(names, *line, *col);
+            AstNode::Nonlocal { names, line, col, end_col, .. } => {
+                self.visit_nonlocal(names, *line, *col, *end_col);
             }
-            AstNode::Assignment { target, value, line, col, .. } => {
-                self.visit_assignment(target, value, *line, *col);
+            AstNode::Assignment { target, value, line, col, end_col, .. } => {
+                self.visit_assignment(target, value, *line, *col, *end_col);
             }
-            AstNode::Assert { test, line, col, .. } => {
-                self.check_assert_tuple(test, *line, *col);
+            AstNode::Assert { test, line, col, end_col, .. } => {
+                self.check_assert_tuple(test, *line, *col, *end_col);
                 self.visit_node(test);
             }
-            AstNode::AnnotatedAssignment { target, type_annotation, value, line, col, .. } => {
-                self.check_forward_annotation_syntax(type_annotation, *line, *col);
+            AstNode::AnnotatedAssignment { target, type_annotation, value, line, col, end_col, .. } => {
+                self.check_forward_annotation_syntax(type_annotation, *line, *col, *end_col);
 
                 if self.ctx.function_depth > 0 {
                     for name in target.extract_target_names() {
@@ -216,8 +245,8 @@ impl<'a> Linter<'a> {
                 }
             }
             AstNode::Call { args, .. } => self.visit_body(args),
-            AstNode::BinaryOp { left, right, op, line, col, .. } => {
-                self.check_percent_format(left, op, *line, *col);
+            AstNode::BinaryOp { left, right, op, line, col, end_col, .. } => {
+                self.check_percent_format(left, op, *line, *col, *end_col);
                 self.visit_node(left);
                 self.visit_node(right);
             }
@@ -227,7 +256,7 @@ impl<'a> Linter<'a> {
                 self.visit_node(value);
                 self.visit_node(slice);
             }
-            AstNode::Literal { value, line, col, .. } => self.visit_literal(value, *line, *col),
+            AstNode::Literal { value, line, col, end_col, .. } => self.visit_literal(value, *line, *col, *end_col),
             AstNode::With { items, body, .. } => self.visit_with(items, body),
             AstNode::Match { subject, cases, .. } => self.visit_match(subject, cases),
             AstNode::Lambda { body, .. } => {
@@ -291,12 +320,18 @@ impl<'a> Linter<'a> {
 
         for param in args {
             if let Some(annotation) = &param.type_annotation {
-                self.check_forward_annotation_syntax(annotation, param.line, param.col);
+                self.check_forward_annotation_syntax(annotation, param.line, param.col, param.end_col);
             }
         }
 
         if let Some(ret_type) = return_type {
-            self.check_forward_annotation_syntax(ret_type, line, 0);
+            let (ret_col, ret_end_col) = if let Some(col) = self.find_return_type_col(line, ret_type) {
+                let end_col = col + ret_type.len();
+                (col, end_col)
+            } else {
+                (1, 2)
+            };
+            self.check_forward_annotation_syntax(ret_type, line, ret_col, ret_end_col);
         }
 
         self.ctx.enter_function();
@@ -343,6 +378,7 @@ impl<'a> Linter<'a> {
                     format!("Import '{var_name}' shadowed by loop variable"),
                     line,
                     col,
+                    col + var_name.len(),
                 );
             }
 
@@ -373,9 +409,9 @@ impl<'a> Linter<'a> {
 
     fn visit_if_statement(
         &mut self, test: &AstNode, body: &[AstNode], elif_parts: &[(AstNode, Vec<AstNode>)],
-        else_body: &Option<Vec<AstNode>>, line: usize, col: usize,
+        else_body: &Option<Vec<AstNode>>, line: usize, col: usize, end_col: usize,
     ) {
-        self.check_if_tuple(test, line, col);
+        self.check_if_tuple(test, line, col, end_col);
         self.visit_node(test);
         self.check_redundant_pass(body);
         self.visit_body(body);
@@ -394,9 +430,9 @@ impl<'a> Linter<'a> {
 
     fn visit_try_statement(
         &mut self, body: &[AstNode], handlers: &[ExceptHandler], else_body: &Option<Vec<AstNode>>,
-        finally_body: &Option<Vec<AstNode>>, line: usize, col: usize,
+        finally_body: &Option<Vec<AstNode>>, line: usize, col: usize, end_col: usize,
     ) {
-        self.check_default_except_not_last(handlers, line, col);
+        self.check_default_except_not_last(handlers, line, col, end_col);
         self.check_redundant_pass(body);
         self.visit_body(body);
 
@@ -416,17 +452,18 @@ impl<'a> Linter<'a> {
         self.visit_optional_body(finally_body);
     }
 
-    fn visit_raise(&mut self, exc: Option<&AstNode>, line: usize, col: usize) {
+    fn visit_raise(&mut self, exc: Option<&AstNode>, line: usize, col: usize, end_col: usize) {
         if let Some(exception) = exc {
-            self.check_raise_not_implemented(exception, line, col);
+            self.check_raise_not_implemented(exception, line, col, end_col);
             self.visit_node(exception);
         }
     }
 
     fn visit_compare(
         &mut self, left: &AstNode, ops: &[CompareOperator], comparators: &[AstNode], line: usize, col: usize,
+        end_col: usize,
     ) {
-        self.check_is_literal(left, ops, comparators, line, col);
+        self.check_is_literal(left, ops, comparators, line, col, end_col);
         self.visit_node(left);
         for comp in comparators {
             self.visit_node(comp);
@@ -438,7 +475,7 @@ impl<'a> Linter<'a> {
         self.ctx.add_import(import_name);
     }
 
-    fn visit_from_import(&mut self, names: &[String], line: usize, col: usize) {
+    fn visit_from_import(&mut self, names: &[beacon_parser::ImportName], line: usize, col: usize) {
         if names.is_empty() {
             if self.ctx.function_depth > 0 || self.ctx.class_depth > 0 {
                 self.report(
@@ -446,6 +483,7 @@ impl<'a> Linter<'a> {
                     "from module import * not allowed inside function or class".to_string(),
                     line,
                     col,
+                    col + 1,
                 );
             }
             self.report(
@@ -453,31 +491,32 @@ impl<'a> Linter<'a> {
                 "import * prevents detection of undefined names".to_string(),
                 line,
                 col,
+                col + 1,
             );
         } else {
-            for name in names {
-                self.ctx.add_import(name.clone());
+            for iname in names {
+                self.ctx.add_import(iname.name.clone());
             }
         }
     }
 
     /// Visit global statement and track declarations
-    fn visit_global(&mut self, names: &[String], line: usize, col: usize) {
+    fn visit_global(&mut self, names: &[String], line: usize, col: usize, end_col: usize) {
         for name in names {
-            self.ctx.add_global_decl(name.clone(), line, col);
+            self.ctx.add_global_decl(name.clone(), line, col, end_col);
         }
     }
 
     /// Visit nonlocal statement and track declarations
-    fn visit_nonlocal(&mut self, names: &[String], line: usize, col: usize) {
+    fn visit_nonlocal(&mut self, names: &[String], line: usize, col: usize, end_col: usize) {
         for name in names {
-            self.ctx.add_nonlocal_decl(name.clone(), line, col);
+            self.ctx.add_nonlocal_decl(name.clone(), line, col, end_col);
         }
     }
 
-    fn visit_assignment(&mut self, target: &AstNode, value: &AstNode, line: usize, col: usize) {
-        self.check_two_starred_expressions(target, line, col);
-        self.check_too_many_expressions_in_starred_assignment(target, value, line, col);
+    fn visit_assignment(&mut self, target: &AstNode, value: &AstNode, line: usize, col: usize, end_col: usize) {
+        self.check_two_starred_expressions(target, line, col, end_col);
+        self.check_too_many_expressions_in_starred_assignment(target, value, line, col, end_col);
 
         if self.ctx.function_depth > 0 {
             for name in target.extract_target_names() {
@@ -488,10 +527,10 @@ impl<'a> Linter<'a> {
         self.visit_node(value);
     }
 
-    fn visit_literal(&mut self, value: &LiteralValue, line: usize, col: usize) {
+    fn visit_literal(&mut self, value: &LiteralValue, line: usize, col: usize, end_col: usize) {
         if let LiteralValue::String { value: s, prefix } = value {
-            self.check_fstring_missing_placeholders(s, prefix, line, col);
-            self.check_tstring_missing_placeholders(s, prefix, line, col);
+            self.check_fstring_missing_placeholders(s, prefix, line, col, end_col);
+            self.check_tstring_missing_placeholders(s, prefix, line, col, end_col);
         }
     }
 
@@ -560,6 +599,7 @@ impl<'a> Linter<'a> {
                         filename: self.filename.clone(),
                         line,
                         col,
+                        end_col: col + 1,
                     });
                 } else {
                     let (key_line, key_col) = match key {
@@ -593,6 +633,7 @@ impl<'a> Linter<'a> {
                         filename: self.filename.clone(),
                         line: *line,
                         col: *col,
+                        end_col: *col + 4,
                     });
                 }
             }
@@ -609,6 +650,7 @@ impl<'a> Linter<'a> {
                     format!("Duplicate argument '{}' in function '{}'", arg.name, func_name),
                     arg.line,
                     arg.col,
+                    arg.end_col,
                 );
             }
         }
@@ -622,6 +664,7 @@ impl<'a> Linter<'a> {
                 "'return' outside function".to_string(),
                 line,
                 col,
+                col + 6,
             );
         }
     }
@@ -634,6 +677,7 @@ impl<'a> Linter<'a> {
                 "'yield' outside function".to_string(),
                 line,
                 col,
+                col + 5,
             );
         }
     }
@@ -646,6 +690,7 @@ impl<'a> Linter<'a> {
                 "'break' outside loop".to_string(),
                 line,
                 col,
+                col + 5,
             );
         }
     }
@@ -658,12 +703,13 @@ impl<'a> Linter<'a> {
                 "'continue' outside loop".to_string(),
                 line,
                 col,
+                col + 8,
             );
         }
     }
 
     /// BEA007 & BEA027: [RuleKind::DefaultExceptNotLast]
-    fn check_default_except_not_last(&mut self, handlers: &[ExceptHandler], line: usize, col: usize) {
+    fn check_default_except_not_last(&mut self, handlers: &[ExceptHandler], line: usize, col: usize, end_col: usize) {
         let mut found_bare_except = false;
         let mut bare_except_index = None;
 
@@ -682,6 +728,7 @@ impl<'a> Linter<'a> {
                     "default 'except:' must be last".to_string(),
                     line,
                     col,
+                    end_col,
                 );
             }
         }
@@ -690,7 +737,7 @@ impl<'a> Linter<'a> {
     }
 
     /// BEA008: [RuleKind::RaiseNotImplemented]
-    fn check_raise_not_implemented(&mut self, exception: &AstNode, line: usize, col: usize) {
+    fn check_raise_not_implemented(&mut self, exception: &AstNode, line: usize, col: usize, end_col: usize) {
         if let AstNode::Identifier { name, .. } = exception {
             if name == "NotImplemented" {
                 self.report(
@@ -698,25 +745,27 @@ impl<'a> Linter<'a> {
                     "use NotImplementedError instead of NotImplemented".to_string(),
                     line,
                     col,
+                    end_col,
                 );
             }
         }
     }
 
     /// BEA011: [RuleKind::IfTuple]
-    fn check_if_tuple(&mut self, test: &AstNode, line: usize, col: usize) {
+    fn check_if_tuple(&mut self, test: &AstNode, line: usize, col: usize, end_col: usize) {
         if let AstNode::Tuple { .. } = test {
             self.report(
                 RuleKind::IfTuple,
                 "if condition is a tuple literal - this is always True".to_string(),
                 line,
                 col,
+                end_col,
             );
         }
     }
 
     /// BEA013: [RuleKind::FStringMissingPlaceholders]
-    fn check_fstring_missing_placeholders(&mut self, s: &str, prefix: &str, line: usize, col: usize) {
+    fn check_fstring_missing_placeholders(&mut self, s: &str, prefix: &str, line: usize, col: usize, end_col: usize) {
         let is_fstring = prefix.to_lowercase().contains('f');
         if is_fstring && !s.contains('{') {
             self.report(
@@ -724,12 +773,13 @@ impl<'a> Linter<'a> {
                 "f-string without any placeholders".to_string(),
                 line,
                 col,
+                end_col,
             );
         }
     }
 
     /// BEA014: [RuleKind::TStringMissingPlaceholders]
-    fn check_tstring_missing_placeholders(&mut self, s: &str, prefix: &str, line: usize, col: usize) {
+    fn check_tstring_missing_placeholders(&mut self, s: &str, prefix: &str, line: usize, col: usize, end_col: usize) {
         let is_tstring = prefix.to_lowercase().contains('t');
         if is_tstring && !s.contains('{') {
             self.report(
@@ -737,6 +787,7 @@ impl<'a> Linter<'a> {
                 "t-string without any placeholders".to_string(),
                 line,
                 col,
+                end_col,
             );
         }
     }
@@ -744,7 +795,7 @@ impl<'a> Linter<'a> {
     /// BEA025: [RuleKind::PercentFormatInvalidFormat]
     ///
     /// Validate percent format strings (e.g., "%s" % value)
-    fn check_percent_format(&mut self, left: &AstNode, op: &BinaryOperator, line: usize, col: usize) {
+    fn check_percent_format(&mut self, left: &AstNode, op: &BinaryOperator, line: usize, col: usize, end_col: usize) {
         if !matches!(op, BinaryOperator::Mod) {
             return;
         }
@@ -756,6 +807,7 @@ impl<'a> Linter<'a> {
                     format!("Invalid % format string: {error}"),
                     line,
                     col,
+                    end_col,
                 );
             }
         }
@@ -799,13 +851,14 @@ impl<'a> Linter<'a> {
     /// BEA023: ForwardAnnotationSyntaxError
     ///
     /// Validates forward type annotation syntax
-    fn check_forward_annotation_syntax(&mut self, annotation: &str, line: usize, col: usize) {
+    fn check_forward_annotation_syntax(&mut self, annotation: &str, line: usize, col: usize, end_col: usize) {
         if let Some(error_msg) = Self::validate_annotation_syntax(annotation) {
             self.report(
                 RuleKind::ForwardAnnotationSyntaxError,
                 format!("Syntax error in annotation '{annotation}': {error_msg}"),
                 line,
                 col,
+                end_col,
             );
         }
     }
@@ -842,6 +895,7 @@ impl<'a> Linter<'a> {
     /// BEA026: [RuleKind::IsLiteral]
     fn check_is_literal(
         &mut self, left: &AstNode, ops: &[CompareOperator], comparators: &[AstNode], line: usize, col: usize,
+        end_col: usize,
     ) {
         for (op, comparator) in ops.iter().zip(comparators.iter()) {
             if matches!(op, CompareOperator::Is | CompareOperator::IsNot) {
@@ -853,6 +907,7 @@ impl<'a> Linter<'a> {
                             "use '==' to compare constant values, not 'is'".to_string(),
                             line,
                             col,
+                            end_col,
                         );
                     }
                 }
@@ -865,6 +920,7 @@ impl<'a> Linter<'a> {
                             "use '==' to compare constant values, not 'is'".to_string(),
                             line,
                             col,
+                            end_col,
                         );
                     }
                 }
@@ -883,6 +939,7 @@ impl<'a> Linter<'a> {
                 "except clause with only 'pass' silently hides all errors".to_string(),
                 handler.line,
                 handler.col,
+                handler.end_col,
             );
         }
     }
@@ -890,7 +947,7 @@ impl<'a> Linter<'a> {
     /// Check for assert with tuple test (always True)
     ///
     /// BEA012: `assert (1, 2)` creates a non-empty tuple which is always True
-    fn check_assert_tuple(&mut self, test: &AstNode, line: usize, col: usize) {
+    fn check_assert_tuple(&mut self, test: &AstNode, line: usize, col: usize, end_col: usize) {
         if let AstNode::Tuple { elements, .. } = test {
             if !elements.is_empty() {
                 self.report(
@@ -898,6 +955,7 @@ impl<'a> Linter<'a> {
                     "assertion is a tuple literal, which is always True".to_string(),
                     line,
                     col,
+                    end_col,
                 );
             }
         }
@@ -906,7 +964,7 @@ impl<'a> Linter<'a> {
     /// Check for multiple starred expressions in assignment target
     ///
     /// BEA009: `a, *b, *c = [1, 2, 3]` has two starred expressions (invalid)
-    fn check_two_starred_expressions(&mut self, target: &AstNode, line: usize, col: usize) {
+    fn check_two_starred_expressions(&mut self, target: &AstNode, line: usize, col: usize, end_col: usize) {
         let starred_count = Self::count_starred_expressions(target);
         if starred_count > 1 {
             self.report(
@@ -914,6 +972,7 @@ impl<'a> Linter<'a> {
                 format!("assignment target contains {starred_count} starred expressions, only one allowed"),
                 line,
                 col,
+                end_col,
             );
         }
     }
@@ -933,7 +992,7 @@ impl<'a> Linter<'a> {
     ///
     /// BEA010: `*a, b, c = [1]` has too many names for the iterable
     fn check_too_many_expressions_in_starred_assignment(
-        &mut self, target: &AstNode, value: &AstNode, line: usize, col: usize,
+        &mut self, target: &AstNode, value: &AstNode, line: usize, col: usize, end_col: usize,
     ) {
         if Self::count_starred_expressions(target) == 0 {
             return;
@@ -954,6 +1013,7 @@ impl<'a> Linter<'a> {
                     format!("too many expressions in assignment; need at least {min_required} values, got {value_len}"),
                     line,
                     col,
+                    end_col,
                 );
             }
         }
@@ -986,6 +1046,7 @@ impl<'a> Linter<'a> {
                     format!("'{keyword} {}' declared but never assigned in function", decl.name),
                     decl.line,
                     decl.col,
+                    decl.end_col,
                 );
             }
         }
@@ -1033,6 +1094,7 @@ impl<'a> Linter<'a> {
                         format!("'{}' imported but never used", symbol.name),
                         symbol.line,
                         symbol.col,
+                        symbol.end_col,
                     );
                 }
             }
@@ -1071,6 +1133,7 @@ impl<'a> Linter<'a> {
                         format!("Annotated variable '{}' is never used", symbol.name),
                         symbol.line,
                         symbol.col,
+                        symbol.end_col,
                     );
                 }
             }
@@ -1117,6 +1180,7 @@ impl<'a> Linter<'a> {
                             format!("'{}' is redefined before being used", symbol.name),
                             curr_write.line,
                             curr_write.col,
+                            curr_write.end_col,
                         );
                         break;
                     }
@@ -1136,6 +1200,19 @@ mod tests {
         let (ast, symbol_table) = parser.parse_and_resolve(source).unwrap();
         let mut linter = Linter::new(&symbol_table, "test.py".to_string(), source);
         linter.analyze(&ast)
+    }
+
+    #[test]
+    fn test_forward_annotation_error_span_matches_return_position() {
+        let source = "def foo() -> \"list[\":\n    return 1";
+        let diagnostics = lint_source(source);
+        let diag = diagnostics
+            .iter()
+            .find(|d| d.rule == RuleKind::ForwardAnnotationSyntaxError)
+            .expect("expected forward annotation diagnostic");
+        assert_eq!(diag.line, 1);
+        assert_eq!(diag.col, 14);
+        assert_eq!(diag.end_col, 21);
     }
 
     #[test]

@@ -580,6 +580,37 @@ else:
 }
 
 #[test]
+fn test_augmented_assignment_ast() {
+    let source = "count += 1";
+    let ast = parse_to_ast(source);
+
+    match extract_first_stmt(ast) {
+        AstNode::Assignment { target, value, .. } => {
+            match target.as_ref() {
+                AstNode::Identifier { name, .. } => assert_eq!(name, "count"),
+                other => panic!("Expected identifier target, got {other:?}"),
+            }
+
+            match value.as_ref() {
+                AstNode::BinaryOp { op, left, right, .. } => {
+                    assert!(matches!(op, crate::BinaryOperator::Add));
+                    assert!(
+                        matches!(left.as_ref(), AstNode::Identifier { name, .. } if name == "count"),
+                        "Left operand should reference the augmented target: {left:?}"
+                    );
+                    assert!(
+                        matches!(right.as_ref(), AstNode::Literal { .. }),
+                        "Right operand should be parsed literal"
+                    );
+                }
+                other => panic!("Expected BinaryOp value, got {other:?}"),
+            }
+        }
+        other => panic!("Expected Assignment node, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_for_loop_simple() {
     let source = r#"for item in items:
     print(item)"#;

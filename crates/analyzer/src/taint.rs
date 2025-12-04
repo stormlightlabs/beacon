@@ -335,10 +335,8 @@ impl<'a> IntraModuleTaintAnalyzer<'a> {
                     if let Some(target_name) = self.extract_target_name(target) {
                         tainted.insert(target_name);
                     }
-                } else {
-                    if let Some(target_name) = self.extract_target_name(target) {
-                        tainted.remove(&target_name);
-                    }
+                } else if let Some(target_name) = self.extract_target_name(target) {
+                    tainted.remove(&target_name);
                 }
             }
             AstNode::AnnotatedAssignment { target, value: Some(val), .. } => {
@@ -346,10 +344,8 @@ impl<'a> IntraModuleTaintAnalyzer<'a> {
                     if let Some(target_name) = self.extract_target_name(target) {
                         tainted.insert(target_name);
                     }
-                } else {
-                    if let Some(target_name) = self.extract_target_name(target) {
-                        tainted.remove(&target_name);
-                    }
+                } else if let Some(target_name) = self.extract_target_name(target) {
+                    tainted.remove(&target_name);
                 }
             }
             _ => {}
@@ -395,22 +391,16 @@ impl<'a> IntraModuleTaintAnalyzer<'a> {
                 if stmt_idx < self.all_statements.len() {
                     let stmt = self.all_statements[stmt_idx];
 
-                    match self.check_taint_sink(stmt) {
-                        Some(sink) => {
-                            if self.sink_receives_taint(stmt, &current_taint) {
-                                for tainted_var in &current_taint {
-                                    match sources.iter().find(|s| &s.var_name == tainted_var) {
-                                        Some(source) => violations.push(TaintViolation {
-                                            source: source.clone(),
-                                            sink: sink.clone(),
-                                            flow_path: vec![tainted_var.clone()],
-                                        }),
-                                        None => (),
-                                    }
-                                }
+                    if let Some(sink) = self.check_taint_sink(stmt) {
+                        if self.sink_receives_taint(stmt, &current_taint) {
+                            for tainted_var in &current_taint {
+                                if let Some(source) = sources.iter().find(|s| &s.var_name == tainted_var) { violations.push(TaintViolation {
+                                    source: source.clone(),
+                                    sink: sink.clone(),
+                                    flow_path: vec![tainted_var.clone()],
+                                }) }
                             }
                         }
-                        None => (),
                     }
 
                     self.propagate_taint(stmt, &mut current_taint);

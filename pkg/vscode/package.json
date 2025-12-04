@@ -12,6 +12,7 @@
   "activationEvents": ["onLanguage:python"],
   "main": "./client/out/extension",
   "contributes": {
+    "commands": [{ "command": "beacon.runLint", "title": "Beacon: Run CLI Lint", "category": "Beacon" }],
     "configuration": {
       "type": "object",
       "title": "Beacon LSP Configuration",

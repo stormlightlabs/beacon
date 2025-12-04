@@ -91,14 +91,13 @@ impl TypeEnvironment {
         );
 
         let elem_tv = self.var_gen.fresh();
+        let iterable_ty =
+            Type::App(Box::new(Type::Con(TypeCtor::Iterable)), Box::new(Type::Var(elem_tv.clone())));
         self.bindings.insert(
             "list".to_string(),
             TypeScheme::new(
                 vec![elem_tv.clone()],
-                Type::fun(
-                    vec![(String::new(), Type::Var(elem_tv.clone()))],
-                    Type::list(Type::Var(elem_tv)),
-                ),
+                Type::fun(vec![(String::new(), iterable_ty)], Type::list(Type::Var(elem_tv))),
             ),
         );
 

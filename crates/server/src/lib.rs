@@ -55,7 +55,7 @@ pub async fn run_server_stdio() {
 /// The server runs indefinitely, accepting sequential connections.
 /// Backend state persists across reconnections, following gopls conventions.
 pub async fn run_server_tcp(host: &str, port: u16) -> std::io::Result<()> {
-    let addr = format!("{}:{}", host, port);
+    let addr = format!("{host}:{port}");
     let listener = TcpListener::bind(&addr).await?;
     tracing::info!("Beacon LSP server listening on TCP {}", addr);
 

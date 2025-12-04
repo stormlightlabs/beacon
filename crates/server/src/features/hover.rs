@@ -325,7 +325,7 @@ impl HoverProvider {
     fn find_import_info(node: &AstNode, target_line: usize, symbol_name: &str) -> Option<(String, String)> {
         match node {
             AstNode::ImportFrom { module, names, line, .. } if *line == target_line => {
-                if names.contains(&symbol_name.to_string()) {
+                if names.iter().any(|n| n.name == symbol_name) {
                     Some((module.clone(), symbol_name.to_string()))
                 } else {
                     None
@@ -728,7 +728,13 @@ mod tests {
         let ast = beacon_parser::AstNode::Module {
             body: vec![beacon_parser::AstNode::ImportFrom {
                 module: "os".to_string(),
-                names: vec!["path".to_string()],
+                names: vec![beacon_parser::ImportName {
+                    name: "path".to_string(),
+                    line: 1,
+                    col: 0,
+                    end_line: 1,
+                    end_col: 4,
+                }],
                 line: 1,
                 col: 0,
                 end_line: 1,

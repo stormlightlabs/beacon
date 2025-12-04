@@ -395,11 +395,11 @@ impl SemanticTokensProvider {
                 Self::add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
             }
 
-            AstNode::ImportFrom { names, line, col, .. } => {
+            AstNode::ImportFrom { names, .. } => {
                 let token_type = self.get_token_type_index(&SymbolKind::Import);
                 let modifiers = self.get_definition_modifier();
                 for name in names {
-                    Self::add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
+                    Self::add_token(&name.name, name.line, name.col, token_type, modifiers, text, raw_tokens);
                 }
             }
 

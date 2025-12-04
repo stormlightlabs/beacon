@@ -94,6 +94,12 @@ pub struct SharedState {
     interpreter_path: Option<std::path::PathBuf>,
 }
 
+impl Default for SharedState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SharedState {
     /// Create new shared state for TCP mode where state persists across reconnections
     pub fn new() -> Self {

@@ -249,7 +249,7 @@ impl CallGraph {
     }
 
     /// Add a call site for a function
-    pub fn add_call_site(&mut self, caller: FunctionId, call_site: CallSite) {
+    pub fn add_call_site(&mut self, caller: FunctionId, call_site: &CallSite) {
         self.call_sites
             .entry(caller.clone())
             .or_default()
@@ -381,14 +381,14 @@ impl<'a> TarjanCallState<'a> {
 
         for function in functions {
             if !self.indices.contains_key(&function) {
-                self.strong_connect(function);
+                self.strong_connect(&function);
             }
         }
 
         std::mem::take(&mut self.sccs)
     }
 
-    fn strong_connect(&mut self, v: FunctionId) {
+    fn strong_connect(&mut self, v: &FunctionId) {
         self.indices.insert(v.clone(), self.index_counter);
         self.lowlinks.insert(v.clone(), self.index_counter);
         self.index_counter += 1;
@@ -396,26 +396,26 @@ impl<'a> TarjanCallState<'a> {
         self.stack.push(v.clone());
         self.on_stack.insert(v.clone());
 
-        for w in self.graph.get_callees(&v) {
+        for w in self.graph.get_callees(v) {
             if !self.indices.contains_key(&w) {
-                self.strong_connect(w.clone());
+                self.strong_connect(&w.clone());
                 let w_lowlink = *self.lowlinks.get(&w).unwrap();
-                let v_lowlink = self.lowlinks.get_mut(&v).unwrap();
+                let v_lowlink = self.lowlinks.get_mut(v).unwrap();
                 *v_lowlink = (*v_lowlink).min(w_lowlink);
             } else if self.on_stack.contains(&w) {
                 let w_index = *self.indices.get(&w).unwrap();
-                let v_lowlink = self.lowlinks.get_mut(&v).unwrap();
+                let v_lowlink = self.lowlinks.get_mut(v).unwrap();
                 *v_lowlink = (*v_lowlink).min(w_index);
             }
         }
 
-        if self.lowlinks.get(&v) == self.indices.get(&v) {
+        if self.lowlinks.get(v) == self.indices.get(v) {
             let mut scc = Vec::new();
             loop {
                 let w = self.stack.pop().unwrap();
                 self.on_stack.remove(&w);
                 scc.push(w.clone());
-                if w == v {
+                if w == *v {
                     break;
                 }
             }
@@ -475,7 +475,7 @@ impl ModuleCFG {
                     .function_names
                     .get(scope_id)
                     .cloned()
-                    .unwrap_or_else(|| format!("func_{:?}", scope_id));
+                    .unwrap_or_else(|| format!("func_{scope_id:?}"));
                 FunctionId::new(self.uri.clone(), *scope_id, name)
             })
             .collect()
@@ -619,20 +619,17 @@ impl<'a> ModuleCFGBuilder<'a> {
     pub fn build(&self, ast: &AstNode) -> ModuleCFG {
         let mut module_cfg = ModuleCFG::new(self.uri.clone(), self.module_name.clone());
 
-        match ast {
-            AstNode::Module { body, .. } => {
-                let mut init_builder = CfgBuilder::new();
-                init_builder.build_module(body);
-                let (init_cfg, init_call_sites) =
-                    init_builder.build_with_resolution(self.symbol_table, &self.uri, self.symbol_table.root_scope);
-                module_cfg.module_init_cfg = init_cfg;
-                for call_site in init_call_sites {
-                    module_cfg.add_call_site(call_site);
-                }
-
-                self.process_module_body(body, &mut module_cfg);
+        if let AstNode::Module { body, .. } = ast {
+            let mut init_builder = CfgBuilder::new();
+            init_builder.build_module(body);
+            let (init_cfg, init_call_sites) =
+                init_builder.build_with_resolution(self.symbol_table, &self.uri, self.symbol_table.root_scope);
+            module_cfg.module_init_cfg = init_cfg;
+            for call_site in init_call_sites {
+                module_cfg.add_call_site(call_site);
             }
-            _ => {}
+
+            self.process_module_body(body, &mut module_cfg);
         }
 
         module_cfg
@@ -889,11 +886,7 @@ impl CfgBuilder {
                 }
             }
             AstNode::Lambda { body, .. } => self.extract_calls_from_expr(body, stmt_index),
-            AstNode::Yield { value, .. } => {
-                if let Some(val) = value {
-                    self.extract_calls_from_expr(val, stmt_index)
-                }
-            }
+            AstNode::Yield { value: Some(val), .. } => self.extract_calls_from_expr(val, stmt_index),
             AstNode::YieldFrom { value, .. } => self.extract_calls_from_expr(value, stmt_index),
             AstNode::Await { value, .. } => self.extract_calls_from_expr(value, stmt_index),
             AstNode::Starred { value, .. } => self.extract_calls_from_expr(value, stmt_index),
@@ -905,17 +898,44 @@ impl CfgBuilder {
     fn build_stmt(&mut self, stmt: &AstNode, stmt_index: &mut usize) {
         match stmt {
             AstNode::If { test, body, elif_parts, else_body, .. } => {
+                self.extract_calls_from_expr(test, *stmt_index);
+                if let Some(block) = self.cfg.blocks.get_mut(&self.ctx.current) {
+                    block.statements.push(*stmt_index);
+                }
+                *stmt_index += 1;
                 self.build_if(test, body, elif_parts, else_body, stmt_index)
             }
-            AstNode::For { target: _, iter: _, body, else_body, .. } => {
-                self.build_for(body, else_body.as_ref(), stmt_index)
+            AstNode::For { iter, body, else_body, .. } => {
+                self.extract_calls_from_expr(iter, *stmt_index);
+                let for_stmt_idx = *stmt_index;
+                *stmt_index += 1;
+                self.build_for(for_stmt_idx, body, else_body.as_ref(), stmt_index)
             }
-            AstNode::While { test: _, body, else_body, .. } => self.build_while(body, else_body.as_ref(), stmt_index),
+            AstNode::While { test, body, else_body, .. } => {
+                self.extract_calls_from_expr(test, *stmt_index);
+                let while_stmt_idx = *stmt_index;
+                *stmt_index += 1;
+                self.build_while(while_stmt_idx, body, else_body.as_ref(), stmt_index)
+            }
             AstNode::Try { body, handlers, else_body, finally_body, .. } => {
                 self.build_try(body, handlers, else_body.as_ref(), finally_body.as_ref(), stmt_index)
             }
-            AstNode::With { items: _, body, .. } => self.build_with(body, stmt_index),
-            AstNode::Match { subject: _, cases, .. } => self.build_match(cases, stmt_index),
+            AstNode::With { body, .. } => {
+                // TODO: capture context manager expressions for call extraction
+                if let Some(block) = self.cfg.blocks.get_mut(&self.ctx.current) {
+                    block.statements.push(*stmt_index);
+                }
+                *stmt_index += 1;
+                self.build_with(body, stmt_index)
+            }
+            AstNode::Match { subject, cases, .. } => {
+                self.extract_calls_from_expr(subject, *stmt_index);
+                if let Some(block) = self.cfg.blocks.get_mut(&self.ctx.current) {
+                    block.statements.push(*stmt_index);
+                }
+                *stmt_index += 1;
+                self.build_match(cases, stmt_index)
+            }
             AstNode::Return { value, .. } => {
                 if let Some(val) = value {
                     self.extract_calls_from_expr(val, *stmt_index);
@@ -986,10 +1006,8 @@ impl CfgBuilder {
             _ => {
                 match stmt {
                     AstNode::Assignment { value, .. } => self.extract_calls_from_expr(value, *stmt_index),
-                    AstNode::AnnotatedAssignment { value, .. } => {
-                        if let Some(val) = value {
-                            self.extract_calls_from_expr(val, *stmt_index);
-                        }
+                    AstNode::AnnotatedAssignment { value: Some(val), .. } => {
+                        self.extract_calls_from_expr(val, *stmt_index);
                     }
                     AstNode::Assert { test, msg, .. } => {
                         self.extract_calls_from_expr(test, *stmt_index);
@@ -1058,12 +1076,17 @@ impl CfgBuilder {
         self.ctx.current = merge_block;
     }
 
-    fn build_for(&mut self, body: &[AstNode], else_body: Option<&Vec<AstNode>>, stmt_index: &mut usize) {
+    fn build_for(
+        &mut self, stmt_idx: usize, body: &[AstNode], else_body: Option<&Vec<AstNode>>, stmt_index: &mut usize,
+    ) {
         let loop_header = self.cfg.new_block();
         let loop_body = self.cfg.new_block();
         let loop_exit = self.cfg.new_block();
 
         self.cfg.add_edge(self.ctx.current, loop_header, EdgeKind::Normal);
+        if let Some(header_block) = self.cfg.blocks.get_mut(&loop_header) {
+            header_block.statements.push(stmt_idx);
+        }
         self.cfg.add_edge(loop_header, loop_body, EdgeKind::True);
         self.cfg.add_edge(loop_header, loop_exit, EdgeKind::False);
 
@@ -1095,8 +1118,10 @@ impl CfgBuilder {
         self.ctx.current = loop_exit;
     }
 
-    fn build_while(&mut self, body: &[AstNode], else_body: Option<&Vec<AstNode>>, stmt_index: &mut usize) {
-        self.build_for(body, else_body, stmt_index);
+    fn build_while(
+        &mut self, stmt_idx: usize, body: &[AstNode], else_body: Option<&Vec<AstNode>>, stmt_index: &mut usize,
+    ) {
+        self.build_for(stmt_idx, body, else_body, stmt_index);
     }
 
     fn build_try(

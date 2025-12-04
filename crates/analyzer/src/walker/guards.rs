@@ -24,7 +24,6 @@ use super::utils::type_name_to_type;
 /// - `x != None` -> (x, T) where x: Optional[T]
 /// - `if x:` -> (x, T) where x: Optional[T] (truthiness narrows out None)
 pub fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<String>, Option<Type>) {
-    // Truthiness check: `if x:` narrows out None
     if let AstNode::Identifier { name: var_name, .. } = test {
         if let Some(current_type) = env.lookup(var_name) {
             if current_type.is_optional() || matches!(current_type, Type::Union(_)) {
@@ -35,17 +34,14 @@ pub fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<S
         return (None, None);
     }
 
-    // isinstance(x, Type) checks
     if let AstNode::Call { function, args, keywords, .. } = test {
         if function.function_to_string() == "isinstance" && args.len() == 2 && keywords.is_empty() {
             if let AstNode::Identifier { name: var_name, .. } = &args[0] {
-                // Single type: isinstance(x, int)
                 if let AstNode::Identifier { name: type_name, .. } = &args[1] {
                     let refined_type = type_name_to_type(type_name);
                     return (Some(var_name.clone()), Some(refined_type));
                 }
 
-                // Tuple of types: isinstance(x, (int, str))
                 if let AstNode::Tuple { elements, .. } = &args[1] {
                     let types: Vec<Type> = elements
                         .iter()
@@ -67,7 +63,6 @@ pub fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<S
         }
     }
 
-    // None comparison checks: `x is None`, `x == None`, `x is not None`, `x != None`
     if let AstNode::Compare { left, ops, comparators, .. } = test {
         if ops.len() == 1 && comparators.len() == 1 {
             if let AstNode::Identifier { name: var_name, .. } = left.as_ref() {
@@ -95,13 +90,11 @@ pub fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<S
 
 /// Detect inverse type guard for else branches
 ///
-/// Returns the narrowed type for the "false" branch of a conditional.
 /// For example:
 /// - `if x is not None:` -> else branch has type None
 /// - `if isinstance(x, int):` -> else branch removes int from union
 /// - `if x:` -> else branch narrows to None (for Optional types)
 pub fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<String>, Option<Type>) {
-    // Truthiness check inverse: `if x:` -> else has type None
     if let AstNode::Identifier { name: var_name, .. } = test {
         if let Some(current_type) = env.lookup(var_name) {
             if current_type.is_optional() || matches!(current_type, Type::Union(_)) {
@@ -111,19 +104,16 @@ pub fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (
         return (None, None);
     }
 
-    // isinstance inverse: removes checked types from union
     if let AstNode::Call { function, args, keywords, .. } = test {
         if function.function_to_string() == "isinstance" && args.len() == 2 && keywords.is_empty() {
             if let AstNode::Identifier { name: var_name, .. } = &args[0] {
                 if let Some(current_type) = env.lookup(var_name) {
-                    // Single type to remove
                     if let AstNode::Identifier { name: type_name, .. } = &args[1] {
                         let checked_type = type_name_to_type(type_name);
                         let narrowed = current_type.remove_from_union(&checked_type);
                         return (Some(var_name.clone()), Some(narrowed));
                     }
 
-                    // Multiple types to remove
                     if let AstNode::Tuple { elements, .. } = &args[1] {
                         let mut result_type = current_type;
                         for elem in elements {
@@ -139,14 +129,12 @@ pub fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (
         }
     }
 
-    // None comparison inverse
     if let AstNode::Compare { left, ops, comparators, .. } = test {
         if ops.len() == 1 && comparators.len() == 1 {
             if let AstNode::Identifier { name: var_name, .. } = left.as_ref() {
                 if let AstNode::Literal { value: LiteralValue::None, .. } = &comparators[0] {
                     match &ops[0] {
                         CompareOperator::Is | CompareOperator::Eq => {
-                            // `if x is None:` -> else branch removes None
                             if let Some(current_type) = env.lookup(var_name) {
                                 let narrowed = current_type.remove_from_union(&Type::none());
                                 return (Some(var_name.clone()), Some(narrowed));
@@ -154,7 +142,6 @@ pub fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (
                             return (None, None);
                         }
                         CompareOperator::IsNot | CompareOperator::NotEq => {
-                            // `if x is not None:` -> else branch has type None
                             return (Some(var_name.clone()), Some(Type::none()));
                         }
                         _ => {}
@@ -204,7 +191,6 @@ pub fn extract_type_guard_info(return_annotation: &str, _params: &[beacon_parser
 /// - User-defined type guards: `is_str(x)` where `is_str` returns `TypeGuard[str]`
 pub fn extract_type_predicate(test: &AstNode, env: &TypeEnvironment) -> Option<TypePredicate> {
     match test {
-        // None comparisons
         AstNode::Compare { left: _, ops, comparators, .. } if ops.len() == 1 && comparators.len() == 1 => {
             if let AstNode::Literal { value: LiteralValue::None, .. } = &comparators[0] {
                 match &ops[0] {
@@ -216,7 +202,7 @@ pub fn extract_type_predicate(test: &AstNode, env: &TypeEnvironment) -> Option<T
                 None
             }
         }
-        // isinstance checks
+
         AstNode::Call { function, args, keywords, .. }
             if function.function_to_string() == "isinstance" && args.len() == 2 && keywords.is_empty() =>
         {
@@ -247,7 +233,6 @@ pub fn extract_type_predicate(test: &AstNode, env: &TypeEnvironment) -> Option<T
 
             Some(TypePredicate::IsInstance(target_type))
         }
-        // User-defined type guards
         AstNode::Call { function, args, .. } if !args.is_empty() => {
             if let Some(guard_info) = env.get_type_guard(&function.function_to_string()) {
                 if args.len() > guard_info.param_index {
@@ -256,9 +241,7 @@ pub fn extract_type_predicate(test: &AstNode, env: &TypeEnvironment) -> Option<T
             }
             None
         }
-        // Truthiness check
         AstNode::Identifier { .. } => Some(TypePredicate::IsTruthy),
-        // Negation
         AstNode::UnaryOp { op: UnaryOperator::Not, operand, .. } => {
             let inner_pred = extract_type_predicate(operand, env)?;
             Some(TypePredicate::Not(Box::new(inner_pred)))
