@@ -12,6 +12,14 @@ use beacon_parser::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 
+/// Source position with line and column information
+#[derive(Debug, Clone, Copy)]
+struct SourcePosition {
+    line: usize,
+    col: usize,
+    end_col: usize,
+}
+
 /// Tracks a global or nonlocal declaration
 #[derive(Debug, Clone)]
 struct GlobalOrNonlocalDecl {
@@ -208,10 +216,12 @@ impl<'a> Linter<'a> {
                 self.visit_while_loop(test, body, else_body);
             }
             AstNode::If { test, body, elif_parts, else_body, line, col, end_col, .. } => {
-                self.visit_if_statement(test, body, elif_parts, else_body, *line, *col, *end_col);
+                let pos = SourcePosition { line: *line, col: *col, end_col: *end_col };
+                self.visit_if_statement(test, body, elif_parts, else_body, pos);
             }
             AstNode::Try { body, handlers, else_body, finally_body, line, col, end_col, .. } => {
-                self.visit_try_statement(body, handlers, else_body, finally_body, *line, *col, *end_col);
+                let pos = SourcePosition { line: *line, col: *col, end_col: *end_col };
+                self.visit_try_statement(body, handlers, else_body, finally_body, pos);
             }
             AstNode::Raise { exc, line, col, end_col, .. } => self.visit_raise(exc.as_deref(), *line, *col, *end_col),
             AstNode::Compare { left, ops, comparators, line, col, end_col, .. } => {
@@ -413,9 +423,9 @@ impl<'a> Linter<'a> {
 
     fn visit_if_statement(
         &mut self, test: &AstNode, body: &[AstNode], elif_parts: &[(AstNode, Vec<AstNode>)],
-        else_body: &Option<Vec<AstNode>>, line: usize, col: usize, end_col: usize,
+        else_body: &Option<Vec<AstNode>>, pos: SourcePosition,
     ) {
-        self.check_if_tuple(test, line, col, end_col);
+        self.check_if_tuple(test, pos.line, pos.col, pos.end_col);
         self.visit_node(test);
         self.check_redundant_pass(body);
         self.visit_body(body);
@@ -434,9 +444,9 @@ impl<'a> Linter<'a> {
 
     fn visit_try_statement(
         &mut self, body: &[AstNode], handlers: &[ExceptHandler], else_body: &Option<Vec<AstNode>>,
-        finally_body: &Option<Vec<AstNode>>, line: usize, col: usize, end_col: usize,
+        finally_body: &Option<Vec<AstNode>>, pos: SourcePosition,
     ) {
-        self.check_default_except_not_last(handlers, line, col, end_col);
+        self.check_default_except_not_last(handlers, pos.line, pos.col, pos.end_col);
         self.check_redundant_pass(body);
         self.visit_body(body);
 

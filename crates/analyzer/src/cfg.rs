@@ -163,6 +163,19 @@ pub enum CallKind {
     Dynamic,
 }
 
+/// Node tracking information for constraint generation
+#[derive(Debug, Clone, Default)]
+pub struct NodeTracking {
+    /// Node ID of the call expression (for constraint generation)
+    pub call_node_id: Option<usize>,
+    /// Node IDs of positional arguments (for constraint generation)
+    pub arg_node_ids: Vec<usize>,
+    /// Node IDs of keyword arguments as (name, node_id) pairs (for constraint generation)
+    pub kwarg_node_ids: Vec<(String, usize)>,
+    /// Node ID where the result is stored (for constraint generation)
+    pub result_node_id: Option<usize>,
+}
+
 /// A call site within a basic block
 ///
 /// Represents a function or method invocation that creates an inter-procedural edge in the call graph.
@@ -207,9 +220,7 @@ impl CallSite {
 
     /// Create a CallSite with node tracking for constraint generation
     pub fn with_nodes(
-        id: BlockId, index: usize, rec: Option<FunctionId>, kind: CallKind, ln: usize, col: usize,
-        call_node_id: Option<usize>, arg_node_ids: Vec<usize>, kwarg_node_ids: Vec<(String, usize)>,
-        result_node_id: Option<usize>,
+        id: BlockId, index: usize, rec: Option<FunctionId>, kind: CallKind, ln: usize, col: usize, nodes: NodeTracking,
     ) -> Self {
         Self {
             block_id: id,
@@ -218,10 +229,10 @@ impl CallSite {
             kind,
             line: ln,
             col,
-            call_node_id,
-            arg_node_ids,
-            kwarg_node_ids,
-            result_node_id,
+            call_node_id: nodes.call_node_id,
+            arg_node_ids: nodes.arg_node_ids,
+            kwarg_node_ids: nodes.kwarg_node_ids,
+            result_node_id: nodes.result_node_id,
         }
     }
 }
