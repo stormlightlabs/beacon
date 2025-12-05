@@ -1,18 +1,6 @@
 //! Move Symbol refactoring
 //!
-//! Moves a symbol (function, class, variable) from one file to another,
-//! updating all imports across the workspace.
-//!
-//! # Algorithm
-//!
-//! 1. Identify the symbol to move (function, class, constant, etc.)
-//! 2. Find the symbol's definition node in the tree
-//! 3. Remove symbol from source file
-//! 4. Add symbol to target file (at appropriate location)
-//! 5. Update imports:
-//!    - Add import in source file if source still references the symbol
-//!    - Update imports in all files that imported from source
-//! 6. Handle __all__ exports if present
+//! Moves a symbol (function, class, variable) from one file to another, updating all imports across the workspace.
 
 use super::refactoring::{EditCollector, RefactoringContext};
 
@@ -35,6 +23,56 @@ pub struct MoveSymbolProvider {
     context: RefactoringContext,
 }
 
+/// Context for checking symbol usage recursively
+struct SymbolUsageChecker<'a> {
+    text: &'a str,
+    symbol_table: &'a SymbolTable,
+    symbol_name: &'a str,
+    target_symbol: &'a Symbol,
+    def_start: usize,
+    def_end: usize,
+}
+
+impl<'a> SymbolUsageChecker<'a> {
+    /// Recursively check for symbol usage
+    fn check_recursive(&self, node: tree_sitter::Node, found: &mut bool) {
+        if *found {
+            return;
+        }
+
+        let node_start = node.start_byte();
+        let node_end = node.end_byte();
+
+        if node_start >= self.def_start && node_end <= self.def_end {
+            return;
+        }
+
+        if node.kind() == "identifier" {
+            if let Ok(node_text) = node.utf8_text(self.text.as_bytes()) {
+                if node_text == self.symbol_name {
+                    let byte_offset = node.start_byte();
+                    let scope = self.symbol_table.find_scope_at_position(byte_offset);
+
+                    if let Some(resolved) = self.symbol_table.lookup_symbol(self.symbol_name, scope) {
+                        if resolved.scope_id == self.target_symbol.scope_id
+                            && resolved.line == self.target_symbol.line
+                            && resolved.col == self.target_symbol.col
+                        {
+                            *found = true;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            self.check_recursive(child, found);
+        }
+    }
+}
+
 impl MoveSymbolProvider {
     /// Create a new move symbol provider
     pub fn new(context: RefactoringContext) -> Self {
@@ -49,14 +87,12 @@ impl MoveSymbolProvider {
 
         let (source_tree, source_text) = self.context.get_tree_and_text(&params.source_uri)?;
         let source_symbol_table = self.context.get_symbol_table(&params.source_uri)?;
-
         let definition_node = Self::find_definition_node(&source_tree, &source_text, &target_symbol)?;
 
         let symbol_definition =
             Self::extract_node_text(&source_text, definition_node.start_byte(), definition_node.end_byte());
 
         let (target_tree, target_text) = self.context.get_tree_and_text(&params.target_uri)?;
-
         let target_insertion = Self::find_module_level_insertion_point(&target_tree, &target_text);
 
         let mut collector = EditCollector::new();
@@ -195,71 +231,11 @@ impl MoveSymbolProvider {
         tree: &tree_sitter::Tree, text: &str, symbol_table: &SymbolTable, symbol_name: &str, target_symbol: &Symbol,
         def_start: usize, def_end: usize,
     ) -> bool {
-        let root = tree.root_node();
+        let checker = SymbolUsageChecker { text, symbol_table, symbol_name, target_symbol, def_start, def_end };
+
         let mut found = false;
-
-        Self::check_symbol_usage_recursive(
-            root,
-            text,
-            symbol_table,
-            symbol_name,
-            target_symbol,
-            def_start,
-            def_end,
-            &mut found,
-        );
-
+        checker.check_recursive(tree.root_node(), &mut found);
         found
-    }
-
-    /// Recursively check for symbol usage (helper)
-    fn check_symbol_usage_recursive(
-        node: tree_sitter::Node, text: &str, symbol_table: &SymbolTable, symbol_name: &str, target_symbol: &Symbol,
-        def_start: usize, def_end: usize, found: &mut bool,
-    ) {
-        if *found {
-            return;
-        }
-
-        let node_start = node.start_byte();
-        let node_end = node.end_byte();
-
-        if node_start >= def_start && node_end <= def_end {
-            return;
-        }
-
-        if node.kind() == "identifier" {
-            if let Ok(node_text) = node.utf8_text(text.as_bytes()) {
-                if node_text == symbol_name {
-                    let byte_offset = node.start_byte();
-                    let scope = symbol_table.find_scope_at_position(byte_offset);
-
-                    if let Some(resolved) = symbol_table.lookup_symbol(symbol_name, scope) {
-                        if resolved.scope_id == target_symbol.scope_id
-                            && resolved.line == target_symbol.line
-                            && resolved.col == target_symbol.col
-                        {
-                            *found = true;
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            Self::check_symbol_usage_recursive(
-                child,
-                text,
-                symbol_table,
-                symbol_name,
-                target_symbol,
-                def_start,
-                def_end,
-                found,
-            );
-        }
     }
 
     /// Generate import statement for moved symbol

@@ -35,7 +35,7 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
     - [x] Move Symbol refactoring
 - [ ] Inline Function refactoring
 - [ ] Change Signature refactoring
-- [ ] Extract Variable refactoring
+- [x] Extract Variable refactoring
 
 ### Diagnostics & Validation
 

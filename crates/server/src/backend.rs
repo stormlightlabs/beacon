@@ -60,6 +60,9 @@ struct Features {
     folding_range: FoldingRangeProvider,
     signature_help: SignatureHelpProvider,
     formatting: FormattingProvider,
+    extract_function: ExtractFunctionProvider,
+    extract_variable: ExtractVariableProvider,
+    move_symbol: MoveSymbolProvider,
 }
 
 impl Features {
@@ -68,6 +71,8 @@ impl Features {
         introspection_cache: cache::IntrospectionCache, workspace: Arc<RwLock<Workspace>>,
         analyzer: Arc<RwLock<analysis::Analyzer>>,
     ) -> Self {
+        let refactoring_context = RefactoringContext::new(documents.clone(), workspace.clone());
+
         Self {
             diagnostics: DiagnosticProvider::new(documents.clone(), workspace.clone()),
             hover: HoverProvider::with_introspection(documents.clone(), interpreter_path, introspection_cache),
@@ -84,6 +89,9 @@ impl Features {
             folding_range: FoldingRangeProvider::new(documents.clone()),
             signature_help: SignatureHelpProvider::new(documents.clone()),
             formatting: FormattingProvider::new(documents),
+            extract_function: ExtractFunctionProvider::new(refactoring_context.clone()),
+            extract_variable: ExtractVariableProvider::new(refactoring_context.clone()),
+            move_symbol: MoveSymbolProvider::new(refactoring_context),
         }
     }
 }
@@ -284,6 +292,12 @@ impl LanguageServer for Backend {
                 document_on_type_formatting_provider: Some(DocumentOnTypeFormattingOptions {
                     first_trigger_character: ":".to_string(),
                     more_trigger_character: Some(vec!["\n".to_string()]),
+                }),
+                execute_command_provider: Some(ExecuteCommandOptions {
+                    commands: Vec::from(
+                        ["beacon.extractVariable", "beacon.extractFunction", "beacon.moveSymbol"].map(String::from),
+                    ),
+                    work_done_progress_options: WorkDoneProgressOptions::default(),
                 }),
                 ..Default::default()
             },
@@ -660,6 +674,125 @@ impl LanguageServer for Backend {
         let workspace = self.workspace.read().await;
         let config = &workspace.config.formatting;
         Ok(self.features.formatting.format_on_save(&params, config))
+    }
+
+    #[tracing::instrument(skip(self), level = "debug")]
+    async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<serde_json::Value>> {
+        tracing::info!("Executing command: {}", params.command);
+
+        match params.command.as_str() {
+            "beacon.extractVariable" => {
+                let args = params.arguments;
+                if args.len() != 4 {
+                    tracing::error!("Invalid arguments for extract variable command");
+                    return Ok(None);
+                }
+
+                let Some(uri) = serde_json::from_value::<Url>(args[0].clone()).ok() else {
+                    tracing::error!("Failed to parse URI argument");
+                    return Ok(None);
+                };
+                let Some(range) = serde_json::from_value::<Range>(args[1].clone()).ok() else {
+                    tracing::error!("Failed to parse range argument");
+                    return Ok(None);
+                };
+                let Some(variable_name) = serde_json::from_value::<String>(args[2].clone()).ok() else {
+                    tracing::error!("Failed to parse variable_name argument");
+                    return Ok(None);
+                };
+                let Some(replace_all) = serde_json::from_value::<bool>(args[3].clone()).ok() else {
+                    tracing::error!("Failed to parse replace_all argument");
+                    return Ok(None);
+                };
+
+                let params =
+                    crate::features::extract_variable::ExtractVariableParams { uri, range, variable_name, replace_all };
+
+                let mut analyzer = self.analyzer.write().await;
+                if let Some(edit) = self
+                    .features
+                    .extract_variable
+                    .execute(params, Some(&mut analyzer))
+                    .await
+                {
+                    if let Ok(value) = serde_json::to_value(edit) {
+                        return Ok(Some(value));
+                    }
+                }
+
+                Ok(None)
+            }
+            "beacon.extractFunction" => {
+                let args = params.arguments;
+                if args.len() != 3 {
+                    tracing::error!("Invalid arguments for extract function command");
+                    return Ok(None);
+                }
+
+                let Some(uri) = serde_json::from_value::<Url>(args[0].clone()).ok() else {
+                    tracing::error!("Failed to parse URI argument");
+                    return Ok(None);
+                };
+                let Some(range) = serde_json::from_value::<Range>(args[1].clone()).ok() else {
+                    tracing::error!("Failed to parse range argument");
+                    return Ok(None);
+                };
+                let Some(function_name) = serde_json::from_value::<String>(args[2].clone()).ok() else {
+                    tracing::error!("Failed to parse function_name argument");
+                    return Ok(None);
+                };
+
+                let params = crate::features::extract_function::ExtractFunctionParams { uri, range, function_name };
+
+                let mut analyzer = self.analyzer.write().await;
+                if let Some(edit) = self
+                    .features
+                    .extract_function
+                    .execute(params, Some(&mut analyzer))
+                    .await
+                {
+                    if let Ok(value) = serde_json::to_value(edit) {
+                        return Ok(Some(value));
+                    }
+                }
+
+                Ok(None)
+            }
+            "beacon.moveSymbol" => {
+                let args = params.arguments;
+                if args.len() != 3 {
+                    tracing::error!("Invalid arguments for move symbol command");
+                    return Ok(None);
+                }
+
+                let Some(source_uri) = serde_json::from_value::<Url>(args[0].clone()).ok() else {
+                    tracing::error!("Failed to parse source_uri argument");
+                    return Ok(None);
+                };
+                let Some(position) = serde_json::from_value::<Position>(args[1].clone()).ok() else {
+                    tracing::error!("Failed to parse position argument");
+                    return Ok(None);
+                };
+                let Some(target_uri) = serde_json::from_value::<Url>(args[2].clone()).ok() else {
+                    tracing::error!("Failed to parse target_uri argument");
+                    return Ok(None);
+                };
+
+                let params = crate::features::move_symbol::MoveSymbolParams { source_uri, position, target_uri };
+
+                if let Some(edit) = self.features.move_symbol.execute(params).await {
+                    if let Ok(value) = serde_json::to_value(edit) {
+                        return Ok(Some(value));
+                    }
+                }
+
+                Ok(None)
+            }
+            _ => {
+                tracing::warn!("Unknown command: {}", params.command);
+                Ok(None)
+            }
+        }
     }
 }
 

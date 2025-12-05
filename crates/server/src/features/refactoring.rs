@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Context for refactoring operations providing access to workspace resources
+#[derive(Clone)]
 pub struct RefactoringContext {
     /// Document manager for accessing open files
     pub documents: DocumentManager,

@@ -45,6 +45,7 @@ pub use diagnostics::DiagnosticProvider;
 pub use document_highlight::DocumentHighlightProvider;
 pub use document_symbols::DocumentSymbolsProvider;
 pub use extract_function::ExtractFunctionProvider;
+pub use extract_variable::ExtractVariableProvider;
 pub use folding_range::FoldingRangeProvider;
 pub use formatting::FormattingProvider;
 pub use goto_definition::GotoDefinitionProvider;
