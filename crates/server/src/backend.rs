@@ -79,7 +79,7 @@ impl Features {
             semantic_tokens: SemanticTokensProvider::new(documents.clone()),
             document_symbols: DocumentSymbolsProvider::new(documents.clone()),
             document_highlight: DocumentHighlightProvider::new(documents.clone()),
-            rename: RenameProvider::new(documents.clone()),
+            rename: RenameProvider::new(documents.clone(), workspace.clone()),
             workspace_symbols: WorkspaceSymbolsProvider::new(documents.clone(), workspace),
             folding_range: FoldingRangeProvider::new(documents.clone()),
             signature_help: SignatureHelpProvider::new(documents.clone()),
@@ -618,7 +618,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(skip(self), level = "debug")]
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
-        Ok(self.features.rename.rename(params))
+        Ok(self.features.rename.rename(params).await)
     }
 
     #[tracing::instrument(skip(self), level = "debug")]

@@ -3,28 +3,29 @@
 //! Renames a symbol across all references in the workspace.
 //! Validates the new name and creates workspace edits for all occurrences.
 
-use crate::{document::DocumentManager, parser};
+use crate::{document::DocumentManager, parser, utils, workspace::Workspace};
 
-use beacon_parser::{AstNode, SymbolTable};
-use lsp_types::{Position, Range, RenameParams, TextEdit, Url, WorkspaceEdit};
-use std::collections::{HashMap, HashSet};
+use beacon_parser::{Symbol, SymbolTable};
+use lsp_types::{Position, RenameParams, TextEdit, Url, WorkspaceEdit};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Rename provider
 ///
 /// Handles symbol renaming across the workspace with validation by finding all references and creates appropriate [`TextEdit`].
 pub struct RenameProvider {
     documents: DocumentManager,
+    workspace: Arc<RwLock<Workspace>>,
 }
 
 impl RenameProvider {
-    pub fn new(documents: DocumentManager) -> Self {
-        Self { documents }
+    pub fn new(documents: DocumentManager, workspace: Arc<RwLock<Workspace>>) -> Self {
+        Self { documents, workspace }
     }
 
     /// Rename a symbol at the given position
-    ///
-    /// Validates the new name and finds all references to create a WorkspaceEdit.
-    pub fn rename(&self, params: RenameParams) -> Option<WorkspaceEdit> {
+    pub async fn rename(&self, params: RenameParams) -> Option<WorkspaceEdit> {
         let uri = params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
         let new_name = params.new_name;
@@ -33,22 +34,11 @@ impl RenameProvider {
             return None;
         }
 
-        let symbol_name = self.documents.get_document(&uri, |doc| {
-            let tree = doc.tree()?;
-            let text = doc.text();
-            let p = parser::LspParser::new().ok()?;
-            let node = p.node_at_position(tree, &text, position)?;
+        let (symbol_name, target_symbol) = self.resolve_symbol_at_position(&uri, position)?;
 
-            match node.kind() {
-                "identifier" => {
-                    let identifier_text = node.utf8_text(text.as_bytes()).ok()?;
-                    Some(identifier_text.to_string())
-                }
-                _ => None,
-            }
-        })??;
-
-        let edits = self.find_all_references(&uri, &symbol_name, &new_name)?;
+        let edits = self
+            .find_all_references(&uri, &symbol_name, &new_name, &target_symbol)
+            .await?;
 
         if edits.is_empty() {
             return None;
@@ -57,95 +47,153 @@ impl RenameProvider {
         Some(WorkspaceEdit { changes: Some(edits), document_changes: None, change_annotations: None })
     }
 
-    /// Find all references to a symbol and create text edits
-    ///
-    /// Currently searches only the current document.
-    /// TODO: Extend to workspace-wide search
-    fn find_all_references(&self, uri: &Url, symbol_name: &str, new_name: &str) -> Option<HashMap<Url, Vec<TextEdit>>> {
-        let mut changes = HashMap::new();
-
+    /// Resolve the symbol at the cursor position
+    fn resolve_symbol_at_position(&self, uri: &Url, position: Position) -> Option<(String, Symbol)> {
         self.documents.get_document(uri, |doc| {
             let tree = doc.tree()?;
-            let symbol_table = doc.symbol_table()?;
-            let ast = doc.ast()?;
             let text = doc.text();
+            let symbol_table = doc.symbol_table()?;
+            let p = parser::LspParser::new().ok()?;
+            let node = p.node_at_position(tree, &text, position)?;
 
-            if !Self::symbol_exists(symbol_table, symbol_name) {
+            if node.kind() != "identifier" {
                 return None;
             }
 
-            let mut edits = Vec::new();
-            Self::collect_renames(ast, symbol_name, new_name, &mut edits, &text);
+            let identifier_text = node.utf8_text(text.as_bytes()).ok()?;
+            let byte_offset = utils::position_to_byte_offset(&text, position);
+            let scope = symbol_table.find_scope_at_position(byte_offset);
+            let symbol = symbol_table.lookup_symbol(identifier_text, scope)?;
 
-            let tree_edits = Self::collect_tree_identifier_edits(tree, &text, symbol_name, new_name);
-            let edits = Self::merge_edits(edits, tree_edits);
+            Some((identifier_text.to_string(), symbol.clone()))
+        })?
+    }
 
+    /// Find all references to a symbol and create text edits
+    async fn find_all_references(
+        &self, uri: &Url, symbol_name: &str, new_name: &str, target_symbol: &Symbol,
+    ) -> Option<HashMap<Url, Vec<TextEdit>>> {
+        let mut changes = HashMap::new();
+
+        if let Some(edits) = self.find_renames_in_document(uri, symbol_name, new_name, target_symbol) {
             if !edits.is_empty() {
                 changes.insert(uri.clone(), edits);
             }
+        }
 
-            Some(())
-        })?;
+        for document_uri in self.documents.all_documents() {
+            if document_uri != *uri {
+                if let Some(edits) = self.find_renames_in_document(&document_uri, symbol_name, new_name, target_symbol)
+                {
+                    if !edits.is_empty() {
+                        changes.insert(document_uri, edits);
+                    }
+                }
+            }
+        }
+
+        let workspace = self.workspace.read().await;
+        let dependents = workspace.get_dependents(uri);
+        for dependent_uri in dependents {
+            if !self.documents.has_document(&dependent_uri) {
+                if let Some(edits) = self.find_renames_in_workspace_file(
+                    &dependent_uri,
+                    symbol_name,
+                    new_name,
+                    target_symbol,
+                    &workspace,
+                ) {
+                    if !edits.is_empty() {
+                        changes.insert(dependent_uri, edits);
+                    }
+                }
+            }
+        }
 
         Some(changes)
     }
 
-    /// Recursively collect rename edits from the AST
+    /// Find renames in an open document using scope-aware matching
     ///
-    /// Finds all occurrences of the symbol and creates text edits to replace them.
-    fn collect_renames(node: &AstNode, symbol_name: &str, new_name: &str, edits: &mut Vec<TextEdit>, _text: &str) {
-        match node {
-            AstNode::Identifier { name, line, col, .. } if name == symbol_name => {
-                let position =
-                    Position { line: (*line as u32).saturating_sub(1), character: (*col as u32).saturating_sub(1) };
-                let end_position =
-                    Position { line: position.line, character: position.character + symbol_name.len() as u32 };
+    /// Uses symbol table to verify each identifier resolves to the target symbol.
+    fn find_renames_in_document(
+        &self, uri: &Url, symbol_name: &str, new_name: &str, target_symbol: &Symbol,
+    ) -> Option<Vec<TextEdit>> {
+        self.documents
+            .get_document(uri, |doc| {
+                let tree = doc.tree()?;
+                let symbol_table = doc.symbol_table()?;
+                let text = doc.text();
 
-                edits.push(TextEdit {
-                    range: Range { start: position, end: end_position },
-                    new_text: new_name.to_string(),
-                });
-            }
-            AstNode::Assignment { target, value, line, col, .. } => {
-                let target_str = target.target_to_string();
-                if target_str == symbol_name {
-                    let position =
-                        Position { line: (*line as u32).saturating_sub(1), character: (*col as u32).saturating_sub(1) };
-                    let end_position =
-                        Position { line: position.line, character: position.character + symbol_name.len() as u32 };
+                let mut edits = Vec::new();
+                Self::collect_renames_from_tree(
+                    tree.root_node(),
+                    symbol_name,
+                    new_name,
+                    target_symbol,
+                    symbol_table,
+                    &text,
+                    &mut edits,
+                );
 
-                    edits.push(TextEdit {
-                        range: Range { start: position, end: end_position },
-                        new_text: new_name.to_string(),
-                    });
-                }
-                let value_is_same_identifier =
-                    matches!(value.as_ref(), AstNode::Identifier { name, .. } if name == symbol_name);
+                Some(edits)
+            })
+            .unwrap_or(None)
+    }
 
-                if !(target_str == symbol_name && value_is_same_identifier) {
-                    Self::collect_renames(value, symbol_name, new_name, edits, _text);
+    /// Find renames in a workspace file that is not currently open
+    ///
+    /// Loads the file, parses it, and searches for references using scope-aware matching.
+    fn find_renames_in_workspace_file(
+        &self, uri: &Url, symbol_name: &str, new_name: &str, target_symbol: &Symbol, workspace: &Workspace,
+    ) -> Option<Vec<TextEdit>> {
+        let parse_result = workspace.load_workspace_file(uri)?;
+        let text = parse_result.rope.to_string();
+        let mut edits = Vec::new();
+
+        Self::collect_renames_from_tree(
+            parse_result.tree.root_node(),
+            symbol_name,
+            new_name,
+            target_symbol,
+            &parse_result.symbol_table,
+            &text,
+            &mut edits,
+        );
+
+        Some(edits)
+    }
+
+    /// Recursively collect renames from the tree-sitter CST using scope-aware matching
+    ///
+    /// Traverses all nodes to find identifier nodes matching the symbol name.
+    /// For each match, verifies it resolves to the target symbol using scope-aware lookup.
+    fn collect_renames_from_tree(
+        node: tree_sitter::Node, symbol_name: &str, new_name: &str, target_symbol: &Symbol, symbol_table: &SymbolTable,
+        text: &str, edits: &mut Vec<TextEdit>,
+    ) {
+        if node.kind() == "identifier" {
+            if let Ok(node_text) = node.utf8_text(text.as_bytes()) {
+                if node_text == symbol_name {
+                    let byte_offset = node.start_byte();
+                    let scope = symbol_table.find_scope_at_position(byte_offset);
+
+                    if let Some(resolved_symbol) = symbol_table.lookup_symbol(symbol_name, scope) {
+                        if resolved_symbol.scope_id == target_symbol.scope_id
+                            && resolved_symbol.line == target_symbol.line
+                            && resolved_symbol.col == target_symbol.col
+                        {
+                            let range = utils::tree_sitter_range_to_lsp_range(text, node.range());
+                            edits.push(TextEdit { range, new_text: new_name.to_string() });
+                        }
+                    }
                 }
             }
-            AstNode::FunctionDef { body, .. } => {
-                for stmt in body {
-                    Self::collect_renames(stmt, symbol_name, new_name, edits, _text);
-                }
-            }
-            AstNode::ClassDef { body, .. } | AstNode::Module { body, .. } => {
-                for stmt in body {
-                    Self::collect_renames(stmt, symbol_name, new_name, edits, _text);
-                }
-            }
-            AstNode::Call { args, .. } => {
-                for arg in args {
-                    Self::collect_renames(arg, symbol_name, new_name, edits, _text);
-                }
-            }
-            AstNode::Return { value: Some(val), .. } => {
-                Self::collect_renames(val, symbol_name, new_name, edits, _text);
-            }
-            AstNode::Literal { .. } => {}
-            _ => {}
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            Self::collect_renames_from_tree(child, symbol_name, new_name, target_symbol, symbol_table, text, edits);
         }
     }
 
@@ -168,75 +216,22 @@ impl RenameProvider {
     }
 }
 
-impl RenameProvider {
-    fn merge_edits(edits: Vec<TextEdit>, additional: Vec<TextEdit>) -> Vec<TextEdit> {
-        let mut seen = HashSet::new();
-        let mut merged = Vec::new();
-
-        for edit in edits.into_iter().chain(additional.into_iter()) {
-            let key = (
-                edit.range.start.line,
-                edit.range.start.character,
-                edit.range.end.line,
-                edit.range.end.character,
-            );
-
-            if seen.insert(key) {
-                merged.push(edit);
-            }
-        }
-
-        merged
-    }
-
-    fn collect_tree_identifier_edits(
-        tree: &tree_sitter::Tree, text: &str, symbol_name: &str, new_name: &str,
-    ) -> Vec<TextEdit> {
-        fn visit(node: tree_sitter::Node, text: &str, symbol_name: &str, new_name: &str, edits: &mut Vec<TextEdit>) {
-            if node.kind() == "identifier" {
-                if let Ok(node_text) = node.utf8_text(text.as_bytes()) {
-                    if node_text == symbol_name {
-                        let start = node.start_position();
-                        let end = node.end_position();
-                        edits.push(TextEdit {
-                            range: Range {
-                                start: Position { line: start.row as u32, character: start.column as u32 },
-                                end: Position { line: end.row as u32, character: end.column as u32 },
-                            },
-                            new_text: new_name.to_string(),
-                        });
-                    }
-                }
-            }
-
-            let mut cursor = node.walk();
-            for child in node.children(&mut cursor) {
-                visit(child, text, symbol_name, new_name, edits);
-            }
-        }
-
-        let mut edits = Vec::new();
-        visit(tree.root_node(), text, symbol_name, new_name, &mut edits);
-        edits
-    }
-
-    fn symbol_exists(symbol_table: &SymbolTable, name: &str) -> bool {
-        symbol_table
-            .scopes
-            .values()
-            .any(|scope| scope.symbols.contains_key(name))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use std::str::FromStr;
+
+    fn create_test_provider() -> RenameProvider {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        RenameProvider::new(documents, workspace)
+    }
 
     #[test]
     fn test_provider_creation() {
-        let documents = DocumentManager::new().unwrap();
-        let _ = RenameProvider::new(documents);
+        let _ = create_test_provider();
     }
 
     #[test]
@@ -253,10 +248,12 @@ mod tests {
         assert!(!RenameProvider::is_valid_identifier("has.dot"));
     }
 
-    #[test]
-    fn test_rename_variable() {
+    #[tokio::test]
+    async fn test_rename_variable() {
         let documents = DocumentManager::new().unwrap();
-        let provider = RenameProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let provider = RenameProvider::new(documents.clone(), workspace);
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"x = 42
 y = x + 1
@@ -273,7 +270,7 @@ print(x)"#;
             work_done_progress_params: Default::default(),
         };
 
-        let result = provider.rename(params);
+        let result = provider.rename(params).await;
         assert!(result.is_some());
 
         let workspace_edit = result.unwrap();
@@ -290,10 +287,12 @@ print(x)"#;
         }
     }
 
-    #[test]
-    fn test_rename_invalid_name() {
+    #[tokio::test]
+    async fn test_rename_invalid_name() {
         let documents = DocumentManager::new().unwrap();
-        let provider = RenameProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let provider = RenameProvider::new(documents.clone(), workspace);
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "x = 42";
 
@@ -308,14 +307,16 @@ print(x)"#;
             work_done_progress_params: Default::default(),
         };
 
-        let result = provider.rename(params);
+        let result = provider.rename(params).await;
         assert!(result.is_none());
     }
 
-    #[test]
-    fn test_rename_not_on_identifier() {
+    #[tokio::test]
+    async fn test_rename_not_on_identifier() {
         let documents = DocumentManager::new().unwrap();
-        let provider = RenameProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let provider = RenameProvider::new(documents.clone(), workspace);
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "x = 42";
 
@@ -330,203 +331,16 @@ print(x)"#;
             work_done_progress_params: Default::default(),
         };
 
-        let result = provider.rename(params);
+        let result = provider.rename(params).await;
         assert!(result.is_none());
     }
 
-    #[test]
-    fn test_collect_renames_simple() {
-        let ast = AstNode::Identifier { name: "old_name".to_string(), line: 1, col: 1, end_line: 1, end_col: 8 };
-        let mut edits = Vec::new();
-
-        RenameProvider::collect_renames(&ast, "old_name", "new_name", &mut edits, "old_name");
-
-        assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].new_text, "new_name");
-        assert_eq!(edits[0].range.start.line, 0);
-        assert_eq!(edits[0].range.start.character, 0);
-    }
-
-    #[test]
-    fn test_collect_renames_in_assignment() {
-        let ast = AstNode::Assignment {
-            target: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 1, end_line: 1, end_col: 2 }),
-            value: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 5, end_line: 1, end_col: 2 }),
-            line: 1,
-            col: 1,
-            end_line: 0,
-            end_col: 0,
-        };
-
-        let mut edits = Vec::new();
-        RenameProvider::collect_renames(&ast, "x", "y", &mut edits, "x = x");
-
-        assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].new_text, "y");
-    }
-
-    #[test]
-    fn test_collect_renames_in_function() {
-        let ast = AstNode::FunctionDef {
-            name: "test".to_string(),
-            args: vec![],
-            body: vec![
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 2,
-                    }),
-                    value: Box::new(AstNode::Literal {
-                        value: beacon_parser::LiteralValue::Integer(42),
-                        line: 2,
-                        col: 9,
-                        end_col: 0,
-                        end_line: 0,
-                    }),
-                    line: 2,
-                    col: 5,
-                    end_col: 0,
-                    end_line: 0,
-                },
-                AstNode::Return {
-                    value: Some(Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 3,
-                        col: 12,
-                        end_col: 0,
-                        end_line: 0,
-                    })),
-                    line: 3,
-                    col: 5,
-                    end_col: 0,
-                    end_line: 0,
-                },
-            ],
-            line: 1,
-            col: 1,
-            docstring: None,
-            return_type: None,
-            decorators: Vec::new(),
-            is_async: false,
-            end_line: 1,
-            end_col: 1,
-        };
-
-        let mut edits = Vec::new();
-        RenameProvider::collect_renames(&ast, "x", "result", &mut edits, "");
-
-        assert_eq!(edits.len(), 2);
-        for edit in &edits {
-            assert_eq!(edit.new_text, "result");
-        }
-    }
-
-    #[test]
-    fn test_collect_renames_in_call() {
-        let ast = AstNode::Call {
-            function: Box::new(AstNode::Identifier {
-                name: "print".to_string(),
-                line: 1,
-                col: 1,
-                end_line: 1,
-                end_col: 6,
-            }),
-            args: vec![AstNode::Identifier { name: "x".to_string(), line: 1, col: 7, end_col: 0, end_line: 0 }],
-            line: 1,
-            col: 1,
-            keywords: Vec::new(),
-            end_line: 1,
-            end_col: 1,
-        };
-
-        let mut edits = Vec::new();
-        RenameProvider::collect_renames(&ast, "x", "value", &mut edits, "");
-
-        assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].new_text, "value");
-    }
-
-    #[test]
-    fn test_collect_renames_no_match() {
-        let ast = AstNode::Identifier { name: "x".to_string(), line: 1, col: 1, end_col: 0, end_line: 0 };
-        let mut edits = Vec::new();
-
-        RenameProvider::collect_renames(&ast, "y", "z", &mut edits, "");
-
-        assert_eq!(edits.len(), 0);
-    }
-
-    #[test]
-    fn test_collect_renames_nested() {
-        let ast = AstNode::Module {
-            body: vec![AstNode::ClassDef {
-                name: "MyClass".to_string(),
-                metaclass: None,
-                bases: Vec::new(),
-                body: vec![AstNode::FunctionDef {
-                    name: "method".to_string(),
-                    args: vec![],
-                    body: vec![AstNode::Return {
-                        value: Some(Box::new(AstNode::Identifier {
-                            name: "x".to_string(),
-                            line: 3,
-                            col: 16,
-                            end_line: 0,
-                            end_col: 0,
-                        })),
-                        line: 3,
-                        col: 9,
-                        end_line: 0,
-                        end_col: 0,
-                    }],
-                    line: 2,
-                    col: 5,
-                    end_line: 0,
-                    end_col: 0,
-                    docstring: None,
-                    return_type: None,
-                    decorators: Vec::new(),
-                    is_async: false,
-                }],
-                line: 1,
-                col: 1,
-                end_line: 0,
-                end_col: 0,
-                docstring: None,
-                decorators: Vec::new(),
-            }],
-            docstring: None,
-        };
-
-        let mut edits = Vec::new();
-        RenameProvider::collect_renames(&ast, "x", "new_x", &mut edits, "");
-
-        assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].new_text, "new_x");
-    }
-
-    #[test]
-    fn test_rename_position_calculation() {
-        let ast =
-            AstNode::Identifier { name: "long_variable_name".to_string(), line: 5, col: 10, end_col: 0, end_line: 0 };
-        let mut edits = Vec::new();
-
-        RenameProvider::collect_renames(&ast, "long_variable_name", "short", &mut edits, "");
-
-        assert_eq!(edits.len(), 1);
-        assert_eq!(edits[0].range.start.line, 4);
-        assert_eq!(edits[0].range.start.character, 9);
-        assert_eq!(edits[0].range.end.character, 9 + "long_variable_name".len() as u32);
-        assert_eq!(edits[0].new_text, "short");
-    }
-
-    #[test]
-    fn test_rename_with_multiple_occurrences() {
+    #[tokio::test]
+    async fn test_rename_with_multiple_occurrences() {
         let documents = DocumentManager::new().unwrap();
-        let provider = RenameProvider::new(documents.clone());
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let provider = RenameProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"def calculate(x):
@@ -544,7 +358,7 @@ print(x)"#;
             work_done_progress_params: Default::default(),
         };
 
-        let result = provider.rename(params);
+        let result = provider.rename(params).await;
         assert!(result.is_some());
 
         let workspace_edit = result.unwrap();
@@ -568,57 +382,52 @@ print(x)"#;
         assert!(RenameProvider::is_valid_identifier("class"));
     }
 
-    #[test]
-    fn test_collect_renames_module() {
-        let ast = AstNode::Module {
-            body: vec![
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 2,
-                    }),
-                    value: Box::new(AstNode::Literal {
-                        value: beacon_parser::LiteralValue::Integer(1),
-                        line: 1,
-                        col: 5,
-                        end_col: 0,
-                        end_line: 0,
-                    }),
-                    line: 1,
-                    col: 1,
-                    end_col: 0,
-                    end_line: 0,
-                },
-                AstNode::Assignment {
-                    target: Box::new(AstNode::Identifier {
-                        name: "y".to_string(),
-                        line: 1,
-                        col: 1,
-                        end_line: 1,
-                        end_col: 2,
-                    }),
-                    value: Box::new(AstNode::Identifier {
-                        name: "x".to_string(),
-                        line: 2,
-                        col: 5,
-                        end_line: 2,
-                        end_col: 6,
-                    }),
-                    line: 2,
-                    col: 1,
-                    end_col: 0,
-                    end_line: 0,
-                },
-            ],
-            docstring: None,
+    #[tokio::test]
+    async fn test_cross_file_rename() {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let provider = RenameProvider::new(documents.clone(), workspace);
+        let module_uri = Url::from_str("file:///module.py").unwrap();
+        let module_source = r#"def helper_function():
+    return 42"#;
+
+        documents
+            .open_document(module_uri.clone(), 1, module_source.to_string())
+            .unwrap();
+
+        let main_uri = Url::from_str("file:///main.py").unwrap();
+        let main_source = r#"from module import helper_function
+
+result = helper_function()"#;
+
+        documents
+            .open_document(main_uri.clone(), 1, main_source.to_string())
+            .unwrap();
+
+        let params = RenameParams {
+            text_document_position: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: module_uri.clone() },
+                position: Position { line: 0, character: 4 },
+            },
+            new_name: "new_helper".to_string(),
+            work_done_progress_params: Default::default(),
         };
 
-        let mut edits = Vec::new();
-        RenameProvider::collect_renames(&ast, "x", "renamed", &mut edits, "");
+        let result = provider.rename(params).await;
+        assert!(result.is_some(), "Rename should return a WorkspaceEdit");
 
-        assert_eq!(edits.len(), 2);
+        let workspace_edit = result.unwrap();
+        assert!(workspace_edit.changes.is_some());
+
+        let changes = workspace_edit.changes.unwrap();
+
+        assert!(changes.contains_key(&module_uri), "Should have edits in module.py");
+
+        for (_, edits) in changes.iter() {
+            for edit in edits {
+                assert_eq!(edit.new_text, "new_helper");
+            }
+        }
     }
 }
