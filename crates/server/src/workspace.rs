@@ -1693,6 +1693,12 @@ impl Workspace {
     pub fn add_test_module(&mut self, uri: Url, module_name: String, source_root: std::path::PathBuf) {
         self.index.insert(ModuleInfo::new(uri, module_name, source_root, false));
     }
+
+    /// Build dependency graph for test modules
+    #[cfg(test)]
+    pub fn build_test_dependency_graph(&mut self) {
+        self.build_dependency_graph();
+    }
 }
 
 /// Dependency graph tracking module imports

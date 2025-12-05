@@ -1699,6 +1699,17 @@ impl PythonParser {
                         }
                     }
                 }
+                "wildcard_import" => {
+                    let start_pos = child.start_position();
+                    let end_pos = child.end_position();
+                    names.push(ImportName {
+                        name: "*".to_string(),
+                        line: start_pos.row + 1,
+                        col: start_pos.column + 1,
+                        end_line: end_pos.row + 1,
+                        end_col: end_pos.column + 1,
+                    });
+                }
                 _ => {}
             }
         }

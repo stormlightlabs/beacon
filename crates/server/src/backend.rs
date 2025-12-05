@@ -8,6 +8,9 @@ use crate::document::DocumentManager;
 use crate::workspace::Workspace;
 use crate::{analysis, cache, features::*, interpreter};
 
+use lsp_types::request::{
+    GotoImplementationParams, GotoImplementationResponse, GotoTypeDefinitionParams, GotoTypeDefinitionResponse,
+};
 use lsp_types::{
     CodeActionProviderCapability, CompletionOptions, HoverProviderCapability, InitializeParams, InitializeResult,
     InlayHintServerCapabilities, OneOf, SemanticTokensFullOptions, SemanticTokensLegend, SemanticTokensOptions,
@@ -255,6 +258,7 @@ impl LanguageServer for Backend {
                 }),
                 definition_provider: Some(OneOf::Left(true)),
                 type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
+                implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
                 references_provider: Some(OneOf::Left(true)),
                 document_highlight_provider: Some(OneOf::Left(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
@@ -534,6 +538,38 @@ impl LanguageServer for Backend {
     #[tracing::instrument(skip(self), level = "debug")]
     async fn goto_definition(&self, params: GotoDefinitionParams) -> Result<Option<GotoDefinitionResponse>> {
         Ok(self.features.goto_definition.goto_definition(params))
+    }
+
+    #[tracing::instrument(skip(self), level = "debug")]
+    async fn goto_type_definition(
+        &self, params: GotoTypeDefinitionParams,
+    ) -> Result<Option<GotoTypeDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        let mut analyzer = self.analyzer.write().await;
+        let location = self
+            .features
+            .goto_definition
+            .goto_type_definition(&uri, position, &mut analyzer);
+
+        Ok(location.map(GotoTypeDefinitionResponse::Scalar))
+    }
+
+    #[tracing::instrument(skip(self), level = "debug")]
+    async fn goto_implementation(
+        &self, params: GotoImplementationParams,
+    ) -> Result<Option<GotoImplementationResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        let mut analyzer = self.analyzer.write().await;
+        let locations = self
+            .features
+            .goto_definition
+            .goto_implementation(&uri, position, &mut analyzer);
+
+        if locations.is_empty() { Ok(None) } else { Ok(Some(GotoImplementationResponse::Array(locations))) }
     }
 
     #[tracing::instrument(skip(self), level = "debug")]

@@ -490,7 +490,9 @@ impl<'a> Linter<'a> {
     }
 
     fn visit_from_import(&mut self, names: &[beacon_parser::ImportName], line: usize, col: usize) {
-        if names.is_empty() {
+        let is_wildcard = names.len() == 1 && names[0].name == "*";
+
+        if is_wildcard {
             if self.ctx.function_depth > 0 || self.ctx.class_depth > 0 {
                 self.report(
                     RuleKind::ImportStarNotPermitted,
@@ -499,14 +501,15 @@ impl<'a> Linter<'a> {
                     col,
                     col + 1,
                 );
+            } else {
+                self.report(
+                    RuleKind::ImportStarUsed,
+                    "import * prevents detection of undefined names".to_string(),
+                    line,
+                    col,
+                    col + 1,
+                );
             }
-            self.report(
-                RuleKind::ImportStarUsed,
-                "import * prevents detection of undefined names".to_string(),
-                line,
-                col,
-                col + 1,
-            );
         } else {
             for iname in names {
                 self.ctx.add_import(iname.name.clone());
