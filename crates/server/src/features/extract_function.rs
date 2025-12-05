@@ -5,7 +5,7 @@
 use super::refactoring::{EditCollector, RefactoringContext, RefactoringValidator};
 
 use lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Parameters for extract function refactoring
 pub struct ExtractFunctionParams {
@@ -29,8 +29,10 @@ impl ExtractFunctionProvider {
     }
 
     /// Execute the extract function refactoring
-    pub async fn execute(&self, params: ExtractFunctionParams) -> Option<WorkspaceEdit> {
-        if let Err(_) = RefactoringValidator::validate_identifier(&params.function_name) {
+    pub async fn execute(
+        &self, params: ExtractFunctionParams, mut analyzer: Option<&mut crate::analysis::Analyzer>,
+    ) -> Option<WorkspaceEdit> {
+        if RefactoringValidator::validate_identifier(&params.function_name).is_err() {
             return None;
         }
 
@@ -41,11 +43,18 @@ impl ExtractFunctionProvider {
 
         let analysis = Self::analyze_variables(&tree, &text, &symbol_table, params.range)?;
 
+        let type_map = if let Some(ref mut a) = analyzer {
+            Self::build_variable_type_map(a, &params.uri, &analysis.returns, &symbol_table, &text)
+        } else {
+            std::collections::HashMap::new()
+        };
+
         let function_def = Self::generate_function_definition(
             &params.function_name,
             &selected_code,
             &analysis.parameters,
             &analysis.returns,
+            &type_map,
         );
 
         let function_call =
@@ -64,7 +73,7 @@ impl ExtractFunctionProvider {
             params.uri.clone(),
             TextEdit {
                 range: Range { start: insertion_point, end: insertion_point },
-                new_text: format!("{}\n\n", function_def),
+                new_text: format!("{function_def}\n\n"),
             },
         );
 
@@ -147,6 +156,34 @@ impl ExtractFunctionProvider {
         let returns: Vec<String> = defined_vars.iter().cloned().collect();
 
         Some(VariableAnalysis { parameters, returns })
+    }
+
+    /// Build a map of variable names to their inferred types
+    ///
+    /// Looks up each variable in the symbol table and uses the analyzer to get its type.
+    fn build_variable_type_map(
+        analyzer: &mut crate::analysis::Analyzer, uri: &Url, variables: &[String],
+        symbol_table: &beacon_parser::SymbolTable, _text: &str,
+    ) -> HashMap<String, String> {
+        let mut type_map = HashMap::new();
+
+        for var_name in variables {
+            if let Some(symbol) = symbol_table.lookup_symbol(var_name, symbol_table.root_scope) {
+                let position = lsp_types::Position {
+                    line: (symbol.line.saturating_sub(1)) as u32,
+                    character: (symbol.col.saturating_sub(1)) as u32,
+                };
+
+                if let Ok(Some(ty)) = analyzer.type_at_position(uri, position) {
+                    let type_str = ty.to_string();
+                    if !type_str.contains('\'') && type_str != "Any" {
+                        type_map.insert(var_name.clone(), type_str);
+                    }
+                }
+            }
+        }
+
+        type_map
     }
 
     /// Convert LSP position to byte offset
@@ -253,22 +290,21 @@ impl ExtractFunctionProvider {
     }
 
     /// Generate the function definition
-    fn generate_function_definition(name: &str, body: &str, parameters: &[String], returns: &[String]) -> String {
+    fn generate_function_definition(
+        name: &str, body: &str, parameters: &[String], returns: &[String], type_map: &HashMap<String, String>,
+    ) -> String {
         let params_str = parameters.join(", ");
 
         let return_annotation = if returns.is_empty() {
             String::new()
         } else if returns.len() == 1 {
-            format!(" -> {}", Self::infer_type_annotation(&returns[0]))
+            format!(" -> {}", Self::infer_type_annotation(&returns[0], type_map))
         } else {
-            format!(
-                " -> tuple[{}]",
-                returns
-                    .iter()
-                    .map(|r| Self::infer_type_annotation(r))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
+            let type_annotations: Vec<String> = returns
+                .iter()
+                .map(|r| Self::infer_type_annotation(r, type_map))
+                .collect();
+            format!(" -> tuple[{}]", type_annotations.join(", "))
         };
 
         let indented_body = Self::indent_code(body, 4);
@@ -276,16 +312,13 @@ impl ExtractFunctionProvider {
         let return_statement =
             if !returns.is_empty() { format!("    return {}\n", returns.join(", ")) } else { String::new() };
 
-        format!(
-            "def {}({}){}:\n{}{}",
-            name, params_str, return_annotation, indented_body, return_statement
-        )
+        format!("def {name}({params_str}){return_annotation}:\n{indented_body}{return_statement}")
     }
 
     /// Generate the function call to replace selected code
     fn generate_function_call(name: &str, parameters: &[String], returns: &[String]) -> String {
         let args = parameters.join(", ");
-        let call = format!("{}({})", name, args);
+        let call = format!("{name}({args})");
 
         if returns.is_empty() {
             call
@@ -368,14 +401,14 @@ impl ExtractFunctionProvider {
     /// Indent code by a number of spaces
     fn indent_code(code: &str, spaces: usize) -> String {
         let indent = " ".repeat(spaces);
-        code.lines().map(|line| format!("{}{}\n", indent, line)).collect()
+        code.lines().map(|line| format!("{indent}{line}\n")).collect()
     }
 
     /// Infer type annotation for a variable
     ///
-    /// TODO: Use type inference engine to determine actual types
-    fn infer_type_annotation(_var_name: &str) -> String {
-        "Any".to_string()
+    /// Uses the provided type map from the analyzer, falling back to "Any" if not available.
+    fn infer_type_annotation(var_name: &str, type_map: &HashMap<String, String>) -> String {
+        type_map.get(var_name).cloned().unwrap_or_else(|| "Any".to_string())
     }
 }
 
@@ -411,7 +444,9 @@ mod tests {
 
     #[test]
     fn test_generate_function_definition_no_params_no_returns() {
-        let result = ExtractFunctionProvider::generate_function_definition("foo", "print('hello')", &[], &[]);
+        let type_map = HashMap::new();
+        let result =
+            ExtractFunctionProvider::generate_function_definition("foo", "print('hello')", &[], &[], &type_map);
 
         assert!(result.contains("def foo():"));
         assert!(result.contains("print('hello')"));
@@ -419,11 +454,13 @@ mod tests {
 
     #[test]
     fn test_generate_function_definition_with_params() {
+        let type_map = HashMap::new();
         let result = ExtractFunctionProvider::generate_function_definition(
             "add",
             "result = a + b",
             &["a".to_string(), "b".to_string()],
             &["result".to_string()],
+            &type_map,
         );
 
         assert!(result.contains("def add(a, b)"));
@@ -500,14 +537,84 @@ mod tests {
 
     #[test]
     fn test_generate_function_definition_multiple_returns() {
+        let type_map = HashMap::new();
         let result = ExtractFunctionProvider::generate_function_definition(
             "compute",
             "x = a + b\ny = a - b",
             &["a".to_string(), "b".to_string()],
             &["x".to_string(), "y".to_string()],
+            &type_map,
         );
 
         assert!(result.contains("def compute(a, b) -> tuple[Any, Any]:"));
+        assert!(result.contains("return x, y"));
+    }
+
+    #[test]
+    fn test_infer_type_annotation_with_known_type() {
+        let mut type_map = HashMap::new();
+        type_map.insert("x".to_string(), "int".to_string());
+
+        let result = ExtractFunctionProvider::infer_type_annotation("x", &type_map);
+        assert_eq!(result, "int");
+    }
+
+    #[test]
+    fn test_infer_type_annotation_with_unknown_type() {
+        let type_map = HashMap::new();
+        let result = ExtractFunctionProvider::infer_type_annotation("unknown_var", &type_map);
+        assert_eq!(result, "Any");
+    }
+
+    #[test]
+    fn test_generate_function_definition_with_inferred_types() {
+        let mut type_map = HashMap::new();
+        type_map.insert("result".to_string(), "int".to_string());
+
+        let result = ExtractFunctionProvider::generate_function_definition(
+            "add",
+            "result = a + b",
+            &["a".to_string(), "b".to_string()],
+            &["result".to_string()],
+            &type_map,
+        );
+
+        assert!(result.contains("def add(a, b) -> int:"));
+        assert!(result.contains("return result"));
+    }
+
+    #[test]
+    fn test_generate_function_definition_with_multiple_inferred_types() {
+        let mut type_map = HashMap::new();
+        type_map.insert("x".to_string(), "int".to_string());
+        type_map.insert("y".to_string(), "str".to_string());
+
+        let result = ExtractFunctionProvider::generate_function_definition(
+            "compute",
+            "x = a + b\ny = str(a)",
+            &["a".to_string(), "b".to_string()],
+            &["x".to_string(), "y".to_string()],
+            &type_map,
+        );
+
+        assert!(result.contains("def compute(a, b) -> tuple[int, str]:"));
+        assert!(result.contains("return x, y"));
+    }
+
+    #[test]
+    fn test_generate_function_definition_with_partial_type_info() {
+        let mut type_map = HashMap::new();
+        type_map.insert("x".to_string(), "int".to_string());
+
+        let result = ExtractFunctionProvider::generate_function_definition(
+            "compute",
+            "x = a + b\ny = unknown",
+            &["a".to_string(), "b".to_string()],
+            &["x".to_string(), "y".to_string()],
+            &type_map,
+        );
+
+        assert!(result.contains("def compute(a, b) -> tuple[int, Any]:"));
         assert!(result.contains("return x, y"));
     }
 }

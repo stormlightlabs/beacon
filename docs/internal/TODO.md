@@ -49,6 +49,9 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 - [ ] Memory profiling for workspace-wide analysis
 - [ ] Integration tests for cross-file CFG
 - [ ] Integration tests for cross-file taint analysis
+- [ ] Integration tests for Extract Function refactoring with type inference
+- [ ] Integration tests for Move Symbol refactoring across files
+- [ ] Integration tests for refactoring with workspace dependency updates
 - [ ] Stress testing with large multi-module projects
 
 ## Linter Tech Debt

@@ -71,7 +71,7 @@ impl MoveSymbolProvider {
             params.target_uri.clone(),
             TextEdit {
                 range: Range { start: target_insertion, end: target_insertion },
-                new_text: format!("{}\n\n", symbol_definition),
+                new_text: format!("{symbol_definition}\n\n"),
             },
         );
 
@@ -93,7 +93,7 @@ impl MoveSymbolProvider {
                 params.source_uri.clone(),
                 TextEdit {
                     range: Range { start: import_insertion, end: import_insertion },
-                    new_text: format!("{}\n", import_statement),
+                    new_text: format!("{import_statement}\n"),
                 },
             );
         }
@@ -115,7 +115,7 @@ impl MoveSymbolProvider {
 
     /// Find a node at a specific line and column (1-indexed)
     fn find_node_at_line_col<'a>(
-        node: tree_sitter::Node<'a>, text: &str, line: usize, col: usize,
+        node: tree_sitter::Node<'a>, _text: &str, line: usize, col: usize,
     ) -> Option<tree_sitter::Node<'a>> {
         let target_line = line.saturating_sub(1);
         let target_col = col.saturating_sub(1);
@@ -128,7 +128,7 @@ impl MoveSymbolProvider {
 
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if let Some(found) = Self::find_node_at_line_col(child, text, line, col) {
+            if let Some(found) = Self::find_node_at_line_col(child, _text, line, col) {
                 return Some(found);
             }
         }
@@ -160,9 +160,34 @@ impl MoveSymbolProvider {
     }
 
     /// Find where to insert at module level in target file
-    fn find_module_level_insertion_point(_tree: &tree_sitter::Tree, _text: &str) -> Position {
-        // TODO: Implement insertion (after imports, after module docstring)
-        Position { line: 0, character: 0 }
+    ///
+    /// Inserts after imports and module docstring
+    fn find_module_level_insertion_point(tree: &tree_sitter::Tree, _text: &str) -> Position {
+        let root = tree.root_node();
+        let mut last_import_line = 0;
+        let mut has_docstring = false;
+
+        let mut cursor = root.walk();
+        for child in root.children(&mut cursor) {
+            match child.kind() {
+                "import_statement" | "import_from_statement" => {
+                    last_import_line = child.end_position().row;
+                }
+                "expression_statement" => {
+                    if !has_docstring && child.start_position().row <= 1 {
+                        if let Some(string_node) = child.child(0) {
+                            if string_node.kind() == "string" {
+                                has_docstring = true;
+                                last_import_line = child.end_position().row;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Position { line: (last_import_line + 2) as u32, character: 0 }
     }
 
     /// Check if symbol is still used in the file (excluding its definition)
@@ -238,10 +263,12 @@ impl MoveSymbolProvider {
     }
 
     /// Generate import statement for moved symbol
+    ///
+    /// Creates an absolute import statement for the symbol.
+    /// The module path is computed by walking up the directory tree to find package boundaries.
     fn generate_import_statement(target_uri: &Url, symbol_name: &str) -> String {
-        // TODO: Compute proper module path from URI
         let module_name = Self::uri_to_module_name(target_uri);
-        format!("from {} import {}", module_name, symbol_name)
+        format!("from {module_name} import {symbol_name}")
     }
 
     /// Convert URI to Python module name
@@ -477,5 +504,65 @@ mod tests {
         let text = "def foo():\n    pass";
         let result = MoveSymbolProvider::extract_node_text(text, 0, text.len());
         assert_eq!(result, text);
+    }
+
+    #[test]
+    fn test_find_module_level_insertion_point_empty_file() {
+        let text = "";
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        let position = MoveSymbolProvider::find_module_level_insertion_point(&tree, text);
+        assert_eq!(position.line, 2);
+        assert_eq!(position.character, 0);
+    }
+
+    #[test]
+    fn test_find_module_level_insertion_point_only_imports() {
+        let text = "import os\nimport sys\nfrom typing import List";
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        let position = MoveSymbolProvider::find_module_level_insertion_point(&tree, text);
+        assert_eq!(position.line, 4);
+        assert_eq!(position.character, 0);
+    }
+
+    #[test]
+    fn test_find_module_level_insertion_point_with_docstring() {
+        let text = "\"\"\"Module docstring.\"\"\"\n\ndef foo():\n    pass";
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        let position = MoveSymbolProvider::find_module_level_insertion_point(&tree, text);
+        assert_eq!(position.line, 2);
+        assert_eq!(position.character, 0);
+    }
+
+    #[test]
+    fn test_find_module_level_insertion_point_docstring_and_imports() {
+        let text = "\"\"\"Module docstring.\"\"\"\nimport os\nimport sys";
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        let position = MoveSymbolProvider::find_module_level_insertion_point(&tree, text);
+        assert_eq!(position.line, 4);
+        assert_eq!(position.character, 0);
+    }
+
+    #[test]
+    fn test_find_module_level_insertion_point_with_code() {
+        let text = "import os\n\ndef foo():\n    pass\n\nclass Bar:\n    pass";
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(text, None).unwrap();
+
+        let position = MoveSymbolProvider::find_module_level_insertion_point(&tree, text);
+        assert_eq!(position.line, 2);
+        assert_eq!(position.character, 0);
     }
 }

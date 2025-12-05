@@ -132,12 +132,12 @@ impl EditCollector {
     }
     /// Add a text edit for a file
     pub fn add_edit(&mut self, uri: Url, edit: TextEdit) {
-        self.changes.entry(uri).or_insert_with(Vec::new).push(edit);
+        self.changes.entry(uri).or_default().push(edit);
     }
     /// Add multiple edits for a file
     pub fn add_edits(&mut self, uri: Url, edits: Vec<TextEdit>) {
         if !edits.is_empty() {
-            self.changes.entry(uri).or_insert_with(Vec::new).extend(edits);
+            self.changes.entry(uri).or_default().extend(edits);
         }
     }
     /// Check if any edits have been collected
@@ -299,11 +299,11 @@ impl RefactoringValidator {
     /// Validate identifier is valid and not a keyword
     pub fn validate_identifier(name: &str) -> Result<(), String> {
         if !Self::is_valid_identifier(name) {
-            return Err(format!("'{}' is not a valid Python identifier", name));
+            return Err(format!("'{name}' is not a valid Python identifier"));
         }
 
         if Self::is_python_keyword(name) {
-            return Err(format!("'{}' is a Python keyword", name));
+            return Err(format!("'{name}' is a Python keyword"));
         }
 
         Ok(())
