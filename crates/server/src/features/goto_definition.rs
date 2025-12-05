@@ -2,9 +2,12 @@
 //!
 //! Navigates to the definition of symbols (variables, functions, classes, imports).
 
+use crate::analysis::Analyzer;
 use crate::document::DocumentManager;
 use crate::workspace::Workspace;
 use crate::{parser, utils};
+use beacon_core::{Type, TypeCtor};
+use beacon_parser::SymbolKind;
 use lsp_types::{GotoDefinitionParams, GotoDefinitionResponse, Location, Position};
 use ropey::Rope;
 use std::sync::Arc;
@@ -55,14 +58,15 @@ impl GotoDefinitionProvider {
             return cross_file_location.map(GotoDefinitionResponse::Scalar);
         }
 
-        if tokio::runtime::Handle::try_current().is_ok() {
-            let cross_file_location = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current()
-                    .block_on(async { self.find_imported_symbol_definition(&uri, position).await })
-            });
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
+                let cross_file_location = tokio::task::block_in_place(|| {
+                    handle.block_on(async { self.find_imported_symbol_definition(&uri, position).await })
+                });
 
-            if cross_file_location.is_some() {
-                return cross_file_location.map(GotoDefinitionResponse::Scalar);
+                if cross_file_location.is_some() {
+                    return cross_file_location.map(GotoDefinitionResponse::Scalar);
+                }
             }
         }
 
@@ -336,22 +340,310 @@ impl GotoDefinitionProvider {
         Some(Location { uri: target_uri, range })
     }
 
-    /// TODO: Implement type definition lookup
-    /// Use type inference to get type of expression
-    /// Navigate to the definition of that type (class, protocol, etc.)
-    pub fn _goto_type_definition(&self, _uri: &Url, _position: Position) -> Option<Location> {
+    /// Navigate to the type definition of the symbol at a position
+    ///
+    /// Uses type inference to get the type of the expression, then navigates to the definition of that type (class, protocol, etc.)
+    pub fn goto_type_definition(&self, uri: &Url, position: Position, analyzer: &mut Analyzer) -> Option<Location> {
+        let ty = analyzer.type_at_position(uri, position).ok()??;
+
+        let class_name = Self::extract_class_name_from_type(&ty)?;
+
+        tracing::debug!(
+            "Looking for type definition of '{}' from position {:?} in {}",
+            class_name,
+            position,
+            uri
+        );
+
+        if let Some(location) = self.find_class_definition(uri, &class_name) {
+            return Some(location);
+        }
+
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
+                let workspace_future = self.find_class_in_workspace(&class_name);
+                tokio::task::block_in_place(|| handle.block_on(workspace_future))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Extract class name from a Type
+    fn extract_class_name_from_type(ty: &Type) -> Option<String> {
+        match ty {
+            Type::Con(TypeCtor::Class(name)) => Some(name.clone()),
+            Type::Con(TypeCtor::Protocol(Some(name), _)) => Some(name.clone()),
+            Type::App(ctor, _) => match &**ctor {
+                Type::Con(TypeCtor::Class(name)) => Some(name.clone()),
+                Type::Con(TypeCtor::Protocol(Some(name), _)) => Some(name.clone()),
+                _ => None,
+            },
+            Type::BoundMethod(receiver, _, _) => match &**receiver {
+                Type::Con(TypeCtor::Class(name)) => Some(name.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Find class definition in the local file
+    fn find_class_definition(&self, uri: &Url, class_name: &str) -> Option<Location> {
+        self.documents.get_document(uri, |doc| {
+            let tree = doc.tree()?;
+            let text = doc.text();
+            let symbol_table = doc.symbol_table()?;
+
+            let symbol = symbol_table
+                .scopes
+                .get(&symbol_table.root_scope)?
+                .symbols
+                .get(class_name)?;
+
+            if symbol.kind != SymbolKind::Class {
+                return None;
+            }
+
+            let range = self.find_identifier_range_at_definition(tree, &text, symbol, class_name)?;
+            Some(Location { uri: uri.clone(), range })
+        })?
+    }
+
+    /// Find class definition across the workspace
+    async fn find_class_in_workspace(&self, class_name: &str) -> Option<Location> {
+        let workspace = self.workspace.read().await;
+
+        for (module_uri, _module_name) in workspace.all_modules() {
+            if let Some(location) = self.find_symbol_in_module(&module_uri, class_name, &workspace) {
+                let is_class = self.documents.get_document(&module_uri, |doc| {
+                    let symbol_table = doc.symbol_table()?;
+                    symbol_table
+                        .lookup_symbol(class_name, symbol_table.root_scope)
+                        .map(|s| s.kind == SymbolKind::Class)
+                })?;
+
+                if is_class == Some(true) {
+                    tracing::debug!(
+                        "Found class '{}' definition in workspace module {}",
+                        class_name,
+                        module_uri
+                    );
+                    return Some(location);
+                }
+            }
+
+            if let Some(parse_result) = workspace.load_workspace_file(&module_uri) {
+                if let Some(symbol) = parse_result
+                    .symbol_table
+                    .lookup_symbol(class_name, parse_result.symbol_table.root_scope)
+                {
+                    if symbol.kind == SymbolKind::Class {
+                        let text = parse_result.rope.to_string();
+                        if let Some(range) =
+                            self.find_identifier_range_at_definition(&parse_result.tree, &text, symbol, class_name)
+                        {
+                            tracing::debug!(
+                                "Found class '{}' definition in workspace file {}",
+                                class_name,
+                                module_uri
+                            );
+                            return Some(Location { uri: module_uri.clone(), range });
+                        }
+                    }
+                }
+            }
+        }
+
         None
     }
 
-    /// TODO: Navigate to implementation (for protocols/abstract methods)
-    pub fn _goto_implementation(&self, _uri: &Url, _position: Position) -> Vec<Location> {
-        Vec::new()
+    /// Navigate to implementations of a protocol or abstract class
+    ///
+    /// Finds all classes that implement a protocol or inherit from a base class.
+    /// For methods, finds overriding implementations in subclasses.
+    pub fn goto_implementation(&self, uri: &Url, position: Position, analyzer: &mut Analyzer) -> Vec<Location> {
+        let handle = match tokio::runtime::Handle::try_current() {
+            Ok(h) => h,
+            Err(_) => return Vec::new(),
+        };
+
+        let ty = match analyzer.type_at_position(uri, position) {
+            Ok(Some(t)) => t,
+            _ => return Vec::new(),
+        };
+
+        let class_name = match Self::extract_class_name_from_type(&ty) {
+            Some(name) => name,
+            None => return Vec::new(),
+        };
+
+        tracing::debug!(
+            "Looking for implementations of '{}' from position {:?} in {}",
+            class_name,
+            position,
+            uri
+        );
+
+        if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
+            tokio::task::block_in_place(|| handle.block_on(self.find_implementations(&class_name)))
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Find all implementations of a class/protocol across the workspace
+    async fn find_implementations(&self, base_class_name: &str) -> Vec<Location> {
+        let workspace = self.workspace.read().await;
+        let mut implementations = Vec::new();
+
+        for (module_uri, _module_name) in workspace.all_modules() {
+            let module_implementations = self.find_implementations_in_module(&module_uri, base_class_name, &workspace);
+            implementations.extend(module_implementations);
+        }
+
+        tracing::debug!(
+            "Found {} implementation(s) of '{}'",
+            implementations.len(),
+            base_class_name
+        );
+
+        implementations
+    }
+
+    /// Find implementations in a specific module
+    fn find_implementations_in_module(
+        &self, module_uri: &Url, base_class_name: &str, workspace: &Workspace,
+    ) -> Vec<Location> {
+        if let Some(Some(impls)) = self.documents.get_document(module_uri, |doc| {
+            let tree = doc.tree()?;
+            let text = doc.text();
+            let symbol_table = doc.symbol_table()?;
+            let ast = doc.ast()?;
+
+            let mut implementations = Vec::new();
+            Self::find_class_implementations(
+                ast,
+                &text,
+                tree,
+                symbol_table,
+                base_class_name,
+                module_uri,
+                &mut implementations,
+            );
+            Some(implementations)
+        }) {
+            return impls;
+        }
+
+        let mut implementations = Vec::new();
+        if let Some(parse_result) = workspace.load_workspace_file(module_uri) {
+            let text = parse_result.rope.to_string();
+            Self::find_class_implementations(
+                &parse_result.ast,
+                &text,
+                &parse_result.tree,
+                &parse_result.symbol_table,
+                base_class_name,
+                module_uri,
+                &mut implementations,
+            );
+        }
+
+        implementations
+    }
+
+    /// Find classes that inherit from or implement the base class
+    fn find_class_implementations(
+        ast: &beacon_parser::AstNode, text: &str, tree: &tree_sitter::Tree, symbol_table: &beacon_parser::SymbolTable,
+        base_class_name: &str, module_uri: &Url, implementations: &mut Vec<Location>,
+    ) {
+        use beacon_parser::AstNode;
+
+        match ast {
+            AstNode::ClassDef { name, bases, body, .. } => {
+                for base_name in bases {
+                    if base_name == base_class_name {
+                        if let Some(symbol) = symbol_table.lookup_symbol(name, symbol_table.root_scope) {
+                            if symbol.kind == SymbolKind::Class {
+                                let line_idx = symbol.line.saturating_sub(1);
+                                let byte_col = symbol.col.saturating_sub(1);
+                                let rope = Rope::from_str(text);
+
+                                if line_idx < rope.len_lines() {
+                                    let symbol_byte_offset = rope.line_to_byte(line_idx) + byte_col;
+                                    if let Some(node) = tree
+                                        .root_node()
+                                        .descendant_for_byte_range(symbol_byte_offset, symbol_byte_offset)
+                                    {
+                                        if let Some(identifier_node) =
+                                            GotoDefinitionProvider::find_identifier_node(text, node, name)
+                                        {
+                                            let range =
+                                                utils::tree_sitter_range_to_lsp_range(text, identifier_node.range());
+                                            implementations.push(Location { uri: module_uri.clone(), range });
+                                            tracing::debug!(
+                                                "Found implementation: {} extends {} in {}",
+                                                name,
+                                                base_class_name,
+                                                module_uri
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for child in body {
+                    Self::find_class_implementations(
+                        child,
+                        text,
+                        tree,
+                        symbol_table,
+                        base_class_name,
+                        module_uri,
+                        implementations,
+                    );
+                }
+            }
+            AstNode::Module { body, .. } => {
+                for child in body {
+                    Self::find_class_implementations(
+                        child,
+                        text,
+                        tree,
+                        symbol_table,
+                        base_class_name,
+                        module_uri,
+                        implementations,
+                    );
+                }
+            }
+            AstNode::FunctionDef { body, .. } => {
+                for child in body {
+                    Self::find_class_implementations(
+                        child,
+                        text,
+                        tree,
+                        symbol_table,
+                        base_class_name,
+                        module_uri,
+                        implementations,
+                    );
+                }
+            }
+            _ => {}
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis;
     use crate::config::Config;
     use std::str::FromStr;
 
@@ -900,5 +1192,186 @@ result = format_string("hello")
             }
             _ => panic!("Expected scalar location"),
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_goto_type_definition() {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let mut analyzer = analysis::Analyzer::with_workspace(config, documents.clone(), workspace.clone());
+        let provider = GotoDefinitionProvider::new(documents.clone(), workspace.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"class MyClass:
+    def __init__(self):
+        self.value = 42
+
+obj = MyClass()
+result = obj
+"#;
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        {
+            let mut ws = workspace.write().await;
+            ws.add_test_module(uri.clone(), "test".to_string(), std::path::PathBuf::from("/"));
+        }
+
+        analyzer.analyze(&uri).ok();
+
+        let location = provider.goto_type_definition(&uri, Position::new(5, 9), &mut analyzer);
+        assert!(
+            location.is_some(),
+            "Should find type definition for variable with class type"
+        );
+
+        let location = location.unwrap();
+        assert_eq!(location.uri, uri);
+        assert_eq!(location.range.start.line, 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_goto_type_definition_cross_file() {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let mut analyzer = analysis::Analyzer::with_workspace(config, documents.clone(), workspace.clone());
+        let provider = GotoDefinitionProvider::new(documents.clone(), workspace.clone());
+
+        let models_uri = Url::from_str("file:///models.py").unwrap();
+        let models_source = r#"class User:
+    def __init__(self, name):
+        self.name = name
+"#;
+        documents
+            .open_document(models_uri.clone(), 1, models_source.to_string())
+            .unwrap();
+
+        let main_uri = Url::from_str("file:///main.py").unwrap();
+        let main_source = r#"from models import User
+
+user = User("Alice")
+"#;
+        documents
+            .open_document(main_uri.clone(), 1, main_source.to_string())
+            .unwrap();
+
+        {
+            let mut ws = workspace.write().await;
+            ws.add_test_module(models_uri.clone(), "models".to_string(), std::path::PathBuf::from("/"));
+            ws.add_test_module(main_uri.clone(), "main".to_string(), std::path::PathBuf::from("/"));
+            ws.build_test_dependency_graph();
+        }
+
+        analyzer.analyze(&models_uri).ok();
+        analyzer.analyze(&main_uri).ok();
+
+        let workspace_lock = workspace.read().await;
+        drop(workspace_lock);
+
+        let location_future = provider.find_class_in_workspace("User");
+        let location = tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(location_future));
+
+        assert!(location.is_some(), "Should find User class in workspace");
+        let location = location.unwrap();
+        assert_eq!(location.uri, models_uri, "Should find User in models.py");
+        assert_eq!(location.range.start.line, 0, "User class should be on line 0");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_goto_implementation() {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let mut analyzer = analysis::Analyzer::with_workspace(config, documents.clone(), workspace.clone());
+        let provider = GotoDefinitionProvider::new(documents.clone(), workspace.clone());
+
+        let uri = Url::from_str("file:///test.py").unwrap();
+        let source = r#"class Animal:
+    def speak(self):
+        pass
+
+class Dog(Animal):
+    def speak(self):
+        return "Woof"
+
+class Cat(Animal):
+    def speak(self):
+        return "Meow"
+
+animal = Animal()
+"#;
+        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+
+        {
+            let mut ws = workspace.write().await;
+            ws.add_test_module(uri.clone(), "test".to_string(), std::path::PathBuf::from("/"));
+        }
+
+        analyzer.analyze(&uri).ok();
+
+        let locations = provider.goto_implementation(&uri, Position::new(12, 9), &mut analyzer);
+        assert_eq!(locations.len(), 2, "Should find two implementations of Animal");
+
+        let class_names: Vec<_> = locations.iter().map(|loc| loc.range.start.line).collect();
+        assert!(class_names.contains(&4), "Should find Dog at line 4");
+        assert!(class_names.contains(&8), "Should find Cat at line 8");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_goto_implementation_cross_file() {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let mut analyzer = analysis::Analyzer::with_workspace(config, documents.clone(), workspace.clone());
+        let provider = GotoDefinitionProvider::new(documents.clone(), workspace.clone());
+
+        let base_uri = Url::from_str("file:///base.py").unwrap();
+        let base_source = r#"class Shape:
+    def area(self):
+        pass
+"#;
+        documents
+            .open_document(base_uri.clone(), 1, base_source.to_string())
+            .unwrap();
+
+        let impl1_uri = Url::from_str("file:///circle.py").unwrap();
+        let impl1_source = r#"from base import Shape
+
+class Circle(Shape):
+    def area(self):
+        return 3.14 * self.radius ** 2
+"#;
+        documents
+            .open_document(impl1_uri.clone(), 1, impl1_source.to_string())
+            .unwrap();
+
+        let impl2_uri = Url::from_str("file:///square.py").unwrap();
+        let impl2_source = r#"from base import Shape
+
+class Square(Shape):
+    def area(self):
+        return self.side ** 2
+"#;
+        documents
+            .open_document(impl2_uri.clone(), 1, impl2_source.to_string())
+            .unwrap();
+
+        {
+            let mut ws = workspace.write().await;
+            ws.add_test_module(base_uri.clone(), "base".to_string(), std::path::PathBuf::from("/"));
+            ws.add_test_module(impl1_uri.clone(), "circle".to_string(), std::path::PathBuf::from("/"));
+            ws.add_test_module(impl2_uri.clone(), "square".to_string(), std::path::PathBuf::from("/"));
+            ws.build_test_dependency_graph();
+        }
+
+        analyzer.analyze(&base_uri).ok();
+
+        let locations = provider.goto_implementation(&base_uri, Position::new(0, 6), &mut analyzer);
+        assert_eq!(locations.len(), 2, "Should find two implementations across files");
+
+        let impl_uris: Vec<_> = locations.iter().map(|loc| loc.uri.clone()).collect();
+        assert!(impl_uris.contains(&impl1_uri), "Should find Circle implementation");
+        assert!(impl_uris.contains(&impl2_uri), "Should find Square implementation");
     }
 }
