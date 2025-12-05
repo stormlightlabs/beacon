@@ -29,7 +29,13 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
 - [x] Cross-file goto definition for all symbols (beyond imports)
 - [x] Cross-file rename support
-- [ ] Multi-file refactoring infrastructure
+- [x] Multi-file refactoring infrastructure
+    - [x] Generic refactoring framework
+    - [x] Extract Function refactoring
+    - [x] Move Symbol refactoring
+- [ ] Inline Function refactoring
+- [ ] Change Signature refactoring
+- [ ] Extract Variable refactoring
 
 ### Diagnostics & Validation
 
