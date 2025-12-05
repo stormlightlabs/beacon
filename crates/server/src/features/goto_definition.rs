@@ -29,10 +29,6 @@ impl GotoDefinitionProvider {
         let uri = params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        if let Some(location) = self.find_definition(&uri, position) {
-            return Some(GotoDefinitionResponse::Scalar(location));
-        }
-
         let is_import = self.documents.get_document(&uri, |doc| {
             let tree = doc.tree()?;
             let text = doc.text();
@@ -57,6 +53,21 @@ impl GotoDefinitionProvider {
             });
 
             return cross_file_location.map(GotoDefinitionResponse::Scalar);
+        }
+
+        if tokio::runtime::Handle::try_current().is_ok() {
+            let cross_file_location = tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(async { self.find_imported_symbol_definition(&uri, position).await })
+            });
+
+            if cross_file_location.is_some() {
+                return cross_file_location.map(GotoDefinitionResponse::Scalar);
+            }
+        }
+
+        if let Some(location) = self.find_definition(&uri, position) {
+            return Some(GotoDefinitionResponse::Scalar(location));
         }
 
         None
@@ -88,9 +99,6 @@ impl GotoDefinitionProvider {
     }
 
     /// Find the range of an identifier at its definition location
-    ///
-    /// Symbols store the position of the entire statement (e.g., "def" for functions), but we want to
-    /// return the range of the actual identifier name.
     fn find_identifier_range_at_definition(
         &self, tree: &tree_sitter::Tree, text: &str, symbol: &beacon_parser::Symbol, identifier_name: &str,
     ) -> Option<lsp_types::Range> {
@@ -171,6 +179,93 @@ impl GotoDefinitionProvider {
                 _ => {}
             }
         }
+        None
+    }
+
+    /// Find definition of an imported symbol used anywhere in the file
+    ///
+    /// Resolves symbols that were imported from other modules to their original definition.
+    pub async fn find_imported_symbol_definition(&self, uri: &Url, position: Position) -> Option<Location> {
+        let identifier = self.documents.get_document(uri, |doc| {
+            let tree = doc.tree()?;
+            let text = doc.text();
+            let p = parser::LspParser::new().ok()?;
+            let node = p.node_at_position(tree, &text, position)?;
+
+            if node.kind() != "identifier" {
+                return None;
+            }
+
+            node.utf8_text(text.as_bytes()).ok().map(String::from)
+        })??;
+
+        tracing::debug!("Looking for cross-file definition of '{}' in {}", identifier, uri);
+
+        let workspace = self.workspace.read().await;
+        let symbol_imports = workspace.get_symbol_imports(uri);
+
+        for import in symbol_imports {
+            if import.symbol == "*" {
+                if let Some(module_uri) = workspace.resolve_import(&import.from_module) {
+                    if let Some(location) = self.find_symbol_in_module(&module_uri, &identifier, &workspace) {
+                        tracing::debug!(
+                            "Found '{}' in star import from {} ({})",
+                            identifier,
+                            import.from_module,
+                            module_uri
+                        );
+                        return Some(location);
+                    }
+                }
+            } else if import.symbol == identifier {
+                if let Some(module_uri) = workspace.resolve_import(&import.from_module) {
+                    if let Some(location) = self.find_symbol_in_module(&module_uri, &identifier, &workspace) {
+                        tracing::debug!(
+                            "Found '{}' imported from {} ({})",
+                            identifier,
+                            import.from_module,
+                            module_uri
+                        );
+                        return Some(location);
+                    }
+                }
+            }
+        }
+
+        tracing::debug!("No cross-file definition found for '{}' in {}", identifier, uri);
+        None
+    }
+
+    /// Find a symbol definition in a specific module
+    fn find_symbol_in_module(
+        &self, module_uri: &Url, symbol_name: &str, workspace: &crate::workspace::Workspace,
+    ) -> Option<Location> {
+        if let Some(location) = self.documents.get_document(module_uri, |doc| {
+            let tree = doc.tree()?;
+            let text = doc.text();
+            let symbol_table = doc.symbol_table()?;
+
+            let root_scope = symbol_table.root_scope;
+            let symbol = symbol_table.lookup_symbol(symbol_name, root_scope)?;
+
+            let range = self.find_identifier_range_at_definition(tree, &text, symbol, symbol_name)?;
+            Some(Location { uri: module_uri.clone(), range })
+        }) {
+            return location;
+        }
+
+        if let Some(parse_result) = workspace.load_workspace_file(module_uri) {
+            let root_scope = parse_result.symbol_table.root_scope;
+            if let Some(symbol) = parse_result.symbol_table.lookup_symbol(symbol_name, root_scope) {
+                let text = parse_result.rope.to_string();
+                if let Some(range) =
+                    self.find_identifier_range_at_definition(&parse_result.tree, &text, symbol, symbol_name)
+                {
+                    return Some(Location { uri: module_uri.clone(), range });
+                }
+            }
+        }
+
         None
     }
 
@@ -562,8 +657,8 @@ x = os"#;
         match result.unwrap() {
             GotoDefinitionResponse::Scalar(location) => {
                 assert_eq!(location.uri, uri);
-                assert_eq!(location.range.start.line, 3); // Definition on line 3
-                assert_eq!(location.range.start.character, 8); // Start of 'y'
+                assert_eq!(location.range.start.line, 3);
+                assert_eq!(location.range.start.character, 8);
             }
             _ => panic!("Expected scalar location"),
         }
@@ -585,5 +680,225 @@ x = os"#;
 
         let result = provider.goto_definition(params);
         assert!(result.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_cross_file_goto_definition_function() {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let provider = GotoDefinitionProvider::new(documents.clone(), workspace.clone());
+        let module_a_uri = Url::from_str("file:///module_a.py").unwrap();
+        let module_a_source = r#"def helper_function():
+    return 42
+"#;
+        documents
+            .open_document(module_a_uri.clone(), 1, module_a_source.to_string())
+            .unwrap();
+
+        let module_b_uri = Url::from_str("file:///module_b.py").unwrap();
+        let module_b_source = r#"from module_a import helper_function
+
+result = helper_function()
+"#;
+        documents
+            .open_document(module_b_uri.clone(), 1, module_b_source.to_string())
+            .unwrap();
+
+        {
+            let mut ws = workspace.write().await;
+            ws.add_test_module(
+                module_a_uri.clone(),
+                "module_a".to_string(),
+                std::path::PathBuf::from("/"),
+            );
+            ws.add_test_module(
+                module_b_uri.clone(),
+                "module_b".to_string(),
+                std::path::PathBuf::from("/"),
+            );
+            ws.build_test_dependency_graph();
+        }
+
+        let params = GotoDefinitionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: module_b_uri },
+                position: Position::new(2, 9),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let result = provider.goto_definition(params);
+        assert!(result.is_some(), "Should find cross-file definition");
+
+        match result.unwrap() {
+            GotoDefinitionResponse::Scalar(location) => {
+                assert_eq!(location.uri, module_a_uri);
+                assert_eq!(location.range.start.line, 0);
+            }
+            _ => panic!("Expected scalar location"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_cross_file_goto_definition_class() {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let provider = GotoDefinitionProvider::new(documents.clone(), workspace.clone());
+        let models_uri = Url::from_str("file:///models.py").unwrap();
+        let models_source = r#"class User:
+    def __init__(self, name):
+        self.name = name
+"#;
+        documents
+            .open_document(models_uri.clone(), 1, models_source.to_string())
+            .unwrap();
+
+        let main_uri = Url::from_str("file:///main.py").unwrap();
+        let main_source = r#"from models import User
+
+user = User("Alice")
+"#;
+        documents
+            .open_document(main_uri.clone(), 1, main_source.to_string())
+            .unwrap();
+
+        {
+            let mut ws = workspace.write().await;
+            ws.add_test_module(models_uri.clone(), "models".to_string(), std::path::PathBuf::from("/"));
+            ws.add_test_module(main_uri.clone(), "main".to_string(), std::path::PathBuf::from("/"));
+            ws.build_test_dependency_graph();
+        }
+
+        let params = GotoDefinitionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: main_uri },
+                position: Position::new(2, 7),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let result = provider.goto_definition(params);
+        assert!(result.is_some(), "Should find cross-file class definition");
+
+        match result.unwrap() {
+            GotoDefinitionResponse::Scalar(location) => {
+                assert_eq!(location.uri, models_uri);
+                assert_eq!(location.range.start.line, 0);
+            }
+            _ => panic!("Expected scalar location"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_cross_file_goto_definition_variable() {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let provider = GotoDefinitionProvider::new(documents.clone(), workspace.clone());
+        let constants_uri = Url::from_str("file:///constants.py").unwrap();
+        let constants_source = r#"MAX_SIZE = 100
+DEFAULT_TIMEOUT = 30
+"#;
+        documents
+            .open_document(constants_uri.clone(), 1, constants_source.to_string())
+            .unwrap();
+
+        let app_uri = Url::from_str("file:///app.py").unwrap();
+        let app_source = r#"from constants import MAX_SIZE
+
+buffer = [0] * MAX_SIZE
+"#;
+        documents
+            .open_document(app_uri.clone(), 1, app_source.to_string())
+            .unwrap();
+
+        {
+            let mut ws = workspace.write().await;
+            ws.add_test_module(
+                constants_uri.clone(),
+                "constants".to_string(),
+                std::path::PathBuf::from("/"),
+            );
+            ws.add_test_module(app_uri.clone(), "app".to_string(), std::path::PathBuf::from("/"));
+            ws.build_test_dependency_graph();
+        }
+
+        let params = GotoDefinitionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: app_uri },
+                position: Position::new(2, 15),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let result = provider.goto_definition(params);
+        assert!(result.is_some(), "Should find cross-file variable definition");
+
+        match result.unwrap() {
+            GotoDefinitionResponse::Scalar(location) => {
+                assert_eq!(location.uri, constants_uri);
+                assert_eq!(location.range.start.line, 0);
+            }
+            _ => panic!("Expected scalar location"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_cross_file_goto_definition_star_import() {
+        let documents = DocumentManager::new().unwrap();
+        let config = Config::default();
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
+        let provider = GotoDefinitionProvider::new(documents.clone(), workspace.clone());
+        let utils_uri = Url::from_str("file:///utils.py").unwrap();
+        let utils_source = r#"def format_string(s):
+    return s.upper()
+
+def parse_int(s):
+    return int(s)
+"#;
+        documents
+            .open_document(utils_uri.clone(), 1, utils_source.to_string())
+            .unwrap();
+
+        let main_uri = Url::from_str("file:///main.py").unwrap();
+        let main_source = r#"from utils import *
+
+result = format_string("hello")
+"#;
+        documents
+            .open_document(main_uri.clone(), 1, main_source.to_string())
+            .unwrap();
+
+        {
+            let mut ws = workspace.write().await;
+            ws.add_test_module(utils_uri.clone(), "utils".to_string(), std::path::PathBuf::from("/"));
+            ws.add_test_module(main_uri.clone(), "main".to_string(), std::path::PathBuf::from("/"));
+            ws.build_test_dependency_graph();
+        }
+
+        let params = GotoDefinitionParams {
+            text_document_position_params: lsp_types::TextDocumentPositionParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: main_uri },
+                position: Position::new(2, 9),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let result = provider.goto_definition(params);
+        assert!(result.is_some(), "Should find definition via star import");
+
+        match result.unwrap() {
+            GotoDefinitionResponse::Scalar(location) => {
+                assert_eq!(location.uri, utils_uri);
+                assert_eq!(location.range.start.line, 0);
+            }
+            _ => panic!("Expected scalar location"),
+        }
     }
 }
