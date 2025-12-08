@@ -74,19 +74,19 @@ impl RefactoringContext {
         }
 
         for uri in self.documents.all_documents() {
-            if uri != *source_uri {
-                if let Some(ctx) = self.get_file_context(&uri) {
-                    files.push(ctx);
-                }
+            if uri != *source_uri
+                && let Some(ctx) = self.get_file_context(&uri)
+            {
+                files.push(ctx);
             }
         }
 
         let workspace = self.workspace.read().await;
         for dependent_uri in workspace.get_dependents(source_uri) {
-            if !self.documents.has_document(&dependent_uri) {
-                if let Some(ctx) = self.get_workspace_file_context(&dependent_uri, &workspace) {
-                    files.push(ctx);
-                }
+            if !self.documents.has_document(&dependent_uri)
+                && let Some(ctx) = self.get_workspace_file_context(&dependent_uri, &workspace)
+            {
+                files.push(ctx);
             }
         }
 
@@ -207,19 +207,18 @@ impl NodeTraverser {
         node: tree_sitter::Node, symbol_name: &str, target_symbol: &Symbol, symbol_table: &SymbolTable, text: &str,
         new_text: &str, edits: &mut Vec<TextEdit>,
     ) {
-        if node.kind() == "identifier" {
-            if let Ok(node_text) = node.utf8_text(text.as_bytes()) {
-                if node_text == symbol_name {
-                    let byte_offset = node.start_byte();
-                    let scope = symbol_table.find_scope_at_position(byte_offset);
+        if node.kind() == "identifier"
+            && let Ok(node_text) = node.utf8_text(text.as_bytes())
+            && node_text == symbol_name
+        {
+            let byte_offset = node.start_byte();
+            let scope = symbol_table.find_scope_at_position(byte_offset);
 
-                    if let Some(resolved_symbol) = symbol_table.lookup_symbol(symbol_name, scope) {
-                        if Self::symbols_match(resolved_symbol, target_symbol) {
-                            let range = utils::tree_sitter_range_to_lsp_range(text, node.range());
-                            edits.push(TextEdit { range, new_text: new_text.to_string() });
-                        }
-                    }
-                }
+            if let Some(resolved_symbol) = symbol_table.lookup_symbol(symbol_name, scope)
+                && Self::symbols_match(resolved_symbol, target_symbol)
+            {
+                let range = utils::tree_sitter_range_to_lsp_range(text, node.range());
+                edits.push(TextEdit { range, new_text: new_text.to_string() });
             }
         }
 

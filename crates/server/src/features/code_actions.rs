@@ -150,10 +150,10 @@ impl CodeActionsProvider {
                 });
             }
 
-            if !source.contains("from typing import") || !source.contains("Optional") {
-                if let Some(import_edit) = self.add_optional_import(&source) {
-                    edits.insert(0, import_edit);
-                }
+            if (!source.contains("from typing import") || !source.contains("Optional"))
+                && let Some(import_edit) = self.add_optional_import(&source)
+            {
+                edits.insert(0, import_edit);
             }
 
             let mut changes = HashMap::default();
@@ -315,14 +315,14 @@ impl CodeActionsProvider {
                 format!("set[{}]", Self::format_type_for_annotation(elem_ty))
             }
             Type::App(app_ctor, val_ty) => {
-                if let Type::App(ctor, key_ty) = &**app_ctor {
-                    if matches!(**ctor, Type::Con(TypeCtor::Dict)) {
-                        return format!(
-                            "dict[{}, {}]",
-                            Self::format_type_for_annotation(key_ty),
-                            Self::format_type_for_annotation(val_ty)
-                        );
-                    }
+                if let Type::App(ctor, key_ty) = &**app_ctor
+                    && matches!(**ctor, Type::Con(TypeCtor::Dict))
+                {
+                    return format!(
+                        "dict[{}, {}]",
+                        Self::format_type_for_annotation(key_ty),
+                        Self::format_type_for_annotation(val_ty)
+                    );
                 }
                 format!(
                     "{}[{}]",

@@ -86,10 +86,10 @@ pub fn parse(docstring: &str) -> ParsedDocstring {
         .keys()
         .find(|k| *k == "args" || *k == "arguments" || *k == "parameters")
         .cloned();
-    if let Some(key) = params_key {
-        if let Some(&(start, end)) = sections.get(&key) {
-            result.parameters = parse_params(&lines[start..end]);
-        }
+    if let Some(key) = params_key
+        && let Some(&(start, end)) = sections.get(&key)
+    {
+        result.parameters = parse_params(&lines[start..end]);
     }
 
     if let Some(&(start, end)) = sections.get("returns").or_else(|| sections.get("return")) {

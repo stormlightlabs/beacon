@@ -171,11 +171,11 @@ impl StringSimilarity for SorensenDiceCoefficient {
 
         let mut common = 0;
         for bigram in target_bigrams.iter() {
-            if let Some(count) = source_counts.get_mut(&bigram) {
-                if *count > 0 {
-                    common += 1;
-                    *count -= 1;
-                }
+            if let Some(count) = source_counts.get_mut(&bigram)
+                && *count > 0
+            {
+                common += 1;
+                *count -= 1;
             }
         }
 

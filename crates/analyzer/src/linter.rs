@@ -738,16 +738,16 @@ impl<'a> Linter<'a> {
             }
         }
 
-        if let Some(idx) = bare_except_index {
-            if idx != handlers.len() - 1 {
-                self.report(
-                    RuleKind::DefaultExceptNotLast,
-                    "default 'except:' must be last".to_string(),
-                    line,
-                    col,
-                    end_col,
-                );
-            }
+        if let Some(idx) = bare_except_index
+            && idx != handlers.len() - 1
+        {
+            self.report(
+                RuleKind::DefaultExceptNotLast,
+                "default 'except:' must be last".to_string(),
+                line,
+                col,
+                end_col,
+            );
         }
 
         let _ = found_bare_except;
@@ -755,16 +755,16 @@ impl<'a> Linter<'a> {
 
     /// BEA008: [RuleKind::RaiseNotImplemented]
     fn check_raise_not_implemented(&mut self, exception: &AstNode, line: usize, col: usize, end_col: usize) {
-        if let AstNode::Identifier { name, .. } = exception {
-            if name == "NotImplemented" {
-                self.report(
-                    RuleKind::RaiseNotImplemented,
-                    "use NotImplementedError instead of NotImplemented".to_string(),
-                    line,
-                    col,
-                    end_col,
-                );
-            }
+        if let AstNode::Identifier { name, .. } = exception
+            && name == "NotImplemented"
+        {
+            self.report(
+                RuleKind::RaiseNotImplemented,
+                "use NotImplementedError instead of NotImplemented".to_string(),
+                line,
+                col,
+                end_col,
+            );
         }
     }
 
@@ -817,16 +817,16 @@ impl<'a> Linter<'a> {
             return;
         }
 
-        if let AstNode::Literal { value: LiteralValue::String { value: s, .. }, .. } = left {
-            if let Err(error) = Self::validate_percent_format(s) {
-                self.report(
-                    RuleKind::PercentFormatInvalidFormat,
-                    format!("Invalid % format string: {error}"),
-                    line,
-                    col,
-                    end_col,
-                );
-            }
+        if let AstNode::Literal { value: LiteralValue::String { value: s, .. }, .. } = left
+            && let Err(error) = Self::validate_percent_format(s)
+        {
+            self.report(
+                RuleKind::PercentFormatInvalidFormat,
+                format!("Invalid % format string: {error}"),
+                line,
+                col,
+                end_col,
+            );
         }
     }
 
@@ -965,16 +965,16 @@ impl<'a> Linter<'a> {
     ///
     /// BEA012: `assert (1, 2)` creates a non-empty tuple which is always True
     fn check_assert_tuple(&mut self, test: &AstNode, line: usize, col: usize, end_col: usize) {
-        if let AstNode::Tuple { elements, .. } = test {
-            if !elements.is_empty() {
-                self.report(
-                    RuleKind::AssertTuple,
-                    "assertion is a tuple literal, which is always True".to_string(),
-                    line,
-                    col,
-                    end_col,
-                );
-            }
+        if let AstNode::Tuple { elements, .. } = test
+            && !elements.is_empty()
+        {
+            self.report(
+                RuleKind::AssertTuple,
+                "assertion is a tuple literal, which is always True".to_string(),
+                line,
+                col,
+                end_col,
+            );
         }
     }
 
@@ -1023,16 +1023,16 @@ impl<'a> Linter<'a> {
             _ => None,
         };
 
-        if let Some(value_len) = value_len {
-            if value_len < min_required {
-                self.report(
-                    RuleKind::TooManyExpressionsInStarredAssignment,
-                    format!("too many expressions in assignment; need at least {min_required} values, got {value_len}"),
-                    line,
-                    col,
-                    end_col,
-                );
-            }
+        if let Some(value_len) = value_len
+            && value_len < min_required
+        {
+            self.report(
+                RuleKind::TooManyExpressionsInStarredAssignment,
+                format!("too many expressions in assignment; need at least {min_required} values, got {value_len}"),
+                line,
+                col,
+                end_col,
+            );
         }
     }
 
@@ -1145,10 +1145,10 @@ impl<'a> Linter<'a> {
                 let has_read = symbol.references.iter().any(|r| r.kind == ReferenceKind::Read);
 
                 if !has_read {
-                    if let Some(ref all_exports) = self.all_exports {
-                        if all_exports.contains(&symbol.name) {
-                            continue;
-                        }
+                    if let Some(ref all_exports) = self.all_exports
+                        && all_exports.contains(&symbol.name)
+                    {
+                        continue;
                     }
 
                     self.report(

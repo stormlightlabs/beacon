@@ -45,12 +45,11 @@ impl ReferencesProvider {
 
         let dependents = workspace.get_dependents(&uri);
         for dependent_uri in dependents {
-            if !self.documents.has_document(&dependent_uri) {
-                if let Some(refs) =
+            if !self.documents.has_document(&dependent_uri)
+                && let Some(refs) =
                     self.find_references_in_workspace_file(&dependent_uri, &symbol_name, &target_symbol, &workspace)
-                {
-                    locations.extend(refs);
-                }
+            {
+                locations.extend(refs);
             }
         }
 
@@ -112,25 +111,25 @@ impl ReferencesProvider {
             .get_document(uri, |doc| {
                 let mut locations = Vec::new();
 
-                if let Some(tree) = doc.tree() {
-                    if let Some(symbol_table) = doc.symbol_table() {
-                        let text = doc.text();
+                if let Some(tree) = doc.tree()
+                    && let Some(symbol_table) = doc.symbol_table()
+                {
+                    let text = doc.text();
 
-                        Self::collect_references_from_tree(
-                            tree.root_node(),
-                            symbol_name,
-                            target_symbol,
-                            symbol_table,
-                            &text,
-                            uri,
-                            &mut locations,
-                        );
+                    Self::collect_references_from_tree(
+                        tree.root_node(),
+                        symbol_name,
+                        target_symbol,
+                        symbol_table,
+                        &text,
+                        uri,
+                        &mut locations,
+                    );
 
-                        if include_declaration {
-                            if let Some(def_range) = self.symbol_to_range(&text, target_symbol, symbol_name) {
-                                locations.push(Location { uri: uri.clone(), range: def_range });
-                            }
-                        }
+                    if include_declaration
+                        && let Some(def_range) = self.symbol_to_range(&text, target_symbol, symbol_name)
+                    {
+                        locations.push(Location { uri: uri.clone(), range: def_range });
                     }
                 }
                 locations
@@ -147,26 +146,24 @@ impl ReferencesProvider {
         node: tree_sitter::Node, symbol_name: &str, target_symbol: &Symbol, symbol_table: &SymbolTable, text: &str,
         uri: &Url, locations: &mut Vec<Location>,
     ) {
-        if node.kind() == "identifier" {
-            if let Ok(node_text) = node.utf8_text(text.as_bytes()) {
-                if node_text == symbol_name {
-                    let byte_offset = node.start_byte();
-                    let scope = symbol_table.find_scope_at_position(byte_offset);
+        if node.kind() == "identifier"
+            && let Ok(node_text) = node.utf8_text(text.as_bytes())
+            && node_text == symbol_name
+        {
+            let byte_offset = node.start_byte();
+            let scope = symbol_table.find_scope_at_position(byte_offset);
 
-                    if let Some(resolved_symbol) = symbol_table.lookup_symbol(symbol_name, scope) {
-                        if resolved_symbol.scope_id == target_symbol.scope_id
-                            && resolved_symbol.line == target_symbol.line
-                            && resolved_symbol.col == target_symbol.col
-                        {
-                            let node_line = node.start_position().row + 1;
-                            let node_col = node.start_position().column + 1;
+            if let Some(resolved_symbol) = symbol_table.lookup_symbol(symbol_name, scope)
+                && resolved_symbol.scope_id == target_symbol.scope_id
+                && resolved_symbol.line == target_symbol.line
+                && resolved_symbol.col == target_symbol.col
+            {
+                let node_line = node.start_position().row + 1;
+                let node_col = node.start_position().column + 1;
 
-                            if node_line != target_symbol.line || node_col != target_symbol.col {
-                                let range = utils::tree_sitter_range_to_lsp_range(text, node.range());
-                                locations.push(Location { uri: uri.clone(), range });
-                            }
-                        }
-                    }
+                if node_line != target_symbol.line || node_col != target_symbol.col {
+                    let range = utils::tree_sitter_range_to_lsp_range(text, node.range());
+                    locations.push(Location { uri: uri.clone(), range });
                 }
             }
         }

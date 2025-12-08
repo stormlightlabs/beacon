@@ -27,15 +27,15 @@ const CAPABILITIES_STUB: &str = include_str!("../../../stubs/capabilities_suppor
 static EMBEDDED_STDLIB_PARSED_STUBS: Lazy<FxHashMap<&'static str, StubFile>> = Lazy::new(|| {
     let mut parsed = FxHashMap::default();
     for module_name in beacon_analyzer::EMBEDDED_STDLIB_MODULES.iter().copied() {
-        if let Some(stub) = beacon_analyzer::get_embedded_stub(module_name) {
-            if let Some(content) = stub.content.as_deref() {
-                match parse_stub_from_string_inner(module_name, content) {
-                    Ok(stub) => {
-                        parsed.insert(module_name, stub);
-                    }
-                    Err(err) => {
-                        tracing::warn!("Failed to parse embedded stub '{}': {:?}", module_name, err);
-                    }
+        if let Some(stub) = beacon_analyzer::get_embedded_stub(module_name)
+            && let Some(content) = stub.content.as_deref()
+        {
+            match parse_stub_from_string_inner(module_name, content) {
+                Ok(stub) => {
+                    parsed.insert(module_name, stub);
+                }
+                Err(err) => {
+                    tracing::warn!("Failed to parse embedded stub '{}': {:?}", module_name, err);
                 }
             }
         }
@@ -205,11 +205,11 @@ impl Workspace {
             for call_site in &module_cfg.call_sites {
                 if call_site.receiver.is_some() {
                     for func_id in module_cfg.function_ids() {
-                        if let Some(cfg) = module_cfg.get_function_cfg(func_id.scope_id) {
-                            if cfg.blocks.contains_key(&call_site.block_id) {
-                                call_graph.add_call_site(func_id.clone(), &call_site.clone());
-                                break;
-                            }
+                        if let Some(cfg) = module_cfg.get_function_cfg(func_id.scope_id)
+                            && cfg.blocks.contains_key(&call_site.block_id)
+                        {
+                            call_graph.add_call_site(func_id.clone(), &call_site.clone());
+                            break;
                         }
                     }
                 }
@@ -588,13 +588,13 @@ impl Workspace {
             .collect();
 
         for file_path in python_files {
-            if let Ok(uri) = Url::from_file_path(&file_path) {
-                if let Some(module_name) = self.uri_to_module_name(&uri) {
-                    let source_root = self.find_source_root_for_file(&file_path);
-                    let is_package = file_path.file_name().and_then(|n| n.to_str()) == Some("__init__.py");
-                    let info = ModuleInfo::new(uri, module_name, source_root, is_package);
-                    self.index.insert(info);
-                }
+            if let Ok(uri) = Url::from_file_path(&file_path)
+                && let Some(module_name) = self.uri_to_module_name(&uri)
+            {
+                let source_root = self.find_source_root_for_file(&file_path);
+                let is_package = file_path.file_name().and_then(|n| n.to_str()) == Some("__init__.py");
+                let info = ModuleInfo::new(uri, module_name, source_root, is_package);
+                self.index.insert(info);
             }
         }
 
@@ -686,21 +686,21 @@ impl Workspace {
 
         roots.extend(self.config.source_roots.clone());
 
-        if let Some(root_uri) = &self.root_uri {
-            if root_uri.scheme() == "file" {
-                let root_path = PathBuf::from(root_uri.path());
-                let src_path = root_path.join("src");
-                if src_path.is_dir() {
-                    roots.push(src_path);
-                }
-
-                let lib_path = root_path.join("lib");
-                if lib_path.is_dir() {
-                    roots.push(lib_path);
-                }
-
-                roots.push(root_path);
+        if let Some(root_uri) = &self.root_uri
+            && root_uri.scheme() == "file"
+        {
+            let root_path = PathBuf::from(root_uri.path());
+            let src_path = root_path.join("src");
+            if src_path.is_dir() {
+                roots.push(src_path);
             }
+
+            let lib_path = root_path.join("lib");
+            if lib_path.is_dir() {
+                roots.push(lib_path);
+            }
+
+            roots.push(root_path);
         }
 
         roots
@@ -1228,37 +1228,31 @@ impl Workspace {
         let walker = ignore::WalkBuilder::new(directory).hidden(false).build();
 
         for entry in walker.filter_map(|e| e.ok()) {
-            if entry.file_type().is_some_and(|ft| ft.is_file()) {
-                if let Some(ext) = entry.path().extension() {
-                    if ext == "pyi" {
-                        if let Some(module_name) = self.path_to_module_name_from_base(entry.path(), directory) {
-                            let is_partial = self.check_if_partial_stub(directory);
-                            match self.parse_stub_file(entry.path()) {
-                                Ok(mut stub) => {
-                                    stub.module = module_name.clone();
-                                    stub.is_partial = is_partial;
-                                    stub.path = entry.path().to_path_buf();
+            if entry.file_type().is_some_and(|ft| ft.is_file())
+                && let Some(ext) = entry.path().extension()
+                && ext == "pyi"
+                && let Some(module_name) = self.path_to_module_name_from_base(entry.path(), directory)
+            {
+                let is_partial = self.check_if_partial_stub(directory);
+                match self.parse_stub_file(entry.path()) {
+                    Ok(mut stub) => {
+                        stub.module = module_name.clone();
+                        stub.is_partial = is_partial;
+                        stub.path = entry.path().to_path_buf();
 
-                                    if let Ok(mut cache) = self.stubs.write() {
-                                        cache.insert(module_name.clone(), stub);
-                                    }
-
-                                    if let Ok(uri) = Url::from_file_path(entry.path()) {
-                                        let module_info = ModuleInfo::new(
-                                            uri.clone(),
-                                            module_name.clone(),
-                                            directory.to_path_buf(),
-                                            false,
-                                        );
-                                        self.index.insert(module_info);
-                                        tracing::debug!("Registered stub module '{}' at {}", module_name, uri);
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to parse stub '{}': {e}", entry.path().display());
-                                }
-                            }
+                        if let Ok(mut cache) = self.stubs.write() {
+                            cache.insert(module_name.clone(), stub);
                         }
+
+                        if let Ok(uri) = Url::from_file_path(entry.path()) {
+                            let module_info =
+                                ModuleInfo::new(uri.clone(), module_name.clone(), directory.to_path_buf(), false);
+                            self.index.insert(module_info);
+                            tracing::debug!("Registered stub module '{}' at {}", module_name, uri);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to parse stub '{}': {e}", entry.path().display());
                     }
                 }
             }
@@ -1273,14 +1267,12 @@ impl Workspace {
 
         if let Ok(entries) = std::fs::read_dir(directory) {
             for entry in entries.filter_map(|e| e.ok()) {
-                if let Ok(file_type) = entry.file_type() {
-                    if file_type.is_dir() {
-                        if let Some(name) = entry.file_name().to_str() {
-                            if name.ends_with("-stubs") {
-                                self.discover_stubs_in_directory(&entry.path());
-                            }
-                        }
-                    }
+                if let Ok(file_type) = entry.file_type()
+                    && file_type.is_dir()
+                    && let Some(name) = entry.file_name().to_str()
+                    && name.ends_with("-stubs")
+                {
+                    self.discover_stubs_in_directory(&entry.path());
                 }
             }
         }
@@ -1399,27 +1391,27 @@ impl Workspace {
     /// This method integrates stub lookups into the type resolution process.
     /// It follows PEP 561 resolution order and parses stubs on-demand.
     pub fn get_stub_type(&self, module_name: &str, symbol_name: &str) -> Option<Type> {
-        if let Ok(cache) = self.stubs.read() {
-            if let Some(stub) = cache.get(module_name) {
-                let result = stub.exports.get(symbol_name).cloned();
-                if result.is_none() {
-                    tracing::debug!(
-                        "Symbol '{}' not found in cached stub for module '{}'",
-                        symbol_name,
-                        module_name
-                    );
-                }
-                return result;
+        if let Ok(cache) = self.stubs.read()
+            && let Some(stub) = cache.get(module_name)
+        {
+            let result = stub.exports.get(symbol_name).cloned();
+            if result.is_none() {
+                tracing::debug!(
+                    "Symbol '{}' not found in cached stub for module '{}'",
+                    symbol_name,
+                    module_name
+                );
             }
+            return result;
         }
 
         if let Some(mut stub) = self.load_stub(module_name) {
-            if stub.exports.is_empty() {
-                if let Ok(parsed) = self.parse_stub_file(&stub.path.clone()) {
-                    stub.exports = parsed.exports;
-                    stub.reexports = parsed.reexports;
-                    stub.all_exports = parsed.all_exports;
-                }
+            if stub.exports.is_empty()
+                && let Ok(parsed) = self.parse_stub_file(&stub.path.clone())
+            {
+                stub.exports = parsed.exports;
+                stub.reexports = parsed.reexports;
+                stub.all_exports = parsed.all_exports;
             }
 
             let result = stub.exports.get(symbol_name).cloned();
@@ -1444,12 +1436,11 @@ impl Workspace {
 
     /// Get all exported symbols from a module's stub
     pub fn get_stub_exports(&self, module_name: &str) -> Option<FxHashMap<String, Type>> {
-        if let Ok(cache) = self.stubs.read() {
-            if let Some(stub) = cache.get(module_name) {
-                if !stub.exports.is_empty() {
-                    return Some(stub.exports.clone());
-                }
-            }
+        if let Ok(cache) = self.stubs.read()
+            && let Some(stub) = cache.get(module_name)
+            && !stub.exports.is_empty()
+        {
+            return Some(stub.exports.clone());
         }
 
         if let Some(mut stub) = self.load_stub(module_name) {
@@ -1476,10 +1467,10 @@ impl Workspace {
 
     /// Check if a module has stub information available
     pub fn has_stub(&self, module_name: &str) -> bool {
-        if let Ok(cache) = self.stubs.read() {
-            if cache.contains(module_name) {
-                return true;
-            }
+        if let Ok(cache) = self.stubs.read()
+            && cache.contains(module_name)
+        {
+            return true;
         }
 
         for stub_path in &self.config.stub_paths {
@@ -1488,13 +1479,13 @@ impl Workspace {
             }
         }
 
-        if let Some(root_uri) = &self.root_uri {
-            if let Ok(root_path) = root_uri.to_file_path() {
-                let top_level = module_name.split('.').next().unwrap_or(module_name);
-                let stub_package_path = root_path.join(format!("{top_level}-stubs"));
-                if stub_package_path.exists() {
-                    return true;
-                }
+        if let Some(root_uri) = &self.root_uri
+            && let Ok(root_path) = root_uri.to_file_path()
+        {
+            let top_level = module_name.split('.').next().unwrap_or(module_name);
+            let stub_package_path = root_path.join(format!("{top_level}-stubs"));
+            if stub_package_path.exists() {
+                return true;
             }
         }
 
@@ -1645,10 +1636,10 @@ impl Workspace {
 
         if let Some(info) = self.index.get_by_name(module_name) {
             let pyi_path = PathBuf::from(info.uri.path()).with_extension("pyi");
-            if pyi_path.exists() {
-                if let Ok(parsed) = self.parse_stub_file(&pyi_path) {
-                    stubs_for_module.push((parsed, pyi_path));
-                }
+            if pyi_path.exists()
+                && let Ok(parsed) = self.parse_stub_file(&pyi_path)
+            {
+                stubs_for_module.push((parsed, pyi_path));
             }
         }
 
@@ -1807,10 +1798,10 @@ impl DependencyGraph {
         for (from, tos) in &self.edges {
             let from_scc = *node_to_scc.get(from).unwrap();
             for to in tos {
-                if let Some(&to_scc) = node_to_scc.get(to) {
-                    if from_scc != to_scc {
-                        scc_edges.entry(to_scc).or_default().insert(from_scc);
-                    }
+                if let Some(&to_scc) = node_to_scc.get(to)
+                    && from_scc != to_scc
+                {
+                    scc_edges.entry(to_scc).or_default().insert(from_scc);
                 }
             }
         }

@@ -139,16 +139,16 @@ fn subtract_coverage(uncovered: Vec<Type>, covered: Vec<Type>) -> Vec<Type> {
 fn types_equal_or_subtype(type1: &Type, type2: &Type) -> bool {
     match (type1, type2) {
         (Type::Con(c1), Type::Con(c2)) => {
-            if let TypeCtor::Literal(lit) = c1 {
-                if let Some(base_type) = lit_to_base_type(lit) {
-                    return c1 == c2 || c2 == &base_type;
-                }
+            if let TypeCtor::Literal(lit) = c1
+                && let Some(base_type) = lit_to_base_type(lit)
+            {
+                return c1 == c2 || c2 == &base_type;
             }
 
-            if let TypeCtor::Literal(lit) = c2 {
-                if let Some(base_type) = lit_to_base_type(lit) {
-                    return c1 == c2 || c1 == &base_type;
-                }
+            if let TypeCtor::Literal(lit) = c2
+                && let Some(base_type) = lit_to_base_type(lit)
+            {
+                return c1 == c2 || c1 == &base_type;
             }
             c1 == c2
         }

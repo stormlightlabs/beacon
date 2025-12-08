@@ -39,6 +39,7 @@ pub mod semantic_tokens;
 pub mod signature_help;
 pub mod workspace_symbols;
 
+pub use change_signature::{ChangeSignatureProvider, ParameterChange};
 pub use code_actions::CodeActionsProvider;
 pub use completion::CompletionProvider;
 pub use diagnostics::DiagnosticProvider;
@@ -51,6 +52,7 @@ pub use formatting::FormattingProvider;
 pub use goto_definition::GotoDefinitionProvider;
 pub use hover::HoverProvider;
 pub use inlay_hints::InlayHintsProvider;
+pub use inline_function::InlineFunctionProvider;
 pub use move_symbol::MoveSymbolProvider;
 pub use refactoring::RefactoringContext;
 pub use references::ReferencesProvider;

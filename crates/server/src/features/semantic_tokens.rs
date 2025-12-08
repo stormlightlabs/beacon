@@ -209,12 +209,11 @@ impl SemanticTokensProvider {
                         raw_tokens,
                     );
 
-                    if let Some(type_ann) = &param.type_annotation {
-                        if let Some(type_col) =
+                    if let Some(type_ann) = &param.type_annotation
+                        && let Some(type_col) =
                             Self::find_type_annotation_position(text, param.line, param.col, &param.name, type_ann)
-                        {
-                            Self::add_token(type_ann, param.line, type_col, type_token_type, 0, text, raw_tokens);
-                        }
+                    {
+                        Self::add_token(type_ann, param.line, type_col, type_token_type, 0, text, raw_tokens);
                     }
 
                     if let Some(default) = &param.default_value {
@@ -222,10 +221,10 @@ impl SemanticTokensProvider {
                     }
                 }
 
-                if let Some(ret_type) = return_type {
-                    if let Some(ret_col) = Self::find_return_type_position(text, *line, ret_type) {
-                        Self::add_token(ret_type, *line, ret_col, type_token_type, 0, text, raw_tokens);
-                    }
+                if let Some(ret_type) = return_type
+                    && let Some(ret_col) = Self::find_return_type_position(text, *line, ret_type)
+                {
+                    Self::add_token(ret_type, *line, ret_col, type_token_type, 0, text, raw_tokens);
                 }
 
                 for stmt in body {
@@ -500,13 +499,12 @@ impl SemanticTokensProvider {
                     let position = utils::byte_offset_to_position(text, byte_offset);
                     final_line = position.line;
                     final_col = position.character;
-                } else if line > 0 {
-                    if let Some(line_text) = text.lines().nth(line - 1) {
-                        if let Some(pos) = line_text.find(name) {
-                            final_line = lsp_line;
-                            final_col = pos as u32;
-                        }
-                    }
+                } else if line > 0
+                    && let Some(line_text) = text.lines().nth(line - 1)
+                    && let Some(pos) = line_text.find(name)
+                {
+                    final_line = lsp_line;
+                    final_col = pos as u32;
                 }
             }
         }

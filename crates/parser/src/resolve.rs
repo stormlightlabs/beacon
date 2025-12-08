@@ -330,11 +330,11 @@ impl SymbolTable {
             let scope_id = scope.id;
 
             if scope.symbols.contains_key(name) {
-                if let Some(scope_mut) = self.scopes.get_mut(&scope_id) {
-                    if let Some(symbol) = scope_mut.symbols.get_mut(name) {
-                        symbol.references.push(SymbolReference { line, col, end_col, kind });
-                        return true;
-                    }
+                if let Some(scope_mut) = self.scopes.get_mut(&scope_id)
+                    && let Some(symbol) = scope_mut.symbols.get_mut(name)
+                {
+                    symbol.references.push(SymbolReference { line, col, end_col, kind });
+                    return true;
                 }
                 return false;
             }
@@ -361,10 +361,10 @@ impl SymbolTable {
                         continue;
                     }
 
-                    if let Some(parent_symbol) = self.lookup_symbol(name, parent_id) {
-                        if parent_symbol.kind != SymbolKind::BuiltinVar {
-                            shadowed.push((child_symbol, parent_symbol));
-                        }
+                    if let Some(parent_symbol) = self.lookup_symbol(name, parent_id)
+                        && parent_symbol.kind != SymbolKind::BuiltinVar
+                    {
+                        shadowed.push((child_symbol, parent_symbol));
                     }
                 }
             }
@@ -487,15 +487,15 @@ impl NameResolver {
         for idx in (0..decorators.len()).rev() {
             let decorator = &decorators[idx];
             while search_line > 0 {
-                if let Some(line_text) = lines.get(search_line - 1) {
-                    if let Some((col, end_col)) = Self::decorator_columns(line_text, decorator) {
-                        spans[idx] = Some((search_line, col, end_col));
-                        if search_line == 1 {
-                            break;
-                        }
-                        search_line -= 1;
+                if let Some(line_text) = lines.get(search_line - 1)
+                    && let Some((col, end_col)) = Self::decorator_columns(line_text, decorator)
+                {
+                    spans[idx] = Some((search_line, col, end_col));
+                    if search_line == 1 {
                         break;
                     }
+                    search_line -= 1;
+                    break;
                 }
 
                 if search_line == 1 {
@@ -525,10 +525,10 @@ impl NameResolver {
         for _ in 0..decorator_char_len {
             chars_iter.next();
         }
-        if let Some(next_char) = chars_iter.next() {
-            if next_char == '_' || next_char.is_alphanumeric() {
-                return None;
-            }
+        if let Some(next_char) = chars_iter.next()
+            && (next_char == '_' || next_char.is_alphanumeric())
+        {
+            return None;
         }
 
         let leading_ws_bytes = line_text.len() - trimmed.len();
@@ -1028,31 +1028,31 @@ impl NameResolver {
                 }
             }
             AstNode::If { body, else_body, .. } => {
-                if let Some(else_stmts) = else_body {
-                    if let Some(last) = else_stmts.last() {
-                        return self.get_node_end_byte(last);
-                    }
+                if let Some(else_stmts) = else_body
+                    && let Some(last) = else_stmts.last()
+                {
+                    return self.get_node_end_byte(last);
                 }
                 if let Some(last) = body.last() { self.get_node_end_byte(last) } else { self.source.len() }
             }
             AstNode::For { body, else_body, .. } | AstNode::While { body, else_body, .. } => {
-                if let Some(else_stmts) = else_body {
-                    if let Some(last) = else_stmts.last() {
-                        return self.get_node_end_byte(last);
-                    }
+                if let Some(else_stmts) = else_body
+                    && let Some(last) = else_stmts.last()
+                {
+                    return self.get_node_end_byte(last);
                 }
                 if let Some(last) = body.last() { self.get_node_end_byte(last) } else { self.source.len() }
             }
             AstNode::Try { body, else_body, finally_body, .. } => {
-                if let Some(finally_stmts) = finally_body {
-                    if let Some(last) = finally_stmts.last() {
-                        return self.get_node_end_byte(last);
-                    }
+                if let Some(finally_stmts) = finally_body
+                    && let Some(last) = finally_stmts.last()
+                {
+                    return self.get_node_end_byte(last);
                 }
-                if let Some(else_stmts) = else_body {
-                    if let Some(last) = else_stmts.last() {
-                        return self.get_node_end_byte(last);
-                    }
+                if let Some(else_stmts) = else_body
+                    && let Some(last) = else_stmts.last()
+                {
+                    return self.get_node_end_byte(last);
                 }
                 if let Some(last) = body.last() { self.get_node_end_byte(last) } else { self.source.len() }
             }
@@ -1064,10 +1064,10 @@ impl NameResolver {
                 }
             }
             AstNode::Match { cases, .. } => {
-                if let Some(last_case) = cases.last() {
-                    if let Some(last_stmt) = last_case.body.last() {
-                        return self.get_node_end_byte(last_stmt);
-                    }
+                if let Some(last_case) = cases.last()
+                    && let Some(last_stmt) = last_case.body.last()
+                {
+                    return self.get_node_end_byte(last_stmt);
                 }
                 self.source.len()
             }
@@ -1207,23 +1207,22 @@ impl NameResolver {
                 self.visit_node(value)?;
 
                 for name in target.extract_target_names() {
-                    if name == "__all__" {
-                        if let AstNode::List { elements, .. } = value.as_ref() {
-                            for elem in elements {
-                                if let AstNode::Literal {
-                                    value: crate::LiteralValue::String { value: ref_name, .. },
-                                    ..
-                                } = elem
-                                {
-                                    self.symbol_table.add_reference(
-                                        ref_name,
-                                        self.current_scope,
-                                        *line,
-                                        *col,
-                                        *col,
-                                        ReferenceKind::Read,
-                                    );
-                                }
+                    if name == "__all__"
+                        && let AstNode::List { elements, .. } = value.as_ref()
+                    {
+                        for elem in elements {
+                            if let AstNode::Literal {
+                                value: crate::LiteralValue::String { value: ref_name, .. }, ..
+                            } = elem
+                            {
+                                self.symbol_table.add_reference(
+                                    ref_name,
+                                    self.current_scope,
+                                    *line,
+                                    *col,
+                                    *col,
+                                    ReferenceKind::Read,
+                                );
                             }
                         }
                     }

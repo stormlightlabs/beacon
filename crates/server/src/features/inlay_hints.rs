@@ -94,23 +94,23 @@ impl InlayHintsProvider {
     ) {
         match node {
             AstNode::Assignment { target, line, col, .. } => {
-                if Self::is_in_range(*line, *col, range) {
-                    if let Some(ty) = Self::get_type_for_position(type_map, position_map, *line, *col) {
-                        let type_str = ty.to_string();
-                        if !type_str.contains("'") && type_str != "Any" {
-                            let target_str = target.target_to_string();
-                            let position = Self::calculate_hint_position(*line, *col, &target_str, text);
-                            hints.push(InlayHint {
-                                position,
-                                label: InlayHintLabel::String(format!(": {type_str}")),
-                                kind: Some(InlayHintKind::TYPE),
-                                text_edits: None,
-                                tooltip: None,
-                                padding_left: None,
-                                padding_right: None,
-                                data: None,
-                            });
-                        }
+                if Self::is_in_range(*line, *col, range)
+                    && let Some(ty) = Self::get_type_for_position(type_map, position_map, *line, *col)
+                {
+                    let type_str = ty.to_string();
+                    if !type_str.contains("'") && type_str != "Any" {
+                        let target_str = target.target_to_string();
+                        let position = Self::calculate_hint_position(*line, *col, &target_str, text);
+                        hints.push(InlayHint {
+                            position,
+                            label: InlayHintLabel::String(format!(": {type_str}")),
+                            kind: Some(InlayHintKind::TYPE),
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: None,
+                            padding_right: None,
+                            data: None,
+                        });
                     }
                 }
             }
@@ -439,22 +439,23 @@ impl InlayHintsProvider {
     ) {
         match node {
             AstNode::FunctionDef { name, args, return_type, line, col, .. } => {
-                if return_type.is_none() && Self::is_in_range(*line, *col, range) {
-                    if let Some(ty) = Self::get_type_for_position(type_map, position_map, *line, *col) {
-                        let type_str = ty.to_string();
-                        if !type_str.contains("'") && type_str != "Any" && type_str != "None" {
-                            let position = Self::calculate_return_hint_position(*line, *col, name, args, text);
-                            hints.push(InlayHint {
-                                position,
-                                label: InlayHintLabel::String(format!(" -> {type_str}")),
-                                kind: Some(InlayHintKind::TYPE),
-                                text_edits: None,
-                                tooltip: None,
-                                padding_left: Some(true),
-                                padding_right: None,
-                                data: None,
-                            });
-                        }
+                if return_type.is_none()
+                    && Self::is_in_range(*line, *col, range)
+                    && let Some(ty) = Self::get_type_for_position(type_map, position_map, *line, *col)
+                {
+                    let type_str = ty.to_string();
+                    if !type_str.contains("'") && type_str != "Any" && type_str != "None" {
+                        let position = Self::calculate_return_hint_position(*line, *col, name, args, text);
+                        hints.push(InlayHint {
+                            position,
+                            label: InlayHintLabel::String(format!(" -> {type_str}")),
+                            kind: Some(InlayHintKind::TYPE),
+                            text_edits: None,
+                            tooltip: None,
+                            padding_left: Some(true),
+                            padding_right: None,
+                            data: None,
+                        });
                     }
                 }
             }

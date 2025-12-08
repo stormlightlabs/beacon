@@ -32,12 +32,12 @@ pub fn generate_constraints(
     ctx.class_registry = loader::new_class_registry_with_stdlib();
     ctx.typevar_registry = loader::new_typevar_registry_with_stdlib();
 
-    if let Some(stub_cache) = &stub_cache {
-        if let Ok(cache) = stub_cache.try_read() {
-            for (module_name, stub) in cache.iter() {
-                if !crate::EMBEDDED_STDLIB_MODULES.contains(&module_name.as_str()) {
-                    loader::load_stub_into_registry(stub, &mut ctx.class_registry, &mut ctx.typevar_registry)?;
-                }
+    if let Some(stub_cache) = &stub_cache
+        && let Ok(cache) = stub_cache.try_read()
+    {
+        for (module_name, stub) in cache.iter() {
+            if !crate::EMBEDDED_STDLIB_MODULES.contains(&module_name.as_str()) {
+                loader::load_stub_into_registry(stub, &mut ctx.class_registry, &mut ctx.typevar_registry)?;
             }
         }
     }
@@ -104,12 +104,12 @@ fn visit_node_with_context(
             let ty = env.lookup(name).unwrap_or_else(|| Type::Var(env.fresh_var()));
             ctx.record_type_with_end(*line, *col, *end_line, *end_col, ty.clone());
 
-            if let (Some(current_scope), Some(symbol_table)) = (ctx.scope_stack.last(), ctx.symbol_table()) {
-                if let Some(symbol) = symbol_table.lookup_symbol(name, *current_scope) {
-                    let defining_scope = symbol.scope_id;
-                    if defining_scope != *current_scope {
-                        ctx.add_scope_dependency(*current_scope, defining_scope);
-                    }
+            if let (Some(current_scope), Some(symbol_table)) = (ctx.scope_stack.last(), ctx.symbol_table())
+                && let Some(symbol) = symbol_table.lookup_symbol(name, *current_scope)
+            {
+                let defining_scope = symbol.scope_id;
+                if defining_scope != *current_scope {
+                    ctx.add_scope_dependency(*current_scope, defining_scope);
                 }
             }
 
@@ -156,17 +156,16 @@ fn visit_node_with_context(
             ));
             ctx.record_type_with_end(*line, *col, *end_line, *end_col, attr_ty.clone());
 
-            if let (Some(current_scope), Some(symbol_table)) = (ctx.scope_stack.last(), ctx.symbol_table()) {
-                if let Type::Con(TypeCtor::Class(class_name)) = &obj_ty {
-                    if let Some(symbol) = symbol_table.lookup_symbol(class_name, *current_scope) {
-                        let defining_scope = symbol.scope_id;
-                        if defining_scope != *current_scope {
-                            ctx.add_scope_dependency(*current_scope, defining_scope);
-                        }
-                    }
+            if let (Some(current_scope), Some(symbol_table)) = (ctx.scope_stack.last(), ctx.symbol_table())
+                && let Type::Con(TypeCtor::Class(class_name)) = &obj_ty
+                && let Some(symbol) = symbol_table.lookup_symbol(class_name, *current_scope)
+            {
+                let defining_scope = symbol.scope_id;
+                if defining_scope != *current_scope {
+                    ctx.add_scope_dependency(*current_scope, defining_scope);
                 }
-                // TODO: Track dependencies for import usage (e.g., module.attribute)
             }
+            // TODO: Track dependencies for import usage (e.g., module.attribute)
 
             Ok(attr_ty)
         }

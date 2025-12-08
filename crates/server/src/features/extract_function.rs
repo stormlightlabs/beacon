@@ -215,10 +215,10 @@ impl ExtractFunctionProvider {
             return;
         }
 
-        if node.kind() == "identifier" {
-            if let Ok(name) = node.utf8_text(text.as_bytes()) {
-                vars.insert(name.to_string());
-            }
+        if node.kind() == "identifier"
+            && let Ok(name) = node.utf8_text(text.as_bytes())
+        {
+            vars.insert(name.to_string());
         }
 
         let mut cursor = node.walk();
@@ -249,10 +249,12 @@ impl ExtractFunctionProvider {
             return;
         }
 
-        if node.kind() == "identifier" && node_start >= start && node_end <= end {
-            if let Ok(name) = node.utf8_text(text.as_bytes()) {
-                used.insert(name.to_string());
-            }
+        if node.kind() == "identifier"
+            && node_start >= start
+            && node_end <= end
+            && let Ok(name) = node.utf8_text(text.as_bytes())
+        {
+            used.insert(name.to_string());
         }
 
         let mut cursor = node.walk();
@@ -263,10 +265,10 @@ impl ExtractFunctionProvider {
 
     /// Collect variables being assigned
     fn collect_assigned_vars(node: tree_sitter::Node, text: &str, vars: &mut std::collections::HashSet<String>) {
-        if node.kind() == "identifier" {
-            if let Ok(name) = node.utf8_text(text.as_bytes()) {
-                vars.insert(name.to_string());
-            }
+        if node.kind() == "identifier"
+            && let Ok(name) = node.utf8_text(text.as_bytes())
+        {
+            vars.insert(name.to_string());
         }
 
         let mut cursor = node.walk();
@@ -277,10 +279,10 @@ impl ExtractFunctionProvider {
 
     /// Collect variables being used
     fn collect_used_vars(node: tree_sitter::Node, text: &str, vars: &mut std::collections::HashSet<String>) {
-        if node.kind() == "identifier" {
-            if let Ok(name) = node.utf8_text(text.as_bytes()) {
-                vars.insert(name.to_string());
-            }
+        if node.kind() == "identifier"
+            && let Ok(name) = node.utf8_text(text.as_bytes())
+        {
+            vars.insert(name.to_string());
         }
 
         let mut cursor = node.walk();
@@ -382,13 +384,13 @@ impl ExtractFunctionProvider {
                     last_import_line = child.end_position().row;
                 }
                 "expression_statement" => {
-                    if !has_docstring && child.start_position().row <= 1 {
-                        if let Some(string_node) = child.child(0) {
-                            if string_node.kind() == "string" {
-                                has_docstring = true;
-                                last_import_line = child.end_position().row;
-                            }
-                        }
+                    if !has_docstring
+                        && child.start_position().row <= 1
+                        && let Some(string_node) = child.child(0)
+                        && string_node.kind() == "string"
+                    {
+                        has_docstring = true;
+                        last_import_line = child.end_position().row;
                     }
                 }
                 _ => {}

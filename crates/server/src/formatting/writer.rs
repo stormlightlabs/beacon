@@ -255,12 +255,11 @@ impl<'a> FormattedWriter<'a> {
             rules.format_comment(text, !line_blank)
         };
         let mut indent_str = self.context.indent_string();
-        if indent_str.is_empty() {
-            if let Some(level) = indent_hint {
-                if level > 0 {
-                    indent_str = self.context.config().indent_string().repeat(level);
-                }
-            }
+        if indent_str.is_empty()
+            && let Some(level) = indent_hint
+            && level > 0
+        {
+            indent_str = self.context.config().indent_string().repeat(level);
         }
 
         if line_blank {
@@ -426,10 +425,10 @@ impl<'a> FormattedWriter<'a> {
 
     /// Ensure we have the correct number of blank lines before a definition
     pub fn ensure_blank_lines_before_definition(&mut self, is_class: bool, is_top_level: bool) {
-        if let Some(last_line) = self.output.lines().rev().find(|l| !l.trim().is_empty()) {
-            if last_line.trim_start().starts_with('@') {
-                return;
-            }
+        if let Some(last_line) = self.output.lines().rev().find(|l| !l.trim().is_empty())
+            && last_line.trim_start().starts_with('@')
+        {
+            return;
         }
 
         let config = self.context.config();

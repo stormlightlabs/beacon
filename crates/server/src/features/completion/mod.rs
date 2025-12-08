@@ -281,18 +281,18 @@ impl CompletionProvider {
         }
 
         let parser = LspParser::new().ok();
-        if let Some(p) = parser {
-            if let Some(node) = p.node_at_position(tree, text, position) {
-                let mut current = node;
-                while let Some(parent) = current.parent() {
-                    match parent.kind() {
-                        "import_statement" | "import_from_statement" => {
-                            return CompletionContextType::Import;
-                        }
-                        _ => {}
+        if let Some(p) = parser
+            && let Some(node) = p.node_at_position(tree, text, position)
+        {
+            let mut current = node;
+            while let Some(parent) = current.parent() {
+                match parent.kind() {
+                    "import_statement" | "import_from_statement" => {
+                        return CompletionContextType::Import;
                     }
-                    current = parent;
+                    _ => {}
                 }
+                current = parent;
             }
         }
 
@@ -334,39 +334,39 @@ impl CompletionProvider {
         }
 
         let parser = LspParser::new().ok();
-        if let Some(p) = parser {
-            if let Some(node) = p.node_at_position(tree, text, position) {
-                let mut current = node;
+        if let Some(p) = parser
+            && let Some(node) = p.node_at_position(tree, text, position)
+        {
+            let mut current = node;
 
-                while let Some(parent) = current.parent() {
-                    match parent.kind() {
-                        "binary_operator"
-                        | "unary_operator"
-                        | "comparison"
-                        | "boolean_operator"
-                        | "lambda"
-                        | "subscript"
-                        | "call"
-                        | "argument_list"
-                        | "parenthesized_expression"
-                        | "list"
-                        | "tuple"
-                        | "dictionary"
-                        | "set"
-                        | "expression_statement"
-                        | "assignment"
-                        | "if_clause"
-                        | "while_clause"
-                        | "for_clause" => {
-                            return false;
-                        }
-                        "module" | "function_definition" | "class_definition" | "block" | "suite" => {
-                            return true;
-                        }
-                        _ => {}
+            while let Some(parent) = current.parent() {
+                match parent.kind() {
+                    "binary_operator"
+                    | "unary_operator"
+                    | "comparison"
+                    | "boolean_operator"
+                    | "lambda"
+                    | "subscript"
+                    | "call"
+                    | "argument_list"
+                    | "parenthesized_expression"
+                    | "list"
+                    | "tuple"
+                    | "dictionary"
+                    | "set"
+                    | "expression_statement"
+                    | "assignment"
+                    | "if_clause"
+                    | "while_clause"
+                    | "for_clause" => {
+                        return false;
                     }
-                    current = parent;
+                    "module" | "function_definition" | "class_definition" | "block" | "suite" => {
+                        return true;
+                    }
+                    _ => {}
                 }
+                current = parent;
             }
         }
 
@@ -863,10 +863,10 @@ impl CompletionProvider {
                         module_name = Some(module_part.to_string());
                     }
 
-                    if module_uri.is_none() {
-                        if let Some(name) = module_name.as_ref() {
-                            module_uri = Self::find_document_for_module(&self._documents, name);
-                        }
+                    if module_uri.is_none()
+                        && let Some(name) = module_name.as_ref()
+                    {
+                        module_uri = Self::find_document_for_module(&self._documents, name);
                     }
 
                     if let Some(exports) = stub_exports {

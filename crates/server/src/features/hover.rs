@@ -60,13 +60,14 @@ impl HoverProvider {
                 "identifier" => {
                     let identifier_text = node.utf8_text(text.as_bytes()).ok()?;
 
-                    if identifier_text.starts_with("__") && identifier_text.ends_with("__") {
-                        if let Some(dunder_info) = dunders::get_dunder_info(identifier_text) {
-                            return Some(Hover {
-                                contents: HoverContents::Markup(self.format_dunder_hover(dunder_info)),
-                                range: None,
-                            });
-                        }
+                    if identifier_text.starts_with("__")
+                        && identifier_text.ends_with("__")
+                        && let Some(dunder_info) = dunders::get_dunder_info(identifier_text)
+                    {
+                        return Some(Hover {
+                            contents: HoverContents::Markup(self.format_dunder_hover(dunder_info)),
+                            range: None,
+                        });
                     }
 
                     if builtin_docs::is_builtin_type(identifier_text) {
@@ -295,18 +296,17 @@ impl HoverProvider {
                     Err(e) => {
                         tracing::warn!("Introspection failed for {}.{}: {}", module, symbol, e);
 
-                        if let Some(doc) = module_doc {
-                            if !doc.trim().is_empty() {
-                                let mut value = format!(
-                                    "**Import** `{name}` from module `{module}`\n\n**Module documentation:**\n\n"
-                                );
-                                let parsed = parse_docstring(&doc);
-                                let rendered = parsed.to_markdown();
-                                if !rendered.trim().is_empty() {
-                                    value.push_str(rendered.trim());
-                                }
-                                return MarkupContent { kind: MarkupKind::Markdown, value };
+                        if let Some(doc) = module_doc
+                            && !doc.trim().is_empty()
+                        {
+                            let mut value =
+                                format!("**Import** `{name}` from module `{module}`\n\n**Module documentation:**\n\n");
+                            let parsed = parse_docstring(&doc);
+                            let rendered = parsed.to_markdown();
+                            if !rendered.trim().is_empty() {
+                                value.push_str(rendered.trim());
                             }
+                            return MarkupContent { kind: MarkupKind::Markdown, value };
                         }
                     }
                 }
@@ -369,14 +369,14 @@ impl HoverProvider {
             }
         }
 
-        if let Some(mod_doc) = module_doc {
-            if !mod_doc.trim().is_empty() {
-                let parsed = parse_docstring(mod_doc);
-                let rendered = parsed.to_markdown();
-                if !rendered.trim().is_empty() {
-                    value.push_str("\n\n---\n\n**Module documentation:**\n\n");
-                    value.push_str(rendered.trim());
-                }
+        if let Some(mod_doc) = module_doc
+            && !mod_doc.trim().is_empty()
+        {
+            let parsed = parse_docstring(mod_doc);
+            let rendered = parsed.to_markdown();
+            if !rendered.trim().is_empty() {
+                value.push_str("\n\n---\n\n**Module documentation:**\n\n");
+                value.push_str(rendered.trim());
             }
         }
 
@@ -473,14 +473,14 @@ impl HoverProvider {
         let type_str = self.format_type(ty);
         let mut value = format!("```python\n{type_str}\n```\n\n**Inferred type**");
 
-        if let Some(docstring) = self.get_type_docstring(ty) {
-            if !docstring.trim().is_empty() {
-                let parsed = parse_docstring(&docstring);
-                let rendered = parsed.to_markdown();
-                if !rendered.trim().is_empty() {
-                    value.push_str("\n\n---\n\n");
-                    value.push_str(rendered.trim());
-                }
+        if let Some(docstring) = self.get_type_docstring(ty)
+            && !docstring.trim().is_empty()
+        {
+            let parsed = parse_docstring(&docstring);
+            let rendered = parsed.to_markdown();
+            if !rendered.trim().is_empty() {
+                value.push_str("\n\n---\n\n");
+                value.push_str(rendered.trim());
             }
         }
 
@@ -522,10 +522,9 @@ impl HoverProvider {
                 let symbol = symbol_table.lookup_symbol(symbol_name, symbol_table.root_scope)?;
 
                 if symbol.kind == kind { symbol.docstring.clone() } else { None }
-            }) {
-                if doc.is_some() {
-                    return doc;
-                }
+            }) && doc.is_some()
+            {
+                return doc;
             }
         }
 

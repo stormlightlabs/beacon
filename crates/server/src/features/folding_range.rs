@@ -41,10 +41,10 @@ impl FoldingRangeProvider {
                 }
             }
             AstNode::FunctionDef { body, line, col, .. } => {
-                if !body.is_empty() {
-                    if let Some(range) = self.body_folding_range(*line, *col, body) {
-                        ranges.push(range);
-                    }
+                if !body.is_empty()
+                    && let Some(range) = self.body_folding_range(*line, *col, body)
+                {
+                    ranges.push(range);
                 }
 
                 for stmt in body {
@@ -52,10 +52,10 @@ impl FoldingRangeProvider {
                 }
             }
             AstNode::ClassDef { body, line, col, .. } => {
-                if !body.is_empty() {
-                    if let Some(range) = self.body_folding_range(*line, *col, body) {
-                        ranges.push(range);
-                    }
+                if !body.is_empty()
+                    && let Some(range) = self.body_folding_range(*line, *col, body)
+                {
+                    ranges.push(range);
                 }
 
                 for stmt in body {
@@ -63,19 +63,19 @@ impl FoldingRangeProvider {
                 }
             }
             AstNode::If { body, elif_parts, else_body, line, col, .. } => {
-                if !body.is_empty() {
-                    if let Some(range) = self.body_folding_range(*line, *col, body) {
-                        ranges.push(range);
-                    }
+                if !body.is_empty()
+                    && let Some(range) = self.body_folding_range(*line, *col, body)
+                {
+                    ranges.push(range);
                 }
 
                 for (_, elif_body) in elif_parts {
-                    if !elif_body.is_empty() {
-                        if let Some(first_stmt) = elif_body.first() {
-                            let start_line = self.get_node_line(first_stmt).saturating_sub(1);
-                            if let Some(range) = self.body_folding_range(start_line, 0, elif_body) {
-                                ranges.push(range);
-                            }
+                    if !elif_body.is_empty()
+                        && let Some(first_stmt) = elif_body.first()
+                    {
+                        let start_line = self.get_node_line(first_stmt).saturating_sub(1);
+                        if let Some(range) = self.body_folding_range(start_line, 0, elif_body) {
+                            ranges.push(range);
                         }
                     }
                     for stmt in elif_body {
@@ -84,12 +84,12 @@ impl FoldingRangeProvider {
                 }
 
                 if let Some(else_stmts) = else_body {
-                    if !else_stmts.is_empty() {
-                        if let Some(first_stmt) = else_stmts.first() {
-                            let start_line = self.get_node_line(first_stmt).saturating_sub(2);
-                            if let Some(range) = self.body_folding_range(start_line, 0, else_stmts) {
-                                ranges.push(range);
-                            }
+                    if !else_stmts.is_empty()
+                        && let Some(first_stmt) = else_stmts.first()
+                    {
+                        let start_line = self.get_node_line(first_stmt).saturating_sub(2);
+                        if let Some(range) = self.body_folding_range(start_line, 0, else_stmts) {
+                            ranges.push(range);
                         }
                     }
                     for stmt in else_stmts {
@@ -102,19 +102,19 @@ impl FoldingRangeProvider {
                 }
             }
             AstNode::For { body, else_body, line, col, .. } => {
-                if !body.is_empty() {
-                    if let Some(range) = self.body_folding_range(*line, *col, body) {
-                        ranges.push(range);
-                    }
+                if !body.is_empty()
+                    && let Some(range) = self.body_folding_range(*line, *col, body)
+                {
+                    ranges.push(range);
                 }
 
                 if let Some(else_stmts) = else_body {
-                    if !else_stmts.is_empty() {
-                        if let Some(first_stmt) = else_stmts.first() {
-                            let start_line = self.get_node_line(first_stmt).saturating_sub(2);
-                            if let Some(range) = self.body_folding_range(start_line, 0, else_stmts) {
-                                ranges.push(range);
-                            }
+                    if !else_stmts.is_empty()
+                        && let Some(first_stmt) = else_stmts.first()
+                    {
+                        let start_line = self.get_node_line(first_stmt).saturating_sub(2);
+                        if let Some(range) = self.body_folding_range(start_line, 0, else_stmts) {
+                            ranges.push(range);
                         }
                     }
                     for stmt in else_stmts {
@@ -127,19 +127,19 @@ impl FoldingRangeProvider {
                 }
             }
             AstNode::While { body, else_body, line, col, .. } => {
-                if !body.is_empty() {
-                    if let Some(range) = self.body_folding_range(*line, *col, body) {
-                        ranges.push(range);
-                    }
+                if !body.is_empty()
+                    && let Some(range) = self.body_folding_range(*line, *col, body)
+                {
+                    ranges.push(range);
                 }
 
                 if let Some(else_stmts) = else_body {
-                    if !else_stmts.is_empty() {
-                        if let Some(first_stmt) = else_stmts.first() {
-                            let start_line = self.get_node_line(first_stmt).saturating_sub(2);
-                            if let Some(range) = self.body_folding_range(start_line, 0, else_stmts) {
-                                ranges.push(range);
-                            }
+                    if !else_stmts.is_empty()
+                        && let Some(first_stmt) = else_stmts.first()
+                    {
+                        let start_line = self.get_node_line(first_stmt).saturating_sub(2);
+                        if let Some(range) = self.body_folding_range(start_line, 0, else_stmts) {
+                            ranges.push(range);
                         }
                     }
                     for stmt in else_stmts {
@@ -152,17 +152,17 @@ impl FoldingRangeProvider {
                 }
             }
             AstNode::Try { body, handlers, else_body, finally_body, line, col, .. } => {
-                if !body.is_empty() {
-                    if let Some(range) = self.body_folding_range(*line, *col, body) {
-                        ranges.push(range);
-                    }
+                if !body.is_empty()
+                    && let Some(range) = self.body_folding_range(*line, *col, body)
+                {
+                    ranges.push(range);
                 }
 
                 for handler in handlers {
-                    if !handler.body.is_empty() {
-                        if let Some(range) = self.body_folding_range(handler.line, handler.col, &handler.body) {
-                            ranges.push(range);
-                        }
+                    if !handler.body.is_empty()
+                        && let Some(range) = self.body_folding_range(handler.line, handler.col, &handler.body)
+                    {
+                        ranges.push(range);
                     }
                     for stmt in &handler.body {
                         self.collect_folding_ranges(stmt, ranges);
@@ -170,12 +170,12 @@ impl FoldingRangeProvider {
                 }
 
                 if let Some(else_stmts) = else_body {
-                    if !else_stmts.is_empty() {
-                        if let Some(first_stmt) = else_stmts.first() {
-                            let start_line = self.get_node_line(first_stmt).saturating_sub(2);
-                            if let Some(range) = self.body_folding_range(start_line, 0, else_stmts) {
-                                ranges.push(range);
-                            }
+                    if !else_stmts.is_empty()
+                        && let Some(first_stmt) = else_stmts.first()
+                    {
+                        let start_line = self.get_node_line(first_stmt).saturating_sub(2);
+                        if let Some(range) = self.body_folding_range(start_line, 0, else_stmts) {
+                            ranges.push(range);
                         }
                     }
                     for stmt in else_stmts {
@@ -184,12 +184,12 @@ impl FoldingRangeProvider {
                 }
 
                 if let Some(finally_stmts) = finally_body {
-                    if !finally_stmts.is_empty() {
-                        if let Some(first_stmt) = finally_stmts.first() {
-                            let start_line = self.get_node_line(first_stmt).saturating_sub(2);
-                            if let Some(range) = self.body_folding_range(start_line, 0, finally_stmts) {
-                                ranges.push(range);
-                            }
+                    if !finally_stmts.is_empty()
+                        && let Some(first_stmt) = finally_stmts.first()
+                    {
+                        let start_line = self.get_node_line(first_stmt).saturating_sub(2);
+                        if let Some(range) = self.body_folding_range(start_line, 0, finally_stmts) {
+                            ranges.push(range);
                         }
                     }
                     for stmt in finally_stmts {
@@ -202,41 +202,40 @@ impl FoldingRangeProvider {
                 }
             }
             AstNode::With { body, line, col, .. } => {
-                if !body.is_empty() {
-                    if let Some(range) = self.body_folding_range(*line, *col, body) {
-                        ranges.push(range);
-                    }
+                if !body.is_empty()
+                    && let Some(range) = self.body_folding_range(*line, *col, body)
+                {
+                    ranges.push(range);
                 }
                 for stmt in body {
                     self.collect_folding_ranges(stmt, ranges);
                 }
             }
             AstNode::Match { cases, line, col, .. } => {
-                if !cases.is_empty() {
-                    if let Some(last_case) = cases.last() {
-                        if let Some(last_stmt) = last_case.body.last() {
-                            let end_line = self.get_node_end_line(last_stmt);
-                            if end_line > *line {
-                                ranges.push(FoldingRange {
-                                    start_line: line.saturating_sub(1) as u32,
-                                    start_character: Some(col.saturating_sub(1) as u32),
-                                    end_line: end_line.saturating_sub(1) as u32,
-                                    end_character: None,
-                                    kind: Some(FoldingRangeKind::Region),
-                                    collapsed_text: None,
-                                });
-                            }
-                        }
+                if !cases.is_empty()
+                    && let Some(last_case) = cases.last()
+                    && let Some(last_stmt) = last_case.body.last()
+                {
+                    let end_line = self.get_node_end_line(last_stmt);
+                    if end_line > *line {
+                        ranges.push(FoldingRange {
+                            start_line: line.saturating_sub(1) as u32,
+                            start_character: Some(col.saturating_sub(1) as u32),
+                            end_line: end_line.saturating_sub(1) as u32,
+                            end_character: None,
+                            kind: Some(FoldingRangeKind::Region),
+                            collapsed_text: None,
+                        });
                     }
                 }
 
                 for case in cases {
-                    if !case.body.is_empty() {
-                        if let Some(first_stmt) = case.body.first() {
-                            let start_line = self.get_node_line(first_stmt).saturating_sub(1);
-                            if let Some(range) = self.body_folding_range(start_line, 0, &case.body) {
-                                ranges.push(range);
-                            }
+                    if !case.body.is_empty()
+                        && let Some(first_stmt) = case.body.first()
+                    {
+                        let start_line = self.get_node_line(first_stmt).saturating_sub(1);
+                        if let Some(range) = self.body_folding_range(start_line, 0, &case.body) {
+                            ranges.push(range);
                         }
                     }
                     for stmt in &case.body {
@@ -247,36 +246,36 @@ impl FoldingRangeProvider {
             AstNode::List { elements, line, col, .. }
             | AstNode::Tuple { elements, line, col, .. }
             | AstNode::Set { elements, line, col, .. } => {
-                if elements.len() > 1 {
-                    if let Some(last) = elements.last() {
-                        let end_line = self.get_node_end_line(last);
-                        if end_line > *line {
-                            ranges.push(FoldingRange {
-                                start_line: line.saturating_sub(1) as u32,
-                                start_character: Some(col.saturating_sub(1) as u32),
-                                end_line: end_line.saturating_sub(1) as u32,
-                                end_character: None,
-                                kind: Some(FoldingRangeKind::Region),
-                                collapsed_text: None,
-                            });
-                        }
+                if elements.len() > 1
+                    && let Some(last) = elements.last()
+                {
+                    let end_line = self.get_node_end_line(last);
+                    if end_line > *line {
+                        ranges.push(FoldingRange {
+                            start_line: line.saturating_sub(1) as u32,
+                            start_character: Some(col.saturating_sub(1) as u32),
+                            end_line: end_line.saturating_sub(1) as u32,
+                            end_character: None,
+                            kind: Some(FoldingRangeKind::Region),
+                            collapsed_text: None,
+                        });
                     }
                 }
             }
             AstNode::Dict { keys, line, col, .. } => {
-                if keys.len() > 1 {
-                    if let Some(last) = keys.last() {
-                        let end_line = self.get_node_end_line(last);
-                        if end_line > *line {
-                            ranges.push(FoldingRange {
-                                start_line: line.saturating_sub(1) as u32,
-                                start_character: Some(col.saturating_sub(1) as u32),
-                                end_line: end_line.saturating_sub(1) as u32,
-                                end_character: None,
-                                kind: Some(FoldingRangeKind::Region),
-                                collapsed_text: None,
-                            });
-                        }
+                if keys.len() > 1
+                    && let Some(last) = keys.last()
+                {
+                    let end_line = self.get_node_end_line(last);
+                    if end_line > *line {
+                        ranges.push(FoldingRange {
+                            start_line: line.saturating_sub(1) as u32,
+                            start_character: Some(col.saturating_sub(1) as u32),
+                            end_line: end_line.saturating_sub(1) as u32,
+                            end_character: None,
+                            kind: Some(FoldingRangeKind::Region),
+                            collapsed_text: None,
+                        });
                     }
                 }
             }
@@ -325,17 +324,17 @@ impl FoldingRangeProvider {
                     import_end = Some(*line);
                 }
                 _ => {
-                    if let (Some(start), Some(end)) = (import_start, import_end) {
-                        if end > start {
-                            ranges.push(FoldingRange {
-                                start_line: start.saturating_sub(1) as u32,
-                                start_character: None,
-                                end_line: end.saturating_sub(1) as u32,
-                                end_character: None,
-                                kind: Some(FoldingRangeKind::Imports),
-                                collapsed_text: None,
-                            });
-                        }
+                    if let (Some(start), Some(end)) = (import_start, import_end)
+                        && end > start
+                    {
+                        ranges.push(FoldingRange {
+                            start_line: start.saturating_sub(1) as u32,
+                            start_character: None,
+                            end_line: end.saturating_sub(1) as u32,
+                            end_character: None,
+                            kind: Some(FoldingRangeKind::Imports),
+                            collapsed_text: None,
+                        });
                     }
                     import_start = None;
                     import_end = None;
@@ -343,17 +342,17 @@ impl FoldingRangeProvider {
             }
         }
 
-        if let (Some(start), Some(end)) = (import_start, import_end) {
-            if end > start {
-                ranges.push(FoldingRange {
-                    start_line: start.saturating_sub(1) as u32,
-                    start_character: None,
-                    end_line: end.saturating_sub(1) as u32,
-                    end_character: None,
-                    kind: Some(FoldingRangeKind::Imports),
-                    collapsed_text: None,
-                });
-            }
+        if let (Some(start), Some(end)) = (import_start, import_end)
+            && end > start
+        {
+            ranges.push(FoldingRange {
+                start_line: start.saturating_sub(1) as u32,
+                start_character: None,
+                end_line: end.saturating_sub(1) as u32,
+                end_character: None,
+                kind: Some(FoldingRangeKind::Imports),
+                collapsed_text: None,
+            });
         }
     }
 

@@ -217,17 +217,16 @@ fn is_mapping_type(ty: &Type) -> bool {
 pub fn validate_pattern_structure(pattern: &Pattern, subject_type: &Type) -> Result<(), TypeError> {
     match (pattern, subject_type) {
         (Pattern::MatchSequence(patterns), Type::App(ctor, _)) => {
-            if let Type::Con(TypeCtor::Tuple) = ctor.as_ref() {
-                if let Some(arity) = extract_tuple_arity(subject_type) {
-                    if patterns.len() != arity {
-                        return Err(TypeError::PatternStructureMismatch {
-                            expected: format!("{arity} elements"),
-                            found: format!("{} pattern bindings", patterns.len()),
-                        });
-                    }
-                }
-                // If arity is unknown (e.g., tuple[int, ...]), we can't validate
+            if let Type::Con(TypeCtor::Tuple) = ctor.as_ref()
+                && let Some(arity) = extract_tuple_arity(subject_type)
+                && patterns.len() != arity
+            {
+                return Err(TypeError::PatternStructureMismatch {
+                    expected: format!("{arity} elements"),
+                    found: format!("{} pattern bindings", patterns.len()),
+                });
             }
+            // If arity is unknown (e.g., tuple[int, ...]), we can't validate
             Ok(())
         }
         _ => Ok(()),

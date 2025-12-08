@@ -272,12 +272,12 @@ fn build_definition_blocks(term: &str, classifier: Option<&str>, body_text: &str
 
     let mut label = Vec::new();
     label.push(Inline::Strong(term.to_string()));
-    if let Some(classifier) = classifier {
-        if !classifier.is_empty() {
-            label.push(Inline::Text(" (".into()));
-            label.push(Inline::Em(classifier.to_string()));
-            label.push(Inline::Text(")".into()));
-        }
+    if let Some(classifier) = classifier
+        && !classifier.is_empty()
+    {
+        label.push(Inline::Text(" (".into()));
+        label.push(Inline::Em(classifier.to_string()));
+        label.push(Inline::Text(")".into()));
     }
 
     if blocks.is_empty() {
@@ -315,13 +315,13 @@ fn split_definition_line(input: &str) -> (String, Option<String>, String) {
     let next_is_space = after.starts_with(' ');
 
     let mut classifier = None;
-    if term.ends_with(')') {
-        if let Some(open_idx) = term.rfind('(') {
-            let inner = term[open_idx + 1..term.len() - 1].trim();
-            if !inner.is_empty() {
-                classifier = Some(inner.to_string());
-                term = term[..open_idx].trim().to_string();
-            }
+    if term.ends_with(')')
+        && let Some(open_idx) = term.rfind('(')
+    {
+        let inner = term[open_idx + 1..term.len() - 1].trim();
+        if !inner.is_empty() {
+            classifier = Some(inner.to_string());
+            term = term[..open_idx].trim().to_string();
         }
     }
 
@@ -366,15 +366,15 @@ fn parse_definition_entries(ls: &mut Lines<'_>) -> Result<Option<Vec<Block>>, Pa
 
         while let Some(next) = ls.peek() {
             if is_blank(next.raw) {
-                if let Some(after_blank) = ls.peek_next() {
-                    if leading_indent(after_blank.raw) > indent_base {
-                        ls.next();
-                        if !body_text.is_empty() {
-                            body_text.push('\n');
-                            body_text.push('\n');
-                        }
-                        continue;
+                if let Some(after_blank) = ls.peek_next()
+                    && leading_indent(after_blank.raw) > indent_base
+                {
+                    ls.next();
+                    if !body_text.is_empty() {
+                        body_text.push('\n');
+                        body_text.push('\n');
                     }
+                    continue;
                 }
                 break;
             }
@@ -439,11 +439,11 @@ fn field_label(kind: &str) -> String {
 fn build_field_label(kind: &str, arg: Option<&str>) -> Vec<Inline> {
     let mut inlines = Vec::new();
     inlines.push(Inline::Strong(field_label(kind)));
-    if let Some(arg) = arg {
-        if !arg.is_empty() {
-            inlines.push(Inline::Text(" ".into()));
-            inlines.push(Inline::Code(arg.to_string()));
-        }
+    if let Some(arg) = arg
+        && !arg.is_empty()
+    {
+        inlines.push(Inline::Text(" ".into()));
+        inlines.push(Inline::Code(arg.to_string()));
     }
     inlines
 }
@@ -515,15 +515,15 @@ fn parse_field_entries(ls: &mut Lines<'_>) -> Result<Option<Vec<Block>>, ParseEr
 
         while let Some(next) = ls.peek() {
             if is_blank(next.raw) {
-                if let Some(after_blank) = ls.peek_next() {
-                    if leading_indent(after_blank.raw) > indent_base {
-                        ls.next();
-                        if !body_text.is_empty() {
-                            body_text.push('\n');
-                            body_text.push('\n');
-                        }
-                        continue;
+                if let Some(after_blank) = ls.peek_next()
+                    && leading_indent(after_blank.raw) > indent_base
+                {
+                    ls.next();
+                    if !body_text.is_empty() {
+                        body_text.push('\n');
+                        body_text.push('\n');
                     }
+                    continue;
                 }
                 break;
             }
@@ -582,66 +582,70 @@ fn parse_inlines(text: &str) -> Vec<Inline> {
     };
 
     while i < text.len() {
-        if bytes[i] == b'`' && i + 1 < text.len() && bytes[i + 1] == b'`' {
-            if let Some(end) = text[i + 2..].find("``") {
-                let inner = &text[i + 2..i + 2 + end];
+        if bytes[i] == b'`'
+            && i + 1 < text.len()
+            && bytes[i + 1] == b'`'
+            && let Some(end) = text[i + 2..].find("``")
+        {
+            let inner = &text[i + 2..i + 2 + end];
+            flush_text(&mut buf, &mut out);
+            out.push(Inline::Code(inner.to_string()));
+            i += 2 + end + 2;
+            continue;
+        }
+
+        if bytes[i] == b'*'
+            && i + 1 < text.len()
+            && bytes[i + 1] == b'*'
+            && let Some(end) = text[i + 2..].find("**")
+        {
+            let inner = &text[i + 2..i + 2 + end];
+            if !inner.is_empty() {
                 flush_text(&mut buf, &mut out);
-                out.push(Inline::Code(inner.to_string()));
+                out.push(Inline::Strong(inner.to_string()));
                 i += 2 + end + 2;
                 continue;
             }
         }
 
-        if bytes[i] == b'*' && i + 1 < text.len() && bytes[i + 1] == b'*' {
-            if let Some(end) = text[i + 2..].find("**") {
-                let inner = &text[i + 2..i + 2 + end];
-                if !inner.is_empty() {
-                    flush_text(&mut buf, &mut out);
-                    out.push(Inline::Strong(inner.to_string()));
-                    i += 2 + end + 2;
-                    continue;
-                }
-            }
-        }
-
-        if bytes[i] == b'*' {
-            if let Some(end) = text[i + 1..].find('*') {
-                let inner = &text[i + 1..i + 1 + end];
-                if !inner.is_empty() {
-                    flush_text(&mut buf, &mut out);
-                    out.push(Inline::Em(inner.to_string()));
-                    i += 1 + end + 1;
-                    continue;
-                }
-            }
-        }
-
-        if bytes[i] == b'`' {
-            if let Some(end) = text[i + 1..].find('`') {
-                let closing_tick = i + 1 + end;
-                let after_tick = closing_tick + 1;
-                if after_tick < text.len() && bytes[after_tick] == b'_' {
-                    let inner = &text[i + 1..closing_tick];
-                    if let (Some(l), Some(r)) = (inner.find('<'), inner.rfind('>')) {
-                        if r > l {
-                            let label = inner[..l].trim();
-                            let url = inner[l + 1..r].trim();
-                            if !label.is_empty() && !url.is_empty() {
-                                flush_text(&mut buf, &mut out);
-                                out.push(Inline::Link { text: label.to_string(), url: url.to_string() });
-                                i = after_tick + 1;
-                                continue;
-                            }
-                        }
-                    }
-                }
-
+        if bytes[i] == b'*'
+            && let Some(end) = text[i + 1..].find('*')
+        {
+            let inner = &text[i + 1..i + 1 + end];
+            if !inner.is_empty() {
                 flush_text(&mut buf, &mut out);
-                let inner = &text[i + 1..closing_tick];
-                out.push(Inline::Code(inner.to_string()));
-                i = closing_tick + 1;
+                out.push(Inline::Em(inner.to_string()));
+                i += 1 + end + 1;
                 continue;
             }
+        }
+
+        if bytes[i] == b'`'
+            && let Some(end) = text[i + 1..].find('`')
+        {
+            let closing_tick = i + 1 + end;
+            let after_tick = closing_tick + 1;
+            if after_tick < text.len() && bytes[after_tick] == b'_' {
+                let inner = &text[i + 1..closing_tick];
+                if let (Some(l), Some(r)) = (inner.find('<'), inner.rfind('>'))
+                    && r > l
+                {
+                    let label = inner[..l].trim();
+                    let url = inner[l + 1..r].trim();
+                    if !label.is_empty() && !url.is_empty() {
+                        flush_text(&mut buf, &mut out);
+                        out.push(Inline::Link { text: label.to_string(), url: url.to_string() });
+                        i = after_tick + 1;
+                        continue;
+                    }
+                }
+            }
+
+            flush_text(&mut buf, &mut out);
+            let inner = &text[i + 1..closing_tick];
+            out.push(Inline::Code(inner.to_string()));
+            i = closing_tick + 1;
+            continue;
         }
 
         let ch = text[i..].chars().next().unwrap();
@@ -724,57 +728,57 @@ pub fn parse(input: &str) -> Result<Vec<Block>, ParseError> {
             break;
         }
 
-        if let Some(l) = ls.peek() {
-            if l.raw.trim() == "```" {
-                ls.next();
-                let mut buf = String::new();
-                while let Some(inner) = ls.next() {
-                    if inner.raw.trim() == "```" {
-                        break;
-                    }
-                    buf.push_str(inner.raw);
-                    buf.push('\n');
+        if let Some(l) = ls.peek()
+            && l.raw.trim() == "```"
+        {
+            ls.next();
+            let mut buf = String::new();
+            while let Some(inner) = ls.next() {
+                if inner.raw.trim() == "```" {
+                    break;
                 }
-                blocks.push(Block::CodeBlock(buf));
-                continue;
+                buf.push_str(inner.raw);
+                buf.push('\n');
             }
+            blocks.push(Block::CodeBlock(buf));
+            continue;
         }
 
-        if let Some(l) = ls.peek() {
-            if l.raw.trim_start().starts_with('>') {
-                let mut quote = String::new();
-                while let Some(q) = ls.peek() {
-                    let t = q.raw.trim_start();
-                    if t.starts_with('>') {
-                        ls.next();
-                        quote.push_str(t.trim_start_matches("> ").trim_start_matches('>'));
-                        quote.push('\n');
-                    } else {
-                        break;
-                    }
+        if let Some(l) = ls.peek()
+            && l.raw.trim_start().starts_with('>')
+        {
+            let mut quote = String::new();
+            while let Some(q) = ls.peek() {
+                let t = q.raw.trim_start();
+                if t.starts_with('>') {
+                    ls.next();
+                    quote.push_str(t.trim_start_matches("> ").trim_start_matches('>'));
+                    quote.push('\n');
+                } else {
+                    break;
                 }
-                let inner = parse(&quote)?;
-                blocks.push(Block::Quote(inner));
-                continue;
             }
+            let inner = parse(&quote)?;
+            blocks.push(Block::Quote(inner));
+            continue;
         }
 
-        if let Some(l) = ls.peek() {
-            if let Some(kind) = list_kind(l.raw) {
-                let mut items: Vec<Vec<Inline>> = Vec::new();
-                while let Some(it) = ls.peek() {
-                    match list_kind(it.raw) {
-                        Some(next_kind) if next_kind == kind => {
-                            let line = ls.next().unwrap();
-                            let content = strip_list_marker(line.raw, kind).unwrap().trim_end();
-                            items.push(parse_inlines(content));
-                        }
-                        _ => break,
+        if let Some(l) = ls.peek()
+            && let Some(kind) = list_kind(l.raw)
+        {
+            let mut items: Vec<Vec<Inline>> = Vec::new();
+            while let Some(it) = ls.peek() {
+                match list_kind(it.raw) {
+                    Some(next_kind) if next_kind == kind => {
+                        let line = ls.next().unwrap();
+                        let content = strip_list_marker(line.raw, kind).unwrap().trim_end();
+                        items.push(parse_inlines(content));
                     }
+                    _ => break,
                 }
-                blocks.push(Block::List { kind, items });
-                continue;
             }
+            blocks.push(Block::List { kind, items });
+            continue;
         }
 
         if let Some(field_blocks) = parse_field_entries(&mut ls)? {
@@ -787,22 +791,22 @@ pub fn parse(input: &str) -> Result<Vec<Block>, ParseError> {
             continue;
         }
 
-        if let Some(line) = ls.peek() {
-            if let Some(title) = colon_heading_text(line, ls.peek_next()) {
-                ls.next();
-                blocks.push(Block::Heading { level: 2, inlines: parse_inlines(&title) });
-                continue;
-            }
+        if let Some(line) = ls.peek()
+            && let Some(title) = colon_heading_text(line, ls.peek_next())
+        {
+            ls.next();
+            blocks.push(Block::Heading { level: 2, inlines: parse_inlines(&title) });
+            continue;
         }
 
         if let Some(title) = ls.next() {
-            if let Some(ul) = ls.peek() {
-                if let Some(level) = underline_level(ul.raw) {
-                    ls.next();
-                    let inlines = parse_inlines(title.raw.trim());
-                    blocks.push(Block::Heading { level, inlines });
-                    continue;
-                }
+            if let Some(ul) = ls.peek()
+                && let Some(level) = underline_level(ul.raw)
+            {
+                ls.next();
+                let inlines = parse_inlines(title.raw.trim());
+                blocks.push(Block::Heading { level, inlines });
+                continue;
             }
             ls.backtrack();
         }

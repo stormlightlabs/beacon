@@ -43,11 +43,8 @@ impl ExtractVariableProvider {
 
         let expression_node = Self::find_expression_node(&tree, &text, params.range)?;
 
-        let type_annotation = if let Some(a) = analyzer {
-            Self::infer_type(a, &params.uri, params.range.start)
-        } else {
-            None
-        };
+        let type_annotation =
+            if let Some(a) = analyzer { Self::infer_type(a, &params.uri, params.range.start) } else { None };
 
         let mut occurrences = vec![params.range];
 
@@ -190,15 +187,14 @@ impl ExtractVariableProvider {
             return;
         }
 
-        if Self::is_expression_node(node.kind()) {
-            if let Ok(node_text) = node.utf8_text(text.as_bytes()) {
-                if node_text.trim() == target_text.trim() {
-                    let start_pos = Self::byte_offset_to_position(text, node.start_byte());
-                    let end_pos = Self::byte_offset_to_position(text, node.end_byte());
-                    duplicates.push(Range { start: start_pos, end: end_pos });
-                    return;
-                }
-            }
+        if Self::is_expression_node(node.kind())
+            && let Ok(node_text) = node.utf8_text(text.as_bytes())
+            && node_text.trim() == target_text.trim()
+        {
+            let start_pos = Self::byte_offset_to_position(text, node.start_byte());
+            let end_pos = Self::byte_offset_to_position(text, node.end_byte());
+            duplicates.push(Range { start: start_pos, end: end_pos });
+            return;
         }
 
         let mut cursor = node.walk();

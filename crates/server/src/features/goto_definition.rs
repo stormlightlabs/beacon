@@ -58,15 +58,15 @@ impl GotoDefinitionProvider {
             return cross_file_location.map(GotoDefinitionResponse::Scalar);
         }
 
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread {
-                let cross_file_location = tokio::task::block_in_place(|| {
-                    handle.block_on(async { self.find_imported_symbol_definition(&uri, position).await })
-                });
+        if let Ok(handle) = tokio::runtime::Handle::try_current()
+            && handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread
+        {
+            let cross_file_location = tokio::task::block_in_place(|| {
+                handle.block_on(async { self.find_imported_symbol_definition(&uri, position).await })
+            });
 
-                if cross_file_location.is_some() {
-                    return cross_file_location.map(GotoDefinitionResponse::Scalar);
-                }
+            if cross_file_location.is_some() {
+                return cross_file_location.map(GotoDefinitionResponse::Scalar);
             }
         }
 
@@ -126,26 +126,26 @@ impl GotoDefinitionProvider {
     /// Traverses up the tree to find a node matching `identifier_name`.
     fn find_identifier_node<'a>(text: &str, mut node: Node<'a>, identifier_name: &str) -> Option<Node<'a>> {
         loop {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                if name_node.kind() == "identifier" {
-                    return Some(name_node);
-                }
+            if let Some(name_node) = node.child_by_field_name("name")
+                && name_node.kind() == "identifier"
+            {
+                return Some(name_node);
             }
 
             if Self::node_is_identifier_with_name(node, text, identifier_name) {
                 return Some(node);
             }
 
-            if let Some(left_node) = node.child_by_field_name("left") {
-                if Self::node_is_identifier_with_name(left_node, text, identifier_name) {
-                    return Some(left_node);
-                }
+            if let Some(left_node) = node.child_by_field_name("left")
+                && Self::node_is_identifier_with_name(left_node, text, identifier_name)
+            {
+                return Some(left_node);
             }
 
-            if Self::is_import_node(node) {
-                if let Some(found) = Self::find_in_imports(node, text, identifier_name) {
-                    return Some(found);
-                }
+            if Self::is_import_node(node)
+                && let Some(found) = Self::find_in_imports(node, text, identifier_name)
+            {
+                return Some(found);
             }
 
             node = node.parent()?;
@@ -165,18 +165,18 @@ impl GotoDefinitionProvider {
         for child in node.children(&mut cursor) {
             match child.kind() {
                 "dotted_name" | "identifier" => {
-                    if let Ok(child_text) = child.utf8_text(text.as_bytes()) {
-                        if child_text == identifier_name {
-                            return Some(child);
-                        }
+                    if let Ok(child_text) = child.utf8_text(text.as_bytes())
+                        && child_text == identifier_name
+                    {
+                        return Some(child);
                     }
                 }
                 "aliased_import" => {
                     for field in ["alias", "name"] {
-                        if let Some(alias_or_name) = child.child_by_field_name(field) {
-                            if Self::node_is_identifier_with_name(alias_or_name, text, identifier_name) {
-                                return Some(alias_or_name);
-                            }
+                        if let Some(alias_or_name) = child.child_by_field_name(field)
+                            && Self::node_is_identifier_with_name(alias_or_name, text, identifier_name)
+                        {
+                            return Some(alias_or_name);
                         }
                     }
                 }
@@ -210,29 +210,28 @@ impl GotoDefinitionProvider {
 
         for import in symbol_imports {
             if import.symbol == "*" {
-                if let Some(module_uri) = workspace.resolve_import(&import.from_module) {
-                    if let Some(location) = self.find_symbol_in_module(&module_uri, &identifier, &workspace) {
-                        tracing::debug!(
-                            "Found '{}' in star import from {} ({})",
-                            identifier,
-                            import.from_module,
-                            module_uri
-                        );
-                        return Some(location);
-                    }
+                if let Some(module_uri) = workspace.resolve_import(&import.from_module)
+                    && let Some(location) = self.find_symbol_in_module(&module_uri, &identifier, &workspace)
+                {
+                    tracing::debug!(
+                        "Found '{}' in star import from {} ({})",
+                        identifier,
+                        import.from_module,
+                        module_uri
+                    );
+                    return Some(location);
                 }
-            } else if import.symbol == identifier {
-                if let Some(module_uri) = workspace.resolve_import(&import.from_module) {
-                    if let Some(location) = self.find_symbol_in_module(&module_uri, &identifier, &workspace) {
-                        tracing::debug!(
-                            "Found '{}' imported from {} ({})",
-                            identifier,
-                            import.from_module,
-                            module_uri
-                        );
-                        return Some(location);
-                    }
-                }
+            } else if import.symbol == identifier
+                && let Some(module_uri) = workspace.resolve_import(&import.from_module)
+                && let Some(location) = self.find_symbol_in_module(&module_uri, &identifier, &workspace)
+            {
+                tracing::debug!(
+                    "Found '{}' imported from {} ({})",
+                    identifier,
+                    import.from_module,
+                    module_uri
+                );
+                return Some(location);
             }
         }
 
@@ -434,24 +433,22 @@ impl GotoDefinitionProvider {
                 }
             }
 
-            if let Some(parse_result) = workspace.load_workspace_file(&module_uri) {
-                if let Some(symbol) = parse_result
+            if let Some(parse_result) = workspace.load_workspace_file(&module_uri)
+                && let Some(symbol) = parse_result
                     .symbol_table
                     .lookup_symbol(class_name, parse_result.symbol_table.root_scope)
+                && symbol.kind == SymbolKind::Class
+            {
+                let text = parse_result.rope.to_string();
+                if let Some(range) =
+                    self.find_identifier_range_at_definition(&parse_result.tree, &text, symbol, class_name)
                 {
-                    if symbol.kind == SymbolKind::Class {
-                        let text = parse_result.rope.to_string();
-                        if let Some(range) =
-                            self.find_identifier_range_at_definition(&parse_result.tree, &text, symbol, class_name)
-                        {
-                            tracing::debug!(
-                                "Found class '{}' definition in workspace file {}",
-                                class_name,
-                                module_uri
-                            );
-                            return Some(Location { uri: module_uri.clone(), range });
-                        }
-                    }
+                    tracing::debug!(
+                        "Found class '{}' definition in workspace file {}",
+                        class_name,
+                        module_uri
+                    );
+                    return Some(Location { uri: module_uri.clone(), range });
                 }
             }
         }
@@ -564,34 +561,30 @@ impl GotoDefinitionProvider {
         match ast {
             AstNode::ClassDef { name, bases, body, .. } => {
                 for base_name in bases {
-                    if base_name == base_class_name {
-                        if let Some(symbol) = symbol_table.lookup_symbol(name, symbol_table.root_scope) {
-                            if symbol.kind == SymbolKind::Class {
-                                let line_idx = symbol.line.saturating_sub(1);
-                                let byte_col = symbol.col.saturating_sub(1);
-                                let rope = Rope::from_str(text);
+                    if base_name == base_class_name
+                        && let Some(symbol) = symbol_table.lookup_symbol(name, symbol_table.root_scope)
+                        && symbol.kind == SymbolKind::Class
+                    {
+                        let line_idx = symbol.line.saturating_sub(1);
+                        let byte_col = symbol.col.saturating_sub(1);
+                        let rope = Rope::from_str(text);
 
-                                if line_idx < rope.len_lines() {
-                                    let symbol_byte_offset = rope.line_to_byte(line_idx) + byte_col;
-                                    if let Some(node) = tree
-                                        .root_node()
-                                        .descendant_for_byte_range(symbol_byte_offset, symbol_byte_offset)
-                                    {
-                                        if let Some(identifier_node) =
-                                            GotoDefinitionProvider::find_identifier_node(text, node, name)
-                                        {
-                                            let range =
-                                                utils::tree_sitter_range_to_lsp_range(text, identifier_node.range());
-                                            implementations.push(Location { uri: module_uri.clone(), range });
-                                            tracing::debug!(
-                                                "Found implementation: {} extends {} in {}",
-                                                name,
-                                                base_class_name,
-                                                module_uri
-                                            );
-                                        }
-                                    }
-                                }
+                        if line_idx < rope.len_lines() {
+                            let symbol_byte_offset = rope.line_to_byte(line_idx) + byte_col;
+                            if let Some(node) = tree
+                                .root_node()
+                                .descendant_for_byte_range(symbol_byte_offset, symbol_byte_offset)
+                                && let Some(identifier_node) =
+                                    GotoDefinitionProvider::find_identifier_node(text, node, name)
+                            {
+                                let range = utils::tree_sitter_range_to_lsp_range(text, identifier_node.range());
+                                implementations.push(Location { uri: module_uri.clone(), range });
+                                tracing::debug!(
+                                    "Found implementation: {} extends {} in {}",
+                                    name,
+                                    base_class_name,
+                                    module_uri
+                                );
                             }
                         }
                     }
