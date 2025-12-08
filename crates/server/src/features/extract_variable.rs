@@ -189,12 +189,13 @@ impl ExtractVariableProvider {
 
         if Self::is_expression_node(node.kind())
             && let Ok(node_text) = node.utf8_text(text.as_bytes())
-                && node_text.trim() == target_text.trim() {
-                    let start_pos = Self::byte_offset_to_position(text, node.start_byte());
-                    let end_pos = Self::byte_offset_to_position(text, node.end_byte());
-                    duplicates.push(Range { start: start_pos, end: end_pos });
-                    return;
-                }
+            && node_text.trim() == target_text.trim()
+        {
+            let start_pos = Self::byte_offset_to_position(text, node.start_byte());
+            let end_pos = Self::byte_offset_to_position(text, node.end_byte());
+            duplicates.push(Range { start: start_pos, end: end_pos });
+            return;
+        }
 
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {

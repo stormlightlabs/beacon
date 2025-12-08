@@ -558,10 +558,11 @@ impl<'a> DataFlowAnalyzer<'a> {
         for block_id in unreachable_blocks {
             if let Some(block) = self.cfg.blocks.get(&block_id)
                 && let Some(&stmt_idx) = block.statements.first()
-                    && stmt_idx < self.all_statements.len() {
-                        let (line, col) = self.get_stmt_location(self.all_statements[stmt_idx]);
-                        unreachable.push(UnreachableCode { block_id, line, col });
-                    }
+                && stmt_idx < self.all_statements.len()
+            {
+                let (line, col) = self.get_stmt_location(self.all_statements[stmt_idx]);
+                unreachable.push(UnreachableCode { block_id, line, col });
+            }
         }
 
         unreachable

@@ -219,13 +219,14 @@ pub fn validate_pattern_structure(pattern: &Pattern, subject_type: &Type) -> Res
         (Pattern::MatchSequence(patterns), Type::App(ctor, _)) => {
             if let Type::Con(TypeCtor::Tuple) = ctor.as_ref()
                 && let Some(arity) = extract_tuple_arity(subject_type)
-                    && patterns.len() != arity {
-                        return Err(TypeError::PatternStructureMismatch {
-                            expected: format!("{arity} elements"),
-                            found: format!("{} pattern bindings", patterns.len()),
-                        });
-                    }
-                // If arity is unknown (e.g., tuple[int, ...]), we can't validate
+                && patterns.len() != arity
+            {
+                return Err(TypeError::PatternStructureMismatch {
+                    expected: format!("{arity} elements"),
+                    found: format!("{} pattern bindings", patterns.len()),
+                });
+            }
+            // If arity is unknown (e.g., tuple[int, ...]), we can't validate
             Ok(())
         }
         _ => Ok(()),

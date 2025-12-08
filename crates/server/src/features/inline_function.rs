@@ -8,18 +8,22 @@
 //! 2. Extract function parameters and body
 //! 3. Find all call sites across the workspace
 //! 4. For each call site:
+//!    - Analyze variable conflicts between function body and call site scope
+//!    - Rename conflicting variables to avoid shadowing
 //!    - Replace the call with the function body
-//!    - Substitute parameters with arguments
-//!    - Handle return statements
-//!    - Adjust variable scoping
+//!    - Substitute parameters with arguments (using AST-based substitution)
+//!    - Transform return statements based on control flow complexity
+//!    - Adjust indentation to match call site
 //! 5. Remove the function definition if no longer used (or if inline_all is true)
+//! # Return Statement Transformations
 //!
-//! # Notes
+//! The refactoring intelligently handles different return patterns:
 //!
-//! - Handling return statements (early returns, multiple returns)
-//! - Variable name conflicts in target scope
-//! - Side effects and evaluation order
-//! - Control flow (break, continue, return in inlined code)
+//!
+//! # Remaining Limitations
+//!
+//! - **Expression contexts**: Currently only supports inlining into statement contexts
+//! - **Complex side effects**: Does not analyze whether argument evaluation order matters
 
 use super::refactoring::{EditCollector, RefactoringContext};
 use crate::utils;
@@ -68,26 +72,24 @@ impl InlineFunctionProvider {
                     &mut call_sites,
                 );
             }
+        } else if let Some(call_site) = Self::find_call_at_position(&tree, &text, params.position) {
+            if let Some(call_name) = Self::get_call_name(call_site, &text)
+                && call_name == function_info.name
+            {
+                call_sites.push(CallSite {
+                    uri: params.uri.clone(),
+                    range: utils::tree_sitter_range_to_lsp_range(&text, call_site.range()),
+                });
+            }
         } else {
-            if let Some(call_site) = Self::find_call_at_position(&tree, &text, params.position) {
-                if let Some(call_name) = Self::get_call_name(call_site, &text)
-                    && call_name == function_info.name
-                {
-                    call_sites.push(CallSite {
-                        uri: params.uri.clone(),
-                        range: utils::tree_sitter_range_to_lsp_range(&text, call_site.range()),
-                    });
-                }
-            } else {
-                for file_ctx in self.context.iter_relevant_files(&params.uri).await {
-                    Self::find_call_sites(
-                        file_ctx.tree.root_node(),
-                        &file_ctx.text,
-                        &function_info.name,
-                        &file_ctx.uri,
-                        &mut call_sites,
-                    );
-                }
+            for file_ctx in self.context.iter_relevant_files(&params.uri).await {
+                Self::find_call_sites(
+                    file_ctx.tree.root_node(),
+                    &file_ctx.text,
+                    &function_info.name,
+                    &file_ctx.uri,
+                    &mut call_sites,
+                );
             }
         }
 
@@ -254,9 +256,7 @@ impl InlineFunctionProvider {
 
         Self::collect_return_statements(body_node, text, &mut has_return, &mut return_values);
 
-        if !has_return {
-            ReturnType::None
-        } else if return_values.is_empty() {
+        if return_values.is_empty() {
             ReturnType::None
         } else if return_values.len() == 1 {
             ReturnType::Single(return_values.into_iter().next().unwrap())
@@ -342,16 +342,32 @@ impl InlineFunctionProvider {
         Some(arguments)
     }
 
-    /// Inline the function body with parameter substitution
+    /// Inline the function body with parameter substitution and conflict resolution
     fn inline_function_body(
-        func_info: &FunctionInfo, arguments: &[String], _text: &str, indent_pos: Position,
+        func_info: &FunctionInfo, arguments: &[String], call_text: &str, indent_pos: Position,
     ) -> Option<String> {
         let mut substitutions = HashMap::new();
         for (param, arg) in func_info.parameters.iter().zip(arguments.iter()) {
             substitutions.insert(param.clone(), arg.clone());
         }
 
+        let body_vars = Self::collect_identifiers(&func_info.body);
+        let call_scope_vars = Self::collect_identifiers(call_text);
+
         let mut inlined = func_info.body.clone();
+        let mut renamed_vars = HashMap::new();
+
+        for var in &body_vars {
+            if !substitutions.contains_key(var) && call_scope_vars.contains(var) {
+                let new_name = Self::generate_unique_name(var, &call_scope_vars, &body_vars);
+                renamed_vars.insert(var.clone(), new_name);
+            }
+        }
+
+        for (old_name, new_name) in &renamed_vars {
+            inlined = Self::substitute_parameter(&inlined, old_name, new_name);
+        }
+
         for (param, arg) in &substitutions {
             inlined = Self::substitute_parameter(&inlined, param, arg);
         }
@@ -359,7 +375,6 @@ impl InlineFunctionProvider {
         inlined = match &func_info.return_type {
             ReturnType::None => Self::remove_return_statements(&inlined),
             ReturnType::Single(_) => Self::transform_single_return(&inlined),
-            // TODO: Complex case: might need temporary variables
             ReturnType::Multiple(_) => Self::transform_multiple_returns(&inlined),
         };
 
@@ -368,13 +383,107 @@ impl InlineFunctionProvider {
         Some(indented.trim_end().to_string())
     }
 
-    /// Substitute a parameter with its argument value
+    /// Collect all identifier names used in code
+    fn collect_identifiers(code: &str) -> HashSet<String> {
+        let mut identifiers = HashSet::new();
+
+        let mut parser = tree_sitter::Parser::new();
+        if parser.set_language(&tree_sitter_python::LANGUAGE.into()).is_err() {
+            return identifiers;
+        }
+
+        let Some(tree) = parser.parse(code, None) else {
+            return identifiers;
+        };
+
+        Self::collect_identifiers_from_node(tree.root_node(), code, &mut identifiers);
+        identifiers
+    }
+
+    /// Recursively collect identifiers from AST nodes
+    fn collect_identifiers_from_node(node: tree_sitter::Node, text: &str, identifiers: &mut HashSet<String>) {
+        if node.kind() == "identifier"
+            && let Ok(name) = node.utf8_text(text.as_bytes())
+        {
+            identifiers.insert(name.to_string());
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            Self::collect_identifiers_from_node(child, text, identifiers);
+        }
+    }
+
+    /// Generate a unique variable name to avoid conflicts
+    fn generate_unique_name(base: &str, call_scope: &HashSet<String>, body_scope: &HashSet<String>) -> String {
+        let mut counter = 1;
+        loop {
+            let candidate = format!("{}_{}", base, counter);
+            if !call_scope.contains(&candidate) && !body_scope.contains(&candidate) {
+                return candidate;
+            }
+            counter += 1;
+        }
+    }
+
+    /// Substitute a parameter with its argument value using AST-based replacement
+    ///
+    /// Uses tree-sitter to parse the body and only substitute identifier nodes
+    /// that match the parameter name, avoiding replacements in strings, comments, etc.
     fn substitute_parameter(body: &str, param: &str, arg: &str) -> String {
-        // Simple word boundary replacement
-        // TODO: can be improved with AST-based substitution
+        if let Some(result) = Self::substitute_parameter_ast(body, param, arg) {
+            return result;
+        }
+
         let pattern = format!(r"\b{}\b", regex::escape(param));
         let re = regex::Regex::new(&pattern).unwrap();
         re.replace_all(body, arg).to_string()
+    }
+
+    /// AST-based parameter substitution using tree-sitter
+    fn substitute_parameter_ast(body: &str, param: &str, arg: &str) -> Option<String> {
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).ok()?;
+
+        let tree = parser.parse(body, None)?;
+        let root = tree.root_node();
+
+        let mut replacements = Vec::new();
+        Self::collect_identifier_replacements(root, body, param, &mut replacements);
+
+        if replacements.is_empty() {
+            return Some(body.to_string());
+        }
+
+        replacements.sort_by_key(|r| std::cmp::Reverse(r.0));
+
+        let mut result = body.to_string();
+        for (start, end, _) in replacements {
+            result.replace_range(start..end, arg);
+        }
+
+        Some(result)
+    }
+
+    /// Collect identifier nodes that should be replaced
+    fn collect_identifier_replacements(
+        node: tree_sitter::Node, text: &str, param: &str, replacements: &mut Vec<(usize, usize, String)>,
+    ) {
+        if matches!(node.kind(), "string" | "comment") {
+            return;
+        }
+
+        if node.kind() == "identifier"
+            && let Ok(node_text) = node.utf8_text(text.as_bytes())
+            && node_text == param
+        {
+            replacements.push((node.start_byte(), node.end_byte(), param.to_string()));
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            Self::collect_identifier_replacements(child, text, param, replacements);
+        }
     }
 
     /// Remove return statements from body
@@ -404,17 +513,145 @@ impl InlineFunctionProvider {
             }
         }
 
-        // For multi-line bodies, keep as-is for now (complex case)
-        // TODO: Handle early returns with control flow
-        body.to_string()
+        if Self::has_only_trailing_return(body) {
+            return Self::replace_trailing_return(body);
+        }
+
+        Self::transform_multiple_returns(body)
     }
 
-    /// Transform return statements for multiple return values
+    /// Check if function body has only a single return statement at the end
+    fn has_only_trailing_return(body: &str) -> bool {
+        let mut parser = tree_sitter::Parser::new();
+        if parser.set_language(&tree_sitter_python::LANGUAGE.into()).is_err() {
+            return false;
+        }
+
+        let Some(tree) = parser.parse(body, None) else {
+            return false;
+        };
+
+        let root = tree.root_node();
+        let return_nodes = Self::count_return_statements(root, body);
+
+        if return_nodes != 1 {
+            return false;
+        }
+
+        let lines: Vec<&str> = body.lines().collect();
+        for line in lines.iter().rev() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            return trimmed.starts_with("return ");
+        }
+
+        false
+    }
+
+    /// Count return statements in AST
+    fn count_return_statements(node: tree_sitter::Node, _text: &str) -> usize {
+        let mut count = 0;
+
+        if node.kind() == "return_statement" {
+            count += 1;
+        }
+
+        if node.kind() == "function_definition" {
+            return count;
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            count += Self::count_return_statements(child, _text);
+        }
+
+        count
+    }
+
+    /// Replace trailing return statement with its value
+    fn replace_trailing_return(body: &str) -> String {
+        let lines: Vec<&str> = body.lines().collect();
+        let mut result = Vec::new();
+
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            if i == lines.len() - 1 && trimmed.starts_with("return ") {
+                if let Some(value) = trimmed.strip_prefix("return ") {
+                    let indent = &line[..line.len() - trimmed.len()];
+                    result.push(format!("{}{}", indent, value));
+                }
+            } else {
+                result.push(line.to_string());
+            }
+        }
+
+        result.join("\n")
+    }
+
+    /// Transform return statements for multiple return values using temporary variables
     fn transform_multiple_returns(body: &str) -> String {
-        // Complex case: needs control flow analysis
-        // For now, keep as-is
-        // TODO: Convert to if/else chain or use temporary variables
-        body.to_string()
+        let mut parser = tree_sitter::Parser::new();
+        if parser.set_language(&tree_sitter_python::LANGUAGE.into()).is_err() {
+            return body.to_string();
+        }
+
+        let Some(tree) = parser.parse(body, None) else {
+            return body.to_string();
+        };
+
+        let root = tree.root_node();
+
+        let mut return_replacements = Vec::new();
+        Self::collect_return_replacements(root, body, &mut return_replacements);
+
+        if return_replacements.is_empty() {
+            return body.to_string();
+        }
+
+        return_replacements.sort_by_key(|r| std::cmp::Reverse(r.0));
+
+        let mut result = body.to_string();
+        for (start, end, value) in return_replacements {
+            if value.is_empty() {
+                result.replace_range(start..end, "_inline_result = None")
+            } else {
+                result.replace_range(start..end, &format!("_inline_result = {}", value))
+            }
+        }
+
+        format!("{}\n_inline_result", result)
+    }
+
+    /// Collect return statement replacements (start_byte, end_byte, return_value)
+    fn collect_return_replacements(
+        node: tree_sitter::Node, text: &str, replacements: &mut Vec<(usize, usize, String)>,
+    ) {
+        if node.kind() == "return_statement" {
+            let mut return_value = String::new();
+            let mut cursor = node.walk();
+
+            for child in node.children(&mut cursor) {
+                if child.kind() != "return"
+                    && let Ok(value) = child.utf8_text(text.as_bytes())
+                {
+                    return_value = value.to_string();
+                }
+            }
+
+            replacements.push((node.start_byte(), node.end_byte(), return_value));
+            return;
+        }
+
+        if node.kind() == "function_definition" {
+            return;
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            Self::collect_return_replacements(child, text, replacements);
+        }
     }
 
     /// Dedent code by removing common leading whitespace
@@ -488,9 +725,12 @@ struct FunctionInfo {
 }
 
 /// Type of return value(s) from a function
+#[derive(Debug)]
 enum ReturnType {
     None,
+    #[allow(dead_code)]
     Single(String),
+    #[allow(dead_code)]
     Multiple(Vec<String>),
 }
 
@@ -561,5 +801,137 @@ mod tests {
         assert_eq!(result.start.line, 0);
         assert_eq!(result.start.character, 0);
         assert_eq!(result.end.line, 2);
+    }
+
+    #[test]
+    fn test_substitute_parameter_avoids_strings() {
+        let body = "msg = \"x is the value\"\nreturn x + 1";
+        let result = InlineFunctionProvider::substitute_parameter(body, "x", "value");
+        assert!(result.contains("\"x is the value\""));
+        assert!(result.contains("value + 1"));
+    }
+
+    #[test]
+    fn test_substitute_parameter_avoids_comments() {
+        let body = "# x is the parameter\nreturn x + 1";
+        let result = InlineFunctionProvider::substitute_parameter(body, "x", "value");
+        assert!(result.contains("# x is the parameter"));
+        assert!(result.contains("value + 1"));
+    }
+
+    #[test]
+    fn test_has_only_trailing_return() {
+        let body = "x = a + b\nreturn x";
+        assert!(InlineFunctionProvider::has_only_trailing_return(body));
+
+        let body = "if a:\n    return 1\nreturn 2";
+        assert!(!InlineFunctionProvider::has_only_trailing_return(body));
+
+        let body = "print('hello')";
+        assert!(!InlineFunctionProvider::has_only_trailing_return(body));
+    }
+
+    #[test]
+    fn test_replace_trailing_return() {
+        let body = "x = a + b\ny = x * 2\nreturn y";
+        let result = InlineFunctionProvider::replace_trailing_return(body);
+        assert_eq!(result, "x = a + b\ny = x * 2\ny");
+    }
+
+    #[test]
+    fn test_replace_trailing_return_with_indentation() {
+        let body = "    x = a + b\n    return x";
+        let result = InlineFunctionProvider::replace_trailing_return(body);
+        assert_eq!(result, "    x = a + b\n    x");
+    }
+
+    #[test]
+    fn test_collect_identifiers() {
+        let code = "x = 1\ny = x + 2\nz = foo(y)";
+        let identifiers = InlineFunctionProvider::collect_identifiers(code);
+        assert!(identifiers.contains("x"));
+        assert!(identifiers.contains("y"));
+        assert!(identifiers.contains("z"));
+        assert!(identifiers.contains("foo"));
+    }
+
+    #[test]
+    fn test_generate_unique_name() {
+        let call_scope = ["x", "x_1", "y"].iter().map(|s| s.to_string()).collect();
+        let body_scope = ["z"].iter().map(|s| s.to_string()).collect();
+        let result = InlineFunctionProvider::generate_unique_name("x", &call_scope, &body_scope);
+        assert_eq!(result, "x_2");
+    }
+
+    #[test]
+    fn test_transform_multiple_returns_with_early_return() {
+        let body = "if condition:\n    return a\nelse:\n    return b";
+        let result = InlineFunctionProvider::transform_multiple_returns(body);
+        assert!(result.contains("_inline_result = a"));
+        assert!(result.contains("_inline_result = b"));
+        assert!(result.ends_with("_inline_result"));
+    }
+
+    #[test]
+    fn test_transform_multiple_returns_complex_control_flow() {
+        let body = "if x > 0:\n    return x\nelif x < 0:\n    return -x\nelse:\n    return 0";
+        let result = InlineFunctionProvider::transform_multiple_returns(body);
+        assert!(result.contains("_inline_result"));
+        assert!(result.ends_with("_inline_result"));
+    }
+
+    #[test]
+    fn test_transform_single_return_with_early_returns() {
+        let body = "if error:\n    return None\nreturn result";
+        let result = InlineFunctionProvider::transform_single_return(body);
+        assert!(result.contains("_inline_result"));
+    }
+
+    #[test]
+    fn test_collect_return_replacements() {
+        let body = "if x:\n    return 1\nreturn 2";
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(body, None).unwrap();
+
+        let mut replacements = Vec::new();
+        InlineFunctionProvider::collect_return_replacements(tree.root_node(), body, &mut replacements);
+        assert_eq!(replacements.len(), 2);
+    }
+
+    #[test]
+    fn test_collect_return_replacements_ignores_nested_functions() {
+        let body = "def inner():\n    return 1\nreturn 2";
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(body, None).unwrap();
+
+        let mut replacements = Vec::new();
+        InlineFunctionProvider::collect_return_replacements(tree.root_node(), body, &mut replacements);
+        assert_eq!(replacements.len(), 1);
+    }
+
+    #[test]
+    fn test_variable_conflict_resolution() {
+        let body = "temp = x + 1\nreturn temp";
+        let call_text = "temp = 5\nresult = foo(10)";
+
+        let body_vars = InlineFunctionProvider::collect_identifiers(body);
+        let call_vars = InlineFunctionProvider::collect_identifiers(call_text);
+
+        assert!(body_vars.contains("temp"));
+        assert!(call_vars.contains("temp"));
+
+        let unique = InlineFunctionProvider::generate_unique_name("temp", &call_vars, &body_vars);
+        assert_ne!(unique, "temp");
+        assert!(!call_vars.contains(&unique));
+    }
+
+    #[test]
+    fn test_transform_multiple_returns_with_empty_return() {
+        let body = "if error:\n    return\nreturn result";
+        let result = InlineFunctionProvider::transform_multiple_returns(body);
+        assert!(result.contains("_inline_result = None"));
+        assert!(result.contains("_inline_result = result"));
     }
 }

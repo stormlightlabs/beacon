@@ -410,9 +410,10 @@ impl ImportSorter {
 
         for import in &self.imports {
             if let Some(prev_category) = current_category
-                && prev_category != import.category {
-                    output.push('\n');
-                }
+                && prev_category != import.category
+            {
+                output.push('\n');
+            }
 
             output.push_str(&import.format(max_line_length));
             output.push('\n');

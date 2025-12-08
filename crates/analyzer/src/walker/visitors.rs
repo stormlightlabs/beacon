@@ -734,15 +734,16 @@ pub fn visit_while(
 
                     if let Some(pred) = &predicate
                         && pred.has_simple_negation()
-                            && let Some(inv_pred) = &inverse_predicate {
-                                let span = Span::with_end(*line, *col, *end_line, *end_col);
-                                ctx.constraints.push(Constraint::Narrowing(
-                                    var_name.clone(),
-                                    inv_pred.clone(),
-                                    refined_ty.clone(),
-                                    span,
-                                ));
-                            }
+                        && let Some(inv_pred) = &inverse_predicate
+                    {
+                        let span = Span::with_end(*line, *col, *end_line, *end_col);
+                        ctx.constraints.push(Constraint::Narrowing(
+                            var_name.clone(),
+                            inv_pred.clone(),
+                            refined_ty.clone(),
+                            span,
+                        ));
+                    }
                 }
 
                 for stmt in else_stmts {
@@ -841,11 +842,12 @@ pub fn visit_imports(
             let module_type = Type::Con(TypeCtor::Module(module.clone()));
             if let Some(cache_arc) = stub_cache
                 && let Ok(cache) = cache_arc.read()
-                    && let Some(stub) = cache.get(module)
-                        && !ctx.loaded_stub_modules.contains(module) {
-                            loader::load_stub_into_registry(stub, &mut ctx.class_registry, &mut ctx.typevar_registry)?;
-                            ctx.loaded_stub_modules.insert(module.clone());
-                        }
+                && let Some(stub) = cache.get(module)
+                && !ctx.loaded_stub_modules.contains(module)
+            {
+                loader::load_stub_into_registry(stub, &mut ctx.class_registry, &mut ctx.typevar_registry)?;
+                ctx.loaded_stub_modules.insert(module.clone());
+            }
 
             env.bind(module_name.clone(), TypeScheme::mono(module_type.clone()));
             ctx.record_type_with_end(*line, *col, *end_line, *end_col, module_type.clone());
@@ -855,10 +857,11 @@ pub fn visit_imports(
             if let Some(cache_arc) = stub_cache {
                 if let Ok(cache) = cache_arc.read() {
                     if let Some(stub) = cache.get(module)
-                        && !ctx.loaded_stub_modules.contains(module) {
-                            loader::load_stub_into_registry(stub, &mut ctx.class_registry, &mut ctx.typevar_registry)?;
-                            ctx.loaded_stub_modules.insert(module.clone());
-                        }
+                        && !ctx.loaded_stub_modules.contains(module)
+                    {
+                        loader::load_stub_into_registry(stub, &mut ctx.class_registry, &mut ctx.typevar_registry)?;
+                        ctx.loaded_stub_modules.insert(module.clone());
+                    }
                     for iname in names {
                         let ty = cache
                             .get(module)
@@ -1232,9 +1235,10 @@ pub fn visit_if(
             let mut true_env = env.clone();
 
             if let (Some(var_name), Some(_)) = (narrowed_var.as_ref(), narrowed_type.as_ref())
-                && let Some(original_type) = env.lookup(var_name) {
-                    ctx.control_flow.start_tracking(var_name.clone(), original_type);
-                }
+                && let Some(original_type) = env.lookup(var_name)
+            {
+                ctx.control_flow.start_tracking(var_name.clone(), original_type);
+            }
 
             if let (Some(var_name), Some(refined_ty)) = (narrowed_var.as_ref(), narrowed_type.as_ref()) {
                 true_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
@@ -1271,22 +1275,23 @@ pub fn visit_if(
 
                     if let Some(pred) = &predicate
                         && pred.has_simple_negation()
-                            && let Some(inv_pred) = &inverse_predicate {
-                                let span = Span::with_end(*line, *col, *end_line, *end_col);
-                                ctx.constraints.push(Constraint::Narrowing(
-                                    var_name.clone(),
-                                    inv_pred.clone(),
-                                    refined_ty,
-                                    span,
-                                ));
+                        && let Some(inv_pred) = &inverse_predicate
+                    {
+                        let span = Span::with_end(*line, *col, *end_line, *end_col);
+                        ctx.constraints.push(Constraint::Narrowing(
+                            var_name.clone(),
+                            inv_pred.clone(),
+                            refined_ty,
+                            span,
+                        ));
 
-                                if let Some(original_type) = env.lookup(&var_name) {
-                                    let eliminated = inv_pred.eliminated_types(&original_type);
-                                    for elim_ty in eliminated {
-                                        ctx.control_flow.eliminate_type(&var_name, elim_ty);
-                                    }
-                                }
+                        if let Some(original_type) = env.lookup(&var_name) {
+                            let eliminated = inv_pred.eliminated_types(&original_type);
+                            for elim_ty in eliminated {
+                                ctx.control_flow.eliminate_type(&var_name, elim_ty);
                             }
+                        }
+                    }
                 }
             }
 
@@ -1304,9 +1309,10 @@ pub fn visit_if(
 
             if let Some(var_name) = narrowed_var.as_ref() {
                 if let Some(existing_scheme) = env.get_scheme(var_name)
-                    && let Some(refined_ty) = ctx.control_flow.apply_remaining_types(var_name, &existing_scheme.ty) {
-                        env.bind(var_name.clone(), TypeScheme::mono(refined_ty));
-                    }
+                    && let Some(refined_ty) = ctx.control_flow.apply_remaining_types(var_name, &existing_scheme.ty)
+                {
+                    env.bind(var_name.clone(), TypeScheme::mono(refined_ty));
+                }
                 ctx.control_flow.stop_tracking(var_name);
             }
 
@@ -1332,12 +1338,13 @@ fn visit_elif_part(
         elif_true_env.bind(var_name.clone(), TypeScheme::mono(refined_ty.clone()));
 
         if let Some(pred) = &elif_predicate
-            && let Some(original_type) = env.lookup(var_name) {
-                let eliminated = pred.eliminated_types(&original_type);
-                for elim_ty in eliminated {
-                    ctx.control_flow.eliminate_type(var_name, elim_ty);
-                }
+            && let Some(original_type) = env.lookup(var_name)
+        {
+            let eliminated = pred.eliminated_types(&original_type);
+            for elim_ty in eliminated {
+                ctx.control_flow.eliminate_type(var_name, elim_ty);
             }
+        }
     }
 
     for stmt in elif_body {

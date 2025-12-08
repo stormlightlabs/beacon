@@ -73,10 +73,11 @@ impl SignatureHelpProvider {
                 }
                 "argument_list" => {
                     if let Some(parent) = current.parent()
-                        && parent.kind() == "call" {
-                            let func = parent.child_by_field_name("function")?;
-                            return Some((parent, func));
-                        }
+                        && parent.kind() == "call"
+                    {
+                        let func = parent.child_by_field_name("function")?;
+                        return Some((parent, func));
+                    }
                 }
                 _ => {}
             }

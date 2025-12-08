@@ -565,10 +565,11 @@ impl WorkspaceCFG {
 
         for function_id in reachable_functions {
             if let Some(module) = self.modules.get(&function_id.uri)
-                && let Some(cfg) = module.function_cfgs.get(&function_id.scope_id) {
-                    let blocks = cfg.reachable_blocks();
-                    reachable.insert(function_id, blocks);
-                }
+                && let Some(cfg) = module.function_cfgs.get(&function_id.scope_id)
+            {
+                let blocks = cfg.reachable_blocks();
+                reachable.insert(function_id, blocks);
+            }
         }
 
         reachable

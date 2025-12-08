@@ -163,16 +163,17 @@ impl IntrospectionCache {
 
         if let Some(ref file) = cache_file
             && file.exists()
-                && let Ok(loaded) = Self::load_from_disk(file) {
-                    for (key, value) in loaded {
-                        cache.put(key, value);
-                    }
-                    tracing::debug!(
-                        "Loaded {} introspection cache entries from {}",
-                        cache.len(),
-                        file.display()
-                    );
-                }
+            && let Ok(loaded) = Self::load_from_disk(file)
+        {
+            for (key, value) in loaded {
+                cache.put(key, value);
+            }
+            tracing::debug!(
+                "Loaded {} introspection cache entries from {}",
+                cache.len(),
+                file.display()
+            );
+        }
 
         Self { cache: Arc::new(RwLock::new(cache)), cache_file }
     }

@@ -131,9 +131,10 @@ fn extract_mapping_value_type(subject_type: &Type, env: &mut TypeEnvironment) ->
     match subject_type {
         Type::App(inner, val) => {
             if let Type::App(ctor, _key) = inner.as_ref()
-                && matches!(ctor.as_ref(), Type::Con(TypeCtor::Dict)) {
-                    return val.as_ref().clone();
-                }
+                && matches!(ctor.as_ref(), Type::Con(TypeCtor::Dict))
+            {
+                return val.as_ref().clone();
+            }
             Type::Var(env.fresh_var())
         }
         _ => Type::Var(env.fresh_var()),
@@ -151,25 +152,26 @@ fn extract_class_bindings(
     let mut bindings = Vec::new();
 
     if let Some(class_meta) = class_registry.get_class(cls)
-        && let Some(init_type) = &class_meta.init_type {
-            let param_types = extract_constructor_params(init_type);
-            if patterns.len() != param_types.len() {
-                return Err(AnalysisError::ConstraintGeneration(format!(
-                    "Class pattern for '{}' expects {} arguments but got {}",
-                    cls,
-                    param_types.len(),
-                    patterns.len()
-                ))
-                .into());
-            }
-
-            for (pattern, param_type) in patterns.iter().zip(param_types.iter()) {
-                let pattern_bindings = extract_pattern_bindings(pattern, &param_type.1, env, class_registry)?;
-                bindings.extend(pattern_bindings);
-            }
-
-            return Ok(bindings);
+        && let Some(init_type) = &class_meta.init_type
+    {
+        let param_types = extract_constructor_params(init_type);
+        if patterns.len() != param_types.len() {
+            return Err(AnalysisError::ConstraintGeneration(format!(
+                "Class pattern for '{}' expects {} arguments but got {}",
+                cls,
+                param_types.len(),
+                patterns.len()
+            ))
+            .into());
         }
+
+        for (pattern, param_type) in patterns.iter().zip(param_types.iter()) {
+            let pattern_bindings = extract_pattern_bindings(pattern, &param_type.1, env, class_registry)?;
+            bindings.extend(pattern_bindings);
+        }
+
+        return Ok(bindings);
+    }
 
     for pattern in patterns {
         let field_type = Type::Var(env.fresh_var());
@@ -483,12 +485,13 @@ pub fn validate_pattern_structure(
         (Pattern::MatchSequence(patterns), Type::App(ctor, _)) => {
             if let Type::Con(TypeCtor::Tuple) = ctor.as_ref()
                 && let Some(arity) = extract_tuple_arity(subject_type)
-                    && patterns.len() != arity {
-                        return Err(TypeError::PatternStructureMismatch {
-                            expected: format!("{arity} elements"),
-                            found: format!("{} pattern bindings", patterns.len()),
-                        });
-                    }
+                && patterns.len() != arity
+            {
+                return Err(TypeError::PatternStructureMismatch {
+                    expected: format!("{arity} elements"),
+                    found: format!("{} pattern bindings", patterns.len()),
+                });
+            }
             Ok(())
         }
         _ => Ok(()),

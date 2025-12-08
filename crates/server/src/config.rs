@@ -209,8 +209,7 @@ impl TypeCheckingConfig {
 /// Python version target for feature support
 ///
 /// Determines which Python language features are enabled (e.g., pattern matching in 3.10+, ParamSpec in 3.10+).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PythonVersion {
     #[serde(rename = "3.9")]
     Py39,
@@ -224,7 +223,6 @@ pub enum PythonVersion {
     #[serde(rename = "3.13")]
     Py313,
 }
-
 
 impl PythonVersion {
     /// Check if pattern matching (PEP 634) is supported
@@ -510,11 +508,12 @@ impl Config {
             );
             if let Ok(content) = fs::read_to_string(&pyproject_toml)
                 && let Ok(table) = toml::from_str::<toml::Table>(&content)
-                    && let Some(tool) = table.get("tool").and_then(|t| t.as_table())
-                        && let Some(beacon_config) = tool.get("beacon") {
-                            config.load_from_toml_value(beacon_config.clone())?;
-                            return Ok(config);
-                        }
+                && let Some(tool) = table.get("tool").and_then(|t| t.as_table())
+                && let Some(beacon_config) = tool.get("beacon")
+            {
+                config.load_from_toml_value(beacon_config.clone())?;
+                return Ok(config);
+            }
         }
 
         tracing::debug!("No beacon.toml or pyproject.toml found, using defaults");

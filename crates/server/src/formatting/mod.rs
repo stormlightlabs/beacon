@@ -207,10 +207,11 @@ impl Formatter {
         }
 
         if self.config.cache_enabled
-            && let Some(cached) = self.cache.get(source, &self.config, start_line, end_line) {
-                tracing::debug!(start_line, end_line, "Cache hit for formatted range");
-                return Ok(cached);
-            }
+            && let Some(cached) = self.cache.get(source, &self.config, start_line, end_line)
+        {
+            tracing::debug!(start_line, end_line, "Cache hit for formatted range");
+            return Ok(cached);
+        }
 
         tracing::debug!(start_line, end_line, "Cache miss, performing full format");
 
@@ -520,16 +521,19 @@ impl Formatter {
     ) {
         if node.kind() == "comment" {
             let line = node.start_position().row + 1;
-            if line >= start_line && line <= end_line
-                && let Ok(text) = node.utf8_text(source.as_bytes()) {
-                    let col = node.start_position().column + 1;
-                    let mut inferred_indent = indent_level;
-                    if let Some(sibling) = node.next_named_sibling()
-                        && sibling.kind() == "block" {
-                            inferred_indent = inferred_indent.saturating_add(1);
-                        }
-                    comments.push(Comment { line, col, text: text.to_string(), indent_level: inferred_indent });
+            if line >= start_line
+                && line <= end_line
+                && let Ok(text) = node.utf8_text(source.as_bytes())
+            {
+                let col = node.start_position().column + 1;
+                let mut inferred_indent = indent_level;
+                if let Some(sibling) = node.next_named_sibling()
+                    && sibling.kind() == "block"
+                {
+                    inferred_indent = inferred_indent.saturating_add(1);
                 }
+                comments.push(Comment { line, col, text: text.to_string(), indent_level: inferred_indent });
+            }
             return;
         }
 

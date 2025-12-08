@@ -180,9 +180,10 @@ impl SuppressionMap {
     /// Check if formatting should be disabled at the given line
     pub fn is_formatting_disabled(&self, line: usize) -> bool {
         if let Some(suppressions) = self.suppressions.get(&line)
-            && suppressions.iter().any(|s| matches!(s, Suppression::FmtSkip)) {
-                return true;
-            }
+            && suppressions.iter().any(|s| matches!(s, Suppression::FmtSkip))
+        {
+            return true;
+        }
 
         for (start, end) in &self.fmt_off_ranges {
             if line >= *start && line <= *end {

@@ -550,12 +550,13 @@ impl<'a> ConstraintGenContext<'a> {
         if let Some(line_text) = self.line_text(line) {
             let search_start = Self::column_to_byte(line_text, column_hint);
             if search_start <= line_text.len()
-                && let Some(rel_idx) = line_text[search_start..].find(name) {
-                    let byte_idx = search_start + rel_idx;
-                    let start_col = Self::byte_to_column(line_text, byte_idx);
-                    let end_col = start_col + name_width;
-                    return Span::with_end(line, start_col, line, end_col);
-                }
+                && let Some(rel_idx) = line_text[search_start..].find(name)
+            {
+                let byte_idx = search_start + rel_idx;
+                let start_col = Self::byte_to_column(line_text, byte_idx);
+                let end_col = start_col + name_width;
+                return Span::with_end(line, start_col, line, end_col);
+            }
         }
 
         Span::with_end(line, column_hint, line, fallback_end)

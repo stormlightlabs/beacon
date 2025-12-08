@@ -163,9 +163,10 @@ impl DocumentSymbolsProvider {
             },
             AstNode::If { body, else_body, .. } => {
                 if let Some(else_stmts) = else_body
-                    && let Some(last) = else_stmts.last() {
-                        return Self::node_end_position(last);
-                    }
+                    && let Some(last) = else_stmts.last()
+                {
+                    return Self::node_end_position(last);
+                }
                 if let Some(last) = body.last() {
                     Self::node_end_position(last)
                 } else {
@@ -183,9 +184,10 @@ impl DocumentSymbolsProvider {
             }
             AstNode::Try { body, finally_body, line, col, .. } => {
                 if let Some(finally_stmts) = finally_body
-                    && let Some(last) = finally_stmts.last() {
-                        return Self::node_end_position(last);
-                    }
+                    && let Some(last) = finally_stmts.last()
+                {
+                    return Self::node_end_position(last);
+                }
                 if let Some(last) = body.last() {
                     Self::node_end_position(last)
                 } else {

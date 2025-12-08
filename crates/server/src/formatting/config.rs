@@ -18,7 +18,6 @@ pub enum QuoteStyle {
     Preserve,
 }
 
-
 /// Trailing comma preference for multi-line structures
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -32,7 +31,6 @@ pub enum TrailingCommas {
     /// Never add trailing commas
     Never,
 }
-
 
 /// Import sorting style
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,7 +46,6 @@ pub enum ImportSorting {
     Off,
 }
 
-
 /// Compatibility mode with other formatters
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -62,7 +59,6 @@ pub enum CompatibilityMode {
     /// Strict PEP8
     Pep8,
 }
-
 
 /// Configuration for the Python code formatter
 ///

@@ -71,9 +71,10 @@ impl Analyzer {
         let stdlib_modules = beacon_analyzer::EMBEDDED_STDLIB_MODULES;
         for module_name in stdlib_modules.iter().copied() {
             if let Some(stub) = beacon_analyzer::get_embedded_stub(module_name)
-                && let Ok(mut cache) = stub_cache.write() {
-                    cache.insert(module_name.to_string(), stub);
-                }
+                && let Ok(mut cache) = stub_cache.write()
+            {
+                cache.insert(module_name.to_string(), stub);
+            }
         }
 
         Self {
@@ -423,9 +424,10 @@ impl Analyzer {
         let position_map = self.position_maps.get(uri);
 
         if let Some(pos_map) = position_map
-            && let Some(node_id) = pos_map.get(&(line, col)) {
-                return Ok(result.type_map.get(node_id).cloned());
-            }
+            && let Some(node_id) = pos_map.get(&(line, col))
+        {
+            return Ok(result.type_map.get(node_id).cloned());
+        }
 
         Ok(None)
     }
@@ -553,23 +555,24 @@ impl Analyzer {
 
             if let Some(tl_scope_id) = top_level_scope_id
                 && let Some(tl_scope) = symbol_table.scopes.get(&tl_scope_id)
-                    && let Some(root_scope) = symbol_table.scopes.get(&root_scope_id) {
-                        let scope_start_byte = tl_scope.start_byte;
-                        let scope_end_byte = tl_scope.end_byte;
+                && let Some(root_scope) = symbol_table.scopes.get(&root_scope_id)
+            {
+                let scope_start_byte = tl_scope.start_byte;
+                let scope_end_byte = tl_scope.end_byte;
 
-                        for (symbol_name, symbol) in &root_scope.symbols {
-                            if symbol.scope_id == root_scope_id {
-                                let symbol_byte = Self::line_col_to_byte_offset(&source, symbol.line, symbol.col);
+                for (symbol_name, symbol) in &root_scope.symbols {
+                    if symbol.scope_id == root_scope_id {
+                        let symbol_byte = Self::line_col_to_byte_offset(&source, symbol.line, symbol.col);
 
-                                if (symbol_byte <= scope_start_byte && scope_start_byte - symbol_byte < 200)
-                                    || (symbol_byte >= scope_start_byte && symbol_byte < scope_end_byte)
-                                {
-                                    affected_symbols.insert(symbol_name.clone());
-                                    break;
-                                }
-                            }
+                        if (symbol_byte <= scope_start_byte && scope_start_byte - symbol_byte < 200)
+                            || (symbol_byte >= scope_start_byte && symbol_byte < scope_end_byte)
+                        {
+                            affected_symbols.insert(symbol_name.clone());
+                            break;
                         }
                     }
+                }
+            }
         }
 
         affected_symbols.into_iter().collect()

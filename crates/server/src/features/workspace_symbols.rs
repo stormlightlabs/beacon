@@ -57,21 +57,22 @@ impl WorkspaceSymbolsProvider {
 
         for uri in workspace_uris {
             if !self.documents.has_document(&uri)
-                && let Ok(_handle) = tokio::runtime::Handle::try_current() {
-                    let workspace = tokio::task::block_in_place(|| {
-                        tokio::runtime::Handle::current().block_on(async { self.workspace.read().await })
-                    });
+                && let Ok(_handle) = tokio::runtime::Handle::try_current()
+            {
+                let workspace = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async { self.workspace.read().await })
+                });
 
-                    if let Some(parse_result) = workspace.load_workspace_file(&uri) {
-                        Self::collect_matching_symbols(
-                            &uri,
-                            &parse_result.ast,
-                            &parse_result.symbol_table,
-                            &query,
-                            &mut results,
-                        );
-                    }
+                if let Some(parse_result) = workspace.load_workspace_file(&uri) {
+                    Self::collect_matching_symbols(
+                        &uri,
+                        &parse_result.ast,
+                        &parse_result.symbol_table,
+                        &query,
+                        &mut results,
+                    );
                 }
+            }
         }
 
         if query.is_empty() || results.is_empty() {

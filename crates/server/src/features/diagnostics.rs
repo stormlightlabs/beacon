@@ -81,14 +81,15 @@ impl DiagnosticProvider {
         if let Some(line_text) = line.checked_sub(1).and_then(|idx| lines.get(idx)).map(|s| s.as_str()) {
             let search_start = column_to_byte(line_text, col_hint);
             if search_start <= line_text.len()
-                && let Some(rel_idx) = line_text[search_start..].find(name) {
-                    let byte_idx = search_start + rel_idx;
-                    let start_col = byte_to_column(line_text, byte_idx);
-                    let end_col = start_col + name.chars().count();
-                    let start = Position { line: (line - 1) as u32, character: (start_col - 1) as u32 };
-                    let end = Position { line: start.line, character: (end_col - 1) as u32 };
-                    return Range { start, end };
-                }
+                && let Some(rel_idx) = line_text[search_start..].find(name)
+            {
+                let byte_idx = search_start + rel_idx;
+                let start_col = byte_to_column(line_text, byte_idx);
+                let end_col = start_col + name.chars().count();
+                let start = Position { line: (line - 1) as u32, character: (start_col - 1) as u32 };
+                let end = Position { line: start.line, character: (end_col - 1) as u32 };
+                return Range { start, end };
+            }
         }
 
         Range { start: fallback_start, end: fallback_end }
@@ -485,9 +486,9 @@ impl DiagnosticProvider {
                 } else if ctx.mode != config::TypeCheckingMode::Relaxed
                     && let Some(inferred_type) =
                         Self::get_type_for_position(ctx.type_map, ctx.position_map, *line, *col)
-                    {
-                        self.check_missing_annotation(target, &inferred_type, *line, *col, ctx);
-                    }
+                {
+                    self.check_missing_annotation(target, &inferred_type, *line, *col, ctx);
+                }
             }
             AstNode::If { body, elif_parts, else_body, .. } => {
                 for stmt in body {
@@ -723,40 +724,41 @@ impl DiagnosticProvider {
                 {
                     let parser = beacon_core::AnnotationParser::new();
                     if let Ok(annotated_type) = parser.parse(annotation)
-                        && !Self::types_are_compatible(&annotated_type, &inferred_type) {
-                            let severity =
-                                Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::AnnotationMismatch);
+                        && !Self::types_are_compatible(&annotated_type, &inferred_type)
+                    {
+                        let severity =
+                            Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::AnnotationMismatch);
 
-                            if let Some(sev) = severity {
-                                let position = Position {
-                                    line: (param.line.saturating_sub(1)) as u32,
-                                    character: (param.col.saturating_sub(1)) as u32,
-                                };
+                        if let Some(sev) = severity {
+                            let position = Position {
+                                line: (param.line.saturating_sub(1)) as u32,
+                                character: (param.col.saturating_sub(1)) as u32,
+                            };
 
-                                let range = Range {
-                                    start: position,
-                                    end: Position {
-                                        line: position.line,
-                                        character: position.character + param.name.len() as u32,
-                                    },
-                                };
+                            let range = Range {
+                                start: position,
+                                end: Position {
+                                    line: position.line,
+                                    character: position.character + param.name.len() as u32,
+                                },
+                            };
 
-                                ctx.diagnostics.push(Diagnostic {
-                                    range,
-                                    severity: Some(sev),
-                                    code: Some(lsp_types::NumberOrString::String("ANN003".to_string())),
-                                    source: Some("beacon".to_string()),
-                                    message: format!(
-                                        "Parameter '{}' annotation mismatch: annotated as '{}', but inferred as '{}'",
-                                        param.name, annotated_type, inferred_type
-                                    ),
-                                    related_information: None,
-                                    tags: None,
-                                    data: None,
-                                    code_description: None,
-                                });
-                            }
+                            ctx.diagnostics.push(Diagnostic {
+                                range,
+                                severity: Some(sev),
+                                code: Some(lsp_types::NumberOrString::String("ANN003".to_string())),
+                                source: Some("beacon".to_string()),
+                                message: format!(
+                                    "Parameter '{}' annotation mismatch: annotated as '{}', but inferred as '{}'",
+                                    param.name, annotated_type, inferred_type
+                                ),
+                                related_information: None,
+                                tags: None,
+                                data: None,
+                                code_description: None,
+                            });
                         }
+                    }
                 }
             }
             None => {
@@ -914,24 +916,25 @@ impl DiagnosticProvider {
 
                     let parser = beacon_core::AnnotationParser::new();
                     if let Ok(annotated_type) = parser.parse(annotation)
-                        && !Self::types_are_compatible(&annotated_type, &inferred_return_type) {
-                            let severity =
-                                Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::AnnotationMismatch);
+                        && !Self::types_are_compatible(&annotated_type, &inferred_return_type)
+                    {
+                        let severity =
+                            Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::AnnotationMismatch);
 
-                            if let Some(sev) = severity {
-                                let start_position = Position {
-                                    line: (line.saturating_sub(1)) as u32,
-                                    character: (col.saturating_sub(1)) as u32,
-                                };
+                        if let Some(sev) = severity {
+                            let start_position = Position {
+                                line: (line.saturating_sub(1)) as u32,
+                                character: (col.saturating_sub(1)) as u32,
+                            };
 
-                                let end_position = Position {
-                                    line: (line.saturating_sub(1)) as u32,
-                                    character: (end_col.saturating_sub(1)) as u32,
-                                };
+                            let end_position = Position {
+                                line: (line.saturating_sub(1)) as u32,
+                                character: (end_col.saturating_sub(1)) as u32,
+                            };
 
-                                let range = Range { start: start_position, end: end_position };
+                            let range = Range { start: start_position, end: end_position };
 
-                                ctx.diagnostics.push(Diagnostic {
+                            ctx.diagnostics.push(Diagnostic {
                                     range,
                                     severity: Some(sev),
                                     code: Some(lsp_types::NumberOrString::String("ANN005".to_string())),
@@ -944,8 +947,8 @@ impl DiagnosticProvider {
                                     data: None,
                                     code_description: None,
                                 });
-                            }
                         }
+                    }
                 }
             }
             None => {
@@ -1413,49 +1416,51 @@ impl DiagnosticProvider {
             }
             AstNode::Import { module, line, col, .. } => {
                 if let Some(resolved_uri) = workspace.resolve_import(module)
-                    && circular_group.contains(&resolved_uri) {
-                        let position = Position { line: (*line - 1) as u32, character: (*col - 1) as u32 };
+                    && circular_group.contains(&resolved_uri)
+                {
+                    let position = Position { line: (*line - 1) as u32, character: (*col - 1) as u32 };
 
-                        let range = Range {
-                            start: position,
-                            end: Position { line: position.line, character: position.character + module.len() as u32 },
-                        };
+                    let range = Range {
+                        start: position,
+                        end: Position { line: position.line, character: position.character + module.len() as u32 },
+                    };
 
-                        diagnostics.push(Diagnostic {
-                            range,
-                            severity: Some(severity),
-                            code: Some(lsp_types::NumberOrString::String("circular-import".to_string())),
-                            source: Some("beacon".to_string()),
-                            message: message.to_string(),
-                            related_information: None,
-                            tags: None,
-                            data: None,
-                            code_description: None,
-                        });
-                    }
+                    diagnostics.push(Diagnostic {
+                        range,
+                        severity: Some(severity),
+                        code: Some(lsp_types::NumberOrString::String("circular-import".to_string())),
+                        source: Some("beacon".to_string()),
+                        message: message.to_string(),
+                        related_information: None,
+                        tags: None,
+                        data: None,
+                        code_description: None,
+                    });
+                }
             }
             AstNode::ImportFrom { module, line, col, .. } => {
                 if let Some(resolved_uri) = workspace.resolve_import(module)
-                    && circular_group.contains(&resolved_uri) {
-                        let position = Position { line: (*line - 1) as u32, character: (*col - 1) as u32 };
+                    && circular_group.contains(&resolved_uri)
+                {
+                    let position = Position { line: (*line - 1) as u32, character: (*col - 1) as u32 };
 
-                        let range = Range {
-                            start: position,
-                            end: Position { line: position.line, character: position.character + module.len() as u32 },
-                        };
+                    let range = Range {
+                        start: position,
+                        end: Position { line: position.line, character: position.character + module.len() as u32 },
+                    };
 
-                        diagnostics.push(Diagnostic {
-                            range,
-                            severity: Some(severity),
-                            code: Some(lsp_types::NumberOrString::String("circular-import".to_string())),
-                            source: Some("beacon".to_string()),
-                            message: message.to_string(),
-                            related_information: None,
-                            tags: None,
-                            data: None,
-                            code_description: None,
-                        });
-                    }
+                    diagnostics.push(Diagnostic {
+                        range,
+                        severity: Some(severity),
+                        code: Some(lsp_types::NumberOrString::String("circular-import".to_string())),
+                        source: Some("beacon".to_string()),
+                        message: message.to_string(),
+                        related_information: None,
+                        tags: None,
+                        data: None,
+                        code_description: None,
+                    });
+                }
             }
             AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } => {
                 for stmt in body {
@@ -1771,42 +1776,44 @@ impl DiagnosticProvider {
             AstNode::Assignment { target, value, line, col, .. } => {
                 let target_name = target.target_to_string();
                 if target_name == "__all__"
-                    && let AstNode::List { elements, .. } = value.as_ref() {
-                        for (idx, element) in elements.iter().enumerate() {
-                            if let AstNode::Literal {
-                                value: beacon_parser::LiteralValue::String { value: symbol_name, .. },
-                                ..
-                            } = element
-                                && !module_symbols.contains(symbol_name) {
-                                    let position = Position {
-                                        line: (*line - 1) as u32,
-                                        character: (*col + idx * (symbol_name.len() + 4)) as u32,
-                                    };
+                    && let AstNode::List { elements, .. } = value.as_ref()
+                {
+                    for (idx, element) in elements.iter().enumerate() {
+                        if let AstNode::Literal {
+                            value: beacon_parser::LiteralValue::String { value: symbol_name, .. },
+                            ..
+                        } = element
+                            && !module_symbols.contains(symbol_name)
+                        {
+                            let position = Position {
+                                line: (*line - 1) as u32,
+                                character: (*col + idx * (symbol_name.len() + 4)) as u32,
+                            };
 
-                                    let range = Range {
-                                        start: position,
-                                        end: Position {
-                                            line: position.line,
-                                            character: position.character + symbol_name.len() as u32 + 2,
-                                        },
-                                    };
+                            let range = Range {
+                                start: position,
+                                end: Position {
+                                    line: position.line,
+                                    character: position.character + symbol_name.len() as u32 + 2,
+                                },
+                            };
 
-                                    diagnostics.push(Diagnostic {
-                                        range,
-                                        severity: Some(DiagnosticSeverity::WARNING),
-                                        code: Some(lsp_types::NumberOrString::String("BEA031".to_string())),
-                                        source: Some("beacon-linter".to_string()),
-                                        message: format!(
-                                            "Symbol '{symbol_name}' is exported in __all__ but not defined in module"
-                                        ),
-                                        related_information: None,
-                                        tags: None,
-                                        data: None,
-                                        code_description: None,
-                                    });
-                                }
+                            diagnostics.push(Diagnostic {
+                                range,
+                                severity: Some(DiagnosticSeverity::WARNING),
+                                code: Some(lsp_types::NumberOrString::String("BEA031".to_string())),
+                                source: Some("beacon-linter".to_string()),
+                                message: format!(
+                                    "Symbol '{symbol_name}' is exported in __all__ but not defined in module"
+                                ),
+                                related_information: None,
+                                tags: None,
+                                data: None,
+                                code_description: None,
+                            });
                         }
                     }
+                }
             }
             _ => {}
         }

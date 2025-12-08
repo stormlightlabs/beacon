@@ -16,9 +16,10 @@ static STDLIB_REGISTRIES: Lazy<(ClassRegistry, beacon_core::TypeVarConstraintReg
 
     for module_name in crate::EMBEDDED_STDLIB_MODULES.iter().copied() {
         if let Some(stub) = crate::get_embedded_stub(module_name)
-            && let Err(e) = load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry) {
-                eprintln!("Warning: Failed to load stdlib stub '{module_name}': {e:?}");
-            }
+            && let Err(e) = load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry)
+        {
+            eprintln!("Warning: Failed to load stdlib stub '{module_name}': {e:?}");
+        }
     }
 
     (class_registry, typevar_registry)
@@ -523,9 +524,10 @@ fn build_method_info(
     let start_idx = if has_self || has_cls { 1 } else { 0 };
     for param in params.iter().skip(start_idx) {
         if let Some(ann) = &param.type_annotation
-            && let Some(ty) = parse_type_annotation(ann, ctx) {
-                param_list.push((param.name.clone(), ty));
-            }
+            && let Some(ty) = parse_type_annotation(ann, ctx)
+        {
+            param_list.push((param.name.clone(), ty));
+        }
     }
 
     let ret_type = return_type
@@ -702,9 +704,10 @@ fn parse_generic_params(params_str: &str, ctx: &mut StubTypeContext) -> Vec<beac
     }
 
     if !current.is_empty()
-        && let Some(ty) = parse_type_annotation(current.trim(), ctx) {
-            types.push(ty);
-        }
+        && let Some(ty) = parse_type_annotation(current.trim(), ctx)
+    {
+        types.push(ty);
+    }
 
     types
 }
@@ -877,21 +880,22 @@ fn parse_class_bases(source: &str) -> std::collections::HashMap<String, Vec<Stri
         let trimmed = line.trim_start();
         if trimmed.starts_with("class ")
             && let Some(rest) = trimmed.strip_prefix("class ")
-                && let Some((name_part, _)) = rest.split_once(':') {
-                    let name_part = name_part.trim();
-                    if let Some(idx) = name_part.find('(') {
-                        let name = name_part[..idx].trim();
-                        if let Some(end_idx) = name_part.rfind(')') {
-                            let bases_str = &name_part[idx + 1..end_idx];
-                            let bases: Vec<String> = bases_str
-                                .split(',')
-                                .map(|s| s.trim().to_string())
-                                .filter(|s| !s.is_empty())
-                                .collect();
-                            map.insert(name.to_string(), bases);
-                        }
-                    }
+            && let Some((name_part, _)) = rest.split_once(':')
+        {
+            let name_part = name_part.trim();
+            if let Some(idx) = name_part.find('(') {
+                let name = name_part[..idx].trim();
+                if let Some(end_idx) = name_part.rfind(')') {
+                    let bases_str = &name_part[idx + 1..end_idx];
+                    let bases: Vec<String> = bases_str
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                    map.insert(name.to_string(), bases);
                 }
+            }
+        }
     }
 
     map

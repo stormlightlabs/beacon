@@ -76,16 +76,18 @@ impl RenameProvider {
         let mut changes = HashMap::new();
 
         if let Some(edits) = self.find_renames_in_document(uri, symbol_name, new_name, target_symbol)
-            && !edits.is_empty() {
-                changes.insert(uri.clone(), edits);
-            }
+            && !edits.is_empty()
+        {
+            changes.insert(uri.clone(), edits);
+        }
 
         for document_uri in self.documents.all_documents() {
             if document_uri != *uri
                 && let Some(edits) = self.find_renames_in_document(&document_uri, symbol_name, new_name, target_symbol)
-                    && !edits.is_empty() {
-                        changes.insert(document_uri, edits);
-                    }
+                && !edits.is_empty()
+            {
+                changes.insert(document_uri, edits);
+            }
         }
 
         let workspace = self.workspace.read().await;
@@ -99,9 +101,10 @@ impl RenameProvider {
                     target_symbol,
                     &workspace,
                 )
-                    && !edits.is_empty() {
-                        changes.insert(dependent_uri, edits);
-                    }
+                && !edits.is_empty()
+            {
+                changes.insert(dependent_uri, edits);
+            }
         }
 
         Some(changes)
@@ -168,19 +171,20 @@ impl RenameProvider {
     ) {
         if node.kind() == "identifier"
             && let Ok(node_text) = node.utf8_text(text.as_bytes())
-                && node_text == symbol_name {
-                    let byte_offset = node.start_byte();
-                    let scope = symbol_table.find_scope_at_position(byte_offset);
+            && node_text == symbol_name
+        {
+            let byte_offset = node.start_byte();
+            let scope = symbol_table.find_scope_at_position(byte_offset);
 
-                    if let Some(resolved_symbol) = symbol_table.lookup_symbol(symbol_name, scope)
-                        && resolved_symbol.scope_id == target_symbol.scope_id
-                            && resolved_symbol.line == target_symbol.line
-                            && resolved_symbol.col == target_symbol.col
-                        {
-                            let range = utils::tree_sitter_range_to_lsp_range(text, node.range());
-                            edits.push(TextEdit { range, new_text: new_name.to_string() });
-                        }
-                }
+            if let Some(resolved_symbol) = symbol_table.lookup_symbol(symbol_name, scope)
+                && resolved_symbol.scope_id == target_symbol.scope_id
+                && resolved_symbol.line == target_symbol.line
+                && resolved_symbol.col == target_symbol.col
+            {
+                let range = utils::tree_sitter_range_to_lsp_range(text, node.range());
+                edits.push(TextEdit { range, new_text: new_name.to_string() });
+            }
+        }
 
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
