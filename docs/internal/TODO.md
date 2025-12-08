@@ -28,9 +28,14 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 ### Cross-File LSP Features
 
 - [x] Cross-file goto definition for all symbols (beyond imports)
-- [ ] Cross-file rename support
-- [ ] Multi-file refactoring infrastructure
-- [ ] Workspace-wide symbol search improvements
+- [x] Cross-file rename support
+- [x] Multi-file refactoring infrastructure
+    - [x] Generic refactoring framework
+    - [x] Extract Function refactoring
+    - [x] Move Symbol refactoring
+- [ ] Inline Function refactoring
+- [ ] Change Signature refactoring
+- [x] Extract Variable refactoring
 
 ### Diagnostics & Validation
 
@@ -44,6 +49,9 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 - [ ] Memory profiling for workspace-wide analysis
 - [ ] Integration tests for cross-file CFG
 - [ ] Integration tests for cross-file taint analysis
+- [ ] Integration tests for Extract Function refactoring with type inference
+- [ ] Integration tests for Move Symbol refactoring across files
+- [ ] Integration tests for refactoring with workspace dependency updates
 - [ ] Stress testing with large multi-module projects
 
 ## Linter Tech Debt
