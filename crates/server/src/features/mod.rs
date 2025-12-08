@@ -39,6 +39,7 @@ pub mod semantic_tokens;
 pub mod signature_help;
 pub mod workspace_symbols;
 
+pub use change_signature::{ChangeSignatureProvider, ParameterChange};
 pub use code_actions::CodeActionsProvider;
 pub use completion::CompletionProvider;
 pub use diagnostics::DiagnosticProvider;

@@ -25,7 +25,6 @@ use tower_lsp::{Client, LanguageServer, jsonrpc::Result, lsp_types::*};
 /// LSP Backend implements the LSP LanguageServer trait and coordinates all features.
 /// TODO: Implement additional LSP methods:
 /// - on_type_formatting
-/// - execute_command
 pub struct Backend {
     /// LSP client for sending notifications and requests
     client: Client,
@@ -64,6 +63,7 @@ struct Features {
     extract_variable: ExtractVariableProvider,
     move_symbol: MoveSymbolProvider,
     inline_function: InlineFunctionProvider,
+    change_signature: ChangeSignatureProvider,
 }
 
 impl Features {
@@ -93,7 +93,8 @@ impl Features {
             extract_function: ExtractFunctionProvider::new(refactoring_context.clone()),
             extract_variable: ExtractVariableProvider::new(refactoring_context.clone()),
             move_symbol: MoveSymbolProvider::new(refactoring_context.clone()),
-            inline_function: InlineFunctionProvider::new(refactoring_context),
+            inline_function: InlineFunctionProvider::new(refactoring_context.clone()),
+            change_signature: ChangeSignatureProvider::new(refactoring_context),
         }
     }
 }
@@ -302,6 +303,7 @@ impl LanguageServer for Backend {
                             "beacon.extractFunction",
                             "beacon.moveSymbol",
                             "beacon.inlineFunction",
+                            "beacon.changeSignature",
                         ]
                         .map(String::from),
                     ),
@@ -817,6 +819,39 @@ impl LanguageServer for Backend {
                 let params = crate::features::inline_function::InlineFunctionParams { uri, position, inline_all };
 
                 if let Some(edit) = self.features.inline_function.execute(params).await
+                    && let Ok(value) = serde_json::to_value(edit)
+                {
+                    return Ok(Some(value));
+                }
+
+                Ok(None)
+            }
+            "beacon.changeSignature" => {
+                let args = params.arguments;
+                if args.len() != 3 {
+                    tracing::error!("Invalid arguments for change signature command");
+                    return Ok(None);
+                }
+
+                let Some(uri) = serde_json::from_value::<Url>(args[0].clone()).ok() else {
+                    tracing::error!("Failed to parse URI argument");
+                    return Ok(None);
+                };
+                let Some(position) = serde_json::from_value::<Position>(args[1].clone()).ok() else {
+                    tracing::error!("Failed to parse position argument");
+                    return Ok(None);
+                };
+                let Some(changes) =
+                    serde_json::from_value::<Vec<crate::features::change_signature::ParameterChange>>(args[2].clone())
+                        .ok()
+                else {
+                    tracing::error!("Failed to parse changes argument");
+                    return Ok(None);
+                };
+
+                let params = crate::features::change_signature::ChangeSignatureParams { uri, position, changes };
+
+                if let Some(edit) = self.features.change_signature.execute(params).await
                     && let Ok(value) = serde_json::to_value(edit)
                 {
                     return Ok(Some(value));
