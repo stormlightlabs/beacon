@@ -230,6 +230,30 @@ impl DiagnosticProvider {
             start.elapsed()
         );
 
+        let start = std::time::Instant::now();
+        self.add_invalid_symbol_import_diagnostics(uri, &mut diagnostics);
+        tracing::trace!(
+            "Invalid symbol import diagnostics: {} ({:?})",
+            diagnostics.len(),
+            start.elapsed()
+        );
+
+        let start = std::time::Instant::now();
+        self.add_private_symbol_import_diagnostics(uri, &mut diagnostics);
+        tracing::trace!(
+            "Private symbol import diagnostics: {} ({:?})",
+            diagnostics.len(),
+            start.elapsed()
+        );
+
+        let start = std::time::Instant::now();
+        self.add_reexport_chain_diagnostics(uri, &mut diagnostics);
+        tracing::trace!(
+            "Re-export chain diagnostics: {} ({:?})",
+            diagnostics.len(),
+            start.elapsed()
+        );
+
         tracing::info!(
             "Generated {} total diagnostics for {} (mode: {})",
             diagnostics.len(),
@@ -480,7 +504,6 @@ impl DiagnosticProvider {
             }
             AstNode::Assignment { target, value, line, col, .. } => {
                 if Self::is_typevar_assignment(value) {
-                    // Skip annotation requirements for TypeVar declarations
                 } else if ctx.in_class_def && ctx.mode == config::TypeCheckingMode::Strict {
                     self.check_class_attribute_annotation(target, *line, *col, ctx);
                 } else if ctx.mode != config::TypeCheckingMode::Relaxed
@@ -1861,6 +1884,335 @@ impl DiagnosticProvider {
                     code_description: None,
                 });
             }
+        }
+    }
+
+    /// Add diagnostics for importing non-existent symbols from valid modules
+    ///
+    /// Reports when a specific symbol is imported from a module that exists, but that symbol is not defined or exported by the module.
+    fn add_invalid_symbol_import_diagnostics(&self, uri: &Url, diagnostics: &mut Vec<Diagnostic>) {
+        let Ok(workspace) = self.workspace.try_read() else {
+            return;
+        };
+
+        let symbol_imports = workspace.get_symbol_imports(uri);
+
+        if symbol_imports.is_empty() {
+            return;
+        }
+
+        self.documents.get_document(uri, |doc| {
+            if let Some(ast) = doc.ast() {
+                Self::find_invalid_symbol_imports(ast, &symbol_imports, &workspace, diagnostics);
+            }
+        });
+    }
+
+    /// Find invalid symbol imports in the AST
+    fn find_invalid_symbol_imports(
+        node: &AstNode, symbol_imports: &[crate::workspace::SymbolImport], workspace: &Workspace,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        match node {
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    Self::find_invalid_symbol_imports(stmt, symbol_imports, workspace, diagnostics);
+                }
+            }
+            AstNode::ImportFrom { module, names, line, col, .. } => {
+                if names.iter().any(|n| n.name == "*") {
+                    return;
+                }
+
+                let module_uri = match workspace.resolve_import(module) {
+                    Some(uri) => uri,
+                    None => return,
+                };
+
+                let available_symbols = workspace.get_module_symbols(&module_uri);
+                let stub_exports = workspace.get_stub_exports(module);
+
+                for import_name in names {
+                    if import_name.name == "*" {
+                        continue;
+                    }
+
+                    let symbol_exists = available_symbols.contains(&import_name.name)
+                        || stub_exports
+                            .as_ref()
+                            .map_or(false, |exports| exports.contains_key(&import_name.name));
+
+                    if !symbol_exists {
+                        let position = Position { line: (*line - 1) as u32, character: (*col - 1) as u32 };
+                        // TODO: Improve positioning to highlight just the symbol, not the whole import
+                        let range = Range {
+                            start: position,
+                            end: Position {
+                                line: position.line,
+                                character: position.character + import_name.name.len() as u32,
+                            },
+                        };
+
+                        diagnostics.push(Diagnostic {
+                            range,
+                            severity: Some(DiagnosticSeverity::ERROR),
+                            code: Some(lsp_types::NumberOrString::String("invalid-import".to_string())),
+                            source: Some("beacon".to_string()),
+                            message: format!(
+                                "Cannot import '{}' from '{}': symbol not found in module",
+                                import_name.name, module
+                            ),
+                            related_information: None,
+                            tags: None,
+                            data: None,
+                            code_description: None,
+                        });
+                    }
+                }
+            }
+            AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } => {
+                for stmt in body {
+                    Self::find_invalid_symbol_imports(stmt, symbol_imports, workspace, diagnostics);
+                }
+            }
+            AstNode::If { body, elif_parts, else_body, .. } => {
+                for stmt in body {
+                    Self::find_invalid_symbol_imports(stmt, symbol_imports, workspace, diagnostics);
+                }
+                for (_test, elif_body) in elif_parts {
+                    for stmt in elif_body {
+                        Self::find_invalid_symbol_imports(stmt, symbol_imports, workspace, diagnostics);
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        Self::find_invalid_symbol_imports(stmt, symbol_imports, workspace, diagnostics);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Add diagnostics for importing private symbols (starting with underscore)
+    ///
+    /// Reports warnings when importing symbols that start with underscore,
+    /// which conventionally indicates they are private/internal.
+    fn add_private_symbol_import_diagnostics(&self, uri: &Url, diagnostics: &mut Vec<Diagnostic>) {
+        let Ok(workspace) = self.workspace.try_read() else {
+            return;
+        };
+
+        let symbol_imports = workspace.get_symbol_imports(uri);
+
+        if symbol_imports.is_empty() {
+            return;
+        }
+
+        self.documents.get_document(uri, |doc| {
+            if let Some(ast) = doc.ast() {
+                Self::find_private_symbol_imports(ast, &symbol_imports, diagnostics);
+            }
+        });
+    }
+
+    /// Find private symbol imports in the AST
+    fn find_private_symbol_imports(
+        node: &AstNode, _symbol_imports: &[crate::workspace::SymbolImport], diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        match node {
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    Self::find_private_symbol_imports(stmt, _symbol_imports, diagnostics);
+                }
+            }
+            AstNode::ImportFrom { names, line, col, module, .. } => {
+                for import_name in names {
+                    if import_name.name.starts_with('_') && import_name.name != "*" {
+                        let position = Position { line: (*line - 1) as u32, character: (*col - 1) as u32 };
+
+                        let range = Range {
+                            start: position,
+                            end: Position {
+                                line: position.line,
+                                character: position.character + import_name.name.len() as u32,
+                            },
+                        };
+
+                        diagnostics.push(Diagnostic {
+                            range,
+                            severity: Some(DiagnosticSeverity::WARNING),
+                            code: Some(lsp_types::NumberOrString::String("private-import".to_string())),
+                            source: Some("beacon".to_string()),
+                            message: format!(
+                                "Importing private symbol '{}' from '{}' (names starting with underscore are conventionally private)",
+                                import_name.name, module
+                            ),
+                            related_information: None,
+                            tags: None,
+                            data: None,
+                            code_description: None,
+                        });
+                    }
+                }
+            }
+            AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } => {
+                for stmt in body {
+                    Self::find_private_symbol_imports(stmt, _symbol_imports, diagnostics);
+                }
+            }
+            AstNode::If { body, elif_parts, else_body, .. } => {
+                for stmt in body {
+                    Self::find_private_symbol_imports(stmt, _symbol_imports, diagnostics);
+                }
+                for (_test, elif_body) in elif_parts {
+                    for stmt in elif_body {
+                        Self::find_private_symbol_imports(stmt, _symbol_imports, diagnostics);
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        Self::find_private_symbol_imports(stmt, _symbol_imports, diagnostics);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Add diagnostics for broken re-export chains
+    ///
+    /// Reports when a module exports a symbol in __all__ that it imported, but that symbol doesn't actually exist in the source module.
+    fn add_reexport_chain_diagnostics(&self, uri: &Url, diagnostics: &mut Vec<Diagnostic>) {
+        let Ok(workspace) = self.workspace.try_read() else {
+            return;
+        };
+
+        let all_exports = match workspace.get_all_exports(uri) {
+            Some(exports) => exports,
+            None => return,
+        };
+
+        let symbol_imports = workspace.get_symbol_imports(uri);
+        let local_symbols = workspace.get_module_symbols(uri);
+
+        self.documents.get_document(uri, |doc| {
+            if let Some(ast) = doc.ast() {
+                Self::find_reexport_chain_issues(
+                    ast,
+                    &all_exports,
+                    &symbol_imports,
+                    &local_symbols,
+                    &workspace,
+                    diagnostics,
+                );
+            }
+        });
+    }
+
+    /// Find re-export chain issues in the AST
+    ///
+    /// Collects defined symbols (functions, classes, variables) separately from local_symbols to properly distinguish between defined and imported symbols
+    fn find_reexport_chain_issues(
+        node: &AstNode, _all_exports: &[String], symbol_imports: &[crate::workspace::SymbolImport],
+        _local_symbols: &rustc_hash::FxHashSet<String>, workspace: &Workspace, diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        match node {
+            AstNode::Module { body, .. } => {
+                let mut defined_symbols = rustc_hash::FxHashSet::default();
+                for stmt in body {
+                    match stmt {
+                        AstNode::FunctionDef { name, .. } => {
+                            defined_symbols.insert(name.clone());
+                        }
+                        AstNode::ClassDef { name, .. } => {
+                            defined_symbols.insert(name.clone());
+                        }
+                        AstNode::Assignment { target, .. } => {
+                            let target_name = target.target_to_string();
+                            if !target_name.is_empty() && target_name != "__all__" {
+                                defined_symbols.insert(target_name);
+                            }
+                        }
+                        AstNode::AnnotatedAssignment { target, .. } => {
+                            let target_name = target.target_to_string();
+                            if !target_name.is_empty() {
+                                defined_symbols.insert(target_name);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                for stmt in body {
+                    if let AstNode::Assignment { target, value, line, col, .. } = stmt {
+                        let target_name = target.target_to_string();
+                        if target_name == "__all__"
+                            && let AstNode::List { elements, .. } = value.as_ref()
+                        {
+                            for (idx, element) in elements.iter().enumerate() {
+                                if let AstNode::Literal {
+                                    value: beacon_parser::LiteralValue::String { value: symbol_name, .. },
+                                    ..
+                                } = element
+                                {
+                                    if !defined_symbols.contains(symbol_name) {
+                                        if let Some(import_info) =
+                                            symbol_imports.iter().find(|imp| imp.symbol == *symbol_name)
+                                        {
+                                            if let Some(source_uri) = workspace.resolve_import(&import_info.from_module)
+                                            {
+                                                let source_symbols = workspace.get_module_symbols(&source_uri);
+                                                let stub_exports = workspace.get_stub_exports(&import_info.from_module);
+
+                                                let symbol_exists = source_symbols.contains(symbol_name)
+                                                    || stub_exports
+                                                        .as_ref()
+                                                        .map_or(false, |exports| exports.contains_key(symbol_name));
+
+                                                if !symbol_exists {
+                                                    let position = Position {
+                                                        line: (*line - 1) as u32,
+                                                        character: (*col + idx * (symbol_name.len() + 4)) as u32,
+                                                    };
+
+                                                    let range = Range {
+                                                        start: position,
+                                                        end: Position {
+                                                            line: position.line,
+                                                            character: position.character
+                                                                + symbol_name.len() as u32
+                                                                + 2,
+                                                        },
+                                                    };
+
+                                                    diagnostics.push(Diagnostic {
+                                                        range,
+                                                        severity: Some(DiagnosticSeverity::WARNING),
+                                                        code: Some(lsp_types::NumberOrString::String(
+                                                            "broken-reexport".to_string(),
+                                                        )),
+                                                        source: Some("beacon".to_string()),
+                                                        message: format!(
+                                                            "Re-exported symbol '{}' does not exist in source module '{}'",
+                                                            symbol_name, import_info.from_module
+                                                        ),
+                                                        related_information: None,
+                                                        tags: None,
+                                                        data: None,
+                                                        code_description: None,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }

@@ -39,7 +39,10 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
 ### Diagnostics & Validation
 
-- [ ] Cross-file diagnostics for import/export issues
+- [x] Cross-file diagnostics for import/export issues
+    - [x] Invalid symbol imports (importing non-existent symbols from valid modules)
+    - [x] Private symbol import warnings
+    - [x] Re-export chain validation
 - [ ] Type mismatch diagnostics across module boundaries
 - [ ] Cross-file dead code detection
 
