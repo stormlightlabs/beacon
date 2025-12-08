@@ -20,9 +20,6 @@ use url::Url;
 
 pub use beacon_analyzer::{StubCache, StubFile};
 
-/// Beacon-specific stub for capabilities support
-const CAPABILITIES_STUB: &str = include_str!("../../../stubs/capabilities_support.pyi");
-
 /// Parsed copies of embedded stdlib stubs reused across workspaces and tests
 static EMBEDDED_STDLIB_PARSED_STUBS: Lazy<FxHashMap<&'static str, StubFile>> = Lazy::new(|| {
     let mut parsed = FxHashMap::default();
@@ -1196,22 +1193,7 @@ impl Workspace {
             }
         }
 
-        match self.parse_stub_from_string("capabilities_support", CAPABILITIES_STUB) {
-            Ok(stub) => {
-                tracing::debug!("Loaded Beacon-specific stub: capabilities_support");
-                if let Ok(mut cache) = self.stubs.write() {
-                    cache.insert("capabilities_support".to_string(), stub);
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to parse capabilities_support stub: {:?}", e);
-            }
-        }
-
-        tracing::info!(
-            "Loaded {} stdlib stub modules + Beacon-specific stubs",
-            stdlib_modules.len()
-        );
+        tracing::info!("Loaded {} stdlib stub modules", stdlib_modules.len());
     }
 
     /// Parse a stub file from string content (used for embedded stdlib stubs)
@@ -2057,7 +2039,7 @@ pub enum WorkspaceError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use beacon_core::{Type, TypeCtor};
+    use beacon_core::Type;
     use std::{fs, io::Write};
     use tempfile::{NamedTempFile, TempDir};
 
@@ -2076,54 +2058,6 @@ mod tests {
     #[test]
     fn test_stub_cache_creation() {
         let _ = StubCache::new();
-    }
-
-    #[test]
-    fn test_discover_stubs_populates_exports() {
-        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let repo_root = manifest_dir
-            .parent()
-            .expect("crate dir parent")
-            .parent()
-            .expect("workspace root");
-        let stubs_dir = repo_root.join("stubs");
-
-        let config = Config { stub_paths: vec![stubs_dir], ..Default::default() };
-        let documents = DocumentManager::new().unwrap();
-        let mut workspace = Workspace::new(None, config, documents);
-        workspace.discover_stubs();
-
-        let cache = workspace.stub_cache();
-        let cache = cache.read().expect("stub cache");
-        let stub = cache.get("capabilities_support").expect("capabilities_support stub");
-        assert!(
-            stub.exports.contains_key("register_provider"),
-            "register_provider export missing: {:?}",
-            stub.exports.keys().collect::<Vec<_>>()
-        );
-
-        let register_ty = stub.exports.get("register_provider").expect("register_provider type");
-        match register_ty {
-            Type::Fun(params, ret) => {
-                assert_eq!(params.len(), 2, "register_provider parameter count");
-                assert_eq!(params[0].1, Type::string(), "first param should be str");
-                match &params[1].1 {
-                    Type::App(ctor, arg) => {
-                        assert!(
-                            matches!(**ctor,  Type::Con( TypeCtor::Class(ref name)) if name == "DataProvider"),
-                            "expected DataProvider constructor, got {ctor:?}"
-                        );
-                        assert!(
-                            matches!(**arg,  Type::Con( TypeCtor::Class(ref name)) if name == "object"),
-                            "expected object type argument, got {arg:?}"
-                        );
-                    }
-                    other => panic!("expected DataProvider[object], got {other:?}"),
-                }
-                assert_eq!(ret.as_ref(), &Type::none(), "register_provider returns None");
-            }
-            other => panic!("register_provider should be a function, got {other:?}"),
-        }
     }
 
     #[test]

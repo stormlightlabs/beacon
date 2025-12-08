@@ -906,7 +906,7 @@ mod tests {
     use super::StubFile;
     use super::*;
 
-    use beacon_core::{ClassRegistry, MethodType, Type, TypeCtor};
+    use beacon_core::{ClassRegistry, Type, TypeCtor};
     use rustc_hash::FxHashMap;
     use std::path::PathBuf;
 
@@ -1212,61 +1212,6 @@ class list(Generic[_T]):
             iterable_metadata.methods.contains_key("__iter__"),
             "Iterable should have __iter__ method"
         );
-    }
-
-    #[test]
-    fn test_capabilities_support_stub_generics() {
-        let stub_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("stubs/capabilities_support.pyi");
-
-        let stub_content = std::fs::read_to_string(&stub_path).unwrap();
-
-        let stub = StubFile {
-            module: "capabilities_support".to_string(),
-            path: stub_path,
-            exports: FxHashMap::default(),
-            is_partial: false,
-            reexports: Vec::new(),
-            all_exports: None,
-            content: Some(stub_content),
-        };
-
-        let mut class_registry = ClassRegistry::new();
-        let mut typevar_registry = beacon_core::TypeVarConstraintRegistry::new();
-        load_stub_into_registry(&stub, &mut class_registry, &mut typevar_registry).unwrap();
-
-        let provider_meta = class_registry
-            .get_class("DataProvider")
-            .expect("DataProvider should be registered");
-        assert_eq!(provider_meta.type_params, vec!["T".to_string()]);
-
-        let load_method = provider_meta
-            .lookup_method_type("load")
-            .expect("DataProvider.load should exist");
-
-        if let MethodType::Single(Type::Fun(params, ret)) = load_method {
-            assert!(!params.is_empty(), "load should include self parameter");
-            assert!(matches!(params[0].1, Type::Con(TypeCtor::Any)));
-
-            match ret.as_ref() {
-                Type::App(iter_ctor, item_ty) => {
-                    assert!(matches!(**iter_ctor, Type::Con(TypeCtor::Class(_))));
-                    assert!(matches!(**item_ty, Type::Con(TypeCtor::TypeVariable(ref var)) if var == "T"));
-                }
-                other => panic!("Expected Iterable[T] return type, got {other:?}"),
-            }
-        } else {
-            panic!("DataProvider.load should have a single method signature");
-        }
-
-        let provider_impl = class_registry
-            .get_class("InMemoryProvider")
-            .expect("InMemoryProvider should be registered");
-        assert!(provider_impl.type_params.contains(&"T".to_string()));
     }
 
     #[test]
