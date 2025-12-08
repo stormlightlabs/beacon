@@ -27,7 +27,12 @@ The hover system integrates with the builtin documentation and dunder metadata m
 
 ## Navigation
 
-`GotoDefinitionProvider` locates definitions using symbol table lookups.
+`GotoDefinitionProvider` locates definitions using symbol table lookups and supports cross-file navigation for all symbol types.
+The provider resolves imports across the workspace, including wildcard imports, to navigate from usage sites to definitions in other modules.
+
+`GotoTypeDefinitionProvider` navigates from a variable to its type definition, supporting both local and cross-file type resolution.
+
+`GotoImplementationProvider` finds all implementations of abstract methods or protocols across the workspace.
 
 `ReferencesProvider` returns all occurrences of a symbol across open documents.
 
@@ -55,7 +60,40 @@ The provider supports lazy symbol resolution for LSP clients that request locati
 
 ## Refactoring
 
-`RenameProvider` validates proposed identifiers, gathers edits via both AST traversal and Tree-sitter scans, deduplicates overlapping ranges, and returns a `WorkspaceEdit`.
+The refactoring system provides multi-file code transformations with precise type inference and module resolution.
+
+`RenameProvider` validates proposed identifiers, gathers edits across all workspace files, deduplicates overlapping ranges, and returns a `WorkspaceEdit`.
+Cross-file rename support ensures consistent symbol updates throughout the codebase.
+
+`ExtractFunctionProvider` extracts selected code into a new function, handling:
+
+- Variable capture analysis to determine parameters and return values
+- Control flow preservation for early returns and breaks
+- Type inference for function signatures
+- Precise import management for extracted code
+
+`ExtractVariableProvider` extracts complex expressions into named variables with inferred type annotations.
+
+`InlineFunctionProvider` replaces function calls with the function body, handling:
+
+- Control flow transformations (return statements, conditional logic)
+- Expression contexts and side effect analysis
+- Variable scoping and name shadowing
+- Multiple call site inlining
+
+`ChangeSignatureProvider` modifies function signatures and updates all call sites:
+
+- Add, remove, or reorder parameters
+- Update parameter types and default values
+- Propagate changes across all references
+- Maintain type safety throughout the refactoring
+
+`MoveSymbolProvider` relocates functions, classes, or variables to different modules:
+
+- Updates imports in all affected files
+- Preserves type information across module boundaries
+- Handles circular import prevention
+- Maintains workspace consistency
 
 ## Code Actions
 
@@ -73,9 +111,12 @@ The provider supports lazy symbol resolution for LSP clients that request locati
 **Refactorings:**
 
 - Inserting type annotations from inferred types on variable assignments
+- Extract to function with automatic parameter inference
+- Extract to variable with type annotations
+- Inline function calls with control flow handling
+- Change function signatures across all call sites
+- Move symbols between modules
 - Add missing imports for undefined symbols (coming soon!)
-- Extract to function/method refactorings (coming soon!)
-- Inline variable refactorings (coming soon!)
 
 ## Support Modules
 

@@ -4,9 +4,9 @@ The Beacon language server already covers core workflows but still has notable c
 
 ## Open-Document Focus
 
-Most features only inspect documents currently open in the editor.
+Navigation features (goto definition, type definition, implementation) and refactoring operations (rename, extract, inline, move) now support cross-file operations.
 
-Closed files are invisible until workspace indexing is implemented, so cross-project references or renames may miss targets.
+However, some features still focus on open documents. Comprehensive workspace-wide analysis for all features is ongoing.
 
 ## Analyzer Coupling
 
@@ -22,7 +22,8 @@ Workspace symbol searches iterate synchronously over all open documents, which c
 
 ## Feature Gaps
 
-Code actions support basic quick fixes (removing unused variables/imports, wrapping types with Optional) but many advanced refactorings remain unimplemented.
+Code actions support quick fixes and several refactorings (extract function/variable, inline function, change signature, move symbol).
+Additional refactorings like automatic import suggestions remain unimplemented.
 
 Formatting endpoints (`textDocument/formatting`, etc.) are unimplemented.
 

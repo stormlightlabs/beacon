@@ -19,12 +19,18 @@ Beacon provides a complete LSP-based, type-safe development environment for Pyth
 - Real-time diagnostics for syntax, semantic, and type errors
 - Hover tooltips with inferred types and builtin documentation
 - Smart completions using symbol table analysis
-- Go to definition and find all references
-- Workspace and document symbol search with fuzzy matching
+- Go to definition, type definition, and implementation (cross-file)
+- Find all references and document symbol search with fuzzy matching
+- Workspace symbol search with fuzzy matching
 
 ### Refactoring & Code Actions
 
-- Symbol renaming with workspace-wide validation
+- Symbol renaming with cross-file workspace validation
+- Extract function with automatic parameter inference and type signatures
+- Extract variable with inferred type annotations
+- Inline function with control flow and side effect handling
+- Change function signatures across all call sites
+- Move symbols between modules with import management
 - Quick fixes for common issues (unused imports, Optional types, pattern completions)
 - Protocol method implementation assistance
 - Type annotation insertion from inferred types

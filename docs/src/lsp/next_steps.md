@@ -22,13 +22,12 @@ Support multi-root workspaces and remote development scenarios.
 
 Implement formatting (`textDocument/formatting`, `rangeFormatting`) and integrate with Beacon's formatting rules.
 
-Expand code actions beyond the current quick fixes (remove unused, wrap with Optional) to include:
+Expand code actions beyond the current refactorings to include:
 
-- Insert type annotations from inference
 - Add missing imports for undefined symbols
-- Implement missing protocol methods
-- Extract to function/method refactorings
-- Inline variable refactorings
+- Convert between single and double quotes
+- Sort imports automatically
+- Generate docstrings from function signatures
 
 Extend semantic tokens with modifier support (documentation, deprecated symbols) and align with editor theming.
 

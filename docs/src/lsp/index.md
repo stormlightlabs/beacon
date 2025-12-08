@@ -9,10 +9,10 @@ Beacon implements the following LSP features:
 - Diagnostics: Real-time syntax, semantic, and type error reporting
 - Hover: Context-sensitive type information and documentation
 - Completion: Symbol table-based completions
-- Navigation: Go to definition, find references, document highlights
+- Navigation: Go to definition, type definition, implementation (cross-file), find references, document highlights
 - Symbols: Document outline and workspace fuzzy search
 - Semantic tokens and inlay hints
-- Refactoring: Rename, code actions, quick fixes
+- Refactoring: Rename (cross-file), extract function/variable, inline function, change signature, move symbol, code actions, quick fixes
 
 See [Feature Providers](./feature_providers.md) for detailed implementation.
 

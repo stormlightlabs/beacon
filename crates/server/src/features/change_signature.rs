@@ -410,9 +410,10 @@ impl ChangeSignatureProvider {
 
         for change in changes {
             if let ParameterChange::Rename { old_name, new_name } = change
-                && let Some(value) = arg_map.remove(old_name) {
-                    arg_map.insert(new_name.clone(), value);
-                }
+                && let Some(value) = arg_map.remove(old_name)
+            {
+                arg_map.insert(new_name.clone(), value);
+            }
         }
 
         let mut new_args = Vec::new();
