@@ -12,6 +12,18 @@ Tests various guard patterns:
 """
 
 
+def test_guard_none_narrowing():
+    """Guard with is not None should narrow type"""
+    value: int | None = get_optional_int()
+
+    match value:
+        case x if x is not None:
+            # x should be narrowed to int (None removed)
+            num: int = x
+        case None:
+            pass
+
+
 def test_guard_isinstance_narrowing():
     """Guard with isinstance check should narrow type"""
     value: int | str | float = get_value()
@@ -27,27 +39,42 @@ def test_guard_isinstance_narrowing():
             pass
 
 
-def test_guard_none_check_narrowing():
-    """Guard with None checks should narrow type"""
-    value: int | None = get_optional_int()
+def test_pattern_narrows_first():
+    """Pattern narrows, guard doesn't change anything"""
+    value: int | str | None = get_optional_value()
 
     match value:
-        case x if x is not None:
-            # x should be narrowed to int (None removed)
-            _ = x.bit_length()
-        case x if x is None:
-            # x should be narrowed to None
+        case int(x):
+            # x is narrowed to int by pattern
+            num: int = x
+        case str(s):
+            # s is narrowed to str by pattern
+            text: str = s
+        case None:
             pass
 
 
-def test_guard_truthiness_narrowing():
-    """Guard with truthiness check should narrow type"""
+def test_guard_truthiness():
+    """Truthiness guard should narrow Optional types"""
     value: str | None = get_optional_str()
 
     match value:
         case s if s:
-            # s should be narrowed to str (None removed by truthiness)
-            _ = s.upper()
+            # s should be narrowed to str (None removed)
+            text: str = s
+        case _:
+            pass
+
+
+def test_guard_with_pattern_binding():
+    """Guard narrows a pattern-bound variable"""
+    pair: tuple[int | None, int | None] = get_pair()
+
+    match value:
+        case (x, y) if x is not None:
+            # x should be narrowed from int | None to int
+            num: int = x
+            # y is still int | None
         case _:
             pass
 
@@ -81,14 +108,13 @@ def test_pattern_and_guard_combined():
             pass
 
 
-def test_guard_with_pattern_binding():
+def test_guard_with_list_pattern_binding():
     """Guard should narrow pattern-bound variables"""
     values: list[int | str | None] = get_list()
 
     match values:
         case [first, *rest] if first is not None:
             # first is narrowed by guard from int | str | None to int | str
-            # (assuming the pattern extracts int | str | None)
             pass
         case _:
             pass
@@ -132,12 +158,10 @@ def test_guard_comparison_no_narrowing():
         case int(x) if x > 0:
             # x is int from pattern
             # x > 0 is a value check, not a type check
-            # Type remains int
             _ = x.bit_length()
         case str(s) if len(s) > 5:
             # s is str from pattern
             # len(s) > 5 is a value check
-            # Type remains str
             _ = s.upper()
 
 
@@ -247,6 +271,10 @@ def get_optional_str() -> str | None:
 
 
 def get_mixed_optional() -> int | str | None:
+    ...
+
+
+def get_optional_value() -> int | str | None:
     ...
 
 
