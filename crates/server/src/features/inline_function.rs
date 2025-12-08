@@ -1,29 +1,7 @@
 //! Inline Function refactoring
 //!
 //! Replaces function call sites with the function body, substituting parameters with arguments.
-//!
-//! # Algorithm
-//!
-//! 1. Find the function definition at the cursor position
-//! 2. Extract function parameters and body
-//! 3. Find all call sites across the workspace
-//! 4. For each call site:
-//!    - Analyze variable conflicts between function body and call site scope
-//!    - Rename conflicting variables to avoid shadowing
-//!    - Replace the call with the function body
-//!    - Substitute parameters with arguments (using AST-based substitution)
-//!    - Transform return statements based on control flow complexity
-//!    - Adjust indentation to match call site
-//! 5. Remove the function definition if no longer used (or if inline_all is true)
-//! # Return Statement Transformations
-//!
-//! The refactoring intelligently handles different return patterns:
-//!
-//!
-//! # Remaining Limitations
-//!
-//! - **Expression contexts**: Currently only supports inlining into statement contexts
-//! - **Complex side effects**: Does not analyze whether argument evaluation order matters
+//! Supports both statement and expression contexts, with handling of side effects.
 
 use super::refactoring::{EditCollector, RefactoringContext};
 use crate::utils;
@@ -106,14 +84,35 @@ impl InlineFunctionProvider {
             let call_node = Self::find_call_at_offset(call_tree.root_node(), byte_offset)?;
 
             let arguments = Self::extract_call_arguments(call_node, &call_text)?;
+            let is_expr_context = Self::is_expression_context(call_node);
 
-            let inlined_body =
-                Self::inline_function_body(&function_info, &arguments, &call_text, call_site.range.start)?;
+            let inline_result = Self::inline_function_body(
+                &function_info,
+                &arguments,
+                &call_text,
+                call_node,
+                is_expr_context,
+                call_site.range.start,
+            )?;
 
-            collector.add_edit(
-                call_site.uri.clone(),
-                TextEdit { range: call_site.range, new_text: inlined_body },
-            );
+            match inline_result {
+                InlineResult::Simple { replacement } => {
+                    collector.add_edit(
+                        call_site.uri.clone(),
+                        TextEdit { range: call_site.range, new_text: replacement },
+                    );
+                }
+                InlineResult::WithPrelude { prelude, replacement, insertion_point } => {
+                    collector.add_edit(
+                        call_site.uri.clone(),
+                        TextEdit { range: insertion_point, new_text: prelude },
+                    );
+                    collector.add_edit(
+                        call_site.uri.clone(),
+                        TextEdit { range: call_site.range, new_text: replacement },
+                    );
+                }
+            }
         }
 
         if params.inline_all {
@@ -342,13 +341,112 @@ impl InlineFunctionProvider {
         Some(arguments)
     }
 
+    /// Check if a call node is in an expression context (not a statement)
+    ///
+    /// A call is in an expression context if it's part of:
+    /// - An assignment (right side)
+    /// - A return statement
+    /// - Another expression (binary op, function argument, list element, etc.)
+    fn is_expression_context(call_node: tree_sitter::Node) -> bool {
+        let Some(parent) = call_node.parent() else {
+            return false;
+        };
+
+        match parent.kind() {
+            "assignment"
+            | "augmented_assignment"
+            | "return_statement"
+            | "binary_operator"
+            | "unary_operator"
+            | "comparison_operator"
+            | "boolean_operator"
+            | "argument_list"
+            | "list"
+            | "tuple"
+            | "dictionary"
+            | "set"
+            | "if_statement"
+            | "elif_clause"
+            | "while_statement"
+            | "for_statement"
+            | "subscript"
+            | "attribute"
+            | "conditional_expression" => true,
+            "expression_statement" => false,
+            _ => Self::is_expression_context(parent),
+        }
+    }
+
+    /// Check if an expression has potential side effects
+    ///
+    /// An expression has side effects if it contains:
+    /// - Function calls
+    /// - Attribute access (might invoke __getattr__)
+    /// - Subscript operations (might invoke __getitem__)
+    fn has_side_effects(expr: &str) -> bool {
+        let mut parser = tree_sitter::Parser::new();
+        if parser.set_language(&tree_sitter_python::LANGUAGE.into()).is_err() {
+            return true;
+        }
+
+        let Some(tree) = parser.parse(expr, None) else {
+            return true;
+        };
+
+        Self::node_has_side_effects(tree.root_node())
+    }
+
+    /// Check if a tree-sitter node contains side-effecting operations
+    fn node_has_side_effects(node: tree_sitter::Node) -> bool {
+        match node.kind() {
+            "call" | "attribute" | "subscript" => true,
+            "identifier" | "integer" | "float" | "string" | "true" | "false" | "none" => false,
+            _ => {
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if Self::node_has_side_effects(child) {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+
     /// Inline the function body with parameter substitution and conflict resolution
+    ///
+    /// Handles both expression and statement contexts, with proper side effect management.
     fn inline_function_body(
-        func_info: &FunctionInfo, arguments: &[String], call_text: &str, indent_pos: Position,
-    ) -> Option<String> {
+        func_info: &FunctionInfo, arguments: &[String], call_text: &str, call_node: tree_sitter::Node,
+        is_expr_context: bool, indent_pos: Position,
+    ) -> Option<InlineResult> {
+        let args_with_side_effects: Vec<bool> = arguments.iter().map(|arg| Self::has_side_effects(arg)).collect();
+        let has_any_side_effects = args_with_side_effects.iter().any(|&x| x);
+
+        let is_complex_body = Self::is_complex_body(&func_info.body);
+
         let mut substitutions = HashMap::new();
-        for (param, arg) in func_info.parameters.iter().zip(arguments.iter()) {
-            substitutions.insert(param.clone(), arg.clone());
+        let mut prelude_lines = Vec::new();
+
+        if has_any_side_effects {
+            let call_scope_vars = Self::collect_identifiers(call_text);
+            let mut used_temp_names = call_scope_vars.clone();
+
+            for (i, (param, arg)) in func_info.parameters.iter().zip(arguments.iter()).enumerate() {
+                if args_with_side_effects[i] {
+                    let temp_name =
+                        Self::generate_unique_name(&format!("_arg_{}", i), &used_temp_names, &HashSet::new());
+                    used_temp_names.insert(temp_name.clone());
+                    prelude_lines.push(format!("{} = {}", temp_name, arg));
+                    substitutions.insert(param.clone(), temp_name);
+                } else {
+                    substitutions.insert(param.clone(), arg.clone());
+                }
+            }
+        } else {
+            for (param, arg) in func_info.parameters.iter().zip(arguments.iter()) {
+                substitutions.insert(param.clone(), arg.clone());
+            }
         }
 
         let body_vars = Self::collect_identifiers(&func_info.body);
@@ -374,13 +472,169 @@ impl InlineFunctionProvider {
 
         inlined = match &func_info.return_type {
             ReturnType::None => Self::remove_return_statements(&inlined),
-            ReturnType::Single(_) => Self::transform_single_return(&inlined),
+            ReturnType::Single(_) if !is_expr_context || !is_complex_body => Self::transform_single_return(&inlined),
+            ReturnType::Single(_) => Self::transform_multiple_returns(&inlined),
             ReturnType::Multiple(_) => Self::transform_multiple_returns(&inlined),
         };
 
-        let indented = Self::indent_to_position(&inlined, indent_pos.character as usize);
+        if is_expr_context && is_complex_body {
+            let lines: Vec<&str> = inlined.lines().collect();
+            if lines.len() > 1 {
+                let setup_lines = &lines[..lines.len() - 1];
+                let final_expr = lines.last().unwrap_or(&"");
 
-        Some(indented.trim_end().to_string())
+                for line in setup_lines {
+                    prelude_lines.push(line.to_string());
+                }
+
+                let replacement = final_expr.trim().to_string();
+
+                if !prelude_lines.is_empty() {
+                    let insertion_point = Self::find_statement_insertion_point(call_node, call_text);
+                    let base_indent = insertion_point.start.character as usize;
+                    let prelude = prelude_lines
+                        .iter()
+                        .map(|line| format!("{}{}\n", " ".repeat(base_indent), line))
+                        .collect::<String>();
+
+                    return Some(InlineResult::WithPrelude { prelude, replacement, insertion_point });
+                } else {
+                    return Some(InlineResult::Simple { replacement });
+                }
+            }
+        }
+
+        let indented = Self::indent_to_position(&inlined, indent_pos.character as usize);
+        let replacement = indented.trim_end().to_string();
+
+        if !prelude_lines.is_empty() {
+            let insertion_point = Self::find_statement_insertion_point(call_node, call_text);
+            let base_indent = insertion_point.start.character as usize;
+            let prelude = prelude_lines
+                .iter()
+                .map(|line| format!("{}{}\n", " ".repeat(base_indent), line))
+                .collect::<String>();
+
+            Some(InlineResult::WithPrelude { prelude, replacement, insertion_point })
+        } else {
+            Some(InlineResult::Simple { replacement })
+        }
+    }
+
+    /// Check if function body is complex (has multiple statements)
+    ///
+    /// A body is complex if it contains:
+    /// - Multiple statements
+    /// - Control flow (if/while/for)
+    /// - Try/except blocks
+    fn is_complex_body(body: &str) -> bool {
+        let trimmed = body.trim();
+
+        if !trimmed.contains('\n') {
+            return false;
+        }
+
+        let mut parser = tree_sitter::Parser::new();
+        if parser.set_language(&tree_sitter_python::LANGUAGE.into()).is_err() {
+            return true;
+        }
+
+        let Some(tree) = parser.parse(body, None) else {
+            return true;
+        };
+
+        let root = tree.root_node();
+
+        if Self::has_control_flow(root) {
+            return true;
+        }
+
+        Self::count_statements(root) > 1
+    }
+
+    /// Check if a node contains control flow structures
+    fn has_control_flow(node: tree_sitter::Node) -> bool {
+        match node.kind() {
+            "if_statement" | "while_statement" | "for_statement" | "try_statement" | "with_statement" => true,
+            _ => {
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if Self::has_control_flow(child) {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+
+    /// Count the number of statements in a node
+    fn count_statements(node: tree_sitter::Node) -> usize {
+        match node.kind() {
+            "module" | "block" => {
+                let mut count = 0;
+                let mut cursor = node.walk();
+                for child in node.children(&mut cursor) {
+                    if !matches!(child.kind(), "comment" | "\n") {
+                        count += 1;
+                    }
+                }
+                count
+            }
+            _ => {
+                if node.child_count() == 0 {
+                    return 0;
+                }
+                let mut cursor = node.walk();
+                let mut total = 0;
+                for child in node.children(&mut cursor) {
+                    total += Self::count_statements(child);
+                }
+                total.max(1)
+            }
+        }
+    }
+
+    /// Find the insertion point for prelude code before the call
+    fn find_statement_insertion_point(call_node: tree_sitter::Node, text: &str) -> Range {
+        let mut node = call_node;
+
+        while let Some(parent) = node.parent() {
+            if Self::is_statement_node(parent) {
+                let start = utils::byte_offset_to_position(text, parent.start_byte());
+                return Range { start, end: start };
+            }
+            node = parent;
+        }
+
+        let pos = utils::byte_offset_to_position(text, call_node.start_byte());
+        Range { start: pos, end: pos }
+    }
+
+    /// Check if a node represents a statement
+    fn is_statement_node(node: tree_sitter::Node) -> bool {
+        matches!(
+            node.kind(),
+            "expression_statement"
+                | "assignment"
+                | "augmented_assignment"
+                | "return_statement"
+                | "if_statement"
+                | "while_statement"
+                | "for_statement"
+                | "with_statement"
+                | "try_statement"
+                | "raise_statement"
+                | "assert_statement"
+                | "delete_statement"
+                | "pass_statement"
+                | "break_statement"
+                | "continue_statement"
+                | "import_statement"
+                | "import_from_statement"
+                | "global_statement"
+                | "nonlocal_statement"
+        )
     }
 
     /// Collect all identifier names used in code
@@ -740,6 +994,18 @@ struct CallSite {
     range: Range,
 }
 
+/// Result of inlining a function
+enum InlineResult {
+    /// Simple replacement without additional code
+    Simple { replacement: String },
+    /// Replacement requiring prelude code (for side effects or complex bodies)
+    WithPrelude {
+        prelude: String,
+        replacement: String,
+        insertion_point: Range,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -933,5 +1199,163 @@ mod tests {
         let result = InlineFunctionProvider::transform_multiple_returns(body);
         assert!(result.contains("_inline_result = None"));
         assert!(result.contains("_inline_result = result"));
+    }
+
+    #[test]
+    fn test_is_expression_context_assignment() {
+        let code = "result = foo(x)";
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(code, None).unwrap();
+
+        let call_node = find_call_in_tree(tree.root_node());
+        assert!(call_node.is_some());
+        assert!(InlineFunctionProvider::is_expression_context(call_node.unwrap()));
+    }
+
+    #[test]
+    fn test_is_expression_context_return() {
+        let code = "return foo(x)";
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(code, None).unwrap();
+
+        let call_node = find_call_in_tree(tree.root_node());
+        assert!(call_node.is_some());
+        assert!(InlineFunctionProvider::is_expression_context(call_node.unwrap()));
+    }
+
+    #[test]
+    fn test_is_expression_context_statement() {
+        let code = "foo(x)";
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(code, None).unwrap();
+
+        let call_node = find_call_in_tree(tree.root_node());
+        assert!(call_node.is_some());
+        assert!(!InlineFunctionProvider::is_expression_context(call_node.unwrap()));
+    }
+
+    #[test]
+    fn test_is_expression_context_binary_op() {
+        let code = "x = foo(a) + bar(b)";
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(code, None).unwrap();
+
+        let call_node = find_call_in_tree(tree.root_node());
+        assert!(call_node.is_some());
+        assert!(InlineFunctionProvider::is_expression_context(call_node.unwrap()));
+    }
+
+    #[test]
+    fn test_has_side_effects_simple() {
+        assert!(!InlineFunctionProvider::has_side_effects("42"));
+        assert!(!InlineFunctionProvider::has_side_effects("x"));
+        assert!(!InlineFunctionProvider::has_side_effects("\"string\""));
+        assert!(!InlineFunctionProvider::has_side_effects("True"));
+    }
+
+    #[test]
+    fn test_has_side_effects_function_call() {
+        assert!(InlineFunctionProvider::has_side_effects("foo()"));
+        assert!(InlineFunctionProvider::has_side_effects("bar(x)"));
+        assert!(InlineFunctionProvider::has_side_effects("get_value()"));
+    }
+
+    #[test]
+    fn test_has_side_effects_attribute_access() {
+        assert!(InlineFunctionProvider::has_side_effects("obj.attr"));
+        assert!(InlineFunctionProvider::has_side_effects("x.y.z"));
+    }
+
+    #[test]
+    fn test_has_side_effects_subscript() {
+        assert!(InlineFunctionProvider::has_side_effects("arr[0]"));
+        assert!(InlineFunctionProvider::has_side_effects("dict[key]"));
+    }
+
+    #[test]
+    fn test_is_complex_body_simple() {
+        let body = "return x + y";
+        assert!(!InlineFunctionProvider::is_complex_body(body));
+    }
+
+    #[test]
+    fn test_is_complex_body_multiple_statements() {
+        let body = "x = a + b\nreturn x";
+        assert!(InlineFunctionProvider::is_complex_body(body));
+    }
+
+    #[test]
+    fn test_is_complex_body_with_control_flow() {
+        let body = "if condition:\n    return a\nelse:\n    return b";
+        assert!(InlineFunctionProvider::is_complex_body(body));
+    }
+
+    #[test]
+    fn test_count_statements() {
+        let code = "x = 1\ny = 2\nreturn x + y";
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(code, None).unwrap();
+
+        let count = InlineFunctionProvider::count_statements(tree.root_node());
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_count_statements_single() {
+        let code = "return 42";
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(code, None).unwrap();
+
+        let count = InlineFunctionProvider::count_statements(tree.root_node());
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_is_statement_node() {
+        let code = "x = 1\ny = 2";
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(code, None).unwrap();
+
+        let mut found_assignment = false;
+        walk_tree(tree.root_node(), &mut |node| {
+            if node.kind() == "expression_statement" {
+                found_assignment = true;
+                assert!(InlineFunctionProvider::is_statement_node(node));
+            }
+        });
+        assert!(found_assignment);
+    }
+
+    fn find_call_in_tree(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+        if node.kind() == "call" {
+            return Some(node);
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if let Some(call) = find_call_in_tree(child) {
+                return Some(call);
+            }
+        }
+
+        None
+    }
+
+    fn walk_tree<F>(node: tree_sitter::Node, callback: &mut F)
+    where
+        F: FnMut(tree_sitter::Node),
+    {
+        callback(node);
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            walk_tree(child, callback);
+        }
     }
 }
