@@ -145,13 +145,17 @@ Each LSP feature is implemented by a dedicated provider:
 
 **Completion provider** searches the symbol table and workspace index for completions, filtering by prefix and ranking by relevance.
 
-**Goto definition provider** resolves the symbol to its definition location using the symbol table and workspace index.
+**Goto definition provider** resolves the symbol to its definition location using the symbol table and workspace index, supporting cross-file navigation for all symbol types including wildcard imports.
+
+**Goto type definition provider** navigates from a variable to its type definition, supporting both local and cross-file type resolution.
+
+**Goto implementation provider** finds all implementations of abstract methods or protocols across the workspace.
 
 **References provider** finds all uses of a symbol across the workspace.
 
-**Rename provider** validates the rename and computes workspace edits.
+**Rename provider** validates the rename and computes workspace edits across all files, ensuring consistent symbol updates throughout the codebase.
 
-**Code actions provider** offers quick fixes for diagnostics like adding imports or suppressing linter rules.
+**Code actions provider** offers quick fixes for diagnostics like adding imports or suppressing linter rules, and provides refactoring actions including extract function, extract variable, inline function, change signature, and move symbol.
 
 **Semantic tokens provider** generates syntax highlighting tokens from the AST.
 
@@ -268,16 +272,22 @@ Memory usage grows with workspace size as the index and caches expand. No automa
 
 ```sh
 crates/server/src/
-├── backend.rs              # Main LSP backend
-├── lib.rs                  # Server entry point
+├── backend.rs                 # Main LSP backend
+├── lib.rs                     # Server entry point
 └── features/
-    ├── diagnostics.rs      # Diagnostic generation
-    ├── hover.rs            # Hover information
-    ├── completion/         # Auto-completion
-    ├── goto_definition.rs  # Jump to definition
-    ├── references.rs       # Find references
-    ├── rename.rs           # Rename symbol
-    ├── code_actions.rs     # Quick fixes
-    ├── semantic_tokens.rs  # Syntax highlighting
-    └── formatting.rs       # Code formatting
+    ├── diagnostics.rs         # Diagnostic generation
+    ├── hover.rs               # Hover information
+    ├── completion/            # Auto-completion
+    ├── goto_definition.rs     # Jump to definition, type definition, implementation
+    ├── references.rs          # Find references
+    ├── rename.rs              # Rename symbol
+    ├── code_actions.rs        # Quick fixes
+    ├── refactoring.rs         # Refactoring infrastructure
+    ├── extract_function.rs    # Extract function refactoring
+    ├── extract_variable.rs    # Extract variable refactoring
+    ├── inline_function.rs     # Inline function refactoring
+    ├── change_signature.rs    # Change signature refactoring
+    ├── move_symbol.rs         # Move symbol refactoring
+    ├── semantic_tokens.rs     # Syntax highlighting
+    └── formatting.rs          # Code formatting
 ```
