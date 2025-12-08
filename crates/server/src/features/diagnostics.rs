@@ -1198,7 +1198,7 @@ impl DiagnosticProvider {
         &self, node: &AstNode, symbol_table: &SymbolTable, diagnostics: &mut Vec<Diagnostic>, source: &str,
     ) {
         match node {
-            AstNode::FunctionDef { name, line, col, body, .. } => {
+            AstNode::FunctionDef { name, line, col, body, args, .. } => {
                 if MAGIC_METHODS.contains(&name.as_str()) {
                     let byte_offset = Self::line_col_to_byte_offset_from_source(source, line, col);
                     let scope_id = symbol_table.find_scope_at_position(byte_offset);
@@ -1223,7 +1223,7 @@ impl DiagnosticProvider {
                             code_description: None,
                         });
                     } else {
-                        self.validate_magic_method_signature(name, line, col, diagnostics);
+                        self.validate_magic_method_signature(name, args, line, col, diagnostics);
                     }
                 }
 
@@ -1247,7 +1247,8 @@ impl DiagnosticProvider {
 
     /// Validate magic method signatures against expected parameter counts and types
     fn validate_magic_method_signature(
-        &self, name: &str, line: &usize, col: &usize, diagnostics: &mut Vec<Diagnostic>,
+        &self, name: &str, args: &[beacon_parser::Parameter], line: &usize, col: &usize,
+        diagnostics: &mut Vec<Diagnostic>,
     ) {
         let expected_params = match name {
             "__init__" => Some((1, None, "self")),
@@ -1276,38 +1277,73 @@ impl DiagnosticProvider {
             _ => None,
         };
 
-        if let Some((min_params, max_params, first_param_name)) = expected_params {
-            let position = Position { line: (*line - 1) as u32, character: (*col - 1) as u32 };
-
-            let range = Range {
-                start: position,
-                end: Position { line: position.line, character: position.character + name.len() as u32 },
+        if let Some((min_params, max_params, expected_first_param)) = expected_params {
+            let actual_param_count = args.len();
+            let has_count_mismatch = if let Some(max) = max_params {
+                actual_param_count < min_params || actual_param_count > max
+            } else {
+                actual_param_count < min_params
             };
 
-            // TODO: Check parameter count and names from the AST node
-            let max_desc = max_params.map_or_else(|| "+".to_string(), |m| m.to_string());
+            let has_first_param_mismatch = args
+                .first()
+                .is_none_or(|first_param| first_param.name != expected_first_param);
 
-            diagnostics.push(Diagnostic {
-                range,
-                severity: Some(DiagnosticSeverity::HINT),
-                code: Some(lsp_types::NumberOrString::String("DUNDER002".to_string())),
-                source: Some("beacon".to_string()),
-                message: format!(
-                    "Magic method '{}' should have {} parameter{} (first: '{}')",
-                    name,
-                    if min_params == max_params.unwrap_or(min_params) {
-                        min_params.to_string()
-                    } else {
-                        format!("{}-{}", min_params, max_desc)
-                    },
-                    if min_params == 1 { "" } else { "s" },
-                    first_param_name
-                ),
-                related_information: None,
-                tags: None,
-                data: None,
-                code_description: None,
-            });
+            if has_count_mismatch || has_first_param_mismatch {
+                let position = Position { line: (*line - 1) as u32, character: (*col - 1) as u32 };
+                let range = Range {
+                    start: position,
+                    end: Position { line: position.line, character: position.character + name.len() as u32 },
+                };
+
+                let message = if has_count_mismatch && has_first_param_mismatch {
+                    let max_desc = max_params.map_or_else(|| "+".to_string(), |m| m.to_string());
+                    format!(
+                        "Magic method '{}' has {} parameter{} but expected {} (first parameter should be '{}')",
+                        name,
+                        actual_param_count,
+                        if actual_param_count == 1 { "" } else { "s" },
+                        if min_params == max_params.unwrap_or(min_params) {
+                            min_params.to_string()
+                        } else {
+                            format!("{}-{}", min_params, max_desc)
+                        },
+                        expected_first_param
+                    )
+                } else if has_count_mismatch {
+                    let max_desc = max_params.map_or_else(|| "+".to_string(), |m| m.to_string());
+                    format!(
+                        "Magic method '{}' has {} parameter{} but expected {}",
+                        name,
+                        actual_param_count,
+                        if actual_param_count == 1 { "" } else { "s" },
+                        if min_params == max_params.unwrap_or(min_params) {
+                            min_params.to_string()
+                        } else {
+                            format!("{}-{}", min_params, max_desc)
+                        }
+                    )
+                } else {
+                    format!(
+                        "Magic method '{}' first parameter should be '{}' not '{}'",
+                        name,
+                        expected_first_param,
+                        args.first().map_or("", |p| p.name.as_str())
+                    )
+                };
+
+                diagnostics.push(Diagnostic {
+                    range,
+                    severity: Some(DiagnosticSeverity::WARNING),
+                    code: Some(lsp_types::NumberOrString::String("DUNDER002".to_string())),
+                    source: Some("beacon".to_string()),
+                    message,
+                    related_information: None,
+                    tags: None,
+                    data: None,
+                    code_description: None,
+                });
+            }
         }
     }
 
