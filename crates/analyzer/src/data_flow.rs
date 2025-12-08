@@ -556,14 +556,12 @@ impl<'a> DataFlowAnalyzer<'a> {
         let mut unreachable = Vec::new();
 
         for block_id in unreachable_blocks {
-            if let Some(block) = self.cfg.blocks.get(&block_id) {
-                if let Some(&stmt_idx) = block.statements.first() {
-                    if stmt_idx < self.all_statements.len() {
+            if let Some(block) = self.cfg.blocks.get(&block_id)
+                && let Some(&stmt_idx) = block.statements.first()
+                    && stmt_idx < self.all_statements.len() {
                         let (line, col) = self.get_stmt_location(self.all_statements[stmt_idx]);
                         unreachable.push(UnreachableCode { block_id, line, col });
                     }
-                }
-            }
         }
 
         unreachable

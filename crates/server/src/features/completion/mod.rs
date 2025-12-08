@@ -281,8 +281,8 @@ impl CompletionProvider {
         }
 
         let parser = LspParser::new().ok();
-        if let Some(p) = parser {
-            if let Some(node) = p.node_at_position(tree, text, position) {
+        if let Some(p) = parser
+            && let Some(node) = p.node_at_position(tree, text, position) {
                 let mut current = node;
                 while let Some(parent) = current.parent() {
                     match parent.kind() {
@@ -294,7 +294,6 @@ impl CompletionProvider {
                     current = parent;
                 }
             }
-        }
 
         CompletionContextType::Expression
     }
@@ -334,8 +333,8 @@ impl CompletionProvider {
         }
 
         let parser = LspParser::new().ok();
-        if let Some(p) = parser {
-            if let Some(node) = p.node_at_position(tree, text, position) {
+        if let Some(p) = parser
+            && let Some(node) = p.node_at_position(tree, text, position) {
                 let mut current = node;
 
                 while let Some(parent) = current.parent() {
@@ -368,7 +367,6 @@ impl CompletionProvider {
                     current = parent;
                 }
             }
-        }
 
         true
     }
@@ -863,11 +861,10 @@ impl CompletionProvider {
                         module_name = Some(module_part.to_string());
                     }
 
-                    if module_uri.is_none() {
-                        if let Some(name) = module_name.as_ref() {
+                    if module_uri.is_none()
+                        && let Some(name) = module_name.as_ref() {
                             module_uri = Self::find_document_for_module(&self._documents, name);
                         }
-                    }
 
                     if let Some(exports) = stub_exports {
                         let module_display = module_name.clone().unwrap_or_else(|| module_part.to_string());

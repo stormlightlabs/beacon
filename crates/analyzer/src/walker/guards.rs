@@ -25,18 +25,17 @@ use super::utils::type_name_to_type;
 /// - `if x:` -> (x, T) where x: Optional[T] (truthiness narrows out None)
 pub fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<String>, Option<Type>) {
     if let AstNode::Identifier { name: var_name, .. } = test {
-        if let Some(current_type) = env.lookup(var_name) {
-            if current_type.is_optional() || matches!(current_type, Type::Union(_)) {
+        if let Some(current_type) = env.lookup(var_name)
+            && (current_type.is_optional() || matches!(current_type, Type::Union(_))) {
                 let narrowed = current_type.remove_from_union(&Type::none());
                 return (Some(var_name.clone()), Some(narrowed));
             }
-        }
         return (None, None);
     }
 
-    if let AstNode::Call { function, args, keywords, .. } = test {
-        if function.function_to_string() == "isinstance" && args.len() == 2 && keywords.is_empty() {
-            if let AstNode::Identifier { name: var_name, .. } = &args[0] {
+    if let AstNode::Call { function, args, keywords, .. } = test
+        && function.function_to_string() == "isinstance" && args.len() == 2 && keywords.is_empty()
+            && let AstNode::Identifier { name: var_name, .. } = &args[0] {
                 if let AstNode::Identifier { name: type_name, .. } = &args[1] {
                     let refined_type = type_name_to_type(type_name);
                     return (Some(var_name.clone()), Some(refined_type));
@@ -60,13 +59,11 @@ pub fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<S
                     }
                 }
             }
-        }
-    }
 
-    if let AstNode::Compare { left, ops, comparators, .. } = test {
-        if ops.len() == 1 && comparators.len() == 1 {
-            if let AstNode::Identifier { name: var_name, .. } = left.as_ref() {
-                if let AstNode::Literal { value: LiteralValue::None, .. } = &comparators[0] {
+    if let AstNode::Compare { left, ops, comparators, .. } = test
+        && ops.len() == 1 && comparators.len() == 1
+            && let AstNode::Identifier { name: var_name, .. } = left.as_ref()
+                && let AstNode::Literal { value: LiteralValue::None, .. } = &comparators[0] {
                     match &ops[0] {
                         CompareOperator::Is | CompareOperator::Eq => {
                             return (Some(var_name.clone()), Some(Type::none()));
@@ -81,9 +78,6 @@ pub fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<S
                         _ => {}
                     }
                 }
-            }
-        }
-    }
 
     (None, None)
 }
@@ -96,18 +90,17 @@ pub fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<S
 /// - `if x:` -> else branch narrows to None (for Optional types)
 pub fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<String>, Option<Type>) {
     if let AstNode::Identifier { name: var_name, .. } = test {
-        if let Some(current_type) = env.lookup(var_name) {
-            if current_type.is_optional() || matches!(current_type, Type::Union(_)) {
+        if let Some(current_type) = env.lookup(var_name)
+            && (current_type.is_optional() || matches!(current_type, Type::Union(_))) {
                 return (Some(var_name.clone()), Some(Type::none()));
             }
-        }
         return (None, None);
     }
 
-    if let AstNode::Call { function, args, keywords, .. } = test {
-        if function.function_to_string() == "isinstance" && args.len() == 2 && keywords.is_empty() {
-            if let AstNode::Identifier { name: var_name, .. } = &args[0] {
-                if let Some(current_type) = env.lookup(var_name) {
+    if let AstNode::Call { function, args, keywords, .. } = test
+        && function.function_to_string() == "isinstance" && args.len() == 2 && keywords.is_empty()
+            && let AstNode::Identifier { name: var_name, .. } = &args[0]
+                && let Some(current_type) = env.lookup(var_name) {
                     if let AstNode::Identifier { name: type_name, .. } = &args[1] {
                         let checked_type = type_name_to_type(type_name);
                         let narrowed = current_type.remove_from_union(&checked_type);
@@ -125,14 +118,11 @@ pub fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (
                         return (Some(var_name.clone()), Some(result_type));
                     }
                 }
-            }
-        }
-    }
 
-    if let AstNode::Compare { left, ops, comparators, .. } = test {
-        if ops.len() == 1 && comparators.len() == 1 {
-            if let AstNode::Identifier { name: var_name, .. } = left.as_ref() {
-                if let AstNode::Literal { value: LiteralValue::None, .. } = &comparators[0] {
+    if let AstNode::Compare { left, ops, comparators, .. } = test
+        && ops.len() == 1 && comparators.len() == 1
+            && let AstNode::Identifier { name: var_name, .. } = left.as_ref()
+                && let AstNode::Literal { value: LiteralValue::None, .. } = &comparators[0] {
                     match &ops[0] {
                         CompareOperator::Is | CompareOperator::Eq => {
                             if let Some(current_type) = env.lookup(var_name) {
@@ -147,9 +137,6 @@ pub fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (
                         _ => {}
                     }
                 }
-            }
-        }
-    }
 
     (None, None)
 }
@@ -166,8 +153,8 @@ pub fn extract_type_guard_info(return_annotation: &str, _params: &[beacon_parser
         let kind = if trimmed.starts_with("TypeGuard[") { TypeGuardKind::TypeGuard } else { TypeGuardKind::TypeIs };
         let prefix = if kind == TypeGuardKind::TypeGuard { "TypeGuard[" } else { "TypeIs[" };
 
-        if let Some(inner) = trimmed.strip_prefix(prefix) {
-            if let Some(type_str) = inner.strip_suffix(']') {
+        if let Some(inner) = trimmed.strip_prefix(prefix)
+            && let Some(type_str) = inner.strip_suffix(']') {
                 let parser = beacon_core::AnnotationParser::new();
                 if let Ok(guarded_type) = parser.parse(type_str) {
                     // TODO: Support guarding specific parameters
@@ -175,7 +162,6 @@ pub fn extract_type_guard_info(return_annotation: &str, _params: &[beacon_parser
                     return Some(TypeGuardInfo::new(param_index, guarded_type, kind));
                 }
             }
-        }
     }
 
     None
@@ -234,11 +220,10 @@ pub fn extract_type_predicate(test: &AstNode, env: &TypeEnvironment) -> Option<T
             Some(TypePredicate::IsInstance(target_type))
         }
         AstNode::Call { function, args, .. } if !args.is_empty() => {
-            if let Some(guard_info) = env.get_type_guard(&function.function_to_string()) {
-                if args.len() > guard_info.param_index {
+            if let Some(guard_info) = env.get_type_guard(&function.function_to_string())
+                && args.len() > guard_info.param_index {
                     return Some(TypePredicate::UserDefinedGuard(guard_info.guarded_type.clone()));
                 }
-            }
             None
         }
         AstNode::Identifier { .. } => Some(TypePredicate::IsTruthy),

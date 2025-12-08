@@ -344,11 +344,10 @@ impl ClassMetadata {
         for (name, method_type) in &self.methods {
             if let Some(ty) = method_type.primary_type() {
                 fields_vec.push((name.clone(), ty.clone()));
-            } else if let MethodType::Overloaded(overload_set) = method_type {
-                if let Some(first_sig) = overload_set.signatures.first() {
+            } else if let MethodType::Overloaded(overload_set) = method_type
+                && let Some(first_sig) = overload_set.signatures.first() {
                     fields_vec.push((name.clone(), first_sig.clone()));
                 }
-            }
         }
         for (name, ty) in &self.classmethods {
             fields_vec.push((name.clone(), ty.clone()));

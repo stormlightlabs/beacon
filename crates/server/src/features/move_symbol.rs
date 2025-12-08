@@ -47,24 +47,21 @@ impl<'a> SymbolUsageChecker<'a> {
             return;
         }
 
-        if node.kind() == "identifier" {
-            if let Ok(node_text) = node.utf8_text(self.text.as_bytes()) {
-                if node_text == self.symbol_name {
+        if node.kind() == "identifier"
+            && let Ok(node_text) = node.utf8_text(self.text.as_bytes())
+                && node_text == self.symbol_name {
                     let byte_offset = node.start_byte();
                     let scope = self.symbol_table.find_scope_at_position(byte_offset);
 
-                    if let Some(resolved) = self.symbol_table.lookup_symbol(self.symbol_name, scope) {
-                        if resolved.scope_id == self.target_symbol.scope_id
+                    if let Some(resolved) = self.symbol_table.lookup_symbol(self.symbol_name, scope)
+                        && resolved.scope_id == self.target_symbol.scope_id
                             && resolved.line == self.target_symbol.line
                             && resolved.col == self.target_symbol.col
                         {
                             *found = true;
                             return;
                         }
-                    }
                 }
-            }
-        }
 
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
@@ -210,14 +207,12 @@ impl MoveSymbolProvider {
                     last_import_line = child.end_position().row;
                 }
                 "expression_statement" => {
-                    if !has_docstring && child.start_position().row <= 1 {
-                        if let Some(string_node) = child.child(0) {
-                            if string_node.kind() == "string" {
+                    if !has_docstring && child.start_position().row <= 1
+                        && let Some(string_node) = child.child(0)
+                            && string_node.kind() == "string" {
                                 has_docstring = true;
                                 last_import_line = child.end_position().row;
                             }
-                        }
-                    }
                 }
                 _ => {}
             }
@@ -253,13 +248,11 @@ impl MoveSymbolProvider {
 
         let filename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("module");
 
-        if filename == "__init__" {
-            if let Some(parent) = path.parent() {
-                if let Some(parent_name) = parent.file_name().and_then(|s| s.to_str()) {
+        if filename == "__init__"
+            && let Some(parent) = path.parent()
+                && let Some(parent_name) = parent.file_name().and_then(|s| s.to_str()) {
                     return parent_name.to_string();
                 }
-            }
-        }
 
         let mut components = Vec::new();
         components.push(filename.to_string());
@@ -392,23 +385,18 @@ impl MoveSymbolProvider {
     fn imports_symbol(import_node: tree_sitter::Node, text: &str, symbol_name: &str) -> bool {
         let mut cursor = import_node.walk();
         for child in import_node.children(&mut cursor) {
-            if child.kind() == "dotted_name" || child.kind() == "identifier" {
-                if let Ok(name) = child.utf8_text(text.as_bytes()) {
-                    if name == symbol_name {
+            if (child.kind() == "dotted_name" || child.kind() == "identifier")
+                && let Ok(name) = child.utf8_text(text.as_bytes())
+                    && name == symbol_name {
                         return true;
                     }
-                }
-            }
 
-            if child.kind() == "aliased_import" {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    if let Ok(name) = name_node.utf8_text(text.as_bytes()) {
-                        if name == symbol_name {
+            if child.kind() == "aliased_import"
+                && let Some(name_node) = child.child_by_field_name("name")
+                    && let Ok(name) = name_node.utf8_text(text.as_bytes())
+                        && name == symbol_name {
                             return true;
                         }
-                    }
-                }
-            }
         }
         false
     }

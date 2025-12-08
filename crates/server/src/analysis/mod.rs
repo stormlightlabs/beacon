@@ -70,11 +70,10 @@ impl Analyzer {
         let stub_cache = Arc::new(std::sync::RwLock::new(beacon_analyzer::StubCache::new()));
         let stdlib_modules = beacon_analyzer::EMBEDDED_STDLIB_MODULES;
         for module_name in stdlib_modules.iter().copied() {
-            if let Some(stub) = beacon_analyzer::get_embedded_stub(module_name) {
-                if let Ok(mut cache) = stub_cache.write() {
+            if let Some(stub) = beacon_analyzer::get_embedded_stub(module_name)
+                && let Ok(mut cache) = stub_cache.write() {
                     cache.insert(module_name.to_string(), stub);
                 }
-            }
         }
 
         Self {
@@ -423,11 +422,10 @@ impl Analyzer {
         let col = (position.character + 1) as usize;
         let position_map = self.position_maps.get(uri);
 
-        if let Some(pos_map) = position_map {
-            if let Some(node_id) = pos_map.get(&(line, col)) {
+        if let Some(pos_map) = position_map
+            && let Some(node_id) = pos_map.get(&(line, col)) {
                 return Ok(result.type_map.get(node_id).cloned());
             }
-        }
 
         Ok(None)
     }
@@ -553,9 +551,9 @@ impl Analyzer {
                 }
             }
 
-            if let Some(tl_scope_id) = top_level_scope_id {
-                if let Some(tl_scope) = symbol_table.scopes.get(&tl_scope_id) {
-                    if let Some(root_scope) = symbol_table.scopes.get(&root_scope_id) {
+            if let Some(tl_scope_id) = top_level_scope_id
+                && let Some(tl_scope) = symbol_table.scopes.get(&tl_scope_id)
+                    && let Some(root_scope) = symbol_table.scopes.get(&root_scope_id) {
                         let scope_start_byte = tl_scope.start_byte;
                         let scope_end_byte = tl_scope.end_byte;
 
@@ -572,8 +570,6 @@ impl Analyzer {
                             }
                         }
                     }
-                }
-            }
         }
 
         affected_symbols.into_iter().collect()

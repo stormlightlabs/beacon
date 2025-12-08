@@ -51,6 +51,7 @@ pub use formatting::FormattingProvider;
 pub use goto_definition::GotoDefinitionProvider;
 pub use hover::HoverProvider;
 pub use inlay_hints::InlayHintsProvider;
+pub use inline_function::InlineFunctionProvider;
 pub use move_symbol::MoveSymbolProvider;
 pub use refactoring::RefactoringContext;
 pub use references::ReferencesProvider;

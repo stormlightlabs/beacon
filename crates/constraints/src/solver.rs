@@ -89,11 +89,10 @@ fn check_user_defined_protocol_impl(
 
                 let mut available_sigs = Vec::new();
                 for (method_name, method_type) in class_meta.methods.iter() {
-                    if let Some(ty) = method_type.primary_type() {
-                        if let Some(sig) = type_to_method_signature(method_name, ty) {
+                    if let Some(ty) = method_type.primary_type()
+                        && let Some(sig) = type_to_method_signature(method_name, ty) {
                             available_sigs.push((method_name.clone(), sig));
                         }
-                    }
                 }
 
                 let mut all_methods_ok = true;
@@ -137,8 +136,8 @@ fn check_user_defined_protocol_impl(
 
                 if all_methods_ok {
                     for base_name in &protocol_meta.base_classes {
-                        if let Some(base_meta) = class_registry.get_class(base_name) {
-                            if base_meta.is_protocol
+                        if let Some(base_meta) = class_registry.get_class(base_name)
+                            && base_meta.is_protocol
                                 && !check_user_defined_protocol_impl(
                                     ty,
                                     base_name,
@@ -150,7 +149,6 @@ fn check_user_defined_protocol_impl(
                                 all_methods_ok = false;
                                 break;
                             }
-                        }
                     }
                 }
 
@@ -320,30 +318,26 @@ fn get_attribute_type(ty: &Type, attr_name: &str, class_registry: &ClassRegistry
                     _ => None,
                 };
 
-                if let Some(name) = class_name {
-                    if let Some(attr_type) = class_registry.lookup_attribute_with_inheritance(name, attr_name) {
-                        if let Some(class_metadata) = class_registry.get_class(name) {
-                            if !class_metadata.type_params.is_empty() {
+                if let Some(name) = class_name
+                    && let Some(attr_type) = class_registry.lookup_attribute_with_inheritance(name, attr_name) {
+                        if let Some(class_metadata) = class_registry.get_class(name)
+                            && !class_metadata.type_params.is_empty() {
                                 let subst = class_metadata.create_type_substitution(&type_args);
                                 return Some(beacon_core::ClassMetadata::substitute_type_params(&attr_type, &subst));
                             }
-                        }
                         return Some(attr_type);
                     }
-                }
             }
 
-            if let Some((class_name, type_args)) = ty.unapply_class() {
-                if let Some(attr_type) = class_registry.lookup_attribute_with_inheritance(class_name, attr_name) {
-                    if let Some(class_metadata) = class_registry.get_class(class_name) {
-                        if !class_metadata.type_params.is_empty() {
+            if let Some((class_name, type_args)) = ty.unapply_class()
+                && let Some(attr_type) = class_registry.lookup_attribute_with_inheritance(class_name, attr_name) {
+                    if let Some(class_metadata) = class_registry.get_class(class_name)
+                        && !class_metadata.type_params.is_empty() {
                             let subst = class_metadata.create_type_substitution(&type_args);
                             return Some(beacon_core::ClassMetadata::substitute_type_params(&attr_type, &subst));
                         }
-                    }
                     return Some(attr_type);
                 }
-            }
 
             let base_ctor = extract_base_constructor(ty);
             base_ctor.and_then(|name| class_registry.lookup_attribute_with_inheritance(name, attr_name))
@@ -365,16 +359,15 @@ fn classes_compatible(
             let result =
                 check_protocol_with_variance(actual, protocol_name, &expected_args, class_registry, typevar_registry);
             return result;
-        } else if let Some(metadata) = class_registry.get_class(protocol_name) {
-            if metadata.is_protocol {
+        } else if let Some(metadata) = class_registry.get_class(protocol_name)
+            && metadata.is_protocol {
                 return check_user_defined_protocol(actual, protocol_name, class_registry, typevar_registry);
             }
-        }
     }
 
     if let Some((expected_name, expected_args)) = class_info(expected) {
-        if let Some((actual_name, actual_args)) = class_info(actual) {
-            if class_registry.is_subclass_of(&actual_name, &expected_name) {
+        if let Some((actual_name, actual_args)) = class_info(actual)
+            && class_registry.is_subclass_of(&actual_name, &expected_name) {
                 if !expected_args.is_empty() && actual_args.len() == expected_args.len() {
                     let variance_info = class_registry
                         .get_class(&actual_name)
@@ -415,10 +408,9 @@ fn classes_compatible(
                 }
                 return true;
             }
-        }
 
-        if let Some(metadata) = class_registry.get_class(&expected_name) {
-            if metadata.is_protocol {
+        if let Some(metadata) = class_registry.get_class(&expected_name)
+            && metadata.is_protocol {
                 if !expected_args.is_empty() {
                     return check_protocol_with_variance(
                         actual,
@@ -431,7 +423,6 @@ fn classes_compatible(
                     return check_user_defined_protocol(actual, &expected_name, class_registry, typevar_registry);
                 }
             }
-        }
     }
 
     false
@@ -448,8 +439,8 @@ fn iterable_compatible(
     actual: &Type, expected: &Type, class_registry: &ClassRegistry,
     typevar_registry: &beacon_core::TypeVarConstraintRegistry,
 ) -> bool {
-    if let Some((yield_ty, _send_ty, _return_ty)) = actual.extract_generator_params() {
-        if let Some((expected_ctor, expected_args)) = expected.unapply() {
+    if let Some((yield_ty, _send_ty, _return_ty)) = actual.extract_generator_params()
+        && let Some((expected_ctor, expected_args)) = expected.unapply() {
             let expects_iterable = matches!(expected_ctor, TypeCtor::Iterable)
                 || matches!(expected_ctor, TypeCtor::Class(name) if name == "Iterable");
 
@@ -460,7 +451,6 @@ fn iterable_compatible(
                 return true;
             }
         }
-    }
 
     if let Some((actual_ctor, actual_args)) = actual.unapply() {
         if let Some((expected_ctor, expected_args)) = expected.unapply() {
@@ -781,13 +771,12 @@ fn protocol_instantiation_compatible(
 
         let mut inferred_type = None;
         for (method_name, protocol_method_ty) in &protocol_methods {
-            if let Some(actual_method) = actual_class_meta.lookup_method(method_name) {
-                if let Some(inferred) = infer_type_param_from_methods(protocol_method_ty, actual_method, type_var_name)
+            if let Some(actual_method) = actual_class_meta.lookup_method(method_name)
+                && let Some(inferred) = infer_type_param_from_methods(protocol_method_ty, actual_method, type_var_name)
                 {
                     inferred_type = Some(inferred);
                     break;
                 }
-            }
         }
 
         inferred_type_args.push(inferred_type.unwrap_or_else(Type::any));
@@ -1181,14 +1170,12 @@ fn resolve_bound_method_type<'a>(
         return method;
     }
 
-    if let Type::Con(TypeCtor::Class(class_name)) = rec.as_ref() {
-        if let Some(metadata) = reg.get_class(class_name) {
-            if let Some(method_type) = metadata.lookup_method_type(name) {
+    if let Type::Con(TypeCtor::Class(class_name)) = rec.as_ref()
+        && let Some(metadata) = reg.get_class(class_name)
+            && let Some(method_type) = metadata.lookup_method_type(name) {
                 let applied_args: Vec<Type> = pos_args.iter().map(|(arg_ty, _)| subst.apply(arg_ty)).collect();
                 return method_type.resolve_for_args(&applied_args).unwrap_or(method);
             }
-        }
-    }
     method
 }
 

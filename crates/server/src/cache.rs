@@ -161,9 +161,9 @@ impl IntrospectionCache {
             .map(|root| root.join(".beacon-cache").join("introspection.json"))
             .or_else(|| dirs::cache_dir().map(|dir| dir.join("beacon-lsp").join("introspection.json")));
 
-        if let Some(ref file) = cache_file {
-            if file.exists() {
-                if let Ok(loaded) = Self::load_from_disk(file) {
+        if let Some(ref file) = cache_file
+            && file.exists()
+                && let Ok(loaded) = Self::load_from_disk(file) {
                     for (key, value) in loaded {
                         cache.put(key, value);
                     }
@@ -173,8 +173,6 @@ impl IntrospectionCache {
                         file.display()
                     );
                 }
-            }
-        }
 
         Self { cache: Arc::new(RwLock::new(cache)), cache_file }
     }

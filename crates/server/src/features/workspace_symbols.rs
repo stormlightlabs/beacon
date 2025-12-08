@@ -56,8 +56,8 @@ impl WorkspaceSymbolsProvider {
             .unwrap_or_default();
 
         for uri in workspace_uris {
-            if !self.documents.has_document(&uri) {
-                if let Ok(_handle) = tokio::runtime::Handle::try_current() {
+            if !self.documents.has_document(&uri)
+                && let Ok(_handle) = tokio::runtime::Handle::try_current() {
                     let workspace = tokio::task::block_in_place(|| {
                         tokio::runtime::Handle::current().block_on(async { self.workspace.read().await })
                     });
@@ -72,7 +72,6 @@ impl WorkspaceSymbolsProvider {
                         );
                     }
                 }
-            }
         }
 
         if query.is_empty() || results.is_empty() {

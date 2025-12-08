@@ -391,8 +391,8 @@ impl<'a> IntraModuleTaintAnalyzer<'a> {
                 if stmt_idx < self.all_statements.len() {
                     let stmt = self.all_statements[stmt_idx];
 
-                    if let Some(sink) = self.check_taint_sink(stmt) {
-                        if self.sink_receives_taint(stmt, &current_taint) {
+                    if let Some(sink) = self.check_taint_sink(stmt)
+                        && self.sink_receives_taint(stmt, &current_taint) {
                             for tainted_var in &current_taint {
                                 if let Some(source) = sources.iter().find(|s| &s.var_name == tainted_var) {
                                     violations.push(TaintViolation {
@@ -403,7 +403,6 @@ impl<'a> IntraModuleTaintAnalyzer<'a> {
                                 }
                             }
                         }
-                    }
 
                     self.propagate_taint(stmt, &mut current_taint);
                 }
@@ -478,14 +477,12 @@ impl<'a> CrossModuleTaintAnalyzer<'a> {
 
             for (caller_fn, call_sites) in self.call_graph.all_call_sites() {
                 for call_site in call_sites {
-                    if let Some(callee_fn) = &call_site.receiver {
-                        if caller_fn.uri != callee_fn.uri {
-                            if let Some(violation) = self.check_cross_module_taint(caller_fn, callee_fn) {
+                    if let Some(callee_fn) = &call_site.receiver
+                        && caller_fn.uri != callee_fn.uri
+                            && let Some(violation) = self.check_cross_module_taint(caller_fn, callee_fn) {
                                 cross_module_violations.push(violation);
                                 changed = true;
                             }
-                        }
-                    }
                 }
             }
 

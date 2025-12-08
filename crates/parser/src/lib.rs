@@ -1385,11 +1385,10 @@ impl PythonParser {
                 continue;
             }
 
-            if let Ok(text) = child.utf8_text(source.as_bytes()) {
-                if text.ends_with('=') && text != "=" {
+            if let Ok(text) = child.utf8_text(source.as_bytes())
+                && text.ends_with('=') && text != "=" {
                     return self.parse_binary_operator(text.trim_end_matches('='));
                 }
-            }
         }
 
         Err(ParseError::TreeSitterError("Missing augmented assignment operator".to_string()).into())
@@ -1496,16 +1495,14 @@ impl PythonParser {
 
                 for child in node.children(&mut cursor) {
                     if child.kind() == "string_start" {
-                        if let Ok(start_text) = child.utf8_text(source.as_bytes()) {
-                            if let Some(pos) = start_text.find(|c: char| ['\'', '"'].contains(&c)) {
+                        if let Ok(start_text) = child.utf8_text(source.as_bytes())
+                            && let Some(pos) = start_text.find(|c: char| ['\'', '"'].contains(&c)) {
                                 prefix = start_text[..pos].to_string();
                             }
-                        }
-                    } else if child.kind() == "string_content" || child.kind() == "interpolation" {
-                        if let Ok(text) = child.utf8_text(source.as_bytes()) {
+                    } else if (child.kind() == "string_content" || child.kind() == "interpolation")
+                        && let Ok(text) = child.utf8_text(source.as_bytes()) {
                             content.push_str(text);
                         }
-                    }
                 }
                 Ok(LiteralValue::String { value: content, prefix })
             }
@@ -1546,11 +1543,10 @@ impl PythonParser {
         let mut cursor = node.walk();
 
         for child in node.children(&mut cursor) {
-            if child.kind() == "identifier" {
-                if let Ok(name) = child.utf8_text(source.as_bytes()) {
+            if child.kind() == "identifier"
+                && let Ok(name) = child.utf8_text(source.as_bytes()) {
                     names.push(name.to_string());
                 }
-            }
         }
 
         Ok(names)
@@ -1621,11 +1617,10 @@ impl PythonParser {
         for child in node.children(&mut cursor) {
             match child.kind() {
                 "dotted_name" | "identifier" => {
-                    if let Ok(name) = child.utf8_text(source.as_bytes()) {
-                        if name != "import" {
+                    if let Ok(name) = child.utf8_text(source.as_bytes())
+                        && name != "import" {
                             modules.push((name.to_string(), None));
                         }
-                    }
                 }
                 "aliased_import" => {
                     if let Some(name_node) = child.child_by_field_name("name") {
@@ -1668,9 +1663,9 @@ impl PythonParser {
         for child in node.children(&mut cursor) {
             match child.kind() {
                 "dotted_name" | "identifier" => {
-                    if child.id() != module_node.id() {
-                        if let Ok(name) = child.utf8_text(source.as_bytes()) {
-                            if name != "from" && name != "import" {
+                    if child.id() != module_node.id()
+                        && let Ok(name) = child.utf8_text(source.as_bytes())
+                            && name != "from" && name != "import" {
                                 let start_pos = child.start_position();
                                 let end_pos = child.end_position();
                                 names.push(ImportName {
@@ -1681,12 +1676,10 @@ impl PythonParser {
                                     end_col: end_pos.column + 1,
                                 });
                             }
-                        }
-                    }
                 }
                 "aliased_import" => {
-                    if let Some(name_node) = child.child_by_field_name("name") {
-                        if let Ok(name) = name_node.utf8_text(source.as_bytes()) {
+                    if let Some(name_node) = child.child_by_field_name("name")
+                        && let Ok(name) = name_node.utf8_text(source.as_bytes()) {
                             let start_pos = name_node.start_position();
                             let end_pos = name_node.end_position();
                             names.push(ImportName {
@@ -1697,7 +1690,6 @@ impl PythonParser {
                                 end_col: end_pos.column + 1,
                             });
                         }
-                    }
                 }
                 "wildcard_import" => {
                     let start_pos = child.start_position();
@@ -1723,8 +1715,8 @@ impl PythonParser {
         for child in node.children(&mut cursor) {
             match child.kind() {
                 "dotted_name" | "identifier" => {
-                    if let Ok(text) = child.utf8_text(source.as_bytes()) {
-                        if text != "__future__" && text != "from" && text != "import" {
+                    if let Ok(text) = child.utf8_text(source.as_bytes())
+                        && text != "__future__" && text != "from" && text != "import" {
                             let start_pos = child.start_position();
                             let end_pos = child.end_position();
                             names.push(ImportName {
@@ -1735,7 +1727,6 @@ impl PythonParser {
                                 end_col: end_pos.column + 1,
                             });
                         }
-                    }
                 }
                 _ => {}
             }
@@ -1804,11 +1795,10 @@ impl PythonParser {
         let mut content = String::new();
 
         for child in string_node.children(&mut cursor) {
-            if child.kind() == "string_content" {
-                if let Ok(text) = child.utf8_text(source.as_bytes()) {
+            if child.kind() == "string_content"
+                && let Ok(text) = child.utf8_text(source.as_bytes()) {
                     content.push_str(text);
                 }
-            }
         }
 
         if content.is_empty() { None } else { Some(content) }
@@ -2123,11 +2113,10 @@ impl PythonParser {
                 let mut sibling_cursor = child.walk();
                 if let Some(parent) = child.parent() {
                     for sibling in parent.children(&mut sibling_cursor) {
-                        if sibling.kind() == "if_clause" && sibling.start_byte() > child.end_byte() {
-                            if let Some(cond) = sibling.named_child(0) {
+                        if sibling.kind() == "if_clause" && sibling.start_byte() > child.end_byte()
+                            && let Some(cond) = sibling.named_child(0) {
                                 ifs.push(self.node_to_ast(cond, source)?);
                             }
-                        }
                     }
                 }
 
@@ -2205,11 +2194,10 @@ impl PythonParser {
         for child in node.children(&mut cursor) {
             if !child.is_extra() {
                 if self.is_compare_operator(child.kind()) {
-                    if let Ok(text) = child.utf8_text(source.as_bytes()) {
-                        if let Ok(op) = self.parse_compare_operator(text) {
+                    if let Ok(text) = child.utf8_text(source.as_bytes())
+                        && let Ok(op) = self.parse_compare_operator(text) {
                             operators.push(op);
                         }
-                    }
                 } else if child.kind() != "(" && child.kind() != ")" {
                     operands.push(self.node_to_ast(child, source)?);
                 }

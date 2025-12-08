@@ -33,7 +33,7 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
     - [x] Generic refactoring framework
     - [x] Extract Function refactoring
     - [x] Move Symbol refactoring
-- [ ] Inline Function refactoring
+- [x] Inline Function refactoring
 - [ ] Change Signature refactoring
 - [x] Extract Variable refactoring
 

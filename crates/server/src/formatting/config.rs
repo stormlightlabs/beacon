@@ -7,44 +7,40 @@ use serde::{Deserialize, Serialize};
 /// Quote style preference for string literals
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum QuoteStyle {
     /// Use single quotes for strings
     Single,
     /// Use double quotes for strings
+    #[default]
     Double,
     /// Preserve existing quote style
     Preserve,
 }
 
-impl Default for QuoteStyle {
-    fn default() -> Self {
-        Self::Double
-    }
-}
 
 /// Trailing comma preference for multi-line structures
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum TrailingCommas {
     /// Always add trailing commas in multi-line structures
     Always,
     /// Add trailing commas only in multi-line structures
+    #[default]
     Multiline,
     /// Never add trailing commas
     Never,
 }
 
-impl Default for TrailingCommas {
-    fn default() -> Self {
-        Self::Multiline
-    }
-}
 
 /// Import sorting style
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum ImportSorting {
     /// PEP8 style: stdlib, third-party, local
+    #[default]
     Pep8,
     /// isort-compatible sorting
     Isort,
@@ -52,17 +48,14 @@ pub enum ImportSorting {
     Off,
 }
 
-impl Default for ImportSorting {
-    fn default() -> Self {
-        Self::Pep8
-    }
-}
 
 /// Compatibility mode with other formatters
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum CompatibilityMode {
     /// Black formatter compatibility
+    #[default]
     Black,
     /// autopep8 compatibility
     Autopep8,
@@ -70,11 +63,6 @@ pub enum CompatibilityMode {
     Pep8,
 }
 
-impl Default for CompatibilityMode {
-    fn default() -> Self {
-        Self::Black
-    }
-}
 
 /// Configuration for the Python code formatter
 ///

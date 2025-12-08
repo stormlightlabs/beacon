@@ -80,8 +80,8 @@ impl DiagnosticProvider {
 
         if let Some(line_text) = line.checked_sub(1).and_then(|idx| lines.get(idx)).map(|s| s.as_str()) {
             let search_start = column_to_byte(line_text, col_hint);
-            if search_start <= line_text.len() {
-                if let Some(rel_idx) = line_text[search_start..].find(name) {
+            if search_start <= line_text.len()
+                && let Some(rel_idx) = line_text[search_start..].find(name) {
                     let byte_idx = search_start + rel_idx;
                     let start_col = byte_to_column(line_text, byte_idx);
                     let end_col = start_col + name.chars().count();
@@ -89,7 +89,6 @@ impl DiagnosticProvider {
                     let end = Position { line: start.line, character: (end_col - 1) as u32 };
                     return Range { start, end };
                 }
-            }
         }
 
         Range { start: fallback_start, end: fallback_end }
@@ -483,13 +482,12 @@ impl DiagnosticProvider {
                     // Skip annotation requirements for TypeVar declarations
                 } else if ctx.in_class_def && ctx.mode == config::TypeCheckingMode::Strict {
                     self.check_class_attribute_annotation(target, *line, *col, ctx);
-                } else if ctx.mode != config::TypeCheckingMode::Relaxed {
-                    if let Some(inferred_type) =
+                } else if ctx.mode != config::TypeCheckingMode::Relaxed
+                    && let Some(inferred_type) =
                         Self::get_type_for_position(ctx.type_map, ctx.position_map, *line, *col)
                     {
                         self.check_missing_annotation(target, &inferred_type, *line, *col, ctx);
                     }
-                }
             }
             AstNode::If { body, elif_parts, else_body, .. } => {
                 for stmt in body {
@@ -724,8 +722,8 @@ impl DiagnosticProvider {
                     Self::get_type_for_position(ctx.type_map, ctx.position_map, param.line, param.col)
                 {
                     let parser = beacon_core::AnnotationParser::new();
-                    if let Ok(annotated_type) = parser.parse(annotation) {
-                        if !Self::types_are_compatible(&annotated_type, &inferred_type) {
+                    if let Ok(annotated_type) = parser.parse(annotation)
+                        && !Self::types_are_compatible(&annotated_type, &inferred_type) {
                             let severity =
                                 Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::AnnotationMismatch);
 
@@ -759,7 +757,6 @@ impl DiagnosticProvider {
                                 });
                             }
                         }
-                    }
                 }
             }
             None => {
@@ -916,8 +913,8 @@ impl DiagnosticProvider {
                     };
 
                     let parser = beacon_core::AnnotationParser::new();
-                    if let Ok(annotated_type) = parser.parse(annotation) {
-                        if !Self::types_are_compatible(&annotated_type, &inferred_return_type) {
+                    if let Ok(annotated_type) = parser.parse(annotation)
+                        && !Self::types_are_compatible(&annotated_type, &inferred_return_type) {
                             let severity =
                                 Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::AnnotationMismatch);
 
@@ -949,7 +946,6 @@ impl DiagnosticProvider {
                                 });
                             }
                         }
-                    }
                 }
             }
             None => {
@@ -1416,8 +1412,8 @@ impl DiagnosticProvider {
                 }
             }
             AstNode::Import { module, line, col, .. } => {
-                if let Some(resolved_uri) = workspace.resolve_import(module) {
-                    if circular_group.contains(&resolved_uri) {
+                if let Some(resolved_uri) = workspace.resolve_import(module)
+                    && circular_group.contains(&resolved_uri) {
                         let position = Position { line: (*line - 1) as u32, character: (*col - 1) as u32 };
 
                         let range = Range {
@@ -1437,11 +1433,10 @@ impl DiagnosticProvider {
                             code_description: None,
                         });
                     }
-                }
             }
             AstNode::ImportFrom { module, line, col, .. } => {
-                if let Some(resolved_uri) = workspace.resolve_import(module) {
-                    if circular_group.contains(&resolved_uri) {
+                if let Some(resolved_uri) = workspace.resolve_import(module)
+                    && circular_group.contains(&resolved_uri) {
                         let position = Position { line: (*line - 1) as u32, character: (*col - 1) as u32 };
 
                         let range = Range {
@@ -1461,7 +1456,6 @@ impl DiagnosticProvider {
                             code_description: None,
                         });
                     }
-                }
             }
             AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } => {
                 for stmt in body {
@@ -1776,15 +1770,14 @@ impl DiagnosticProvider {
             }
             AstNode::Assignment { target, value, line, col, .. } => {
                 let target_name = target.target_to_string();
-                if target_name == "__all__" {
-                    if let AstNode::List { elements, .. } = value.as_ref() {
+                if target_name == "__all__"
+                    && let AstNode::List { elements, .. } = value.as_ref() {
                         for (idx, element) in elements.iter().enumerate() {
                             if let AstNode::Literal {
                                 value: beacon_parser::LiteralValue::String { value: symbol_name, .. },
                                 ..
                             } = element
-                            {
-                                if !module_symbols.contains(symbol_name) {
+                                && !module_symbols.contains(symbol_name) {
                                     let position = Position {
                                         line: (*line - 1) as u32,
                                         character: (*col + idx * (symbol_name.len() + 4)) as u32,
@@ -1812,10 +1805,8 @@ impl DiagnosticProvider {
                                         code_description: None,
                                     });
                                 }
-                            }
                         }
                     }
-                }
             }
             _ => {}
         }

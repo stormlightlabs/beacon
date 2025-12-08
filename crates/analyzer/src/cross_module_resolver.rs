@@ -100,12 +100,11 @@ impl<'a> CrossModuleTypeResolver<'a> {
         let mut changed = false;
 
         for call_site in call_sites {
-            if let Some(type_changed) = self.try_resolve_call_site(function_id, call_site)? {
-                if type_changed {
+            if let Some(type_changed) = self.try_resolve_call_site(function_id, call_site)?
+                && type_changed {
                     changed = true;
                     *constraints_generated += 1;
                 }
-            }
         }
 
         Ok(changed)

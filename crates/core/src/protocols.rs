@@ -328,18 +328,15 @@ impl ProtocolChecker {
                 matches!(inner.as_ref(), Type::App(ctor, _) if matches!(ctor.as_ref(), Type::Con(TypeCtor::AsyncGenerator)))
             }
             (Type::App(inner, _), ProtocolName::Awaitable) => {
-                if let Type::App(ctor, _) = inner.as_ref() {
-                    if matches!(ctor.as_ref(), Type::Con(TypeCtor::AsyncGenerator)) {
+                if let Type::App(ctor, _) = inner.as_ref()
+                    && matches!(ctor.as_ref(), Type::Con(TypeCtor::AsyncGenerator)) {
                         return true;
                     }
-                }
-                if let Type::App(inner2, _) = inner.as_ref() {
-                    if let Type::App(ctor, _) = inner2.as_ref() {
-                        if matches!(ctor.as_ref(), Type::Con(TypeCtor::Coroutine)) {
+                if let Type::App(inner2, _) = inner.as_ref()
+                    && let Type::App(ctor, _) = inner2.as_ref()
+                        && matches!(ctor.as_ref(), Type::Con(TypeCtor::Coroutine)) {
                             return true;
                         }
-                    }
-                }
 
                 false
             }
@@ -359,11 +356,10 @@ impl ProtocolChecker {
             Type::App(ctor, elem) if matches!(ctor.as_ref(), Type::Con(TypeCtor::Iterable)) => elem.as_ref().clone(),
             Type::App(ctor, elem) if matches!(ctor.as_ref(), Type::Con(TypeCtor::Iterator)) => elem.as_ref().clone(),
             Type::App(inner, _) => {
-                if let Type::App(ctor, key) = inner.as_ref() {
-                    if matches!(ctor.as_ref(), Type::Con(TypeCtor::Dict)) {
+                if let Type::App(ctor, key) = inner.as_ref()
+                    && matches!(ctor.as_ref(), Type::Con(TypeCtor::Dict)) {
                         return key.as_ref().clone();
                     }
-                }
                 Type::any()
             }
             Type::Con(TypeCtor::String) => Type::string(),
@@ -377,11 +373,10 @@ impl ProtocolChecker {
     pub fn extract_mapping_value(ty: &Type) -> Type {
         match ty {
             Type::App(inner, val) => {
-                if let Type::App(ctor, _) = inner.as_ref() {
-                    if matches!(ctor.as_ref(), Type::Con(TypeCtor::Dict)) {
+                if let Type::App(ctor, _) = inner.as_ref()
+                    && matches!(ctor.as_ref(), Type::Con(TypeCtor::Dict)) {
                         return val.as_ref().clone();
                     }
-                }
                 Type::any()
             }
             _ => Type::any(),
@@ -394,11 +389,10 @@ impl ProtocolChecker {
     pub fn extract_mapping_key(ty: &Type) -> Type {
         match ty {
             Type::App(inner, _) => {
-                if let Type::App(ctor, key) = inner.as_ref() {
-                    if matches!(ctor.as_ref(), Type::Con(TypeCtor::Dict)) {
+                if let Type::App(ctor, key) = inner.as_ref()
+                    && matches!(ctor.as_ref(), Type::Con(TypeCtor::Dict)) {
                         return key.as_ref().clone();
                     }
-                }
                 Type::any()
             }
             _ => Type::any(),
@@ -411,11 +405,10 @@ impl ProtocolChecker {
     pub fn extract_async_iterable_element(ty: &Type) -> Type {
         match ty {
             Type::App(inner, _send_type) => {
-                if let Type::App(ctor, yield_type) = inner.as_ref() {
-                    if matches!(ctor.as_ref(), Type::Con(TypeCtor::AsyncGenerator)) {
+                if let Type::App(ctor, yield_type) = inner.as_ref()
+                    && matches!(ctor.as_ref(), Type::Con(TypeCtor::AsyncGenerator)) {
                         return yield_type.as_ref().clone();
                     }
-                }
                 Type::any()
             }
             _ => Type::any(),
@@ -428,13 +421,11 @@ impl ProtocolChecker {
     pub fn extract_awaitable_result(ty: &Type) -> Type {
         match ty {
             Type::App(inner, result_type) => {
-                if let Type::App(inner2, _send_type) = inner.as_ref() {
-                    if let Type::App(ctor, _yield_type) = inner2.as_ref() {
-                        if matches!(ctor.as_ref(), Type::Con(TypeCtor::Coroutine)) {
+                if let Type::App(inner2, _send_type) = inner.as_ref()
+                    && let Type::App(ctor, _yield_type) = inner2.as_ref()
+                        && matches!(ctor.as_ref(), Type::Con(TypeCtor::Coroutine)) {
                             return result_type.as_ref().clone();
                         }
-                    }
-                }
                 Type::any()
             }
             _ => Type::any(),

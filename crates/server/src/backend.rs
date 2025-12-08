@@ -63,6 +63,7 @@ struct Features {
     extract_function: ExtractFunctionProvider,
     extract_variable: ExtractVariableProvider,
     move_symbol: MoveSymbolProvider,
+    inline_function: InlineFunctionProvider,
 }
 
 impl Features {
@@ -91,7 +92,8 @@ impl Features {
             formatting: FormattingProvider::new(documents),
             extract_function: ExtractFunctionProvider::new(refactoring_context.clone()),
             extract_variable: ExtractVariableProvider::new(refactoring_context.clone()),
-            move_symbol: MoveSymbolProvider::new(refactoring_context),
+            move_symbol: MoveSymbolProvider::new(refactoring_context.clone()),
+            inline_function: InlineFunctionProvider::new(refactoring_context),
         }
     }
 }
@@ -295,7 +297,13 @@ impl LanguageServer for Backend {
                 }),
                 execute_command_provider: Some(ExecuteCommandOptions {
                     commands: Vec::from(
-                        ["beacon.extractVariable", "beacon.extractFunction", "beacon.moveSymbol"].map(String::from),
+                        [
+                            "beacon.extractVariable",
+                            "beacon.extractFunction",
+                            "beacon.moveSymbol",
+                            "beacon.inlineFunction",
+                        ]
+                        .map(String::from),
                     ),
                     work_done_progress_options: WorkDoneProgressOptions::default(),
                 }),
@@ -338,33 +346,33 @@ impl LanguageServer for Backend {
     async fn did_change_configuration(&self, params: DidChangeConfigurationParams) {
         tracing::info!("Configuration change notification received");
 
-        if let Some(settings) = params.settings.as_object() {
-            if let Some(beacon_settings) = settings.get("beacon") {
-                tracing::debug!("Updating configuration from LSP settings");
-                let mut workspace = self.workspace.write().await;
-                let mut config = workspace.config.clone();
+        if let Some(settings) = params.settings.as_object()
+            && let Some(beacon_settings) = settings.get("beacon")
+        {
+            tracing::debug!("Updating configuration from LSP settings");
+            let mut workspace = self.workspace.write().await;
+            let mut config = workspace.config.clone();
 
-                config.update_from_value(beacon_settings.clone());
+            config.update_from_value(beacon_settings.clone());
 
-                if let Err(e) = config.validate() {
-                    tracing::warn!(?e, "Configuration validation warning");
-                    self.client
-                        .log_message(MessageType::WARNING, format!("Configuration validation warning: {e}"))
-                        .await;
-                }
-
-                workspace.config = config.clone();
-                drop(workspace);
-
-                let mut analyzer = self.analyzer.write().await;
-                analyzer.update_config(config);
-                drop(analyzer);
-
-                tracing::info!("Configuration updated successfully");
+            if let Err(e) = config.validate() {
+                tracing::warn!(?e, "Configuration validation warning");
                 self.client
-                    .log_message(MessageType::INFO, "Configuration updated successfully")
+                    .log_message(MessageType::WARNING, format!("Configuration validation warning: {e}"))
                     .await;
             }
+
+            workspace.config = config.clone();
+            drop(workspace);
+
+            let mut analyzer = self.analyzer.write().await;
+            analyzer.update_config(config);
+            drop(analyzer);
+
+            tracing::info!("Configuration updated successfully");
+            self.client
+                .log_message(MessageType::INFO, "Configuration updated successfully")
+                .await;
         }
     }
 
@@ -714,10 +722,9 @@ impl LanguageServer for Backend {
                     .extract_variable
                     .execute(params, Some(&mut analyzer))
                     .await
+                    && let Ok(value) = serde_json::to_value(edit)
                 {
-                    if let Ok(value) = serde_json::to_value(edit) {
-                        return Ok(Some(value));
-                    }
+                    return Ok(Some(value));
                 }
 
                 Ok(None)
@@ -750,10 +757,9 @@ impl LanguageServer for Backend {
                     .extract_function
                     .execute(params, Some(&mut analyzer))
                     .await
+                    && let Ok(value) = serde_json::to_value(edit)
                 {
-                    if let Ok(value) = serde_json::to_value(edit) {
-                        return Ok(Some(value));
-                    }
+                    return Ok(Some(value));
                 }
 
                 Ok(None)
@@ -780,10 +786,40 @@ impl LanguageServer for Backend {
 
                 let params = crate::features::move_symbol::MoveSymbolParams { source_uri, position, target_uri };
 
-                if let Some(edit) = self.features.move_symbol.execute(params).await {
-                    if let Ok(value) = serde_json::to_value(edit) {
-                        return Ok(Some(value));
-                    }
+                if let Some(edit) = self.features.move_symbol.execute(params).await
+                    && let Ok(value) = serde_json::to_value(edit)
+                {
+                    return Ok(Some(value));
+                }
+
+                Ok(None)
+            }
+            "beacon.inlineFunction" => {
+                let args = params.arguments;
+                if args.len() != 3 {
+                    tracing::error!("Invalid arguments for inline function command");
+                    return Ok(None);
+                }
+
+                let Some(uri) = serde_json::from_value::<Url>(args[0].clone()).ok() else {
+                    tracing::error!("Failed to parse URI argument");
+                    return Ok(None);
+                };
+                let Some(position) = serde_json::from_value::<Position>(args[1].clone()).ok() else {
+                    tracing::error!("Failed to parse position argument");
+                    return Ok(None);
+                };
+                let Some(inline_all) = serde_json::from_value::<bool>(args[2].clone()).ok() else {
+                    tracing::error!("Failed to parse inline_all argument");
+                    return Ok(None);
+                };
+
+                let params = crate::features::inline_function::InlineFunctionParams { uri, position, inline_all };
+
+                if let Some(edit) = self.features.inline_function.execute(params).await
+                    && let Ok(value) = serde_json::to_value(edit)
+                {
+                    return Ok(Some(value));
                 }
 
                 Ok(None)

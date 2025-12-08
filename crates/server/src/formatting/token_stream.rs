@@ -376,13 +376,12 @@ impl TokenGenerator {
             AstNode::Module { body, .. } => {
                 let mut first_stmt = true;
                 let mut start_index = 0;
-                if let Some(first) = body.first() {
-                    if Self::is_string_literal(first) {
+                if let Some(first) = body.first()
+                    && Self::is_string_literal(first) {
                         self.emit_docstring(first, true);
                         start_index = 1;
                         first_stmt = false;
                     }
-                }
 
                 let mut last_import_category: Option<ImportCategory> = None;
                 let mut previous_was_import = false;
@@ -392,11 +391,10 @@ impl TokenGenerator {
                     let current_line = Self::node_start_line(stmt);
 
                     if let Some(category) = Self::import_category(stmt) {
-                        if let Some(prev) = last_import_category {
-                            if prev != category {
+                        if let Some(prev) = last_import_category
+                            && prev != category {
                                 self.tokens.push(Token::Newline { line: current_line });
                             }
-                        }
                         last_import_category = Some(category);
                     } else {
                         last_import_category = None;
@@ -416,13 +414,11 @@ impl TokenGenerator {
 
                     if !first_stmt && !Self::is_top_level_definition(stmt) {
                         let is_import = matches!(stmt, AstNode::Import { .. } | AstNode::ImportFrom { .. });
-                        if !(previous_was_import && is_import) {
-                            if let Some(prev_line) = previous_line {
-                                if current_line > prev_line + 1 {
+                        if !(previous_was_import && is_import)
+                            && let Some(prev_line) = previous_line
+                                && current_line > prev_line + 1 {
                                     self.tokens.push(Token::Newline { line: current_line });
                                 }
-                            }
-                        }
                     }
 
                     self.visit_node(stmt);
@@ -610,14 +606,13 @@ impl TokenGenerator {
                         other => other,
                     };
                     let kind = Self::class_item_kind(stmt);
-                    if matches!(kind, ClassItemKind::Method) {
-                        if let Some(ClassItemKind::Docstring | ClassItemKind::Attribute | ClassItemKind::Method) =
+                    if matches!(kind, ClassItemKind::Method)
+                        && let Some(ClassItemKind::Docstring | ClassItemKind::Attribute | ClassItemKind::Method) =
                             last_kind
                         {
                             let line = Self::node_start_line(stmt);
                             self.tokens.push(Token::Newline { line });
                         }
-                    }
 
                     self.tokens
                         .push(Token::Indent { level: self.current_indent, line: stmt_line });

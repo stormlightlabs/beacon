@@ -130,11 +130,10 @@ fn extract_mapping_bindings(
 fn extract_mapping_value_type(subject_type: &Type, env: &mut TypeEnvironment) -> Type {
     match subject_type {
         Type::App(inner, val) => {
-            if let Type::App(ctor, _key) = inner.as_ref() {
-                if matches!(ctor.as_ref(), Type::Con(TypeCtor::Dict)) {
+            if let Type::App(ctor, _key) = inner.as_ref()
+                && matches!(ctor.as_ref(), Type::Con(TypeCtor::Dict)) {
                     return val.as_ref().clone();
                 }
-            }
             Type::Var(env.fresh_var())
         }
         _ => Type::Var(env.fresh_var()),
@@ -151,8 +150,8 @@ fn extract_class_bindings(
 ) -> Result<Vec<(String, Type)>> {
     let mut bindings = Vec::new();
 
-    if let Some(class_meta) = class_registry.get_class(cls) {
-        if let Some(init_type) = &class_meta.init_type {
+    if let Some(class_meta) = class_registry.get_class(cls)
+        && let Some(init_type) = &class_meta.init_type {
             let param_types = extract_constructor_params(init_type);
             if patterns.len() != param_types.len() {
                 return Err(AnalysisError::ConstraintGeneration(format!(
@@ -171,7 +170,6 @@ fn extract_class_bindings(
 
             return Ok(bindings);
         }
-    }
 
     for pattern in patterns {
         let field_type = Type::Var(env.fresh_var());
@@ -483,16 +481,14 @@ pub fn validate_pattern_structure(
 ) -> std::result::Result<(), TypeError> {
     match (pattern, subject_type) {
         (Pattern::MatchSequence(patterns), Type::App(ctor, _)) => {
-            if let Type::Con(TypeCtor::Tuple) = ctor.as_ref() {
-                if let Some(arity) = extract_tuple_arity(subject_type) {
-                    if patterns.len() != arity {
+            if let Type::Con(TypeCtor::Tuple) = ctor.as_ref()
+                && let Some(arity) = extract_tuple_arity(subject_type)
+                    && patterns.len() != arity {
                         return Err(TypeError::PatternStructureMismatch {
                             expected: format!("{arity} elements"),
                             found: format!("{} pattern bindings", patterns.len()),
                         });
                     }
-                }
-            }
             Ok(())
         }
         _ => Ok(()),

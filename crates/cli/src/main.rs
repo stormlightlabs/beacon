@@ -1209,11 +1209,10 @@ fn extract_function<'a>(ast: &'a AstNode, name: &str) -> Option<&'a AstNode> {
     match ast {
         AstNode::Module { body, .. } => {
             for node in body {
-                if let AstNode::FunctionDef { name: func_name, .. } = node {
-                    if func_name == name {
+                if let AstNode::FunctionDef { name: func_name, .. } = node
+                    && func_name == name {
                         return Some(node);
                     }
-                }
                 if let Some(found) = extract_function(node, name) {
                     return Some(found);
                 }
@@ -1247,11 +1246,10 @@ fn extract_class<'a>(ast: &'a AstNode, name: &str) -> Option<&'a AstNode> {
     match ast {
         AstNode::Module { body, .. } => {
             for node in body {
-                if let AstNode::ClassDef { name: class_name, .. } = node {
-                    if class_name == name {
+                if let AstNode::ClassDef { name: class_name, .. } = node
+                    && class_name == name {
                         return Some(node);
                     }
-                }
                 if let Some(found) = extract_class(node, name) {
                     return Some(found);
                 }
@@ -1467,15 +1465,14 @@ fn find_diagnostic_span(line: &str, diagnostic: &DiagnosticMessage) -> (usize, u
         return (diagnostic.col, diagnostic.end_col.saturating_sub(diagnostic.col));
     }
 
-    if let Some(start) = diagnostic.message.find('\'') {
-        if let Some(end) = diagnostic.message[start + 1..].find('\'') {
+    if let Some(start) = diagnostic.message.find('\'')
+        && let Some(end) = diagnostic.message[start + 1..].find('\'') {
             let identifier = &diagnostic.message[start + 1..start + 1 + end];
 
             if let Some(pos) = line.find(identifier) {
                 return (pos + 1, identifier.len());
             }
         }
-    }
 
     (diagnostic.col, 1)
 }
@@ -1633,11 +1630,10 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
                     let diagnostics = diagnostic_provider.generate_diagnostics(&uri, &mut analyzer);
 
                     for diagnostic in diagnostics {
-                        if let Some(NumberOrString::String(code)) = &diagnostic.code {
-                            if code == "MODE_INFO" {
+                        if let Some(NumberOrString::String(code)) = &diagnostic.code
+                            && code == "MODE_INFO" {
                                 continue;
                             }
-                        }
                         all_diagnostics.push((file_path.clone(), source.clone(), diagnostic));
                     }
                 }

@@ -15,26 +15,23 @@ use tracing::{debug, warn};
 /// 4. System Python (python3 or python in PATH)
 pub fn find_python_interpreter(workspace_root: Option<&Path>) -> Option<PathBuf> {
     if let Some(root) = workspace_root {
-        if root.join("pyproject.toml").exists() {
-            if let Some(path) = try_poetry(root) {
+        if root.join("pyproject.toml").exists()
+            && let Some(path) = try_poetry(root) {
                 debug!("Found Python via poetry: {}", path.display());
                 return Some(path);
             }
-        }
 
-        if root.join("Pipfile").exists() {
-            if let Some(path) = try_pipenv(root) {
+        if root.join("Pipfile").exists()
+            && let Some(path) = try_pipenv(root) {
                 debug!("Found Python via pipenv: {}", path.display());
                 return Some(path);
             }
-        }
 
-        if root.join("uv.lock").exists() || root.join(".venv").exists() {
-            if let Some(path) = try_uv(root) {
+        if (root.join("uv.lock").exists() || root.join(".venv").exists())
+            && let Some(path) = try_uv(root) {
                 debug!("Found Python via uv: {}", path.display());
                 return Some(path);
             }
-        }
     }
 
     if let Some(path) = try_system_python() {

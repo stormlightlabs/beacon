@@ -1130,11 +1130,10 @@ impl Type {
                 for (_, t) in fields {
                     t.collect_free_vars(vars, bound);
                 }
-                if let Some(rv) = row_var {
-                    if bound.contains_key(rv).not() {
+                if let Some(rv) = row_var
+                    && bound.contains_key(rv).not() {
                         vars.insert(rv.clone(), ());
                     }
-                }
             }
             Type::BoundMethod(receiver, _, method) => {
                 receiver.collect_free_vars(vars, bound);
@@ -1331,12 +1330,11 @@ impl Type {
         let (name, args) = self.class_like_name_and_args()?;
         let mut record = class_registry.class_to_record(&name)?;
 
-        if let Some(metadata) = class_registry.get_class(&name) {
-            if !metadata.type_params.is_empty() && !args.is_empty() {
+        if let Some(metadata) = class_registry.get_class(&name)
+            && !metadata.type_params.is_empty() && !args.is_empty() {
                 let subst = metadata.create_type_substitution(&args);
                 record = ClassMetadata::substitute_type_params(&record, &subst);
             }
-        }
 
         Some(record)
     }
@@ -1362,11 +1360,10 @@ impl Type {
             Type::Con(TypeCtor::Class(name)) => return Some((name.clone(), Vec::new())),
             Type::Con(TypeCtor::Protocol(Some(name), _)) => return Some((name.clone(), Vec::new())),
             Type::Con(TypeCtor::Literal(lit)) => {
-                if let Some(base_ctor) = TypeCtor::Literal(lit.clone()).base_type() {
-                    if let Some(name) = Self::builtin_class_name(&base_ctor) {
+                if let Some(base_ctor) = TypeCtor::Literal(lit.clone()).base_type()
+                    && let Some(name) = Self::builtin_class_name(&base_ctor) {
                         return Some((name.to_string(), Vec::new()));
                     }
-                }
             }
             Type::Con(ctor) => {
                 if let Some(name) = Self::builtin_class_name(ctor) {
