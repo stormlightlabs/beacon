@@ -12,7 +12,7 @@ use beacon_constraint::Span;
 use beacon_core::BeaconError;
 use beacon_core::TypeError;
 use beacon_core::{Type, TypeCtor};
-use beacon_parser::{AstNode, MAGIC_METHODS, SymbolTable};
+use beacon_parser::{AstNode, LiteralValue, MAGIC_METHODS, SymbolTable};
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -127,18 +127,26 @@ impl DiagnosticProvider {
     fn mode_severity_for_diagnostic(
         mode: config::TypeCheckingMode, category: DiagnosticCategory,
     ) -> Option<lsp_types::DiagnosticSeverity> {
-        use lsp_types::DiagnosticSeverity as Severity;
-
         match (mode, category) {
-            (config::TypeCheckingMode::Strict, DiagnosticCategory::ImplicitAny) => Some(Severity::ERROR),
-            (config::TypeCheckingMode::Balanced, DiagnosticCategory::ImplicitAny) => Some(Severity::WARNING),
+            (config::TypeCheckingMode::Strict, DiagnosticCategory::ImplicitAny) => Some(DiagnosticSeverity::ERROR),
+            (config::TypeCheckingMode::Balanced, DiagnosticCategory::ImplicitAny) => Some(DiagnosticSeverity::WARNING),
             (config::TypeCheckingMode::Relaxed, DiagnosticCategory::ImplicitAny) => None,
-            (config::TypeCheckingMode::Strict, DiagnosticCategory::MissingAnnotation) => Some(Severity::ERROR),
-            (config::TypeCheckingMode::Balanced, DiagnosticCategory::MissingAnnotation) => Some(Severity::WARNING),
+            (config::TypeCheckingMode::Strict, DiagnosticCategory::MissingAnnotation) => {
+                Some(DiagnosticSeverity::ERROR)
+            }
+            (config::TypeCheckingMode::Balanced, DiagnosticCategory::MissingAnnotation) => {
+                Some(DiagnosticSeverity::WARNING)
+            }
             (config::TypeCheckingMode::Relaxed, DiagnosticCategory::MissingAnnotation) => None,
-            (config::TypeCheckingMode::Strict, DiagnosticCategory::AnnotationMismatch) => Some(Severity::ERROR),
-            (config::TypeCheckingMode::Balanced, DiagnosticCategory::AnnotationMismatch) => Some(Severity::WARNING),
-            (config::TypeCheckingMode::Relaxed, DiagnosticCategory::AnnotationMismatch) => Some(Severity::HINT),
+            (config::TypeCheckingMode::Strict, DiagnosticCategory::AnnotationMismatch) => {
+                Some(DiagnosticSeverity::ERROR)
+            }
+            (config::TypeCheckingMode::Balanced, DiagnosticCategory::AnnotationMismatch) => {
+                Some(DiagnosticSeverity::WARNING)
+            }
+            (config::TypeCheckingMode::Relaxed, DiagnosticCategory::AnnotationMismatch) => {
+                Some(DiagnosticSeverity::HINT)
+            }
         }
     }
 
@@ -250,6 +258,22 @@ impl DiagnosticProvider {
         self.add_reexport_chain_diagnostics(uri, &mut diagnostics);
         tracing::trace!(
             "Re-export chain diagnostics: {} ({:?})",
+            diagnostics.len(),
+            start.elapsed()
+        );
+
+        let start = std::time::Instant::now();
+        self.add_cross_module_type_mismatch_diagnostics(uri, analyzer, &mut diagnostics);
+        tracing::trace!(
+            "Cross-module type mismatch diagnostics: {} ({:?})",
+            diagnostics.len(),
+            start.elapsed()
+        );
+
+        let start = std::time::Instant::now();
+        self.add_cross_file_dead_code_diagnostics(uri, &mut diagnostics);
+        tracing::trace!(
+            "Cross-file dead code diagnostics: {} ({:?})",
             diagnostics.len(),
             start.elapsed()
         );
@@ -2292,6 +2316,360 @@ impl DiagnosticProvider {
             }
         }
     }
+
+    /// Add diagnostics for type mismatches across module boundaries
+    ///
+    /// Reports when an imported symbol with a known type signature is used with incompatible types.
+    /// Works with both stdlib functions (from stubs) and user-defined functions (from source).
+    fn add_cross_module_type_mismatch_diagnostics(
+        &self, uri: &Url, analyzer: &mut Analyzer, diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        let Ok(workspace) = self.workspace.try_read() else {
+            return;
+        };
+
+        let symbol_imports = workspace.get_symbol_imports(uri);
+
+        if symbol_imports.is_empty() {
+            return;
+        }
+
+        let analysis_result = match analyzer.analyze(uri) {
+            Ok(result) => result,
+            Err(_) => return,
+        };
+
+        self.documents.get_document(uri, |doc| {
+            if let Some(ast) = doc.ast() {
+                Self::find_cross_module_type_mismatches(
+                    ast,
+                    &symbol_imports,
+                    &workspace,
+                    &analysis_result.type_map,
+                    diagnostics,
+                );
+            }
+        });
+    }
+
+    /// Find type mismatches for imported symbols in the AST
+    ///
+    /// Validates function calls against both stub signatures and user-defined function signatures
+    fn find_cross_module_type_mismatches(
+        node: &AstNode, symbol_imports: &[crate::workspace::SymbolImport], workspace: &Workspace,
+        _type_map: &rustc_hash::FxHashMap<usize, beacon_core::Type>, diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        match node {
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    Self::find_cross_module_type_mismatches(stmt, symbol_imports, workspace, _type_map, diagnostics);
+                }
+            }
+            AstNode::Call { function, args, line, col, .. } => {
+                if let AstNode::Identifier { name: func_name, .. } = function.as_ref()
+                    && let Some(import_info) = symbol_imports.iter().find(|imp| imp.symbol == *func_name)
+                {
+                    let expected_func_type = workspace
+                        .get_stub_type(&import_info.from_module, func_name)
+                        .or_else(|| workspace.get_source_function_type(&import_info.from_module, func_name));
+
+                    if let Some(expected_func_type) = expected_func_type
+                        && let Type::Fun(params, _return_type) = &expected_func_type
+                    {
+                        if args.len() != params.len() {
+                            let range = Range::new(
+                                Position::new((*line - 1) as u32, (*col - 1) as u32),
+                                Position::new((*line - 1) as u32, (*col - 1 + func_name.len()) as u32),
+                            );
+                            Self::report_argument_count_mismatch(
+                                func_name,
+                                &import_info.from_module,
+                                params.len(),
+                                args.len(),
+                                range,
+                                diagnostics,
+                            );
+                        } else {
+                            for (idx, (arg, (param_name, expected_type))) in args.iter().zip(params.iter()).enumerate()
+                            {
+                                if let Some(arg_type) = Self::infer_literal_type(arg)
+                                    && !Self::types_are_compatible(expected_type, &arg_type)
+                                {
+                                    Self::report_argument_type_mismatch(
+                                        func_name,
+                                        idx,
+                                        param_name,
+                                        expected_type,
+                                        &arg_type,
+                                        arg,
+                                        diagnostics,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for arg in args {
+                    Self::find_cross_module_type_mismatches(arg, symbol_imports, workspace, _type_map, diagnostics);
+                }
+            }
+            AstNode::Assignment { value, .. } => {
+                Self::find_cross_module_type_mismatches(value, symbol_imports, workspace, _type_map, diagnostics);
+            }
+            AstNode::AnnotatedAssignment { value: Some(val), .. } => {
+                Self::find_cross_module_type_mismatches(val, symbol_imports, workspace, _type_map, diagnostics);
+            }
+            AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } => {
+                for stmt in body {
+                    Self::find_cross_module_type_mismatches(stmt, symbol_imports, workspace, _type_map, diagnostics);
+                }
+            }
+            AstNode::If { body, elif_parts, else_body, .. } => {
+                for stmt in body {
+                    Self::find_cross_module_type_mismatches(stmt, symbol_imports, workspace, _type_map, diagnostics);
+                }
+                for (_, elif_body) in elif_parts {
+                    for stmt in elif_body {
+                        Self::find_cross_module_type_mismatches(
+                            stmt,
+                            symbol_imports,
+                            workspace,
+                            _type_map,
+                            diagnostics,
+                        );
+                    }
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        Self::find_cross_module_type_mismatches(
+                            stmt,
+                            symbol_imports,
+                            workspace,
+                            _type_map,
+                            diagnostics,
+                        );
+                    }
+                }
+            }
+            AstNode::For { body, else_body, .. } => {
+                for stmt in body {
+                    Self::find_cross_module_type_mismatches(stmt, symbol_imports, workspace, _type_map, diagnostics);
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        Self::find_cross_module_type_mismatches(
+                            stmt,
+                            symbol_imports,
+                            workspace,
+                            _type_map,
+                            diagnostics,
+                        );
+                    }
+                }
+            }
+            AstNode::While { body, else_body, .. } => {
+                for stmt in body {
+                    Self::find_cross_module_type_mismatches(stmt, symbol_imports, workspace, _type_map, diagnostics);
+                }
+                if let Some(else_stmts) = else_body {
+                    for stmt in else_stmts {
+                        Self::find_cross_module_type_mismatches(
+                            stmt,
+                            symbol_imports,
+                            workspace,
+                            _type_map,
+                            diagnostics,
+                        );
+                    }
+                }
+            }
+            AstNode::With { body, .. } | AstNode::Try { body, .. } => {
+                for stmt in body {
+                    Self::find_cross_module_type_mismatches(stmt, symbol_imports, workspace, _type_map, diagnostics);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Infer the type of a literal AST node
+    fn infer_literal_type(node: &AstNode) -> Option<beacon_core::Type> {
+        match node {
+            AstNode::Literal { value, .. } => match value {
+                LiteralValue::Integer(_) => Some(Type::Con(TypeCtor::Int)),
+                LiteralValue::Float(_) => Some(Type::Con(TypeCtor::Float)),
+                LiteralValue::String { .. } => Some(Type::Con(TypeCtor::String)),
+                LiteralValue::Boolean(_) => Some(Type::Con(TypeCtor::Bool)),
+                LiteralValue::None => Some(Type::Con(TypeCtor::NoneType)),
+            },
+            _ => None,
+        }
+    }
+
+    /// Report an argument type mismatch
+    fn report_argument_type_mismatch(
+        func_name: &str, arg_index: usize, param_name: &str, expected_type: &beacon_core::Type,
+        actual_type: &beacon_core::Type, arg_node: &AstNode, diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        let (line, col, end_line, end_col) = match arg_node {
+            AstNode::Literal { line, col, end_line, end_col, .. } => (*line, *col, *end_line, *end_col),
+            AstNode::Identifier { line, col, end_line, end_col, .. } => (*line, *col, *end_line, *end_col),
+            AstNode::Call { line, col, end_line, end_col, .. } => (*line, *col, *end_line, *end_col),
+            _ => return,
+        };
+
+        let range = Range {
+            start: Position::new((line - 1) as u32, (col - 1) as u32),
+            end: Position::new((end_line - 1) as u32, (end_col - 1) as u32),
+        };
+
+        let param_desc = if !param_name.is_empty() {
+            format!("parameter '{}' (position {})", param_name, arg_index + 1)
+        } else {
+            format!("parameter at position {}", arg_index + 1)
+        };
+
+        diagnostics.push(Diagnostic {
+            range,
+            severity: Some(DiagnosticSeverity::WARNING),
+            code: Some(lsp_types::NumberOrString::String("type-mismatch-argument".to_string())),
+            source: Some("beacon".to_string()),
+            message: format!(
+                "Type mismatch in call to '{}': {} expects {}, got {}",
+                func_name,
+                param_desc,
+                Self::type_to_display_string(expected_type),
+                Self::type_to_display_string(actual_type)
+            ),
+            related_information: None,
+            tags: None,
+            data: None,
+            code_description: None,
+        });
+    }
+
+    /// Report an argument count mismatch for a function call
+    fn report_argument_count_mismatch(
+        func_name: &str, module_name: &str, expected_count: usize, actual_count: usize, range: Range,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        diagnostics.push(Diagnostic {
+            range,
+            severity: Some(DiagnosticSeverity::WARNING),
+            code: Some(lsp_types::NumberOrString::String("argument-count-mismatch".to_string())),
+            source: Some("beacon".to_string()),
+            message: format!(
+                "Function '{}' from '{}' expects {} argument{}, but {} {} provided",
+                func_name,
+                module_name,
+                expected_count,
+                if expected_count == 1 { "" } else { "s" },
+                actual_count,
+                if actual_count == 1 { "was" } else { "were" }
+            ),
+            related_information: None,
+            tags: None,
+            data: None,
+            code_description: None,
+        });
+    }
+
+    /// Convert a Type to a human-readable display string
+    fn type_to_display_string(ty: &beacon_core::Type) -> String {
+        use beacon_core::{Type, TypeCtor};
+
+        match ty {
+            Type::Con(TypeCtor::Int) => "int".to_string(),
+            Type::Con(TypeCtor::Float) => "float".to_string(),
+            Type::Con(TypeCtor::String) => "str".to_string(),
+            Type::Con(TypeCtor::Bool) => "bool".to_string(),
+            Type::Con(TypeCtor::NoneType) => "None".to_string(),
+            Type::Con(TypeCtor::Any) => "Any".to_string(),
+            Type::Con(TypeCtor::List) => "list".to_string(),
+            Type::Con(TypeCtor::Dict) => "dict".to_string(),
+            Type::Con(TypeCtor::Set) => "set".to_string(),
+            Type::Con(TypeCtor::Tuple) => "tuple".to_string(),
+            Type::Con(TypeCtor::Class(name)) => name.clone(),
+            Type::App(ctor, arg) => format!(
+                "{}[{}]",
+                Self::type_to_display_string(ctor),
+                Self::type_to_display_string(arg)
+            ),
+            Type::Fun(params, return_type) => {
+                let param_types: Vec<String> = params.iter().map(|(_, ty)| Self::type_to_display_string(ty)).collect();
+                format!(
+                    "({}) -> {}",
+                    param_types.join(", "),
+                    Self::type_to_display_string(return_type)
+                )
+            }
+            Type::Var(tv) => format!("'{}", tv.id),
+            _ => format!("{:?}", ty),
+        }
+    }
+
+    /// Add diagnostics for cross-file dead code (unused exports)
+    ///
+    /// Reports functions and classes that are defined but never used across the workspace.
+    fn add_cross_file_dead_code_diagnostics(&self, uri: &Url, diagnostics: &mut Vec<Diagnostic>) {
+        let Ok(workspace) = self.workspace.try_read() else {
+            return;
+        };
+
+        workspace.populate_entry_points();
+
+        let workspace_cfg_arc = workspace.workspace_cfg();
+        let Ok(workspace_cfg) = workspace_cfg_arc.try_read() else {
+            return;
+        };
+
+        let unreachable_functions = workspace_cfg.unreachable_functions();
+
+        for func_id in unreachable_functions {
+            if func_id.uri != *uri {
+                continue;
+            }
+
+            let Some((symbol_table, source_lines)) = self
+                .documents
+                .get_document(uri, |doc| {
+                    doc.symbol_table()
+                        .map(|st| (st.clone(), doc.text().lines().map(String::from).collect::<Vec<_>>()))
+                })
+                .flatten()
+            else {
+                continue;
+            };
+
+            let mut found_symbol = None;
+            for scope in symbol_table.scopes.values() {
+                if let Some(symbol) = scope.symbols.get(&func_id.name) {
+                    found_symbol = Some(symbol);
+                    break;
+                }
+            }
+
+            if let Some(symbol) = found_symbol {
+                let range = Self::identifier_range(symbol.line, symbol.col, &func_id.name, &source_lines);
+
+                diagnostics.push(Diagnostic {
+                    range,
+                    severity: Some(DiagnosticSeverity::WARNING),
+                    code: Some(lsp_types::NumberOrString::String("BEA033".to_string())),
+                    source: Some("beacon-linter".to_string()),
+                    message: format!(
+                        "Function '{}' is never used across the workspace. Consider removing it or marking it as private (prefix with '_')",
+                        func_id.name
+                    ),
+                    related_information: None,
+                    tags: Some(vec![lsp_types::DiagnosticTag::UNNECESSARY]),
+                    data: None,
+                    code_description: None,
+                });
+            }
+        }
+    }
 }
 
 /// Convert a parse error to an LSP diagnostic
@@ -2532,6 +2910,7 @@ mod tests {
     use super::*;
     use beacon_constraint::{Span, TypeErrorInfo};
     use beacon_core::{AnalysisError, Type, TypeCtor, TypeError, TypeVar};
+    use lsp_types::DiagnosticSeverity;
     use std::str::FromStr;
     use std::sync::Arc;
     use tokio::sync::RwLock;
@@ -4192,21 +4571,19 @@ def bar():
 
     #[test]
     fn test_mode_severity_for_diagnostic_implicit_any() {
-        use lsp_types::DiagnosticSeverity as Severity;
-
         assert_eq!(
             DiagnosticProvider::mode_severity_for_diagnostic(
                 config::TypeCheckingMode::Strict,
                 DiagnosticCategory::ImplicitAny
             ),
-            Some(Severity::ERROR)
+            Some(DiagnosticSeverity::ERROR)
         );
         assert_eq!(
             DiagnosticProvider::mode_severity_for_diagnostic(
                 config::TypeCheckingMode::Balanced,
                 DiagnosticCategory::ImplicitAny
             ),
-            Some(Severity::WARNING)
+            Some(DiagnosticSeverity::WARNING)
         );
         assert_eq!(
             DiagnosticProvider::mode_severity_for_diagnostic(
@@ -4219,21 +4596,19 @@ def bar():
 
     #[test]
     fn test_mode_severity_for_diagnostic_missing_annotation() {
-        use lsp_types::DiagnosticSeverity as Severity;
-
         assert_eq!(
             DiagnosticProvider::mode_severity_for_diagnostic(
                 config::TypeCheckingMode::Strict,
                 DiagnosticCategory::MissingAnnotation
             ),
-            Some(Severity::ERROR)
+            Some(DiagnosticSeverity::ERROR)
         );
         assert_eq!(
             DiagnosticProvider::mode_severity_for_diagnostic(
                 config::TypeCheckingMode::Balanced,
                 DiagnosticCategory::MissingAnnotation
             ),
-            Some(Severity::WARNING)
+            Some(DiagnosticSeverity::WARNING)
         );
         assert_eq!(
             DiagnosticProvider::mode_severity_for_diagnostic(
@@ -4246,28 +4621,26 @@ def bar():
 
     #[test]
     fn test_mode_severity_for_diagnostic_annotation_mismatch() {
-        use lsp_types::DiagnosticSeverity as Severity;
-
         assert_eq!(
             DiagnosticProvider::mode_severity_for_diagnostic(
                 config::TypeCheckingMode::Strict,
                 DiagnosticCategory::AnnotationMismatch
             ),
-            Some(Severity::ERROR)
+            Some(DiagnosticSeverity::ERROR)
         );
         assert_eq!(
             DiagnosticProvider::mode_severity_for_diagnostic(
                 config::TypeCheckingMode::Balanced,
                 DiagnosticCategory::AnnotationMismatch
             ),
-            Some(Severity::WARNING)
+            Some(DiagnosticSeverity::WARNING)
         );
         assert_eq!(
             DiagnosticProvider::mode_severity_for_diagnostic(
                 config::TypeCheckingMode::Relaxed,
                 DiagnosticCategory::AnnotationMismatch
             ),
-            Some(Severity::HINT)
+            Some(DiagnosticSeverity::HINT)
         );
     }
 

@@ -70,6 +70,8 @@ pub enum RuleKind {
     InconsistentExport,
     /// BEA032
     ConflictingStubDefinition,
+    /// BEA033
+    UnusedExport,
     Unknown,
 }
 
@@ -109,6 +111,7 @@ impl RuleKind {
             RuleKind::EmptyExcept => "BEA030",
             RuleKind::InconsistentExport => "BEA031",
             RuleKind::ConflictingStubDefinition => "BEA032",
+            RuleKind::UnusedExport => "BEA033",
             RuleKind::Unknown => "BEA000",
         }
     }
@@ -402,6 +405,13 @@ impl RuleEngine {
                 kind: RuleKind::ConflictingStubDefinition,
                 name: "ConflictingStubDefinition",
                 description: "Conflicting type definitions for the same symbol across stub files",
+                default_severity: RuleSeverity::Warning,
+                enabled: true,
+            },
+            Rule {
+                kind: RuleKind::UnusedExport,
+                name: "UnusedExport",
+                description: "Exported function or class is never used across the workspace",
                 default_severity: RuleSeverity::Warning,
                 enabled: true,
             },

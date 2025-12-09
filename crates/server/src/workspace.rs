@@ -218,6 +218,93 @@ impl Workspace {
         Some(())
     }
 
+    /// Populate entry points for cross-file dead code analysis
+    ///
+    /// Identifies entry points across the workspace:
+    /// - Module initialization code (always runs on import)
+    /// - Public functions that are imported by other modules
+    /// - Functions explicitly listed in __all__
+    pub fn populate_entry_points(&self) {
+        let Ok(mut workspace_cfg) = self.workspace_cfg.write() else {
+            return;
+        };
+
+        workspace_cfg.clear_entry_points();
+
+        tracing::debug!("Populating entry points from {} modules", self.index.modules.len());
+
+        let mut imported_symbols: FxHashSet<(Url, String)> = FxHashSet::default();
+        for module_info in self.index.modules.values() {
+            for symbol_import in &module_info.symbol_imports {
+                if let Some(source_uri) = self.resolve_import(&symbol_import.from_module) {
+                    tracing::debug!(
+                        "Resolved import: {} from {} -> {}",
+                        symbol_import.symbol,
+                        symbol_import.from_module,
+                        source_uri
+                    );
+                    imported_symbols.insert((source_uri, symbol_import.symbol.clone()));
+                }
+            }
+        }
+        tracing::debug!("Found {} imported symbols", imported_symbols.len());
+
+        let mut entry_points = Vec::new();
+
+        for (uri, module_info) in &self.index.modules {
+            let root_scope = self
+                .documents
+                .get_document(uri, |doc| doc.symbol_table().map(|st| st.root_scope))
+                .flatten();
+
+            let has_module_cfg = workspace_cfg.get_module(uri).is_some();
+            tracing::debug!(
+                "Module {}: has_cfg={}, has_root_scope={}",
+                module_info.module_name,
+                has_module_cfg,
+                root_scope.is_some()
+            );
+
+            if let Some(module_cfg) = workspace_cfg.get_module(uri)
+                && let Some(root_scope) = root_scope
+            {
+                let init_function_id = beacon_analyzer::FunctionId::new(
+                    uri.clone(),
+                    root_scope,
+                    format!("<module:{}>", module_info.module_name),
+                );
+                entry_points.push(init_function_id);
+
+                for func_id in module_cfg.function_ids() {
+                    let is_public = !func_id.name.starts_with('_');
+                    let is_in_all = module_info
+                        .all_exports
+                        .as_ref()
+                        .is_some_and(|exports| exports.contains(&func_id.name));
+                    let is_imported = imported_symbols.contains(&(uri.clone(), func_id.name.clone()));
+
+                    tracing::debug!(
+                        "Function {}: is_public={}, is_in_all={}, is_imported={}",
+                        func_id.name,
+                        is_public,
+                        is_in_all,
+                        is_imported
+                    );
+
+                    if is_public && (is_in_all || is_imported) {
+                        entry_points.push(func_id.clone());
+                        tracing::debug!("Added {} as entry point", func_id.name);
+                    }
+                }
+            }
+        }
+
+        tracing::debug!("Adding {} entry points to workspace CFG", entry_points.len());
+        for entry_point in entry_points {
+            workspace_cfg.add_entry_point(entry_point);
+        }
+    }
+
     /// Initialize workspace by discovering Python files and stubs
     ///
     /// Scans the workspace for all Python files, builds the module index, constructs the initial dependency graph, and discovers stub files following PEP 561.
@@ -936,7 +1023,6 @@ impl Workspace {
     /// Mark a module as analyzed with the given version
     pub fn mark_analyzed(&mut self, uri: &Url, version: i32) {
         self.analyzed_modules.insert(uri.clone(), version);
-        // Build CFG for the analyzed module and add to workspace CFG
         self.build_module_cfg(uri);
     }
 
@@ -1479,6 +1565,69 @@ impl Workspace {
         }
 
         false
+    }
+
+    /// Get function type from a source module (user-defined functions)
+    ///
+    /// This extracts type information from annotated function definitions in source files.
+    /// Returns None if the module or function cannot be found, or if annotations are missing.
+    pub fn get_source_function_type(&self, module_name: &str, func_name: &str) -> Option<Type> {
+        let uri = self.resolve_import(module_name)?;
+
+        self.documents.get_document(&uri, |doc| {
+            let ast = doc.ast()?;
+            Self::extract_function_type_from_ast(ast, func_name)
+        })?
+    }
+
+    /// Extract function type from AST
+    ///
+    /// Recursively searches for a function definition and builds its type from annotations
+    fn extract_function_type_from_ast(node: &beacon_parser::AstNode, func_name: &str) -> Option<Type> {
+        use beacon_parser::AstNode;
+
+        match node {
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    if let Some(ty) = Self::extract_function_type_from_ast(stmt, func_name) {
+                        return Some(ty);
+                    }
+                }
+                None
+            }
+            AstNode::FunctionDef { name, args, return_type, .. } if name == func_name => {
+                let mut param_types: Vec<(String, Type)> = Vec::new();
+
+                for param in args {
+                    if let Some(type_str) = &param.type_annotation {
+                        if let Some(ty) = parse_annotation(type_str) {
+                            param_types.push((param.name.clone(), ty));
+                        } else {
+                            return None;
+                        }
+                    } else {
+                        return None;
+                    }
+                }
+
+                let return_ty = if let Some(ret_str) = return_type {
+                    parse_annotation(ret_str)?
+                } else {
+                    return None;
+                };
+
+                Some(Type::Fun(param_types, Box::new(return_ty)))
+            }
+            AstNode::ClassDef { body, .. } => {
+                for stmt in body {
+                    if let Some(ty) = Self::extract_function_type_from_ast(stmt, func_name) {
+                        return Some(ty);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
     }
 
     /// Get all indexed files in the workspace
@@ -2886,5 +3035,162 @@ my_var: str
             !conflicts.contains_key("MyClass"),
             "MyClass should not have conflicts (same type in both)"
         );
+    }
+
+    #[test]
+    fn test_get_source_function_type_basic() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut workspace = Workspace::new(None, config, documents.clone());
+
+        let utils_uri = Url::parse("file:///workspace/utils.py").unwrap();
+        let utils_content = r#"
+def greet(name: str) -> str:
+    return f"Hello, {name}!"
+"#;
+
+        documents
+            .open_document(utils_uri.clone(), 0, utils_content.to_string())
+            .unwrap();
+
+        workspace.add_test_module(
+            utils_uri.clone(),
+            "utils".to_string(),
+            std::path::PathBuf::from("/workspace"),
+        );
+
+        let func_type = workspace.get_source_function_type("utils", "greet");
+        assert!(func_type.is_some(), "Failed to get function type for 'greet'");
+
+        if let Some(Type::Fun(params, return_type)) = func_type {
+            assert_eq!(params.len(), 1, "Expected 1 parameter");
+            assert_eq!(params[0].0, "name", "Parameter name should be 'name'");
+            assert_eq!(
+                params[0].1,
+                Type::Con(beacon_core::TypeCtor::String),
+                "Parameter type should be str"
+            );
+            assert_eq!(
+                *return_type,
+                Type::Con(beacon_core::TypeCtor::String),
+                "Return type should be str"
+            );
+        } else {
+            panic!("Expected function type, got something else");
+        }
+    }
+
+    #[test]
+    fn test_get_source_function_type_multiple_params() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut workspace = Workspace::new(None, config, documents.clone());
+
+        let math_uri = Url::parse("file:///workspace/math_ops.py").unwrap();
+        let math_content = r#"
+def add(a: int, b: int) -> int:
+    return a + b
+"#;
+
+        documents
+            .open_document(math_uri.clone(), 0, math_content.to_string())
+            .unwrap();
+
+        workspace.add_test_module(
+            math_uri.clone(),
+            "math_ops".to_string(),
+            std::path::PathBuf::from("/workspace"),
+        );
+
+        let func_type = workspace.get_source_function_type("math_ops", "add");
+        assert!(func_type.is_some(), "Failed to get function type for 'add'");
+
+        if let Some(Type::Fun(params, return_type)) = func_type {
+            assert_eq!(params.len(), 2, "Expected 2 parameters");
+            assert_eq!(params[0].0, "a", "First parameter name should be 'a'");
+            assert_eq!(
+                params[0].1,
+                Type::Con(beacon_core::TypeCtor::Int),
+                "First parameter type should be int"
+            );
+            assert_eq!(params[1].0, "b", "Second parameter name should be 'b'");
+            assert_eq!(
+                params[1].1,
+                Type::Con(beacon_core::TypeCtor::Int),
+                "Second parameter type should be int"
+            );
+            assert_eq!(
+                *return_type,
+                Type::Con(beacon_core::TypeCtor::Int),
+                "Return type should be int"
+            );
+        } else {
+            panic!("Expected function type, got something else");
+        }
+    }
+
+    #[test]
+    fn test_get_source_function_type_missing_annotations() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut workspace = Workspace::new(None, config, documents.clone());
+
+        let untyped_uri = Url::parse("file:///workspace/untyped.py").unwrap();
+        let untyped_content = r#"
+def do_something(x, y):
+    return x + y
+"#;
+
+        documents
+            .open_document(untyped_uri.clone(), 0, untyped_content.to_string())
+            .unwrap();
+
+        workspace.add_test_module(
+            untyped_uri.clone(),
+            "untyped".to_string(),
+            std::path::PathBuf::from("/workspace"),
+        );
+
+        let func_type = workspace.get_source_function_type("untyped", "do_something");
+        assert!(
+            func_type.is_none(),
+            "Should return None for function without type annotations"
+        );
+    }
+
+    #[test]
+    fn test_get_source_function_type_nonexistent_module() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let workspace = Workspace::new(None, config, documents.clone());
+
+        let func_type = workspace.get_source_function_type("nonexistent", "some_func");
+        assert!(func_type.is_none(), "Should return None for nonexistent module");
+    }
+
+    #[test]
+    fn test_get_source_function_type_nonexistent_function() {
+        let config = Config::default();
+        let documents = DocumentManager::new().unwrap();
+        let mut workspace = Workspace::new(None, config, documents.clone());
+
+        let utils_uri = Url::parse("file:///workspace/utils.py").unwrap();
+        let utils_content = r#"
+def greet(name: str) -> str:
+    return f"Hello, {name}!"
+"#;
+
+        documents
+            .open_document(utils_uri.clone(), 0, utils_content.to_string())
+            .unwrap();
+
+        workspace.add_test_module(
+            utils_uri.clone(),
+            "utils".to_string(),
+            std::path::PathBuf::from("/workspace"),
+        );
+
+        let func_type = workspace.get_source_function_type("utils", "nonexistent_func");
+        assert!(func_type.is_none(), "Should return None for nonexistent function");
     }
 }

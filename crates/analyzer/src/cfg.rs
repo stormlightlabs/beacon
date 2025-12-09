@@ -546,6 +546,11 @@ impl WorkspaceCFG {
         self.entry_points.push(function_id);
     }
 
+    /// Clear all entry points
+    pub fn clear_entry_points(&mut self) {
+        self.entry_points.clear();
+    }
+
     /// Get all entry points
     pub fn entry_points(&self) -> &[FunctionId] {
         &self.entry_points
@@ -554,6 +559,39 @@ impl WorkspaceCFG {
     /// Compute all reachable functions from entry points
     pub fn reachable_functions(&self) -> Vec<FunctionId> {
         self.call_graph.reachable_functions(&self.entry_points)
+    }
+
+    /// Find all unreachable (dead) functions in the workspace
+    ///
+    /// Returns functions that are never called from any entry point.
+    /// Excludes special methods and private functions (starting with _).
+    pub fn unreachable_functions(&self) -> Vec<FunctionId> {
+        let reachable = self
+            .reachable_functions()
+            .into_iter()
+            .collect::<rustc_hash::FxHashSet<_>>();
+
+        let mut all_functions = rustc_hash::FxHashSet::default();
+        for module_cfg in self.modules.values() {
+            for func_id in module_cfg.function_ids() {
+                all_functions.insert(func_id.clone());
+            }
+        }
+
+        all_functions
+            .into_iter()
+            .filter(|func| {
+                if reachable.contains(func) {
+                    return false;
+                }
+
+                if func.name.starts_with('_') {
+                    return false;
+                }
+
+                true
+            })
+            .collect()
     }
 
     /// Perform cross-module reachability analysis
