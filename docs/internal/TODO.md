@@ -43,7 +43,11 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
     - [x] Invalid symbol imports (importing non-existent symbols from valid modules)
     - [x] Private symbol import warnings
     - [x] Re-export chain validation
-- [ ] Type mismatch diagnostics across module boundaries
+- [x] Type mismatch diagnostics across module boundaries
+    - [x] Argument count validation for imported functions
+    - [x] Type checking for literal arguments against stub signatures
+    - [x] Infrastructure for stdlib function validation
+    - [ ] TODO: Extend to user-defined functions by analyzing source modules
 - [ ] Cross-file dead code detection
 
 ### Performance & Testing
