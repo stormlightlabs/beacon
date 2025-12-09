@@ -388,7 +388,7 @@ def main():
     assert!(
         dead_code_diagnostics
             .iter()
-            .any(|d| d.message.contains("unused_function")),
+            .any(|d| d.message.contains("'unused_function'")),
         "Expected dead code diagnostic for unused_function. Found diagnostics: {:?}",
         dead_code_diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
@@ -396,8 +396,9 @@ def main():
     assert!(
         !dead_code_diagnostics
             .iter()
-            .any(|d| d.message.contains("used_function")),
-        "Should not flag used_function as dead code"
+            .any(|d| d.message.contains("'used_function'")),
+        "Should not flag used_function as dead code. Found diagnostics: {:?}",
+        dead_code_diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
     );
 }
 

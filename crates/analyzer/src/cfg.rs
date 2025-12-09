@@ -546,6 +546,11 @@ impl WorkspaceCFG {
         self.entry_points.push(function_id);
     }
 
+    /// Clear all entry points
+    pub fn clear_entry_points(&mut self) {
+        self.entry_points.clear();
+    }
+
     /// Get all entry points
     pub fn entry_points(&self) -> &[FunctionId] {
         &self.entry_points

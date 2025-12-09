@@ -229,14 +229,25 @@ impl Workspace {
             return;
         };
 
+        workspace_cfg.clear_entry_points();
+
+        tracing::debug!("Populating entry points from {} modules", self.index.modules.len());
+
         let mut imported_symbols: FxHashSet<(Url, String)> = FxHashSet::default();
-        for (_uri, module_info) in &self.index.modules {
+        for module_info in self.index.modules.values() {
             for symbol_import in &module_info.symbol_imports {
                 if let Some(source_uri) = self.resolve_import(&symbol_import.from_module) {
+                    tracing::debug!(
+                        "Resolved import: {} from {} -> {}",
+                        symbol_import.symbol,
+                        symbol_import.from_module,
+                        source_uri
+                    );
                     imported_symbols.insert((source_uri, symbol_import.symbol.clone()));
                 }
             }
         }
+        tracing::debug!("Found {} imported symbols", imported_symbols.len());
 
         let mut entry_points = Vec::new();
 
@@ -245,6 +256,14 @@ impl Workspace {
                 .documents
                 .get_document(uri, |doc| doc.symbol_table().map(|st| st.root_scope))
                 .flatten();
+
+            let has_module_cfg = workspace_cfg.get_module(uri).is_some();
+            tracing::debug!(
+                "Module {}: has_cfg={}, has_root_scope={}",
+                module_info.module_name,
+                has_module_cfg,
+                root_scope.is_some()
+            );
 
             if let Some(module_cfg) = workspace_cfg.get_module(uri)
                 && let Some(root_scope) = root_scope
@@ -261,16 +280,26 @@ impl Workspace {
                     let is_in_all = module_info
                         .all_exports
                         .as_ref()
-                        .map_or(false, |exports| exports.contains(&func_id.name));
+                        .is_some_and(|exports| exports.contains(&func_id.name));
                     let is_imported = imported_symbols.contains(&(uri.clone(), func_id.name.clone()));
+
+                    tracing::debug!(
+                        "Function {}: is_public={}, is_in_all={}, is_imported={}",
+                        func_id.name,
+                        is_public,
+                        is_in_all,
+                        is_imported
+                    );
 
                     if is_public && (is_in_all || is_imported) {
                         entry_points.push(func_id.clone());
+                        tracing::debug!("Added {} as entry point", func_id.name);
                     }
                 }
             }
         }
 
+        tracing::debug!("Adding {} entry points to workspace CFG", entry_points.len());
         for entry_point in entry_points {
             workspace_cfg.add_entry_point(entry_point);
         }

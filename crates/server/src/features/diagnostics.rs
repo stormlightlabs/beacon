@@ -2642,9 +2642,15 @@ impl DiagnosticProvider {
                 continue;
             };
 
-            if let Some(scope) = symbol_table.scopes.get(&func_id.scope_id)
-                && let Some(symbol) = scope.symbols.get(&func_id.name)
-            {
+            let mut found_symbol = None;
+            for scope in symbol_table.scopes.values() {
+                if let Some(symbol) = scope.symbols.get(&func_id.name) {
+                    found_symbol = Some(symbol);
+                    break;
+                }
+            }
+
+            if let Some(symbol) = found_symbol {
                 let range = Self::identifier_range(symbol.line, symbol.col, &func_id.name, &source_lines);
 
                 diagnostics.push(Diagnostic {

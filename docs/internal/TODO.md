@@ -53,7 +53,7 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
     - [x] Implemented workspace-level reachability analysis
     - [x] Entry point detection (module init, **all**, imported symbols)
     - [x] Integration with diagnostics pipeline
-    - [ ] TODO: Fix test case for unused function detection (populate entry points)
+    - [x] Fixed symbol lookup in diagnostic generation (search parent scope)
 
 ### Performance & Testing
 
