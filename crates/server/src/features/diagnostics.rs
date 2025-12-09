@@ -2312,9 +2312,7 @@ impl DiagnosticProvider {
     /// Add diagnostics for type mismatches across module boundaries
     ///
     /// Reports when an imported symbol with a known type signature is used with incompatible types.
-    /// Currently works with stdlib functions that have stub files (.pyi).
-    ///
-    /// TODO: Extend to work with user-defined functions by analyzing source modules
+    /// Works with both stdlib functions (from stubs) and user-defined functions (from source).
     fn add_cross_module_type_mismatch_diagnostics(
         &self, uri: &Url, analyzer: &mut Analyzer, diagnostics: &mut Vec<Diagnostic>,
     ) {
@@ -2348,7 +2346,7 @@ impl DiagnosticProvider {
 
     /// Find type mismatches for imported symbols in the AST
     ///
-    /// Simplified version that validates function calls against stub signatures
+    /// Validates function calls against both stub signatures and user-defined function signatures
     fn find_cross_module_type_mismatches(
         node: &AstNode, symbol_imports: &[crate::workspace::SymbolImport], workspace: &Workspace,
         _type_map: &rustc_hash::FxHashMap<usize, beacon_core::Type>, diagnostics: &mut Vec<Diagnostic>,
@@ -2360,41 +2358,44 @@ impl DiagnosticProvider {
                 }
             }
             AstNode::Call { function, args, line, col, .. } => {
-                if let AstNode::Identifier { name: func_name, .. } = function.as_ref() {
-                    if let Some(import_info) = symbol_imports.iter().find(|imp| imp.symbol == *func_name) {
-                        // Currently only works with stub files (e.g., stdlib functions)
-                        // TODO: Analyze source modules to get function signatures for user-defined functions
-                        if let Some(expected_func_type) = workspace.get_stub_type(&import_info.from_module, func_name) {
-                            if let Type::Fun(params, _return_type) = &expected_func_type {
-                                if args.len() != params.len() {
-                                    Self::report_argument_count_mismatch(
+                if let AstNode::Identifier { name: func_name, .. } = function.as_ref()
+                    && let Some(import_info) = symbol_imports.iter().find(|imp| imp.symbol == *func_name)
+                {
+                    let expected_func_type = workspace
+                        .get_stub_type(&import_info.from_module, func_name)
+                        .or_else(|| workspace.get_source_function_type(&import_info.from_module, func_name));
+
+                    if let Some(expected_func_type) = expected_func_type
+                        && let Type::Fun(params, _return_type) = &expected_func_type
+                    {
+                        if args.len() != params.len() {
+                            let range = Range::new(
+                                Position::new((*line - 1) as u32, (*col - 1) as u32),
+                                Position::new((*line - 1) as u32, (*col - 1 + func_name.len()) as u32),
+                            );
+                            Self::report_argument_count_mismatch(
+                                func_name,
+                                &import_info.from_module,
+                                params.len(),
+                                args.len(),
+                                range,
+                                diagnostics,
+                            );
+                        } else {
+                            for (idx, (arg, (param_name, expected_type))) in args.iter().zip(params.iter()).enumerate()
+                            {
+                                if let Some(arg_type) = Self::infer_literal_type(arg)
+                                    && !Self::types_are_compatible(expected_type, &arg_type)
+                                {
+                                    Self::report_argument_type_mismatch(
                                         func_name,
-                                        &import_info.from_module,
-                                        params.len(),
-                                        args.len(),
-                                        *line,
-                                        *col,
-                                        func_name.len(),
+                                        idx,
+                                        param_name,
+                                        expected_type,
+                                        &arg_type,
+                                        arg,
                                         diagnostics,
                                     );
-                                } else {
-                                    for (idx, (arg, (param_name, expected_type))) in
-                                        args.iter().zip(params.iter()).enumerate()
-                                    {
-                                        if let Some(arg_type) = Self::infer_literal_type(arg) {
-                                            if !Self::types_are_compatible(expected_type, &arg_type) {
-                                                Self::report_argument_type_mismatch(
-                                                    func_name,
-                                                    idx,
-                                                    param_name,
-                                                    expected_type,
-                                                    &arg_type,
-                                                    arg,
-                                                    diagnostics,
-                                                );
-                                            }
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -2408,10 +2409,8 @@ impl DiagnosticProvider {
             AstNode::Assignment { value, .. } => {
                 Self::find_cross_module_type_mismatches(value, symbol_imports, workspace, _type_map, diagnostics);
             }
-            AstNode::AnnotatedAssignment { value, .. } => {
-                if let Some(val) = value {
-                    Self::find_cross_module_type_mismatches(val, symbol_imports, workspace, _type_map, diagnostics);
-                }
+            AstNode::AnnotatedAssignment { value: Some(val), .. } => {
+                Self::find_cross_module_type_mismatches(val, symbol_imports, workspace, _type_map, diagnostics);
             }
             AstNode::FunctionDef { body, .. } | AstNode::ClassDef { body, .. } => {
                 for stmt in body {
@@ -2544,14 +2543,9 @@ impl DiagnosticProvider {
 
     /// Report an argument count mismatch for a function call
     fn report_argument_count_mismatch(
-        func_name: &str, module_name: &str, expected_count: usize, actual_count: usize, line: usize, col: usize,
-        name_len: usize, diagnostics: &mut Vec<Diagnostic>,
+        func_name: &str, module_name: &str, expected_count: usize, actual_count: usize, range: Range,
+        diagnostics: &mut Vec<Diagnostic>,
     ) {
-        let range = Range {
-            start: Position::new((line - 1) as u32, (col - 1) as u32),
-            end: Position::new((line - 1) as u32, (col - 1 + name_len) as u32),
-        };
-
         diagnostics.push(Diagnostic {
             range,
             severity: Some(DiagnosticSeverity::WARNING),

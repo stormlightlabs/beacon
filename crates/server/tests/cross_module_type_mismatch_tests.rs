@@ -14,29 +14,65 @@ fn file_uri(workspace_root: &str, path: &str) -> Url {
 }
 
 #[tokio::test]
-async fn test_function_call_with_stdlib_wrong_argument_count() {
+async fn test_user_defined_function_wrong_argument_count() {
     let documents = DocumentManager::new().unwrap();
     let config = Config::default();
     let workspace_root = Url::parse("file:///workspace").unwrap();
-    let workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
+    let mut workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
 
-    let module_uri = file_uri(workspace_root.as_str(), "main.py");
-    let module_content = r#"
-import os
-
-# Test with stdlib functions that have stubs
-result = os.path.join("a", "b", "c")  # OK
+    let utils_uri = file_uri(workspace_root.as_str(), "utils.py");
+    let utils_content = r#"
+def greet(name: str) -> str:
+    return f"Hello, {name}!"
 "#;
     documents
-        .open_document(module_uri.clone(), 0, module_content.to_string())
+        .open_document(utils_uri.clone(), 0, utils_content.to_string())
         .unwrap();
+    workspace.update_dependencies(&utils_uri);
+
+    let main_uri = file_uri(workspace_root.as_str(), "main.py");
+    let main_content = r#"
+from utils import greet
+
+# This should trigger an argument count mismatch diagnostic
+result = greet("Alice", "Bob")  # ERROR: expects 1 argument, got 2
+"#;
+    documents
+        .open_document(main_uri.clone(), 0, main_content.to_string())
+        .unwrap();
+    workspace.update_dependencies(&main_uri);
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let mut analyzer = Analyzer::new(config, documents.clone());
     let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
-    let _ = diagnostic_provider.generate_diagnostics(&module_uri, &mut analyzer);
+    let diagnostics = diagnostic_provider.generate_diagnostics(&main_uri, &mut analyzer);
 
-    // TODO: user-defined
+    let mismatch_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code.as_ref().map_or(false, |c| match c {
+                lsp_types::NumberOrString::String(s) => s == "argument-count-mismatch",
+                _ => false,
+            })
+        })
+        .collect();
+
+    assert_eq!(
+        mismatch_diagnostics.len(),
+        1,
+        "Expected 1 argument count mismatch diagnostic. Found: {:?}",
+        mismatch_diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+
+    let diagnostic = mismatch_diagnostics[0];
+    assert!(
+        diagnostic.message.contains("greet"),
+        "Diagnostic should mention function name 'greet'"
+    );
+    assert!(
+        diagnostic.message.contains("1") && diagnostic.message.contains("2"),
+        "Diagnostic should mention expected (1) and actual (2) argument counts"
+    );
 }
 
 #[tokio::test]
@@ -95,31 +131,65 @@ total = count([1, 2, 3])  # OK: list argument
 }
 
 #[tokio::test]
-async fn test_cross_module_diagnostics_infrastructure() {
+async fn test_user_defined_function_with_type_mismatch() {
     let documents = DocumentManager::new().unwrap();
     let config = Config::default();
     let workspace_root = Url::parse("file:///workspace").unwrap();
-    let workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
+    let mut workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
 
-    let module_uri = file_uri(workspace_root.as_str(), "main.py");
-    let module_content = r#"
-import os
-import sys
-
-# Infrastructure test - verifies the diagnostic system runs without errors
-path = os.path.join("a", "b")
-version = sys.version
+    let math_ops_uri = file_uri(workspace_root.as_str(), "math_ops.py");
+    let math_ops_content = r#"
+def add(a: int, b: int) -> int:
+    return a + b
 "#;
     documents
-        .open_document(module_uri.clone(), 0, module_content.to_string())
+        .open_document(math_ops_uri.clone(), 0, math_ops_content.to_string())
         .unwrap();
+    workspace.update_dependencies(&math_ops_uri);
+
+    let main_uri = file_uri(workspace_root.as_str(), "main.py");
+    let main_content = r#"
+from math_ops import add
+
+# This should trigger type mismatch diagnostics
+result = add("hello", 42)  # ERROR: first arg should be int, got str
+"#;
+    documents
+        .open_document(main_uri.clone(), 0, main_content.to_string())
+        .unwrap();
+    workspace.update_dependencies(&main_uri);
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let mut analyzer = Analyzer::new(config, documents.clone());
     let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
-    let _ = diagnostic_provider.generate_diagnostics(&module_uri, &mut analyzer);
+    let diagnostics = diagnostic_provider.generate_diagnostics(&main_uri, &mut analyzer);
 
-    // TODO: Full type checking
+    let type_mismatch_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code.as_ref().map_or(false, |c| match c {
+                lsp_types::NumberOrString::String(s) => s == "type-mismatch-argument",
+                _ => false,
+            })
+        })
+        .collect();
+
+    assert_eq!(
+        type_mismatch_diagnostics.len(),
+        1,
+        "Expected 1 type mismatch diagnostic. Found: {:?}",
+        type_mismatch_diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+
+    let diagnostic = type_mismatch_diagnostics[0];
+    assert!(
+        diagnostic.message.contains("add"),
+        "Diagnostic should mention function name 'add'"
+    );
+    assert!(
+        diagnostic.message.contains("str") && diagnostic.message.contains("int"),
+        "Diagnostic should mention both actual (str) and expected (int) types"
+    );
 }
 
 #[tokio::test]
