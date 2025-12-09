@@ -330,3 +330,165 @@ from module_a import *
 
     assert_eq!(invalid_diagnostics.len(), 0);
 }
+
+#[tokio::test]
+async fn test_cross_file_dead_code_unused_function() {
+    let documents = DocumentManager::new().unwrap();
+    let config = Config::default();
+    let workspace_root = Url::parse("file:///workspace").unwrap();
+    let mut workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
+
+    let module_a_uri = file_uri(workspace_root.as_str(), "module_a.py");
+    let module_a_content = r#"
+def used_function():
+    pass
+
+def unused_function():
+    pass
+"#;
+    documents
+        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .unwrap();
+    workspace.update_dependencies(&module_a_uri);
+
+    let module_b_uri = file_uri(workspace_root.as_str(), "module_b.py");
+    let module_b_content = r#"
+from module_a import used_function
+
+def main():
+    used_function()
+"#;
+    documents
+        .open_document(module_b_uri.clone(), 0, module_b_content.to_string())
+        .unwrap();
+    workspace.update_dependencies(&module_b_uri);
+
+    let mut analyzer = Analyzer::new(config, documents.clone());
+
+    let _ = analyzer.analyze(&module_a_uri);
+    let _ = analyzer.analyze(&module_b_uri);
+
+    workspace.mark_analyzed(&module_a_uri, 0);
+    workspace.mark_analyzed(&module_b_uri, 0);
+
+    let workspace_arc = Arc::new(RwLock::new(workspace));
+    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostics = diagnostic_provider.generate_diagnostics(&module_a_uri, &mut analyzer);
+
+    let dead_code_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code.as_ref().map_or(false, |c| match c {
+                lsp_types::NumberOrString::String(s) => s == "BEA033",
+                _ => false,
+            })
+        })
+        .collect();
+
+    assert!(
+        dead_code_diagnostics
+            .iter()
+            .any(|d| d.message.contains("unused_function")),
+        "Expected dead code diagnostic for unused_function. Found diagnostics: {:?}",
+        dead_code_diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+    );
+
+    assert!(
+        !dead_code_diagnostics
+            .iter()
+            .any(|d| d.message.contains("used_function")),
+        "Should not flag used_function as dead code"
+    );
+}
+
+#[tokio::test]
+async fn test_cross_file_dead_code_function_in_all_is_not_dead() {
+    let documents = DocumentManager::new().unwrap();
+    let config = Config::default();
+    let workspace_root = Url::parse("file:///workspace").unwrap();
+    let mut workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
+
+    let module_a_uri = file_uri(workspace_root.as_str(), "module_a.py");
+    let module_a_content = r#"
+__all__ = ["exported_function"]
+
+def exported_function():
+    pass
+
+def not_exported_function():
+    pass
+"#;
+    documents
+        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .unwrap();
+    workspace.update_dependencies(&module_a_uri);
+
+    let workspace_arc = Arc::new(RwLock::new(workspace));
+    let mut analyzer = Analyzer::new(config, documents.clone());
+    let _ = analyzer.analyze(&module_a_uri);
+
+    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostics = diagnostic_provider.generate_diagnostics(&module_a_uri, &mut analyzer);
+
+    let dead_code_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code.as_ref().map_or(false, |c| match c {
+                lsp_types::NumberOrString::String(s) => s == "BEA033",
+                _ => false,
+            })
+        })
+        .collect();
+
+    assert!(
+        !dead_code_diagnostics
+            .iter()
+            .any(|d| d.message.contains("exported_function")),
+        "Should not flag exported_function as dead code since it's in __all__"
+    );
+}
+
+#[tokio::test]
+async fn test_cross_file_dead_code_private_functions_not_flagged() {
+    let documents = DocumentManager::new().unwrap();
+    let config = Config::default();
+    let workspace_root = Url::parse("file:///workspace").unwrap();
+    let mut workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
+
+    let module_a_uri = file_uri(workspace_root.as_str(), "module_a.py");
+    let module_a_content = r#"
+def _private_function():
+    pass
+
+def public_function():
+    pass
+"#;
+    documents
+        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .unwrap();
+    workspace.update_dependencies(&module_a_uri);
+
+    let workspace_arc = Arc::new(RwLock::new(workspace));
+    let mut analyzer = Analyzer::new(config, documents.clone());
+    let _ = analyzer.analyze(&module_a_uri);
+
+    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostics = diagnostic_provider.generate_diagnostics(&module_a_uri, &mut analyzer);
+
+    let dead_code_diagnostics: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code.as_ref().map_or(false, |c| match c {
+                lsp_types::NumberOrString::String(s) => s == "BEA033",
+                _ => false,
+            })
+        })
+        .collect();
+
+    assert!(
+        !dead_code_diagnostics
+            .iter()
+            .any(|d| d.message.contains("_private_function")),
+        "Private functions should not be flagged as dead code"
+    );
+}

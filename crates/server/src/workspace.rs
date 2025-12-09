@@ -218,6 +218,64 @@ impl Workspace {
         Some(())
     }
 
+    /// Populate entry points for cross-file dead code analysis
+    ///
+    /// Identifies entry points across the workspace:
+    /// - Module initialization code (always runs on import)
+    /// - Public functions that are imported by other modules
+    /// - Functions explicitly listed in __all__
+    pub fn populate_entry_points(&self) {
+        let Ok(mut workspace_cfg) = self.workspace_cfg.write() else {
+            return;
+        };
+
+        let mut imported_symbols: FxHashSet<(Url, String)> = FxHashSet::default();
+        for (_uri, module_info) in &self.index.modules {
+            for symbol_import in &module_info.symbol_imports {
+                if let Some(source_uri) = self.resolve_import(&symbol_import.from_module) {
+                    imported_symbols.insert((source_uri, symbol_import.symbol.clone()));
+                }
+            }
+        }
+
+        let mut entry_points = Vec::new();
+
+        for (uri, module_info) in &self.index.modules {
+            let root_scope = self
+                .documents
+                .get_document(uri, |doc| doc.symbol_table().map(|st| st.root_scope))
+                .flatten();
+
+            if let Some(module_cfg) = workspace_cfg.get_module(uri)
+                && let Some(root_scope) = root_scope
+            {
+                let init_function_id = beacon_analyzer::FunctionId::new(
+                    uri.clone(),
+                    root_scope,
+                    format!("<module:{}>", module_info.module_name),
+                );
+                entry_points.push(init_function_id);
+
+                for func_id in module_cfg.function_ids() {
+                    let is_public = !func_id.name.starts_with('_');
+                    let is_in_all = module_info
+                        .all_exports
+                        .as_ref()
+                        .map_or(false, |exports| exports.contains(&func_id.name));
+                    let is_imported = imported_symbols.contains(&(uri.clone(), func_id.name.clone()));
+
+                    if is_public && (is_in_all || is_imported) {
+                        entry_points.push(func_id.clone());
+                    }
+                }
+            }
+        }
+
+        for entry_point in entry_points {
+            workspace_cfg.add_entry_point(entry_point);
+        }
+    }
+
     /// Initialize workspace by discovering Python files and stubs
     ///
     /// Scans the workspace for all Python files, builds the module index, constructs the initial dependency graph, and discovers stub files following PEP 561.

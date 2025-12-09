@@ -47,8 +47,13 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
     - [x] Argument count validation for imported functions
     - [x] Type checking for literal arguments against stub signatures
     - [x] Infrastructure for stdlib function validation
-    - [ ] TODO: Extend to user-defined functions by analyzing source modules
-- [ ] Cross-file dead code detection
+    - [x] Extend to user-defined functions by analyzing source modules
+- [x] Cross-file dead code detection
+    - [x] Added UnusedExport rule (BEA033)
+    - [x] Implemented workspace-level reachability analysis
+    - [x] Entry point detection (module init, **all**, imported symbols)
+    - [x] Integration with diagnostics pipeline
+    - [ ] TODO: Fix test case for unused function detection (populate entry points)
 
 ### Performance & Testing
 

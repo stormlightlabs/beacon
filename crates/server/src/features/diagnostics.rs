@@ -270,6 +270,14 @@ impl DiagnosticProvider {
             start.elapsed()
         );
 
+        let start = std::time::Instant::now();
+        self.add_cross_file_dead_code_diagnostics(uri, &mut diagnostics);
+        tracing::trace!(
+            "Cross-file dead code diagnostics: {} ({:?})",
+            diagnostics.len(),
+            start.elapsed()
+        );
+
         tracing::info!(
             "Generated {} total diagnostics for {} (mode: {})",
             diagnostics.len(),
@@ -2598,6 +2606,62 @@ impl DiagnosticProvider {
             }
             Type::Var(tv) => format!("'{}", tv.id),
             _ => format!("{:?}", ty),
+        }
+    }
+
+    /// Add diagnostics for cross-file dead code (unused exports)
+    ///
+    /// Reports functions and classes that are defined but never used across the workspace.
+    fn add_cross_file_dead_code_diagnostics(&self, uri: &Url, diagnostics: &mut Vec<Diagnostic>) {
+        let Ok(workspace) = self.workspace.try_read() else {
+            return;
+        };
+
+        workspace.populate_entry_points();
+
+        let workspace_cfg_arc = workspace.workspace_cfg();
+        let Ok(workspace_cfg) = workspace_cfg_arc.try_read() else {
+            return;
+        };
+
+        let unreachable_functions = workspace_cfg.unreachable_functions();
+
+        for func_id in unreachable_functions {
+            if func_id.uri != *uri {
+                continue;
+            }
+
+            let Some((symbol_table, source_lines)) = self
+                .documents
+                .get_document(uri, |doc| {
+                    doc.symbol_table()
+                        .map(|st| (st.clone(), doc.text().lines().map(String::from).collect::<Vec<_>>()))
+                })
+                .flatten()
+            else {
+                continue;
+            };
+
+            if let Some(scope) = symbol_table.scopes.get(&func_id.scope_id)
+                && let Some(symbol) = scope.symbols.get(&func_id.name)
+            {
+                let range = Self::identifier_range(symbol.line, symbol.col, &func_id.name, &source_lines);
+
+                diagnostics.push(Diagnostic {
+                    range,
+                    severity: Some(DiagnosticSeverity::WARNING),
+                    code: Some(lsp_types::NumberOrString::String("BEA033".to_string())),
+                    source: Some("beacon-linter".to_string()),
+                    message: format!(
+                        "Function '{}' is never used across the workspace. Consider removing it or marking it as private (prefix with '_')",
+                        func_id.name
+                    ),
+                    related_information: None,
+                    tags: Some(vec![lsp_types::DiagnosticTag::UNNECESSARY]),
+                    data: None,
+                    code_description: None,
+                });
+            }
         }
     }
 }
