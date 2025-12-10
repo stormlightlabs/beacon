@@ -53,6 +53,7 @@ See [Suppressions](../format/suppressions.md) for complete documentation on supp
 | [BEA030](#bea030) | `EmptyExcept`                           | &#9888;  | Exception | `except:` with no handling code (silent failure).                     |
 | [BEA031](#bea031) | `InconsistentExport`                    | &#9888;  | Imports   | `__all__` exports symbol that is not defined in module.               |
 | [BEA032](#bea032) | `ConflictingStubDefinition`             | &#9888;  | Typing    | Conflicting type definitions for the same symbol across stub files.   |
+| [BEA033](#bea033) | `UnusedExport`                          | &#9888;  | Imports   | Exported function or class is never used across the workspace.        |
 
 ## Rules
 
@@ -442,6 +443,51 @@ def process(data: str) -> int: ...
 #### Fix
 
 Resolve the conflict by ensuring consistent type signatures across all stub files. Remove duplicate stub definitions or consolidate them into a single authoritative stub file.
+
+### BEA033
+
+#### Example
+
+When a function or class is exported via `__all__` but never imported or used anywhere in the workspace:
+
+**mylib/utils.py:**
+
+```py
+def public_helper():
+    pass
+
+def unused_export():
+    # This function is exported but never used in the workspace
+    pass
+
+__all__ = ["public_helper", "unused_export"]
+```
+
+**main.py:**
+
+```py
+from mylib.utils import public_helper
+
+# Only public_helper is used, unused_export is never imported
+public_helper()
+```
+
+#### Fix
+
+Remove the unused export from `__all__` if it's truly not needed:
+
+```py
+def public_helper():
+    pass
+
+def unused_export():
+    # Make it private or remove from __all__
+    pass
+
+__all__ = ["public_helper"]  # Removed unused_export
+```
+
+Or if it's a public API that should be kept, suppress the warning with a comment explaining why it's part of the public interface.
 
 ## Planned
 

@@ -66,6 +66,31 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 - [ ] Integration tests for refactoring with workspace dependency updates
 - [ ] Stress testing with large multi-module projects
 
+### CLI Updates for Workspace Diagnostics
+
+Recent work added comprehensive cross-file diagnostics (BEA031-BEA033, invalid/private symbol imports, re-export validation, cross-module type checking, magic method validation). These are available in LSP via DiagnosticProvider but CLI `lint` and `analyze` commands don't expose them.
+
+**Current State**:
+
+- `beacon lint` - Single-file linter only (BEA001-BEA033 basic rules)
+- `beacon analyze` - Single-file linter + data flow (no cross-file analysis)
+- `beacon debug diagnostics` - Full DiagnosticProvider with all cross-file checks (debug builds only)
+
+**Tasks**:
+
+- [ ] Ensure all workspace initialization logic works in `debug diagnostics`
+- [ ] Enhance `analyze package` and `analyze project` implementations
+    - [ ] Implement workspace-level analysis using DiagnosticProvider
+    - [ ] Add cross-file diagnostics to package/project analysis
+    - [ ] Support workspace symbol resolution and import validation
+- [ ] Update CLI documentation
+    - [ ] Document new `debug diagnostics` features
+    - [ ] Add examples showing cross-file diagnostic detection
+    - [ ] Add cross-file diagnostic examples (BEA031-BEA033)
+- [ ] Performance considerations
+    - [ ] Caching for workspace-level analysis in CLI
+    - [ ] Incremental analysis options for CLI
+
 ## Linter Tech Debt
 
 **Priority**: v0.8.0 focus
