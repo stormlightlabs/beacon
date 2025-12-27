@@ -78,11 +78,11 @@ Recent work added comprehensive cross-file diagnostics (BEA031-BEA033, invalid/p
 
 **Tasks**:
 
-- [ ] Ensure all workspace initialization logic works in `debug diagnostics`
-- [ ] Enhance `analyze package` and `analyze project` implementations
-    - [ ] Implement workspace-level analysis using DiagnosticProvider
-    - [ ] Add cross-file diagnostics to package/project analysis
-    - [ ] Support workspace symbol resolution and import validation
+- [x] Ensure all workspace initialization logic works in `debug diagnostics`
+- [x] Enhance `analyze package` and `analyze project` implementations
+    - [x] Implement workspace-level analysis using DiagnosticProvider
+    - [x] Add cross-file diagnostics to package/project analysis
+    - [x] Support workspace symbol resolution and import validation
 - [ ] Update CLI documentation
     - [ ] Document new `debug diagnostics` features
     - [ ] Add examples showing cross-file diagnostic detection

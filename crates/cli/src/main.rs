@@ -277,7 +277,7 @@ async fn main() -> Result<()> {
         Commands::Lsp { stdio, tcp, host, port, log_file } => lsp_command(stdio, tcp, host, port, log_file).await,
         Commands::Format { paths, write, check, output } => format_command(paths, write, check, output),
         Commands::Analyze { target, format, show_cfg, show_types, lint_only, dataflow_only } => {
-            analyze_command(target, format, show_cfg, show_types, lint_only, dataflow_only)
+            analyze_command(target, format, show_cfg, show_types, lint_only, dataflow_only).await
         }
         Commands::Lint { paths, format } => lint_command(paths, format),
         Commands::Version => version_command(),
@@ -1031,7 +1031,7 @@ fn version_command() -> Result<()> {
     Ok(())
 }
 
-fn analyze_command(
+async fn analyze_command(
     target: AnalyzeTarget, format: OutputFormat, show_cfg: bool, show_types: bool, lint_only: bool, dataflow_only: bool,
 ) -> Result<()> {
     match target {
@@ -1045,10 +1045,10 @@ fn analyze_command(
             analyze_class(&file, &name, format, show_cfg, show_types, lint_only, dataflow_only)
         }
         AnalyzeTarget::Package { path } => {
-            analyze_package(&path, format, show_cfg, show_types, lint_only, dataflow_only)
+            analyze_package(&path, format, show_cfg, show_types, lint_only, dataflow_only).await
         }
         AnalyzeTarget::Project { path } => {
-            analyze_project(&path, format, show_cfg, show_types, lint_only, dataflow_only)
+            analyze_project(&path, format, show_cfg, show_types, lint_only, dataflow_only).await
         }
     }
 }
@@ -1193,16 +1193,34 @@ fn analyze_class(
     Ok(())
 }
 
-fn analyze_package(
-    _path: &Path, _format: OutputFormat, _show_cfg: bool, _show_types: bool, _lint_only: bool, _dataflow_only: bool,
+async fn analyze_package(
+    path: &Path, format: OutputFormat, _show_cfg: bool, _show_types: bool, _lint_only: bool, _dataflow_only: bool,
 ) -> Result<()> {
-    anyhow::bail!("Package analysis not yet implemented")
+    let path = path.canonicalize().unwrap_or(path.to_path_buf());
+    let paths = vec![path.clone()];
+    let (diagnostics, failed_files) = run_workspace_diagnostics(paths, Some(path)).await?;
+
+    format_lsp_diagnostics(&diagnostics, &failed_files, format)?;
+
+    if (!diagnostics.is_empty() || !failed_files.is_empty()) && !cfg!(test) {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
-fn analyze_project(
-    _path: &Path, _format: OutputFormat, _show_cfg: bool, _show_types: bool, _lint_only: bool, _dataflow_only: bool,
+async fn analyze_project(
+    path: &Path, format: OutputFormat, _show_cfg: bool, _show_types: bool, _lint_only: bool, _dataflow_only: bool,
 ) -> Result<()> {
-    anyhow::bail!("Project analysis not yet implemented")
+    let path = path.canonicalize().unwrap_or(path.to_path_buf());
+    let paths = vec![path.clone()];
+    let (diagnostics, failed_files) = run_workspace_diagnostics(paths, Some(path)).await?;
+
+    format_lsp_diagnostics(&diagnostics, &failed_files, format)?;
+
+    if (!diagnostics.is_empty() || !failed_files.is_empty()) && !cfg!(test) {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 fn extract_function<'a>(ast: &'a AstNode, name: &str) -> Option<&'a AstNode> {
@@ -1573,13 +1591,31 @@ fn format_lint_results_compact(diagnostics: &[(PathBuf, String, DiagnosticMessag
 }
 
 #[cfg(debug_assertions)]
+/// TODO: Handle workspace root
 async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) -> Result<()> {
+    let (diagnostics, failed_files) = run_workspace_diagnostics(paths, None).await?;
+    format_lsp_diagnostics(&diagnostics, &failed_files, format)?;
+
+    if (!diagnostics.is_empty() || !failed_files.is_empty()) && !cfg!(test) {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+async fn run_workspace_diagnostics(
+    paths: Vec<PathBuf>, workspace_root: Option<PathBuf>,
+) -> Result<(Vec<(PathBuf, String, lsp_types::Diagnostic)>, Vec<(PathBuf, String)>)> {
     let files = helpers::discover_python_files(&paths)?;
+
+    let files: Vec<PathBuf> = files.into_iter().filter_map(|p| p.canonicalize().ok()).collect();
+
     let documents = DocumentManager::new()?;
     let config = Config::default();
     let mut analyzer = Analyzer::new(config.clone(), documents.clone());
 
-    let mut workspace = Workspace::new(None, config, documents.clone());
+    let root_uri = workspace_root.and_then(|p| Url::from_file_path(p).ok());
+
+    let mut workspace = Workspace::new(root_uri, config, documents.clone());
     workspace.initialize()?;
     let workspace = std::sync::Arc::new(tokio::sync::RwLock::new(workspace));
     let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace.clone());
@@ -1594,18 +1630,34 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
     let mut failed_files = Vec::new();
 
     for file_path in &files {
-        let source =
-            fs::read_to_string(file_path).with_context(|| format!("Failed to read file: {}", file_path.display()))?;
+        let source = match fs::read_to_string(file_path) {
+            Ok(s) => s,
+            Err(e) => {
+                failed_files.push((file_path.clone(), e.to_string()));
+                continue;
+            }
+        };
 
-        let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
+        let mut parser = match PythonParser::new() {
+            Ok(p) => p,
+            Err(e) => {
+                failed_files.push((file_path.clone(), e.to_string()));
+                continue;
+            }
+        };
 
         match parser.parse(&source) {
             Ok(_parsed) => {
                 if let Ok((_ast, _symbol_table)) = parser.parse_and_resolve(&source) {
-                    let uri = Url::from_file_path(file_path)
-                        .map_err(|_| anyhow::anyhow!("Failed to create URL for {}", file_path.display()))?;
+                    let uri = match Url::from_file_path(file_path) {
+                        Ok(u) => u,
+                        Err(_) => {
+                            failed_files.push((file_path.clone(), "Failed to create URL".to_string()));
+                            continue;
+                        }
+                    };
 
-                    documents.open_document(uri.clone(), 1, source.clone())?;
+                    let _ = documents.open_document(uri.clone(), 1, source.clone());
 
                     {
                         let mut ws = workspace.write().await;
@@ -1648,6 +1700,13 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
         }
     }
 
+    Ok((all_diagnostics, failed_files))
+}
+
+fn format_lsp_diagnostics(
+    all_diagnostics: &[(PathBuf, String, lsp_types::Diagnostic)], failed_files: &[(PathBuf, String)],
+    format: OutputFormat,
+) -> Result<()> {
     match format {
         OutputFormat::Human => {
             if !all_diagnostics.is_empty() {
@@ -1657,7 +1716,7 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
                     all_diagnostics.len().to_string().yellow()
                 );
 
-                for (file, source, diagnostic) in &all_diagnostics {
+                for (file, source, diagnostic) in all_diagnostics {
                     let code_str = match &diagnostic.code {
                         Some(NumberOrString::String(s)) => s.clone(),
                         Some(NumberOrString::Number(n)) => n.to_string(),
@@ -1724,7 +1783,7 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
                     "✗".red().bold(),
                     failed_files.len().to_string().yellow()
                 );
-                for (file, error) in &failed_files {
+                for (file, error) in failed_files {
                     println!(
                         "  {} {}: {}",
                         "▸".red(),
@@ -1776,7 +1835,7 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
             println!("{}", serde_json::to_string_pretty(&output)?);
         }
         OutputFormat::Compact => {
-            for (file, _source, diagnostic) in &all_diagnostics {
+            for (file, _source, diagnostic) in all_diagnostics {
                 let code_str = match &diagnostic.code {
                     Some(NumberOrString::String(s)) => s.clone(),
                     Some(NumberOrString::Number(n)) => n.to_string(),
@@ -1791,17 +1850,11 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
                     diagnostic.message
                 );
             }
-            for (file, error) in &failed_files {
+            for (file, error) in failed_files {
                 eprintln!("{}:0:0: [ERROR] {}", file.display(), error);
             }
         }
     }
-
-    let total_issues = all_diagnostics.len();
-    if (total_issues > 0 || !failed_files.is_empty()) && !cfg!(test) {
-        std::process::exit(1);
-    }
-
     Ok(())
 }
 
@@ -2622,10 +2675,39 @@ result = obj.method(10)
     #[test]
     fn test_lsp_command_conflicts() {
         let result = Cli::try_parse_from(["beacon", "lsp", "--stdio", "--tcp"]);
-        assert!(
-            result.is_err(),
-            "Expected error when both --stdio and --tcp are specified"
-        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_analyze_package_command() {
+        let cli = Cli::try_parse_from(["beacon", "analyze", "package", "./src"]);
+        assert!(cli.is_ok());
+
+        if let Commands::Analyze { target, .. } = cli.unwrap().command {
+            if let AnalyzeTarget::Package { path } = target {
+                assert_eq!(path, PathBuf::from("./src"));
+            } else {
+                panic!("Expected Package target");
+            }
+        } else {
+            panic!("Expected Analyze command");
+        }
+    }
+
+    #[test]
+    fn test_analyze_project_command() {
+        let cli = Cli::try_parse_from(["beacon", "analyze", "project", "."]);
+        assert!(cli.is_ok());
+
+        if let Commands::Analyze { target, .. } = cli.unwrap().command {
+            if let AnalyzeTarget::Project { path } = target {
+                assert_eq!(path, PathBuf::from("."));
+            } else {
+                panic!("Expected Project target");
+            }
+        } else {
+            panic!("Expected Analyze command");
+        }
     }
 
     #[test]
