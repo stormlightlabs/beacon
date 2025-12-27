@@ -97,6 +97,23 @@ This is optional but helps validate links in the SUMMARY.md file. Be sure to kee
 
 - Use `just demo` or `beacon-cli debug <subcommand>` to capture ASTs, constraints, and solver output when explaining changes in your PR.
 
+### Benchmarking & Performance
+
+- We use `criterion` for benchmarking. Run benchmarks with:
+
+  ```sh
+  cargo bench -p beacon-cli
+  ```
+
+- Profiles can be generated using `cargo flamegraph` (Linux/macOS):
+
+  ```sh
+  # Requires `cargo install flamegraph`
+  cargo flamegraph -p beacon-cli -- analyze project path/to/project
+  ```
+
+- Please include benchmark results in PRs that touch performance-critical paths (parser, analysis loop, etc).
+
 ### Logging
 
 See [docs](./docs/src/lsp/logging.md)

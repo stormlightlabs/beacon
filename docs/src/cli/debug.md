@@ -134,26 +134,19 @@ $ beacon debug diagnostics src/
 
 ⚡ Running comprehensive diagnostics on 5 file(s)...
 
-✓ 0 Parse Errors
+✗ 5 Diagnostic(s) Found
 
-✗ 3 Lint Issues
   ▸ src/main.py:5:1 [BEA015] 'os' imported but never used
     5 import os
-      ~
+      ^
+
   ▸ src/utils.py:10:5 [BEA018] 'x' is redefined before being used
     10     x = 2
-           ~
-  ▸ src/helper.py:3:1 [BEA015] 'sys' imported but never used
-    3 import sys
-      ~
+           ^
 
-✗ 2 Type Errors
-  ▸ src/main.py:12:9 Cannot unify types: Int ~ Str
+  ▸ src/main.py:12:9 [error] Cannot unify types: Int ~ Str
     12     z = x + y
-               ~
-  ▸ src/utils.py:20:5 Undefined type variable: τ5
-    20     result = unknown_func()
-           ~
+               ^
 
 Summary: 5 total issue(s) found
 ```
@@ -170,5 +163,35 @@ Compact output (for editor integration):
 beacon debug diagnostics --format compact src/
 src/main.py:5:1: [BEA015] 'os' imported but never used
 src/utils.py:10:5: [BEA018] 'x' is redefined before being used
-src/main.py:12:9: [TYPE] Cannot unify types: Int ~ Str
+src/main.py:12:9: [error]: Cannot unify types: Int ~ Str
+```
+
+## Profiling
+
+### Using perf (Linux)
+
+To profile CPU usage on Linux:
+
+```sh
+# Record profile (needs root or proper capabilities)
+perf record --call-graph dwarf -F 999 ./target/release/beacon analyze project .
+
+# Analyze report
+perf report
+```
+
+### Using cargo flamegraph (macOS/Linux)
+
+Install `cargo-flamegraph`:
+
+```sh
+cargo install flamegraph
+```
+
+Generate a flamegraph:
+
+```sh
+# This uses dtrace on macOS (requires sudo) or perf on Linux
+# Note: You need to run this from the project root
+cargo flamegraph -p beacon-cli -- analyze project .
 ```

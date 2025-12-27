@@ -3,18 +3,17 @@ mod helpers;
 
 use anyhow::{Context, Result};
 use beacon_analyzer::{DiagnosticMessage, Linter};
+use beacon_cli::diagnostics::{OutputFormat, format_lsp_diagnostics, run_workspace_diagnostics};
 use beacon_lsp::{
     Config,
     analysis::Analyzer,
     document::DocumentManager,
-    features::DiagnosticProvider,
     formatting::{Formatter, FormatterConfig},
     workspace::Workspace,
 };
 use beacon_parser::{AstNode, PythonHighlighter, PythonParser};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use formatters::{format_compact, format_human, format_json, print_parse_errors, print_symbol_table};
-use lsp_types::{DiagnosticSeverity, NumberOrString};
 use owo_colors::OwoColorize;
 use serde_json::json;
 use std::fs;
@@ -29,17 +28,6 @@ use {
     io::{BufRead, Seek},
     std::time,
 };
-
-/// Output format for diagnostics
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum OutputFormat {
-    /// Human-readable output with colors and context
-    Human,
-    /// JSON format for machine processing
-    Json,
-    /// Compact single-line format (file:line:col)
-    Compact,
-}
 
 #[derive(Parser)]
 #[command(name = "beacon-cli")]
@@ -1598,262 +1586,6 @@ async fn debug_diagnostics_command(paths: Vec<PathBuf>, format: OutputFormat) ->
 
     if (!diagnostics.is_empty() || !failed_files.is_empty()) && !cfg!(test) {
         std::process::exit(1);
-    }
-    Ok(())
-}
-
-async fn run_workspace_diagnostics(
-    paths: Vec<PathBuf>, workspace_root: Option<PathBuf>,
-) -> Result<(Vec<(PathBuf, String, lsp_types::Diagnostic)>, Vec<(PathBuf, String)>)> {
-    let files = helpers::discover_python_files(&paths)?;
-
-    let files: Vec<PathBuf> = files.into_iter().filter_map(|p| p.canonicalize().ok()).collect();
-
-    let documents = DocumentManager::new()?;
-    let config = Config::default();
-    let mut analyzer = Analyzer::new(config.clone(), documents.clone());
-
-    let root_uri = workspace_root.and_then(|p| Url::from_file_path(p).ok());
-
-    let mut workspace = Workspace::new(root_uri, config, documents.clone());
-    workspace.initialize()?;
-    let workspace = std::sync::Arc::new(tokio::sync::RwLock::new(workspace));
-    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace.clone());
-
-    println!(
-        "{} Running comprehensive diagnostics on {} file(s)...\n",
-        "⚡".yellow().bold(),
-        files.len().to_string().cyan()
-    );
-
-    let mut all_diagnostics: Vec<(PathBuf, String, lsp_types::Diagnostic)> = Vec::new();
-    let mut failed_files = Vec::new();
-
-    for file_path in &files {
-        let source = match fs::read_to_string(file_path) {
-            Ok(s) => s,
-            Err(e) => {
-                failed_files.push((file_path.clone(), e.to_string()));
-                continue;
-            }
-        };
-
-        let mut parser = match PythonParser::new() {
-            Ok(p) => p,
-            Err(e) => {
-                failed_files.push((file_path.clone(), e.to_string()));
-                continue;
-            }
-        };
-
-        match parser.parse(&source) {
-            Ok(_parsed) => {
-                if let Ok((_ast, _symbol_table)) = parser.parse_and_resolve(&source) {
-                    let uri = match Url::from_file_path(file_path) {
-                        Ok(u) => u,
-                        Err(_) => {
-                            failed_files.push((file_path.clone(), "Failed to create URL".to_string()));
-                            continue;
-                        }
-                    };
-
-                    let _ = documents.open_document(uri.clone(), 1, source.clone());
-
-                    {
-                        let mut ws = workspace.write().await;
-                        ws.update_dependencies(&uri);
-
-                        let symbol_imports = ws.get_symbol_imports(&uri);
-                        let mut resolved_imports = Vec::new();
-                        for import in &symbol_imports {
-                            if let Some(resolved_uri) = ws.resolve_import(&import.from_module) {
-                                if import.symbol == "*" {
-                                    let symbols = ws.resolve_star_import(&resolved_uri);
-                                    for symbol in symbols {
-                                        resolved_imports.push((resolved_uri.clone(), symbol));
-                                    }
-                                } else {
-                                    resolved_imports.push((resolved_uri, import.symbol.clone()));
-                                }
-                            }
-                        }
-                        if !resolved_imports.is_empty() {
-                            analyzer.record_imports(&uri, &resolved_imports);
-                        }
-                    }
-
-                    let diagnostics = diagnostic_provider.generate_diagnostics(&uri, &mut analyzer);
-
-                    for diagnostic in diagnostics {
-                        if let Some(NumberOrString::String(code)) = &diagnostic.code
-                            && code == "MODE_INFO"
-                        {
-                            continue;
-                        }
-                        all_diagnostics.push((file_path.clone(), source.clone(), diagnostic));
-                    }
-                }
-            }
-            Err(e) => {
-                failed_files.push((file_path.clone(), e.to_string()));
-            }
-        }
-    }
-
-    Ok((all_diagnostics, failed_files))
-}
-
-fn format_lsp_diagnostics(
-    all_diagnostics: &[(PathBuf, String, lsp_types::Diagnostic)], failed_files: &[(PathBuf, String)],
-    format: OutputFormat,
-) -> Result<()> {
-    match format {
-        OutputFormat::Human => {
-            if !all_diagnostics.is_empty() {
-                println!(
-                    "{} {} Diagnostic(s) Found\n",
-                    "✗".red().bold(),
-                    all_diagnostics.len().to_string().yellow()
-                );
-
-                for (file, source, diagnostic) in all_diagnostics {
-                    let code_str = match &diagnostic.code {
-                        Some(NumberOrString::String(s)) => s.clone(),
-                        Some(NumberOrString::Number(n)) => n.to_string(),
-                        None => "unknown".to_string(),
-                    };
-
-                    let is_error = matches!(diagnostic.severity, Some(DiagnosticSeverity::ERROR));
-                    let is_warning = matches!(diagnostic.severity, Some(DiagnosticSeverity::WARNING));
-                    let is_info = matches!(diagnostic.severity, Some(DiagnosticSeverity::INFORMATION));
-
-                    let line = (diagnostic.range.start.line + 1) as usize;
-                    let col = (diagnostic.range.start.character + 1) as usize;
-
-                    let severity_str = if is_error {
-                        "▸".bright_red().to_string()
-                    } else if is_warning {
-                        "▸".yellow().to_string()
-                    } else if is_info {
-                        "▸".blue().to_string()
-                    } else {
-                        "▸".cyan().to_string()
-                    };
-
-                    println!(
-                        "  {} {}:{}:{} [{}] {}",
-                        severity_str,
-                        file.display().to_string().cyan(),
-                        line.to_string().yellow(),
-                        col.to_string().yellow(),
-                        code_str.dimmed(),
-                        diagnostic.message
-                    );
-
-                    let lines: Vec<&str> = source.lines().collect();
-                    if line > 0 && line <= lines.len() {
-                        let source_line = lines[line - 1];
-                        println!("    {} {}", line.to_string().dimmed(), source_line.dimmed());
-
-                        let start_col = diagnostic.range.start.character as usize;
-                        let end_col = diagnostic.range.end.character as usize;
-                        let highlight_len = end_col.saturating_sub(start_col).max(1);
-
-                        if start_col < source_line.len() {
-                            let spaces = " ".repeat(line.to_string().len() + 1 + start_col);
-                            let squiggle_str = if is_error {
-                                "~".repeat(highlight_len).bright_red().to_string()
-                            } else if is_warning {
-                                "~".repeat(highlight_len).yellow().to_string()
-                            } else {
-                                "~".repeat(highlight_len).cyan().to_string()
-                            };
-                            println!("    {spaces}{squiggle_str}");
-                        }
-                    }
-                }
-                println!();
-            } else {
-                println!("{} All checks passed!\n", "✓".green().bold());
-            }
-
-            if !failed_files.is_empty() {
-                println!(
-                    "{} {} Failed Files",
-                    "✗".red().bold(),
-                    failed_files.len().to_string().yellow()
-                );
-                for (file, error) in failed_files {
-                    println!(
-                        "  {} {}: {}",
-                        "▸".red(),
-                        file.display().to_string().cyan(),
-                        error.bright_red()
-                    );
-                }
-                println!();
-            }
-
-            if !all_diagnostics.is_empty() || !failed_files.is_empty() {
-                println!(
-                    "{} {} total issue(s) found",
-                    "Summary:".bold(),
-                    all_diagnostics.len().to_string().yellow()
-                );
-            }
-        }
-        OutputFormat::Json => {
-            let output = json!({
-                "diagnostics": all_diagnostics.iter().map(|(file, _source, diagnostic)| {
-                    let code_str = match &diagnostic.code {
-                        Some(NumberOrString::String(s)) => s.clone(),
-                        Some(NumberOrString::Number(n)) => n.to_string(),
-                        None => "unknown".to_string(),
-                    };
-                    json!({
-                        "file": file.display().to_string(),
-                        "line": diagnostic.range.start.line + 1,
-                        "col": diagnostic.range.start.character + 1,
-                        "code": code_str,
-                        "severity": match diagnostic.severity {
-                            Some(DiagnosticSeverity::ERROR) => "error",
-                            Some(DiagnosticSeverity::WARNING) => "warning",
-                            Some(DiagnosticSeverity::INFORMATION) => "info",
-                            Some(DiagnosticSeverity::HINT) => "hint",
-                            _ => "unknown",
-                        },
-                        "message": diagnostic.message,
-                    })
-                }).collect::<Vec<_>>(),
-                "failed_files": failed_files.iter().map(|(file, error)| {
-                    json!({
-                        "file": file.display().to_string(),
-                        "error": error,
-                    })
-                }).collect::<Vec<_>>(),
-            });
-            println!("{}", serde_json::to_string_pretty(&output)?);
-        }
-        OutputFormat::Compact => {
-            for (file, _source, diagnostic) in all_diagnostics {
-                let code_str = match &diagnostic.code {
-                    Some(NumberOrString::String(s)) => s.clone(),
-                    Some(NumberOrString::Number(n)) => n.to_string(),
-                    None => "unknown".to_string(),
-                };
-                println!(
-                    "{}:{}:{}: [{}] {}",
-                    file.display(),
-                    diagnostic.range.start.line + 1,
-                    diagnostic.range.start.character + 1,
-                    code_str,
-                    diagnostic.message
-                );
-            }
-            for (file, error) in failed_files {
-                eprintln!("{}:0:0: [ERROR] {}", file.display(), error);
-            }
-        }
     }
     Ok(())
 }

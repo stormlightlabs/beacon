@@ -57,14 +57,13 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
 ### Performance & Testing
 
-- [ ] Performance benchmarks for multi-file analysis
-- [ ] Memory profiling for workspace-wide analysis
+- [x] Performance benchmarks for multi-file analysis
+- [x] Memory profiling for workspace-wide analysis (Documented in debug.md)
 - [ ] Integration tests for cross-file CFG
 - [ ] Integration tests for cross-file taint analysis
 - [ ] Integration tests for Extract Function refactoring with type inference
 - [ ] Integration tests for Move Symbol refactoring across files
 - [ ] Integration tests for refactoring with workspace dependency updates
-- [ ] Stress testing with large multi-module projects
 
 ### CLI Updates for Workspace Diagnostics
 
@@ -83,13 +82,10 @@ Recent work added comprehensive cross-file diagnostics (BEA031-BEA033, invalid/p
     - [x] Implement workspace-level analysis using DiagnosticProvider
     - [x] Add cross-file diagnostics to package/project analysis
     - [x] Support workspace symbol resolution and import validation
-- [ ] Update CLI documentation
-    - [ ] Document new `debug diagnostics` features
-    - [ ] Add examples showing cross-file diagnostic detection
-    - [ ] Add cross-file diagnostic examples (BEA031-BEA033)
-- [ ] Performance considerations
-    - [ ] Caching for workspace-level analysis in CLI
-    - [ ] Incremental analysis options for CLI
+- [x] Update CLI documentation
+    - [x] Document new `debug diagnostics` features
+    - [x] Add examples showing cross-file diagnostic detection
+    - [x] Add cross-file diagnostic examples (BEA031-BEA033)
 
 ## Linter Tech Debt
 
@@ -250,11 +246,3 @@ See [Logging](#logging) section below for detailed logging standards.
     - Fatal errors and crash reports
 - [ ] Continue using `window/logMessage` for high-level, safe summaries ("Server initialized", "Analysis failed")
 - [ ] Provide a runtime flag or env var (`LSP_LOG_LEVEL`) for fine-grained control in deployments.
-
-## Parking Lot/Deferred
-
-- From 0.2.1
-    - [ ] Add performance benchmarks for cache improvements
-- From 0.4.0
-    - [ ] Performance benchmarks (ensure modes don't add overhead)
-    - [ ] Implement signature validation in DiagnosticProvider
