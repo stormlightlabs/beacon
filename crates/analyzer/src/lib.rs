@@ -24,8 +24,8 @@ pub mod walker;
 pub mod workspace;
 
 pub use cfg::{
-    BasicBlock, BlockId, CallGraph, CallResolver, CallSite, CfgBuilder, ControlFlowGraph, EdgeKind, FunctionId,
-    ModuleCFG, ModuleCFGBuilder, WorkspaceCFG,
+    BasicBlock, BlockId, CallEdgeSummary, CallGraph, CallResolver, CallSite, CfgBuilder, ControlFlowGraph, EdgeKind,
+    FunctionId, FunctionSummary, ModuleCFG, ModuleCFGBuilder, WorkspaceCFG, WorkspaceCfgSummary,
 };
 pub use const_eval::{ConstValue, evaluate_const_expr};
 pub use cross_module_resolver::{CrossModuleTypeResolver, PropagationResult};

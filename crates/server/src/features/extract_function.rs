@@ -44,7 +44,12 @@ impl ExtractFunctionProvider {
         let analysis = Self::analyze_variables(&tree, &text, &symbol_table, params.range)?;
 
         let type_map = if let Some(ref mut a) = analyzer {
-            Self::build_variable_type_map(a, &params.uri, &analysis.returns, &symbol_table, &text)
+            let start_byte = Self::position_to_byte_offset(&text, params.range.start);
+            let scope_id = symbol_table.find_scope_at_position(start_byte);
+
+            let mut all_vars = analysis.parameters.clone();
+            all_vars.extend(analysis.returns.clone());
+            Self::build_variable_type_map(a, &params.uri, &all_vars, &symbol_table, &text, scope_id)
         } else {
             std::collections::HashMap::new()
         };
@@ -163,12 +168,12 @@ impl ExtractFunctionProvider {
     /// Looks up each variable in the symbol table and uses the analyzer to get its type.
     fn build_variable_type_map(
         analyzer: &mut crate::analysis::Analyzer, uri: &Url, variables: &[String],
-        symbol_table: &beacon_parser::SymbolTable, _text: &str,
+        symbol_table: &beacon_parser::SymbolTable, _text: &str, scope_id: beacon_parser::ScopeId,
     ) -> HashMap<String, String> {
         let mut type_map = HashMap::new();
 
         for var_name in variables {
-            if let Some(symbol) = symbol_table.lookup_symbol(var_name, symbol_table.root_scope) {
+            if let Some(symbol) = symbol_table.lookup_symbol(var_name, scope_id) {
                 let position = lsp_types::Position {
                     line: (symbol.line.saturating_sub(1)) as u32,
                     character: (symbol.col.saturating_sub(1)) as u32,

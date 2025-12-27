@@ -11,10 +11,11 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 ### Workspace-Level CFG & Data Flow
 
 - [x] Cross-module CFG construction
-- [x] Handle circular dependencies in CFG gracefully (SCC detection in CallGraph.reachable_functions)
+- [x] Handle circular dependencies in CFG gracefully
 - [x] Cross-file reachability analysis
 - [x] Transitive type propagation across module boundaries
 - [x] Taint analysis across file boundaries
+- [x] Implement Cross-Module CFG Linking
 
 ### Enhanced Import/Export Analysis
 
@@ -57,14 +58,36 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
 ### Performance & Testing
 
-- [ ] Performance benchmarks for multi-file analysis
-- [ ] Memory profiling for workspace-wide analysis
-- [ ] Integration tests for cross-file CFG
-- [ ] Integration tests for cross-file taint analysis
-- [ ] Integration tests for Extract Function refactoring with type inference
-- [ ] Integration tests for Move Symbol refactoring across files
-- [ ] Integration tests for refactoring with workspace dependency updates
-- [ ] Stress testing with large multi-module projects
+- [x] Performance benchmarks for multi-file analysis
+- [x] Memory profiling for workspace-wide analysis (Documented in debug.md)
+- [x] Integration tests for cross-file CFG
+- [x] Integration tests for cross-file taint analysis
+- [x] Integration tests for Extract Function refactoring
+    - [ ] Enable type inference checks
+- [x] Integration tests for Move Symbol refactoring across files
+- [x] Integration tests for refactoring with workspace dependency updates
+
+### CLI Updates for Workspace Diagnostics
+
+Recent work added comprehensive cross-file diagnostics (BEA031-BEA033, invalid/private symbol imports, re-export validation, cross-module type checking, magic method validation). These are available in LSP via DiagnosticProvider but CLI `lint` and `analyze` commands don't expose them.
+
+**Current State**:
+
+- `beacon lint` - Single-file linter only (BEA001-BEA033 basic rules)
+- `beacon analyze` - Single-file linter + data flow (no cross-file analysis)
+- `beacon debug diagnostics` - Full DiagnosticProvider with all cross-file checks (debug builds only)
+
+**Tasks**:
+
+- [x] Ensure all workspace initialization logic works in `debug diagnostics`
+- [x] Enhance `analyze package` and `analyze project` implementations
+    - [x] Implement workspace-level analysis using DiagnosticProvider
+    - [x] Add cross-file diagnostics to package/project analysis
+    - [x] Support workspace symbol resolution and import validation
+- [x] Update CLI documentation
+    - [x] Document new `debug diagnostics` features
+    - [x] Add examples showing cross-file diagnostic detection
+    - [x] Add cross-file diagnostic examples (BEA031-BEA033)
 
 ## Linter Tech Debt
 
@@ -194,6 +217,7 @@ See [Logging](#logging) section below for detailed logging standards.
 - [ ] Add performance regression tests
 - [ ] Fuzzing for parser and analyzer
 - [ ] Stress testing with large codebases
+- [ ] Debug Analyzer type resolution in integration test environment (to enable strict type checks in extract function tests)
 
 ## Logging
 
@@ -225,11 +249,3 @@ See [Logging](#logging) section below for detailed logging standards.
     - Fatal errors and crash reports
 - [ ] Continue using `window/logMessage` for high-level, safe summaries ("Server initialized", "Analysis failed")
 - [ ] Provide a runtime flag or env var (`LSP_LOG_LEVEL`) for fine-grained control in deployments.
-
-## Parking Lot/Deferred
-
-- From 0.2.1
-    - [ ] Add performance benchmarks for cache improvements
-- From 0.4.0
-    - [ ] Performance benchmarks (ensure modes don't add overhead)
-    - [ ] Implement signature validation in DiagnosticProvider

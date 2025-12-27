@@ -4,6 +4,7 @@
 //! - Dependency graph between modules
 //! - Module resolution and imports
 //! - Project-wide type checking
+//! - Cross-file CFG and taint analysis
 
 use crate::config::Config;
 use crate::document::DocumentManager;
@@ -218,6 +219,59 @@ impl Workspace {
         Some(())
     }
 
+    /// Perform cross-module CFG linking
+    ///
+    /// Resolves import stubs to function definitions across modules.
+    /// This must be called after all modules have been added to the workspace CFG.
+    pub fn link_workspace_cfg(&self) {
+        let import_map = self.build_import_function_map();
+
+        if import_map.is_empty() {
+            tracing::debug!("No import mappings to link");
+            return;
+        }
+
+        tracing::debug!("Linking {} cross-module imports", import_map.len());
+
+        if let Ok(mut workspace_cfg) = self.workspace_cfg.write() {
+            workspace_cfg.link_cross_module_calls(&import_map);
+        }
+    }
+
+    /// Build a map from (importing_module_uri, symbol_name) to target FunctionId
+    ///
+    /// For each import like `from module_a import func_a`, creates a mapping  from (module_b_uri, "func_a") -> FunctionId in module_a.
+    fn build_import_function_map(&self) -> FxHashMap<(Url, String), beacon_analyzer::FunctionId> {
+        let mut import_map = FxHashMap::default();
+
+        let workspace_cfg = match self.workspace_cfg.read() {
+            Ok(cfg) => cfg,
+            Err(_) => return import_map,
+        };
+
+        for (importer_uri, module_info) in &self.index.modules {
+            for symbol_import in &module_info.symbol_imports {
+                let Some(source_uri) = self.resolve_import(&symbol_import.from_module) else {
+                    continue;
+                };
+
+                let Some(source_module) = workspace_cfg.get_module(&source_uri) else {
+                    continue;
+                };
+
+                for func_id in source_module.function_ids() {
+                    if func_id.name == symbol_import.symbol {
+                        let key = (importer_uri.clone(), symbol_import.symbol.clone());
+                        import_map.insert(key, func_id);
+                        break;
+                    }
+                }
+            }
+        }
+
+        import_map
+    }
+
     /// Populate entry points for cross-file dead code analysis
     ///
     /// Identifies entry points across the workspace:
@@ -307,7 +361,9 @@ impl Workspace {
 
     /// Initialize workspace by discovering Python files and stubs
     ///
-    /// Scans the workspace for all Python files, builds the module index, constructs the initial dependency graph, and discovers stub files following PEP 561.
+    /// Scans the workspace for all Python files, builds the module index, constructs the initial dependency graph,
+    /// and discovers stub files following PEP 561.
+    ///
     /// Stubs are always loaded even if file discovery fails, since stdlib stubs are essential for type checking.
     pub fn initialize(&mut self) -> Result<(), WorkspaceError> {
         tracing::info!("Starting workspace initialization & discovering stubs");

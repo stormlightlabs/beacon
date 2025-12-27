@@ -28,21 +28,25 @@ Analyze a specific class in a file:
 beacon analyze class ./src/myapp/models.py:User
 ```
 
-### Package Analysis (TODO)
+### Package Analysis
 
-Analyze an entire package (directory with __init__.py):
+Analyze an entire package directory (recursively), resolving imports within the package:
 
 ```sh
 beacon analyze package ./src/myapp
 ```
 
-### Project Analysis (TODO)
+This command will find all Python files in the directory and run diagnostics with workspace context.
 
-Analyze an entire project (workspace with multiple packages):
+### Project Analysis
+
+Analyze an entire project workspace (multiple packages), resolving cross-package dependencies:
 
 ```sh
 beacon analyze project .
 ```
+
+This is useful for analyzing monorepos or projects with multiple top-level packages. It sets the working directory as the workspace root.
 
 ## Options
 

@@ -36,7 +36,7 @@ Beacon works with any LSP-compatible editor:
 For editor integration, Beacon uses stdio mode by default:
 
 ```bash
-# Directly with the lsp or the CLI
+# Invoke the lsp binary directly or use the cli
 beacon-lsp # or beacon lsp
 ```
 
@@ -45,11 +45,7 @@ beacon-lsp # or beacon lsp
 For debugging, testing, or remote connections, use TCP mode:
 
 ```bash
-# Server binary with defaults (127.0.0.1:9350)
 beacon lsp --tcp --host 127.0.0.1 --port 9350
-
-# Explicit stdio mode
-beacon-lsp --stdio
 ```
 
 ## Quick Start
@@ -78,6 +74,4 @@ cargo run -p beacon-lsp -- --stdio
 
 Made with ⚡️ by Stormlight Labs.
 
-Stormlight Labs is just me, [Owais](https://github.com/desertthunder). Support my work on [Ko-fi](https://ko-fi.com/desertthunder).
-
-[<img src="https://brainmade.org/white-logo.png" width="100px" alt="Brain Made"/>](https://brainmade.org)
+Stormlight Labs is just me, [Owais](https://github.com/desertthunder). Sponsor my work [here on github](https://github.com/sponsors/desertthunder)
