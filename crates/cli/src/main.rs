@@ -252,6 +252,15 @@ enum DebugCommands {
         #[arg(long)]
         filter: Option<String>,
     },
+    /// Show workspace Control Flow Graph and call graph
+    Cfg {
+        /// Path to workspace directory
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[tokio::main]
@@ -619,6 +628,7 @@ async fn debug_command(command: DebugCommands) -> Result<()> {
         DebugCommands::Unify { file } => debug_unify_command(file),
         DebugCommands::Diagnostics { paths, format } => debug_diagnostics_command(paths, format).await,
         DebugCommands::Logs { follow, path, filter } => debug_logs_command(follow, path, filter),
+        DebugCommands::Cfg { path, json } => debug_cfg_command(path, json).await,
     }
 }
 
@@ -938,6 +948,124 @@ fn print_log_line(line: &str) {
     } else {
         println!("{line}");
     }
+}
+
+#[cfg(debug_assertions)]
+async fn debug_cfg_command(path: PathBuf, json: bool) -> Result<()> {
+    let canonical_path = path
+        .canonicalize()
+        .with_context(|| format!("Failed to resolve path: {}", path.display()))?;
+
+    let workspace_uri = Url::from_file_path(&canonical_path)
+        .map_err(|_| anyhow::anyhow!("Failed to create URL for path: {}", canonical_path.display()))?;
+
+    let documents = DocumentManager::new()?;
+    let config = Config::default();
+    let mut workspace = Workspace::new(Some(workspace_uri), config, documents.clone());
+
+    println!(
+        "{} {} ...",
+        "Initializing workspace at".cyan(),
+        canonical_path.display().to_string().yellow()
+    );
+
+    workspace.initialize()?;
+
+    let python_files = helpers::discover_python_files(&[canonical_path.clone()])?;
+    println!(
+        "{} {} Python files",
+        "Found".green(),
+        python_files.len().to_string().yellow()
+    );
+
+    for file_path in &python_files {
+        let source =
+            fs::read_to_string(file_path).with_context(|| format!("Failed to read file: {}", file_path.display()))?;
+
+        let uri = Url::from_file_path(file_path)
+            .map_err(|_| anyhow::anyhow!("Failed to create URL for {}", file_path.display()))?;
+
+        documents.open_document(uri.clone(), 1, source)?;
+        workspace.update_dependencies(&uri);
+        workspace.build_module_cfg(&uri);
+    }
+
+    workspace.link_workspace_cfg();
+
+    let workspace_cfg = workspace.workspace_cfg();
+    let cfg = workspace_cfg
+        .read()
+        .map_err(|_| anyhow::anyhow!("Failed to read workspace CFG"))?;
+    let summary = cfg.debug_summary();
+
+    if json {
+        let json_output = serde_json::json!({
+            "module_count": summary.module_count,
+            "function_count": summary.function_count,
+            "call_edge_count": summary.call_edge_count,
+            "has_circular_dependencies": summary.has_circular_deps,
+            "functions": summary.functions.iter().map(|f| serde_json::json!({
+                "module": f.module,
+                "name": f.name,
+            })).collect::<Vec<_>>(),
+            "call_edges": summary.call_edges.iter().map(|e| serde_json::json!({
+                "caller_module": e.caller_module,
+                "caller_name": e.caller_name,
+                "callee_module": e.callee_module,
+                "callee_name": e.callee_name,
+                "line": e.line,
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&json_output)?);
+    } else {
+        println!("\n{}", "Workspace CFG Summary".cyan().bold());
+        println!("{}", "=".repeat(40).dimmed());
+        println!("  {}: {}", "Modules".cyan(), summary.module_count.to_string().yellow());
+        println!(
+            "  {}: {}",
+            "Functions".cyan(),
+            summary.function_count.to_string().yellow()
+        );
+        println!(
+            "  {}: {}",
+            "Call edges".cyan(),
+            summary.call_edge_count.to_string().yellow()
+        );
+
+        if summary.has_circular_deps {
+            println!(
+                "  {}: {}",
+                "Circular dependencies".red().bold(),
+                "DETECTED".bright_red().bold()
+            );
+        } else {
+            println!("  {}: {}", "Circular dependencies".green(), "None".green());
+        }
+
+        if !summary.functions.is_empty() {
+            println!("\n{}", "Functions".cyan().bold());
+            for func in &summary.functions {
+                println!("  {} {}.{}", "▸".blue(), func.module.dimmed(), func.name.bright_white());
+            }
+        }
+
+        if !summary.call_edges.is_empty() {
+            println!("\n{}", "Call Graph Edges".cyan().bold());
+            for edge in &summary.call_edges {
+                let caller = format!("{} (line {})", edge.caller_name, edge.line);
+                let callee = &edge.callee_name;
+                println!(
+                    "  {} {} {} {}",
+                    caller.bright_white(),
+                    "→".yellow(),
+                    callee.green(),
+                    format!("({})", edge.callee_module).dimmed()
+                );
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn lint_command(paths: Vec<PathBuf>, format: OutputFormat) -> Result<()> {

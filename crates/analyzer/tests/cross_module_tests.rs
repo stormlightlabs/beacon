@@ -1213,3 +1213,114 @@ fn test_scc_cross_module_cycle() {
     assert!(circular_funcs.contains(&func_a));
     assert!(circular_funcs.contains(&func_b));
 }
+
+#[test]
+fn test_relink_callee_updates_call_sites() {
+    let mut call_graph = CallGraph::new();
+
+    let uri_a = test_uri("a.py");
+    let uri_b = test_uri("b.py");
+
+    let caller = FunctionId::new(uri_a.clone(), ScopeId::from_raw(1), "caller".to_string());
+    let old_callee = FunctionId::new(uri_a.clone(), ScopeId::from_raw(2), "import_stub".to_string());
+    let new_callee = FunctionId::new(uri_b.clone(), ScopeId::from_raw(1), "actual_func".to_string());
+
+    call_graph.add_call_site(
+        caller.clone(),
+        &CallSite::new(BlockId(1), 0, Some(old_callee.clone()), CallKind::Direct, 10, 5),
+    );
+    let callees = call_graph.get_callees(&caller);
+    assert_eq!(callees.len(), 1);
+    assert_eq!(callees[0], old_callee);
+
+    call_graph.relink_callee(&caller, &old_callee, new_callee.clone());
+
+    let callees_after = call_graph.get_callees(&caller);
+    assert_eq!(callees_after.len(), 1);
+    assert_eq!(callees_after[0], new_callee);
+
+    let callers = call_graph.get_callers(&new_callee);
+    assert!(callers.is_some());
+    assert!(callers.unwrap().contains(&caller));
+}
+
+#[test]
+fn test_link_cross_module_calls() {
+    use rustc_hash::FxHashMap;
+
+    let uri_a = test_uri("module_a.py");
+    let uri_b = test_uri("module_b.py");
+
+    let mut workspace_cfg = WorkspaceCFG::new();
+
+    let mut module_a = ModuleCFG::new(uri_a.clone(), "module_a".to_string());
+    let cfg_a = ControlFlowGraph::new();
+    module_a.add_function_cfg(ScopeId::from_raw(1), "func_a".to_string(), cfg_a);
+    workspace_cfg.add_module(module_a);
+    let mut module_b = ModuleCFG::new(uri_b.clone(), "module_b".to_string());
+    let cfg_b = ControlFlowGraph::new();
+    module_b.add_function_cfg(ScopeId::from_raw(1), "func_b".to_string(), cfg_b);
+    workspace_cfg.add_module(module_b);
+
+    let func_b = FunctionId::new(uri_b.clone(), ScopeId::from_raw(1), "func_b".to_string());
+    let import_stub = FunctionId::new(uri_b.clone(), ScopeId::from_raw(99), "func_a".to_string());
+    let actual_func_a = FunctionId::new(uri_a.clone(), ScopeId::from_raw(1), "func_a".to_string());
+
+    workspace_cfg.call_graph_mut().add_call_site(
+        func_b.clone(),
+        &CallSite::new(BlockId(1), 0, Some(import_stub.clone()), CallKind::Direct, 5, 1),
+    );
+
+    let mut import_map = FxHashMap::default();
+    import_map.insert((uri_b.clone(), "func_a".to_string()), actual_func_a.clone());
+
+    workspace_cfg.link_cross_module_calls(&import_map);
+    let callees = workspace_cfg.call_graph().get_callees(&func_b);
+    assert_eq!(callees.len(), 1);
+    assert_eq!(callees[0].uri, uri_a, "Callee should now point to module_a");
+    assert_eq!(callees[0].name, "func_a");
+}
+
+#[test]
+fn test_link_cross_module_circular_dependency_detection() {
+    use rustc_hash::FxHashMap;
+
+    let uri_a = test_uri("module_a.py");
+    let uri_b = test_uri("module_b.py");
+
+    let mut workspace_cfg = WorkspaceCFG::new();
+
+    let mut module_a = ModuleCFG::new(uri_a.clone(), "module_a".to_string());
+    let cfg_a = ControlFlowGraph::new();
+    module_a.add_function_cfg(ScopeId::from_raw(1), "func_a".to_string(), cfg_a);
+    workspace_cfg.add_module(module_a);
+
+    let mut module_b = ModuleCFG::new(uri_b.clone(), "module_b".to_string());
+    let cfg_b = ControlFlowGraph::new();
+    module_b.add_function_cfg(ScopeId::from_raw(1), "func_b".to_string(), cfg_b);
+    workspace_cfg.add_module(module_b);
+
+    let func_a = FunctionId::new(uri_a.clone(), ScopeId::from_raw(1), "func_a".to_string());
+    let func_b = FunctionId::new(uri_b.clone(), ScopeId::from_raw(1), "func_b".to_string());
+
+    let stub_b_in_a = FunctionId::new(uri_a.clone(), ScopeId::from_raw(99), "func_b".to_string());
+    let stub_a_in_b = FunctionId::new(uri_b.clone(), ScopeId::from_raw(99), "func_a".to_string());
+
+    workspace_cfg.call_graph_mut().add_call_site(
+        func_a.clone(),
+        &CallSite::new(BlockId(1), 0, Some(stub_b_in_a.clone()), CallKind::Direct, 1, 1),
+    );
+    workspace_cfg.call_graph_mut().add_call_site(
+        func_b.clone(),
+        &CallSite::new(BlockId(1), 0, Some(stub_a_in_b.clone()), CallKind::Direct, 1, 1),
+    );
+
+    assert!(!workspace_cfg.call_graph().has_circular_dependencies());
+
+    let mut import_map = FxHashMap::default();
+    import_map.insert((uri_a.clone(), "func_b".to_string()), func_b.clone());
+    import_map.insert((uri_b.clone(), "func_a".to_string()), func_a.clone());
+
+    workspace_cfg.link_cross_module_calls(&import_map);
+    assert!(workspace_cfg.call_graph().has_circular_dependencies());
+}

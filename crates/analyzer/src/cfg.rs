@@ -352,6 +352,26 @@ impl CallGraph {
 
         functions
     }
+
+    /// Replace a callee reference in call sites for cross-module linking
+    ///
+    /// Updates the caller's call sites to point to the new callee, and updates
+    /// the callers map accordingly.
+    pub fn relink_callee(&mut self, caller: &FunctionId, old_callee: &FunctionId, new_callee: FunctionId) {
+        if let Some(sites) = self.call_sites.get_mut(caller) {
+            for site in sites.iter_mut() {
+                if site.receiver.as_ref() == Some(old_callee) {
+                    site.receiver = Some(new_callee.clone());
+                }
+            }
+        }
+
+        if let Some(callers) = self.callers.get_mut(old_callee) {
+            callers.retain(|c| c != caller);
+        }
+
+        self.callers.entry(new_callee).or_default().push(caller.clone());
+    }
 }
 
 impl Default for CallGraph {
@@ -620,8 +640,105 @@ impl WorkspaceCFG {
     pub fn entry_point_fns(self) -> Vec<FunctionId> {
         self.entry_points
     }
+
+    /// Link import stubs to actual function definitions across modules
+    ///
+    /// When CFG is built, calls to imported functions create FunctionIds pointing
+    /// to the import symbol in the importing module. This method resolves those
+    /// references to point to the actual function definitions in the target modules.
+    ///
+    /// The `import_map` maps (source_module_uri, symbol_name) -> target FunctionId.
+    /// This allows the call graph to correctly track cross-module dependencies
+    /// and detect circular dependencies between modules.
+    pub fn link_cross_module_calls(&mut self, import_map: &FxHashMap<(Url, String), FunctionId>) {
+        let mut relinks: Vec<(FunctionId, FunctionId, FunctionId)> = Vec::new();
+
+        for (caller_fn, call_sites) in self.call_graph.all_call_sites() {
+            for call_site in call_sites {
+                if let Some(callee) = &call_site.receiver {
+                    let key = (callee.uri.clone(), callee.name.clone());
+                    if let Some(target_fn) = import_map.get(&key) {
+                        if target_fn != callee {
+                            relinks.push((caller_fn.clone(), callee.clone(), target_fn.clone()));
+                        }
+                    }
+                }
+            }
+        }
+
+        for (caller, old_callee, new_callee) in relinks {
+            self.call_graph.relink_callee(&caller, &old_callee, new_callee);
+        }
+    }
+
+    /// Build a summary of the workspace CFG for debugging
+    pub fn debug_summary(&self) -> WorkspaceCfgSummary {
+        let mut functions = Vec::new();
+        let mut call_edges = Vec::new();
+
+        for (uri, module) in &self.modules {
+            for func_id in module.function_ids() {
+                functions.push(FunctionSummary {
+                    module: module.module_name.clone(),
+                    name: func_id.name.clone(),
+                    uri: uri.clone(),
+                });
+            }
+        }
+
+        for (caller, call_sites) in self.call_graph.all_call_sites() {
+            for call_site in call_sites {
+                if let Some(callee) = &call_site.receiver {
+                    call_edges.push(CallEdgeSummary {
+                        caller_module: caller.uri.path().to_string(),
+                        caller_name: caller.name.clone(),
+                        callee_module: callee.uri.path().to_string(),
+                        callee_name: callee.name.clone(),
+                        line: call_site.line,
+                    });
+                }
+            }
+        }
+
+        WorkspaceCfgSummary {
+            module_count: self.modules.len(),
+            function_count: functions.len(),
+            call_edge_count: call_edges.len(),
+            has_circular_deps: self.call_graph.has_circular_dependencies(),
+            functions,
+            call_edges,
+        }
+    }
 }
 
+/// Summary of workspace CFG for debugging output
+#[derive(Debug, Clone)]
+pub struct WorkspaceCfgSummary {
+    pub module_count: usize,
+    pub function_count: usize,
+    pub call_edge_count: usize,
+    pub has_circular_deps: bool,
+    pub functions: Vec<FunctionSummary>,
+    pub call_edges: Vec<CallEdgeSummary>,
+}
+
+/// Summary of a function for debugging output
+#[derive(Debug, Clone)]
+pub struct FunctionSummary {
+    pub module: String,
+    pub name: String,
+    pub uri: Url,
+}
+
+/// Summary of a call edge for debugging output
+#[derive(Debug, Clone)]
+pub struct CallEdgeSummary {
+    pub caller_module: String,
+    pub caller_name: String,
+    pub callee_module: String,
+    pub callee_name: String,
+    pub line: usize,
+}
 impl Default for WorkspaceCFG {
     fn default() -> Self {
         Self::new()

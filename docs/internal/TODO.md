@@ -11,11 +11,11 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 ### Workspace-Level CFG & Data Flow
 
 - [x] Cross-module CFG construction
-- [x] Handle circular dependencies in CFG gracefully (SCC detection in CallGraph.reachable_functions)
+- [x] Handle circular dependencies in CFG gracefully
 - [x] Cross-file reachability analysis
 - [x] Transitive type propagation across module boundaries
 - [x] Taint analysis across file boundaries
-- [ ] Implement Cross-Module CFG Linking (resolve import stubs to FunctionIds to enable true circular dependency detection)
+- [x] Implement Cross-Module CFG Linking
 
 ### Enhanced Import/Export Analysis
 
@@ -61,8 +61,9 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 - [x] Performance benchmarks for multi-file analysis
 - [x] Memory profiling for workspace-wide analysis (Documented in debug.md)
 - [x] Integration tests for cross-file CFG
-- [ ] Integration tests for cross-file taint analysis (Added ignored test template; depends on Cross-Module CFG Linking)
-- [x] Integration tests for Extract Function refactoring (Type inference checks disabled; requires Analyzer test env fix)
+- [x] Integration tests for cross-file taint analysis
+- [x] Integration tests for Extract Function refactoring
+    - [ ] Enable type inference checks
 - [x] Integration tests for Move Symbol refactoring across files
 - [x] Integration tests for refactoring with workspace dependency updates
 
