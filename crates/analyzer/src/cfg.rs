@@ -760,7 +760,7 @@ impl<'a> CallResolver<'a> {
             AstNode::Identifier { name, .. } => {
                 if let Some(symbol) = self.symbol_table.lookup_symbol(name, self.current_scope) {
                     match symbol.kind {
-                        beacon_parser::SymbolKind::Function => {
+                        beacon_parser::SymbolKind::Function | beacon_parser::SymbolKind::Import => {
                             let func_id = FunctionId::new(self.current_uri.clone(), symbol.scope_id, name.clone());
                             (Some(func_id), CallKind::Direct)
                         }

@@ -143,7 +143,6 @@ impl MoveSymbolProvider {
         tree: &'a tree_sitter::Tree, text: &str, symbol: &Symbol,
     ) -> Option<tree_sitter::Node<'a>> {
         let root = tree.root_node();
-
         Self::find_node_at_line_col(root, text, symbol.line, symbol.col)
     }
 
@@ -157,7 +156,9 @@ impl MoveSymbolProvider {
         let start_point = node.start_position();
 
         if start_point.row == target_line && start_point.column == target_col {
-            return Self::find_parent_definition(node);
+            if let Some(def) = Self::find_parent_definition(node) {
+                return Some(def);
+            }
         }
 
         let mut cursor = node.walk();
