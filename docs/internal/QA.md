@@ -13,7 +13,7 @@
 
 - **Type System**: `str` type is not treated as `Iterable` (found in `test_mode_balanced.py`).
 - **Analysis**: Exhaustiveness verification fails to account for some match guards, leading to false positive warnings (found in `test_guard_narrowing.py`).
-- **CLI**: `typecheck` command fails when using relative paths (e.g., `beacon typecheck samples/basic.py`).
+
 - **Diagnostics**:
     - Spans are sometimes positioned incorrectly (e.g., squiggles under wrong part of expression).
     - Single-character spans (excessively small) do not accurately communicate the scope of the problem.

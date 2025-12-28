@@ -12,7 +12,6 @@
 - **LSP Features**: All major features working (hover, completion, goto-def, references, rename, etc.).
 - **Cache**: Advanced three-tier caching with scope-level invalidation and import tracking.
 - **CLI**: Feature parity with LSP.
-    - _Known Issues_: `typecheck` command requires absolute paths.
 
 ## Release Ladder to v1.0
 
