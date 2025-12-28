@@ -4,7 +4,7 @@ Current milestone tasks and technical debt tracking. All integration tests are t
 
 See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 
-## Cross-File Static Analysis (v0.6.0)
+## Cross-File Static Analysis & Data Flow (v0.6.0)
 
 **Priority**: Current (2025-12-01) milestone focus
 
@@ -16,6 +16,9 @@ See [ROADMAP.md](./ROADMAP.md) for the full release plan to v1.0.
 - [x] Transitive type propagation across module boundaries
 - [x] Taint analysis across file boundaries
 - [x] Implement Cross-Module CFG Linking
+- [ ] Null safety improvements (beyond use-before-def coverage)
+- [ ] Definite assignment analysis
+- [ ] Constant propagation across scopes
 
 ### Enhanced Import/Export Analysis
 
@@ -163,10 +166,6 @@ Complex annotation parsing issues:
 - [ ] Integration tests with Neovim/nvim-cmp
 - [ ] Documentation and examples
 - [ ] Performance benchmarks for snippet filtering
-
-## Static Analysis Tech Debt
-
-**Note**: Cross-file analysis tasks moved to [Cross-File Static Analysis (v0.6.0)](#cross-file-static-analysis-v060) section above
 
 ## Infrastructure Tech Debt
 

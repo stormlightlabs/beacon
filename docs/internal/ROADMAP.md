@@ -1,38 +1,41 @@
 # Beacon Roadmap to v1.0
 
-## Current State (v0.1.0)
+## Current State (v0.5.0)
 
-- **Type Checker**: HM inference with variance, protocols, generics, pattern matching, constant expressions
-- **Static Analysis**: Full CFG construction, data flow analysis, reachability checking
-- **Linting**: 30 PyFlakes-level rules (BEA001-BEA030) with suppression support
-- **Formatting**: Production-ready PEP8 formatter with two-level caching
-- **LSP Features**: All major features working (hover, completion, goto-def, references, rename, etc.)
-- **Cache**: Advanced three-tier caching with scope-level invalidation and import tracking
+- **Type Checker**: HM inference with variance, protocols, generics, pattern matching, constant expressions.
+    - _Known Issues_: `str` not treated as `Iterable`.
+- **Static Analysis**: Full CFG construction, data flow analysis, reachability checking.
+    - _Known Issues_: Exhaustiveness checks miss some match guard patterns.
+- **Linting**: 30 PyFlakes-level rules (BEA001-BEA030) with suppression support.
+    - _Known Issues_: Diagnostic spans sometimes positioned incorrectly or too small (single char).
+- **Formatting**: Production-ready PEP8 formatter with two-level caching.
+- **LSP Features**: All major features working (hover, completion, goto-def, references, rename, etc.).
+- **Cache**: Advanced three-tier caching with scope-level invalidation and import tracking.
+- **CLI**: Feature parity with LSP.
+    - _Known Issues_: `typecheck` command requires absolute paths.
 
 ## Release Ladder to v1.0
 
-| Version | Theme                                      | Key Deliverables                              | Status                                          |
-| ------- | ------------------------------------------ | --------------------------------------------- | ----------------------------------------------- |
-| v0.1.0  | Baseline formatter + parser + analyzer     | Initial release                               | shipped                                         |
-| v0.2.0  | Cache granularity & selective invalidation | Merge ft/cache-granularity, import tracking   | done                                            |
-| v0.3.0  | Type checker bug fixes                     | Fix known HM issues, improve test coverage    | [shipped](#v030---type-checker-bug-fixes)       |
-| v0.4.0  | Type checking modes                        | Implement strict/balanced/relaxed enforcement | [shipped](#v040---type-checking-modes)          |
-| v0.5.0  | Stdlib stubs & error messages              | Expand stubs, "did you mean" suggestions      | [shipped](#v050---stdlib-stubs--error-messages) |
-| v0.6.0  | Cross-file static analysis                 | Workspace-aware CFG, import/export tracking   | planned                                         |
-| v0.7.0  | Advanced data flow                         | Taint analysis, null safety improvements      | planned                                         |
-| v0.8.0  | Linting expansion                          | 10 new rules, autofix infrastructure          | planned                                         |
-| v0.9.0  | Formatting polish & config                 | Additional PEP8 options, config validation    | planned                                         |
-| v0.10.0 | Multi-root workspace support               | workspace/didChangeWorkspaceFolders           | planned                                         |
-| v0.11.0 | Snippet engine                             | Context-aware snippets, LSP integration       | planned                                         |
-| v0.12.0 | Auto-import & code actions                 | Import management, quick fixes                | planned                                         |
-| v0.13.0 | Diagnostics publishing baseline            | publishDiagnostics, severity toggles          | planned                                         |
-| v0.14.0 | Monorepo performance - caching             | Workspace-aware cache, parallelization        | planned                                         |
-| v0.15.0 | Monorepo performance - scale               | Handle 100k+ LOC projects, benchmarks         | planned                                         |
-| v0.16.0 | Telemetry & observability                  | Performance metrics, cache hit rates          | planned                                         |
-| v0.17.0 | Production hardening                       | Stress testing, memory profiling, stability   | planned                                         |
-| v0.18.0 | Beta stabilization                         | Full QA pass, regression suite                | planned                                         |
-| v0.19.0 | Release candidate                          | Migration guide, docs freeze                  | planned                                         |
-| v1.0.0  | General availability                       | Stable release                                | planned                                         |
+| Version | Theme                                      | Key Deliverables                              | Status                                                       |
+| ------- | ------------------------------------------ | --------------------------------------------- | ------------------------------------------------------------ |
+| v0.1.0  | Baseline formatter + parser + analyzer     | Initial release                               | shipped                                                      |
+| v0.2.0  | Cache granularity & selective invalidation | Merge ft/cache-granularity, import tracking   | [shipped](#v020---cache-granularity--selective-invalidation) |
+| v0.3.0  | Type checker bug fixes                     | Fix known HM issues, improve test coverage    | [shipped](#v030---type-checker-bug-fixes)                    |
+| v0.4.0  | Type checking modes                        | Implement strict/balanced/relaxed enforcement | [shipped](#v040---type-checking-modes)                       |
+| v0.5.0  | Stdlib stubs & error messages              | Expand stubs, "did you mean" suggestions      | [shipped](#v050---stdlib-stubs--error-messages)              |
+| v0.6.0  | Cross-file analysis & Data Flow            | Workspace-aware CFG, Taint analysis           | in-progress                                                  |
+| v0.7.0  | Linting & Formatting Polish                | New rules, autofix, config polish             | planned                                                      |
+| v0.8.0  | Multi-root workspace support               | workspace/didChangeWorkspaceFolders           | planned                                                      |
+| v0.9.0  | Snippet engine                             | Context-aware snippets, LSP integration       | planned                                                      |
+| v0.10.0 | Auto-import & code actions                 | Import management, quick fixes                | planned                                                      |
+| v0.11.0 | Diagnostics publishing baseline            | publishDiagnostics, severity toggles          | planned                                                      |
+| v0.12.0 | Monorepo performance - caching             | Workspace-aware cache, parallelization        | planned                                                      |
+| v0.13.0 | Monorepo performance - scale               | Handle 100k+ LOC projects, benchmarks         | planned                                                      |
+| v0.14.0 | Telemetry & observability                  | Performance metrics, cache hit rates          | planned                                                      |
+| v0.15.0 | Production hardening                       | Stress testing, memory profiling, stability   | planned                                                      |
+| v0.16.0 | Beta stabilization                         | Full QA pass, regression suite                | planned                                                      |
+| v0.17.0 | Release candidate                          | Migration guide, docs freeze                  | planned                                                      |
+| v1.0.0  | General availability                       | Stable release                                | planned                                                      |
 
 ## Type Checker Stabilization (v0.2.0 - v0.5.0)
 
@@ -40,11 +43,7 @@
 
 ### v0.2.0 - Cache Granularity & Selective Invalidation
 
-**Requirements:**
-
-- ImportDependencyTracker working for transitive invalidation
-- Scope-level content hashing for change detection
-- Add regression tests for cache behavior
+[Completed & cut 2025-11-15](https://github.com/stormlightlabs/beacon/releases/tag/v0.2.0)
 
 ### v0.3.0 - Type Checker Bug Fixes
 
@@ -58,11 +57,11 @@
 
 [Completed & cut 2025-12-01](https://github.com/stormlightlabs/beacon/releases/tag/v0.5.0)
 
-## Cross-File Static Analysis (v0.6.0 - v0.7.0)
+## Cross-File Static Analysis (v0.6.0)
 
 **Focus**: Workspace-aware analysis, advanced data flow
 
-### v0.6.0 - Cross-File Static Analysis
+### v0.6.0 - Cross-File Static Analysis & Data Flow
 
 **Goals:**
 
@@ -71,6 +70,10 @@
 - Cross-file goto definition and references
 - Inconsistent export detection (**all** mismatches)
 - Conflicting stub definitions across files
+- Taint analysis for security-sensitive data flow
+- Null safety improvements beyond use-before-def
+- Definite assignment analysis
+- Constant propagation across scopes
 
 **Architecture:**
 
@@ -85,27 +88,15 @@
 - Find references works workspace-wide
 - Cross-file diagnostics for import/export issues
 - Performance benchmarks for multi-file analysis
-
-### v0.7.0 - Advanced Data Flow
-
-**Goals:**
-
-- Taint analysis for security-sensitive data flow
-- Null safety improvements beyond use-before-def
-- Definite assignment analysis
-- Constant propagation across scopes
-
-**Requirements:**
-
 - Taint analysis detects basic injection risks
 - Null safety catches more patterns
 - Performance remains acceptable on large codebases
 
-## Linting & Formatting Polish (v0.8.0 - v0.9.0)
+## Linting & Formatting Polish (v0.7.0)
 
 **Focus**: Expand linting rules, add autofix, polish formatter config
 
-### v0.8.0 - Linting Expansion
+### v0.7.0 - Linting Expansion & Formatting Polish
 
 **Goals:**
 
@@ -114,6 +105,11 @@
 - Fix BEA023 (complex nested generic annotations)
 - Autofix infrastructure for simple rules
 - Per-rule configuration and severity
+- Additional PEP8 configuration options
+- Format-on-save integration
+- Format-on-paste support
+- Configuration validation
+- Compatibility mode improvements (Black, autopep8)
 
 **New rules:**
 
@@ -130,30 +126,17 @@
 - Autofix working for 10+ rules
 - Per-rule enable/disable configuration
 - Rule documentation
-
-### v0.9.0 - Formatting Polish & Config
-
-**Goals:**
-
-- Additional PEP8 configuration options
-- Format-on-save integration
-- Format-on-paste support
-- Configuration validation
-- Compatibility mode improvements (Black, autopep8)
-
-**Requirements:**
-
 - Format-on-save working
 - Config validation catches errors
 - Documentation for all config options
 
-## LSP Features & Multi-Root (v0.10.0 - v0.13.0)
+## LSP Features & Multi-Root (v0.8.0 - v0.11.0)
 
 **Focus**: Workspace support, snippets, auto-import, diagnostics publishing
 
 This set of releases is around where the VSCode extension will be published as a pre-release
 
-### v0.10.0 - Multi-Root Workspace Support
+### v0.8.0 - Multi-Root Workspace Support
 
 **Goals:**
 
@@ -168,7 +151,7 @@ This set of releases is around where the VSCode extension will be published as a
 - Per-folder config tested
 - Workspace symbol search across roots
 
-### v0.11.0 - Snippet Engine
+### v0.9.0 - Snippet Engine
 
 **Goals:**
 
@@ -203,7 +186,7 @@ This set of releases is around where the VSCode extension will be published as a
 - User-defined snippet support
 - Documentation and examples
 
-### v0.12.0 - Auto-Import & Code Actions
+### v0.10.0 - Auto-Import & Code Actions
 
 **Goals:**
 
@@ -219,7 +202,7 @@ This set of releases is around where the VSCode extension will be published as a
 - Quick fixes for type errors, lint warnings
 - Code action tests passing
 
-### v0.13.0 - Diagnostics Publishing Baseline
+### v0.11.0 - Diagnostics Publishing Baseline
 
 **Goals:**
 
@@ -234,11 +217,11 @@ This set of releases is around where the VSCode extension will be published as a
 - Severity configuration tested
 - Performance acceptable on large files
 
-## Monorepo Performance & Scale (v0.14.0 - v0.15.0)
+## Monorepo Performance & Scale (v0.12.0 - v0.13.0)
 
 **Focus**: Handle Django-scale projects (100k+ LOC) with acceptable performance
 
-### v0.14.0 - Monorepo Performance - Caching
+### v0.12.0 - Monorepo Performance - Caching
 
 **Goals:**
 
@@ -262,7 +245,7 @@ This set of releases is around where the VSCode extension will be published as a
 - Cache hit rate >80% for typical workflows
 - Memory usage reasonable for large projects
 
-### v0.15.0 - Monorepo Performance - Scale Testing
+### v0.13.0 - Monorepo Performance - Scale Testing
 
 **Goals:**
 
@@ -286,11 +269,11 @@ This set of releases is around where the VSCode extension will be published as a
 - Documentation of scale limits
 - Performance regression tests in CI
 
-## Production Hardening (v0.16.0 - v0.18.0)
+## Production Hardening (v0.14.0 - v0.16.0)
 
 **Focus**: Telemetry, stability, QA
 
-### v0.16.0 - Telemetry & Observability
+### v0.14.0 - Telemetry & Observability
 
 **Goals:**
 
@@ -307,7 +290,7 @@ This set of releases is around where the VSCode extension will be published as a
 - Privacy-respecting implementation
 - Documentation
 
-### v0.17.0 - Production Hardening
+### v0.15.0 - Production Hardening
 
 **Goals:**
 
@@ -324,7 +307,7 @@ This set of releases is around where the VSCode extension will be published as a
 - Crash recovery tested
 - Fuzzing integrated in CI
 
-### v0.18.0 - Beta Stabilization
+### v0.16.0 - Beta Stabilization
 
 **Goals:**
 
@@ -341,11 +324,11 @@ This set of releases is around where the VSCode extension will be published as a
 - Documentation complete
 - User feedback addressed
 
-## Release Candidate (v0.19.0 - v1.0.0)
+## Release Candidate (v0.17.0 - v1.0.0)
 
 **Focus**: Release candidate, docs, migration, GA
 
-### v0.19.0 - Release Candidate
+### v0.17.0 - Release Candidate
 
 **Goals:**
 
