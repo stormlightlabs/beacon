@@ -30,21 +30,29 @@ Thanks for helping make Beacon better! This document walks through the expectati
 ## Local setup
 
 1. Fork and clone the repository, then add the upstream remote so you can rebase easily.
-2. Install dependencies once:
+2. Initialize submodules:
+
+   ```sh
+   git submodule update --init --recursive
+   ```
+
+   Beacon uses `typeshed/` as a git submodule for bundled standard library stubs. A healthy checkout has `typeshed/stubs/` populated. If that directory is missing, stub-related analyzer tests and builds that embed stdlib stubs are not testing the real project setup.
+
+3. Install dependencies once:
 
    ```sh
    pnpm install            # respects pnpm-workspace.yaml
    cargo fetch             # primes the cargo cache for offline builds
    ```
 
-3. Verify things build:
+4. Verify things build:
 
    ```sh
    just build
    just test
    ```
 
-4. When iterating on the VS Code extension (or other editor packages), work inside the corresponding `pkg/<editor>` directory and rely on the scripts in its `package.json`.
+5. When iterating on the VS Code extension (or other editor packages), work inside the corresponding `pkg/<editor>` directory and rely on the scripts in its `package.json`.
 
 ## Development workflow
 
@@ -85,6 +93,24 @@ Thanks for helping make Beacon better! This document walks through the expectati
 
 Sources live in `docs/src`. Run `mdbook serve docs --open` for local previews or `mdbook build docs` in CI mode.
 This is optional but helps validate links in the SUMMARY.md file. Be sure to keep diagrams in `docs/book` up to date when architecture shifts, and cross-link to reference material in `README.md` when possible.
+
+### Typeshed submodule
+
+The `typeshed/` submodule provides the stdlib stubs embedded into Beacon at compile time. The expected layout is:
+
+```text
+typeshed/
+├── README
+├── scripts/
+└── stubs/
+    ├── builtins.pyi
+    ├── typing.pyi
+    └── ...
+```
+
+Build output such as `Bundled 7 typeshed stubs` reports how many stdlib stub modules were embedded from `typeshed/stubs/` for that build. It is a build-time snapshot, not the total number of upstream typeshed files and not a runtime download.
+
+See [Typeshed Integration](./docs/src/development/typeshed-integration.md) for update and troubleshooting notes.
 
 ### Coverage & debugging
 

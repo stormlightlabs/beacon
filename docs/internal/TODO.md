@@ -2,7 +2,7 @@
 
 ## Milestone 0: Define The Contract
 
-- [ ] Document submodule setup in public contributor docs:
+- [x] Document submodule setup in public contributor docs:
   - `git submodule update --init --recursive`
   - expected `typeshed/stubs` layout
   - what the embedded stdlib module list means at build time
@@ -15,15 +15,17 @@
 
 Keep core dependency-light while making it the stable API that parser, constraints, analyzer, server, and CLI can build on. Core is well tested and clippy-clean, but downstream crates are duplicating type formatting, type decomposition, builtin mapping, and compatibility helpers.
 
-- [ ] Split `types.rs` into type model, constructors, application/decomposition helpers, normalization, subtyping, diagnostics/display formatting, type schemes, and overloads.
-- [ ] Split `unify.rs` into solve dispatch, type-variable binding, application variance, union handling, record handling, tuple/forall handling, and unification errors.
-- [ ] Move `TypeVarGen` out of `lib.rs` into a focused type-variable module.
-- [ ] Replace broad glob re-exports from `lib.rs` with an intentional public surface, keeping compatibility re-exports until downstream crates migrate.
-- [ ] Add shared helpers for builtin type names, literal-to-base conversion, `Any`/type-variable detection, app decomposition, class/protocol app decomposition, and diagnostic type formatting.
-- [ ] Decide which constraint data can move into `beacon-core` without adding parser, analyzer, or server dependencies.
-- [ ] Keep `AnnotationParser` as the shared annotation parser, but split its lexer/parser internals if further typing work expands it.
-- [ ] Keep class metadata, protocol metadata, and overload resolution APIs covered by downstream characterization tests.
-- [ ] Make `cargo clippy -p beacon-core --all-targets -- -D warnings` stay clean.
+- [x] Split `types.rs` into type model, constructors, application/decomposition helpers, normalization, subtyping, diagnostics/display formatting, type schemes, and overloads.
+- [x] Split `unify.rs` into solve dispatch, type-variable binding, application variance, union handling, record handling, tuple/forall handling, and unification errors.
+- [x] Move `TypeVarGen` out of `lib.rs` into a focused type-variable module.
+- [x] Replace broad glob re-exports from `lib.rs` with an intentional public surface, keeping compatibility re-exports until downstream crates migrate.
+- [x] Add shared helpers for builtin type names, literal-to-base conversion, `Any`/type-variable detection, app decomposition, class/protocol app decomposition, and diagnostic type formatting.
+- [x] Decide which constraint data can move into `beacon-core` without adding parser, analyzer, or server dependencies:
+  - keep solver-specific `Constraint`, `ConstraintSet`, `ConstraintResult`, `Span`, `TypeErrorInfo`, narrowing metadata, and control-flow state in `beacon-constraint` for now
+  - move only reusable type-model helpers into `beacon-core` until a shared diagnostic model is designed
+- [x] Keep `AnnotationParser` as the shared annotation parser, but split its lexer/parser internals if further typing work expands it.
+- [x] Keep class metadata, protocol metadata, and overload resolution APIs covered by downstream characterization tests.
+- [x] Make `cargo clippy -p beacon-core --all-targets -- -D warnings` stay clean.
 
 ## Milestone 2: Refactor The Parser
 
