@@ -1,383 +1,192 @@
-# Beacon Roadmap to v1.0
+# Beacon Roadmap
 
-## Current State (v0.1.0)
+Beacon's v1 goal is a maintainable, powerful Hindley-Milner type checker, language server, and static checker for Python.
 
-- **Type Checker**: HM inference with variance, protocols, generics, pattern matching, constant expressions
-- **Static Analysis**: Full CFG construction, data flow analysis, reachability checking
-- **Linting**: 30 PyFlakes-level rules (BEA001-BEA030) with suppression support
-- **Formatting**: Production-ready PEP8 formatter with two-level caching
-- **LSP Features**: All major features working (hover, completion, goto-def, references, rename, etc.)
-- **Cache**: Advanced three-tier caching with scope-level invalidation and import tracking
+Near-term execution lives in [TODO.md](./TODO.md). Testing, e2e coverage, and refactor validation live in [QA.md](./QA.md).
 
-## Release Ladder to v1.0
+## Current Position
 
-| Version | Theme                                      | Key Deliverables                              | Status                                          |
-| ------- | ------------------------------------------ | --------------------------------------------- | ----------------------------------------------- |
-| v0.1.0  | Baseline formatter + parser + analyzer     | Initial release                               | shipped                                         |
-| v0.2.0  | Cache granularity & selective invalidation | Merge ft/cache-granularity, import tracking   | done                                            |
-| v0.3.0  | Type checker bug fixes                     | Fix known HM issues, improve test coverage    | [shipped](#v030---type-checker-bug-fixes)       |
-| v0.4.0  | Type checking modes                        | Implement strict/balanced/relaxed enforcement | [shipped](#v040---type-checking-modes)          |
-| v0.5.0  | Stdlib stubs & error messages              | Expand stubs, "did you mean" suggestions      | [shipped](#v050---stdlib-stubs--error-messages) |
-| v0.6.0  | Cross-file static analysis                 | Workspace-aware CFG, import/export tracking   | planned                                         |
-| v0.7.0  | Advanced data flow                         | Taint analysis, null safety improvements      | planned                                         |
-| v0.8.0  | Linting expansion                          | 10 new rules, autofix infrastructure          | planned                                         |
-| v0.9.0  | Formatting polish & config                 | Additional PEP8 options, config validation    | planned                                         |
-| v0.10.0 | Multi-root workspace support               | workspace/didChangeWorkspaceFolders           | planned                                         |
-| v0.11.0 | Snippet engine                             | Context-aware snippets, LSP integration       | planned                                         |
-| v0.12.0 | Auto-import & code actions                 | Import management, quick fixes                | planned                                         |
-| v0.13.0 | Diagnostics publishing baseline            | publishDiagnostics, severity toggles          | planned                                         |
-| v0.14.0 | Monorepo performance - caching             | Workspace-aware cache, parallelization        | planned                                         |
-| v0.15.0 | Monorepo performance - scale               | Handle 100k+ LOC projects, benchmarks         | planned                                         |
-| v0.16.0 | Telemetry & observability                  | Performance metrics, cache hit rates          | planned                                         |
-| v0.17.0 | Production hardening                       | Stress testing, memory profiling, stability   | planned                                         |
-| v0.18.0 | Beta stabilization                         | Full QA pass, regression suite                | planned                                         |
-| v0.19.0 | Release candidate                          | Migration guide, docs freeze                  | planned                                         |
-| v1.0.0  | General availability                       | Stable release                                | planned                                         |
+Beacon already has a parser, core type model, constraint solver, analyzer, workspace index, CLI, formatter, LSP providers, editor packages, stdlib stub embedding from the `typeshed` git submodule, and broad tests.
 
-## Type Checker Stabilization (v0.2.0 - v0.5.0)
+V1 work should define the supported contract, harden the checker, and route CLI and LSP behavior through the same analysis.
 
-**Focus**: MVP + Fix bugs, add modes, expand stubs, improve error quality, optimize performance
+## V1 Definition
 
-### v0.2.0 - Cache Granularity & Selective Invalidation
+Beacon v1 is viable when it can be used on a real Python package as a dependable checker and editor backend:
 
-**Requirements:**
+- Local HM inference is useful without requiring annotation-heavy code.
+- Python annotations, `.pyi` stubs, protocols, decorators, generics, overloads, `Any`, unions, optionals, and control-flow narrowing feed the same constraint model.
+- Diagnostics have stable codes, source spans, suppression behavior, mode-specific severity, and matching CLI/LSP output.
+- Workspace analysis handles packages, relative imports, stubs, re-exports, `__all__`, star imports, cycles, and cross-file symbol references with documented rules.
+- Dynamic Python behavior has explicit semantics for metaprogramming, monkey-patching, custom import hooks, and runtime reflection.
+- CLI and LSP agree on diagnostics, config, and workspace behavior.
+- Snippets, auto-imports, autofixes, telemetry, multi-root workspaces, and formatting are part of the product surface.
+- Performance is good enough for normal package development and measured by repeatable benchmarks.
+- Docs state supported behavior and known limitations directly.
 
-- ImportDependencyTracker working for transitive invalidation
-- Scope-level content hashing for change detection
-- Add regression tests for cache behavior
+## V1 Product Boundary
 
-### v0.3.0 - Type Checker Bug Fixes
+V1 scope:
 
-[Completed & cut 2025-11-19](https://github.com/stormlightlabs/beacon/releases/tag/v0.3.0)
+- Parser and symbol resolution for modern Python syntax used by the checker.
+- HM type checking with Python-specific extensions.
+- Workspace-aware static checks and import diagnostics.
+- Dynamic Python support with documented fallback behavior.
+- LSP diagnostics, hover, completion, goto definition, references, rename, symbols, semantic tokens, inlay hints, snippets, auto-imports, formatting, and code actions.
+- CLI `typecheck`, `analyze`, `lint`, `format`, and debug commands that are reproducible outside the editor.
+- Lint autofixes and formatter behavior that are safe enough for editor use.
+- Telemetry and release logging with privacy controls.
+- Multi-root workspace support.
+- VS Code and Zed integration.
 
-### v0.4.0 - Type Checking Modes
+V1 can still document limits. A dynamic Python feature can be supported by precise inference, a conservative diagnostic, or an explicit unknown/`Any` boundary. The behavior must be deliberate and tested.
 
-[Completed & cut 2025-11-21](https://github.com/stormlightlabs/beacon/releases/tag/v0.4.0)
+## Workstreams
 
-### v0.5.0 - Stdlib Stubs & Error Messages
+### 1. Checker Semantics
 
-[Completed & cut 2025-12-01](https://github.com/stormlightlabs/beacon/releases/tag/v0.5.0)
+Make the HM engine reliable for the supported Python subset.
 
-## Cross-File Static Analysis (v0.6.0 - v0.7.0)
+- Value restriction and generalization for Python expressions.
+- Type variable constraints, bounds, variance, and generic class behavior.
+- Callable, overload, method receiver, default argument, and keyword argument constraints.
+- Union/optional simplification, joins, narrowing, TypeGuard, and TypeIs.
+- Protocol and structural conformance, including generic and inherited protocols.
+- Async, generator, coroutine, context manager, and dataclass behavior.
+- Error messages that explain the real constraint failure.
 
-**Focus**: Workspace-aware analysis, advanced data flow
+### 2. Core Type API Architecture
 
-### v0.6.0 - Cross-File Static Analysis
+Keep core narrow, stable, and dependency-light.
 
-**Goals:**
+- Split type model, constructors, normalization, subtyping, display, type schemes, and overloads into smaller modules.
+- Split unification by responsibility: variables, applications and variance, unions, records, tuples, forall, and error reporting.
+- Provide shared helpers for builtin names, literal/base-type conversion, type decomposition, `Any` detection, type-variable detection, and diagnostic formatting.
+- Keep annotation parsing, class metadata, protocol metadata, and overload resolution as stable APIs used by constraints, analyzer, server, and CLI.
+- Decide whether any constraint data belongs in core without adding parser, analyzer, or server dependencies.
+- Replace broad exports with an intentional public surface after downstream crates migrate.
 
-- Workspace-level CFG construction across modules
-- Import/export symbol tracking
-- Cross-file goto definition and references
-- Inconsistent export detection (**all** mismatches)
-- Conflicting stub definitions across files
+### 3. Parser And Symbol Architecture
 
-**Architecture:**
+Keep syntax and symbol behavior stable while making parser work easier to isolate.
 
-- Extend ImportDependencyTracker to track symbol-level dependencies
-- Build workspace symbol table with module resolution
-- Cross-file reachability analysis
-- Transitive type propagation across module boundaries
+- Split AST models from tree-sitter CST conversion.
+- Split CST conversion by syntax family: definitions, statements, expressions, literals, imports, comprehensions, and patterns.
+- Share node, span, body, and text extraction helpers instead of repeating tree-sitter cursor loops.
+- Keep literal parsing, import parsing, decorator extraction, docstring extraction, and pattern parsing covered by focused tests.
+- Split symbol resolution into symbol model, scope table, definition pass, reference pass, annotation references, f-string references, and query helpers.
+- Preserve spans for diagnostics, hover, goto, references, rename, and semantic tokens.
 
-**Requirements:**
+### 4. Constraint Solver Architecture
 
-- Goto definition works across files
-- Find references works workspace-wide
-- Cross-file diagnostics for import/export issues
-- Performance benchmarks for multi-file analysis
+Keep solver behavior stable while making checker work easier to review.
 
-### v0.7.0 - Advanced Data Flow
+- Split the main solve loop from equality, call, attribute, protocol, pattern, join, and error-recovery handling.
+- Move constraint models, spans, type error wrappers, type guard metadata, and control-flow tracking out of `lib.rs`.
+- Define the `Constraint::Narrowing` contract: solver output, analyzer-only state, or replacement by more concrete constraints.
+- Deduplicate pattern and class compatibility rules across narrowing, validation, and exhaustiveness.
+- Keep protocol variance, callable compatibility, generator/coroutine compatibility, and attribute lookup covered by characterization tests.
+- Decide whether constraint data stays crate-local or moves into `beacon-core`.
 
-**Goals:**
+### 5. Stubs And Imports
 
-- Taint analysis for security-sensitive data flow
-- Null safety improvements beyond use-before-def
-- Definite assignment analysis
-- Constant propagation across scopes
+Make stubs part of the analysis contract.
 
-**Requirements:**
+- Deterministic `typeshed` submodule bootstrap.
+- Reliable embedded stdlib stub bundle and version reporting.
+- Clear precedence between workspace source, workspace stubs, custom `stubPaths`, bundled stdlib, and site-packages.
+- Tests for `.pyi` overrides, partial stubs, re-exports, and stale/missing stubs.
 
-- Taint analysis detects basic injection risks
-- Null safety catches more patterns
-- Performance remains acceptable on large codebases
+### 6. Analyzer Architecture
 
-## Linting & Formatting Polish (v0.8.0 - v0.9.0)
+Make the analyzer crate easier to extend without changing behavior.
 
-**Focus**: Expand linting rules, add autofix, polish formatter config
+- Split CFG graph data, builders, call graph resolution, and workspace wrappers.
+- Split the walker around Python constructs and analysis phases.
+- Share AST traversal helpers across data-flow, taint, lint, CFG, and type walking.
+- Keep BEA lint codes, diagnostic spans, and suppression behavior stable while rule code moves.
+- Separate stub loading concerns: cache, TypeVars, annotations, class registry, and method extraction.
+- Replace production `todo!()` paths with implemented behavior or explicit diagnostics.
+- Reduce public exports so CLI and LSP depend on the analyzer contract instead of internal modules.
 
-### v0.8.0 - Linting Expansion
+### 7. One Analysis Pipeline
 
-**Goals:**
+Eliminate frontend drift.
 
-- Implement 10+ new lint rules (see TODO.md for candidates)
-- Fix BEA022 (augmented assignments, nested scopes)
-- Fix BEA023 (complex nested generic annotations)
-- Autofix infrastructure for simple rules
-- Per-rule configuration and severity
+- Shared diagnostic path for CLI and LSP.
+- Shared config loading for `beacon.toml`, `pyproject.toml`, editor settings, and file mode directives.
+- Stable diagnostic JSON shape for CI.
+- Clear boundaries between syntax, name, type, data-flow, lint, taint, import, and formatting diagnostics.
 
-**New rules:**
+### 8. Workspace Reliability
 
-- MutableDefaultArgument
-- ReturnInFinally
-- ForElseWithoutBreak
-- UnnecessaryElse
-- DuplicateExcept
-- Others from TODO.md backlog
+Make cross-file behavior predictable before optimizing it.
 
-**Requirements:**
+- Package and namespace package module naming.
+- Relative import and re-export resolution.
+- Symbol-level invalidation for changed exports/imports.
+- Workspace-wide references, rename, diagnostics, and dead export analysis.
+- Graceful handling of cycles and partial information.
 
-- 40+ working lint rules
-- Autofix working for 10+ rules
-- Per-rule enable/disable configuration
-- Rule documentation
+### 9. LSP And CLI Productization
 
-### v0.9.0 - Formatting Polish & Config
+Keep only what can be validated.
 
-**Goals:**
+- Version-safe diagnostics publishing and clearing.
+- Hover/completion/navigation/refactoring backed by current symbol/type data.
+- Snippet completion and auto-import behavior backed by workspace symbols and stubs.
+- Autofix actions for diagnostics where the edit is mechanical and covered by tests.
+- CLI commands with no placeholder output in the v1 path.
+- Privacy-safe release logging with developer-grade debug logging behind flags.
+- Manual editor QA for VS Code, Zed, and at least one generic LSP client.
 
-- Additional PEP8 configuration options
-- Format-on-save integration
-- Format-on-paste support
-- Configuration validation
-- Compatibility mode improvements (Black, autopep8)
+### 10. Formatting And Lint Fixes
 
-**Requirements:**
+Make formatter and lint fixes editor-safe.
 
-- Format-on-save working
-- Config validation catches errors
-- Documentation for all config options
+- Full-document, range, on-type, and save formatting behavior.
+- Formatter config validation and compatibility notes.
+- Autofixes for unused imports, redundant pass, simple import cleanup, and other mechanical rules.
+- Edit safety tests that prove unrelated code is preserved.
+- CLI and LSP parity for format/check/fix behavior.
 
-## LSP Features & Multi-Root (v0.10.0 - v0.13.0)
+### 11. Multi-Root, Telemetry, And Dynamic Python
 
-**Focus**: Workspace support, snippets, auto-import, diagnostics publishing
+Cover the remaining v1 product surface.
 
-This set of releases is around where the VSCode extension will be published as a pre-release
+- Multi-root workspace indexing, config, diagnostics, and symbol search.
+- Telemetry events for analysis timing, cache behavior, crashes, and feature errors.
+- User controls for telemetry and log level.
+- Conservative handling for monkey-patching, metaclasses, `__getattr__`, custom import hooks, and reflection.
+- Tests that define when Beacon infers a type, emits a diagnostic, or falls back to `Any`/unknown.
 
-### v0.10.0 - Multi-Root Workspace Support
+### 12. Scale And Release Hardening
 
-**Goals:**
+Measure after semantics stabilize.
 
-- Implement workspace/didChangeWorkspaceFolders
-- Per-folder configuration overrides
-- Multi-project symbol resolution
-- Workspace-wide search and indexing
+- Budgets for single-file checks, cold workspace indexing, incremental reanalysis, and dependency fan-out.
+- Benchmarks for normal package, large synthetic workspace, and rapid edit scenarios.
+- Memory profiles for stub loading, workspace indexes, caches, and solver hot paths.
+- Fuzzing or stress tests for parser/analyzer crash safety.
 
-**Requirements:**
+## Release Path
 
-- Multi-root workspaces working
-- Per-folder config tested
-- Workspace symbol search across roots
+### v0.6: Contract Freeze
 
-### v0.11.0 - Snippet Engine
+Freeze the v1-supported behavior list, diagnostic categories, config shape, fixture conventions, and CLI/LSP parity expectations.
 
-**Goals:**
+### v0.7: Checker Stabilization
 
-- Context-aware snippet insertion based on scope and type context
-- LSP textDocument/completion integration with snippet support
-- Snippet registry with Python-specific templates
-- Dynamic placeholder generation using type inference
-- Multi-cursor snippet expansion
+Close semantic holes in the HM core and constraint solver. Add fixtures before implementation changes.
 
-**Architecture:**
+### v0.8: Workspace, Stubs, And Editor Actions
 
-- Snippet definition format (JSON/YAML schema)
-- Context matcher (scope type, surrounding code, imports)
-- Placeholder resolver using HM type inference
-- LSP CompletionItem with insertTextFormat=Snippet
-- Snippet variable expansion ($0, ${1:default}, etc.)
+Make imports, stubs, workspace diagnostics, invalidation, re-exports, snippets, auto-imports, and autofixes reliable across CLI and LSP.
 
-**Built-in snippets:**
+### v0.9: Product Beta
 
-- Common patterns: if/elif/else, for/while loops, try/except, with statements
-- Function/class templates with type annotations
-- Dataclass/Protocol/TypedDict templates
-- Common decorators (@property, @classmethod, @staticmethod)
-- Type guard patterns, match statement templates
+Run full QA on CLI, VS Code, Zed, generic LSP clients, multi-root workspaces, telemetry, and formatter/autofix behavior. Remove placeholder v1-path commands. Publish limitations.
 
-**Requirements:**
+### v1.0: Stable Contract
 
-- Snippet registry working with 20+ built-in snippets
-- Context-aware filtering based on scope
-- Type-aware placeholder generation
-- LSP integration tested with VS Code/Neovim
-- User-defined snippet support
-- Documentation and examples
-
-### v0.12.0 - Auto-Import & Code Actions
-
-**Goals:**
-
-- Auto-import for undefined symbols
-- Import management (add, remove, organize)
-- Quick fixes for common errors
-- Refactoring actions (extract function, rename)
-
-**Requirements:**
-
-- Auto-import suggests correct imports
-- Import organization working
-- Quick fixes for type errors, lint warnings
-- Code action tests passing
-
-### v0.13.0 - Diagnostics Publishing Baseline
-
-**Goals:**
-
-- textDocument/publishDiagnostics implementation
-- Config-driven severity toggles
-- Diagnostic categories (syntax, type, lint)
-- Performance optimization for rapid diagnostics
-
-**Requirements:**
-
-- Diagnostics publishing working
-- Severity configuration tested
-- Performance acceptable on large files
-
-## Monorepo Performance & Scale (v0.14.0 - v0.15.0)
-
-**Focus**: Handle Django-scale projects (100k+ LOC) with acceptable performance
-
-### v0.14.0 - Monorepo Performance - Caching
-
-**Goals:**
-
-- Workspace-aware cache coordination
-- Parallelization for multi-file analysis
-- Incremental re-analysis optimization
-- Cache persistence across sessions
-- LRU eviction tuning for large projects
-
-**Architecture:**
-
-- SCC slicing for constraint solving
-- Disk cache for analysis results
-- Parallel analysis with work-stealing
-- Cache statistics and monitoring
-
-**Requirements:**
-
-- 10k+ file workspace analysis completes in <30s (cold)
-- Incremental re-analysis <1s for single-file changes
-- Cache hit rate >80% for typical workflows
-- Memory usage reasonable for large projects
-
-### v0.15.0 - Monorepo Performance - Scale Testing
-
-**Goals:**
-
-- Performance benchmarks on real Django projects
-- Stress testing with 100k+ LOC codebases
-- Memory profiling and optimization
-- CPU profiling and hotspot fixes
-- Scalability documentation
-
-**Benchmarks:**
-
-- Django (large real-world project)
-- Synthetic 100k LOC test case
-- Rapid edit scenario (type while analyzing)
-- Workspace-wide refactoring
-
-**Requirements:**
-
-- Benchmarks pass performance targets
-- Memory usage <2GB for 100k LOC project
-- Documentation of scale limits
-- Performance regression tests in CI
-
-## Production Hardening (v0.16.0 - v0.18.0)
-
-**Focus**: Telemetry, stability, QA
-
-### v0.16.0 - Telemetry & Observability
-
-**Goals:**
-
-- Performance metrics collection
-- Cache hit/miss rates
-- Analysis time breakdowns
-- Error rate tracking
-- Opt-in telemetry for diagnostics
-
-**Requirements:**
-
-- Telemetry infrastructure working
-- Metrics exposed via logging
-- Privacy-respecting implementation
-- Documentation
-
-### v0.17.0 - Production Hardening
-
-**Goals:**
-
-- Stress testing and stability improvements
-- Memory leak detection and fixes
-- Crash recovery and error handling
-- Fuzzing for parser and analyzer
-- Security audit
-
-**Requirements:**
-
-- 24h stress test passes
-- Zero memory leaks detected
-- Crash recovery tested
-- Fuzzing integrated in CI
-
-### v0.18.0 - Beta Stabilization
-
-**Goals:**
-
-- Full QA pass on all features
-- Regression test suite completion
-- Bug fix sprint
-- Documentation review
-- User feedback collection
-
-**Requirements:**
-
-- All major features QA'd
-- Zero critical bugs
-- Documentation complete
-- User feedback addressed
-
-## Release Candidate (v0.19.0 - v1.0.0)
-
-**Focus**: Release candidate, docs, migration, GA
-
-### v0.19.0 - Release Candidate
-
-**Goals:**
-
-- Feature freeze
-- Migration guide for users
-- Sample configurations
-- Breaking change documentation
-- Limited external feedback
-
-**Requirements:**
-
-- No new features
-- Migration guide complete
-- Sample configs provided
-- External feedback collected
-
-### v1.0.0 - General Availability
-
-**Goals:**
-
-- Finalize documentation
-- Publish stable tag
-- Announcement and marketing
-- Support channels established
-
-**Requirements:**
-
-- All blockers closed
-- Docs published
-- Tag pushed
-- Announcement made
-
-## Post-1.0 Backlog
-
-- **Advanced Formatter Features**: Additional PEP8 options, custom formatting rules
+No new feature work. Fix release blockers, freeze docs, tag, and publish editor packages.

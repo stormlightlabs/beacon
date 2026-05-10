@@ -1,214 +1,265 @@
+# Beacon QA And E2E Plan
 
-# QA Checklist for Existing Features
+Use this file for QA workflows, e2e test planning, and validation of analysis/refactoring work.
 
-Last Updated: 2025-11-05
+## Baseline
 
-## LSP Document Lifecycle
+Run from the repository root:
 
-- **Test:** Open a Python file, make edits, save, and close
-- **Expected:** No crashes, incremental updates reflected, diagnostics refresh on save
+```sh
+git submodule update --init --recursive
+just fmt
+just lint
+just test
+mdbook build docs
+```
 
-- **Test:** Open workspace with multiple Python files
-- **Expected:** All files indexed, cross-file references work
+Expanded Rust equivalents:
 
-## Diagnostics
+```sh
+cargo fmt --all
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+```
 
-- **Test:** Write code with parse errors (e.g., `def foo(`), type errors (e.g., `x: int = "str"`), and unbound variables
-- **Expected:** Diagnostics appear with appropriate severity (error/warning), positions match the issues
+Editor package checks:
 
-- **Test:** Create circular imports between two modules
-- **Expected:** Circular import diagnostic appears, specifies the cycle
+```sh
+pnpm install
+pnpm --filter beacon-lsp compile
+pnpm --filter beacon-lsp lint
+```
 
-- **Test:** Import non-existent module or use unsafe Any types
-- **Expected:** Unresolved import error and unsafe Any warnings appear
+## Setup Checks
 
-- **Test:** Trigger linting rules (unused imports, undefined names, duplicate arguments, etc.)
-- **Expected:** All 30+ BEA linting rules fire appropriately with clear messages
+Before trusting test results:
 
-## Hover
+- `git submodule status typeshed` should show a checked-out commit.
+- `typeshed/stubs` should exist.
+- Generated embedded stubs should report a non-zero count.
+- `pnpm install` should have been run before editor package checks.
+- Debug-only CLI commands should be tested with a debug build.
 
-- **Test:** Hover over variables, function parameters, class attributes, builtin types
-- **Expected:** Type information displays correctly, includes documentation for builtins
+Useful probes:
 
-- **Test:** Hover over dunder methods like `__init__`, `__str__`
-- **Expected:** Method signature and documentation appear
+```sh
+git submodule status typeshed
+ls typeshed/stubs
+cargo test -p beacon-analyzer embedded_stubs
+cargo test -p beacon-analyzer loader::tests::test_stub_loading_typeshed_builtins
+cargo run -p beacon-cli -- version
+```
 
-## Completion
+## Focused Commands
 
-- **Test:** Type `.` after an object and trigger completion
-- **Expected:** Context-aware suggestions appear (methods, attributes based on type)
+Parser:
 
-- **Test:** Trigger completion in various contexts (imports, function calls, assignments)
-- **Expected:** Relevant suggestions with type information
+```sh
+just test-parser
+cargo test -p beacon-parser
+```
 
-## Navigation
+Core type system and constraints:
 
-- **Test:** Use "Go to Definition" on function calls, variable references, class names
-- **Expected:** Navigates to the definition location, works across files
+```sh
+cargo test -p beacon-core
+cargo test -p beacon-constraint
+```
 
-- **Test:** Use "Find References" on a symbol used in multiple places
-- **Expected:** Lists all usages across workspace with file/line information
+Analyzer:
 
-- **Test:** Place cursor on a symbol and use "Document Highlight"
-- **Expected:** All occurrences in current file are highlighted
+```sh
+cargo test -p beacon-analyzer
+cargo test -p beacon-analyzer data_flow
+cargo test -p beacon-analyzer linter
+cargo test -p beacon-analyzer workspace
+```
 
-## Rename
+Language server:
 
-- **Test:** Rename a function used in multiple files
-- **Expected:** All references updated across workspace, no broken references
+```sh
+cargo test -p beacon-lsp
+cargo test -p beacon-lsp diagnostics
+cargo test -p beacon-lsp formatting
+cargo test -p beacon-lsp refactoring
+```
 
-- **Test:** Rename a parameter or local variable
-- **Expected:** Only updates within scope, doesn't affect other scopes
+CLI:
 
-## Inlay Hints
+```sh
+just test-cli
+cargo test -p beacon-cli
+```
 
-- **Test:** Open file with uninferred types
-- **Expected:** Inlay hints display inferred types inline for parameters and return values
+## CLI Smoke Tests
 
-## Symbols
+Use samples and a temporary workspace to verify frontend behavior without an editor:
 
-- **Test:** Open document symbols view
-- **Expected:** Hierarchical outline showing classes, functions, variables
+```sh
+cargo run -p beacon-cli -- check samples/basic.py
+cargo run -p beacon-cli -- resolve samples/basic.py --verbose
+cargo run -p beacon-cli -- typecheck samples/basic.py
+cargo run -p beacon-cli -- typecheck --format json samples/basic.py
+cargo run -p beacon-cli -- lint samples
+cargo run -p beacon-cli -- analyze project samples
+cargo run -p beacon-cli -- format --check samples
+```
 
-- **Test:** Search workspace symbols for a class or function name
-- **Expected:** Results show matching symbols across all files with locations
+Debug build probes:
 
-## Semantic Tokens
+```sh
+cargo run -p beacon-cli -- debug tree samples/basic.py
+cargo run -p beacon-cli -- debug ast samples/basic.py
+cargo run -p beacon-cli -- debug constraints samples/basic.py
+cargo run -p beacon-cli -- debug diagnostics samples
+```
 
-- **Test:** Open Python file with various constructs (classes, functions, keywords)
-- **Expected:** Advanced syntax highlighting applies correctly, distinguishes types from variables
+Commands that print placeholder `TODO` output stay outside the v1 contract until implemented or hidden.
+
+## E2E Test Plan
 
-## Code Actions
+The e2e suite should prove Beacon's v1 contract across parser, analyzer, CLI, and LSP. Prefer inline fixtures and direct assertions committed to the repo.
 
-- **Test:** Create unused variable or import
-- **Expected:** Code action quick fix appears to remove unused code
+### Fixture Strategy
 
-- **Test:** Use value that could be None in unsafe context
-- **Expected:** Code action suggests wrapping with Optional
+Create one shared "v1 package" fixture with:
 
-## Type Inference
+- Package root and at least one subpackage.
+- `__init__.py` re-exports and `__all__`.
+- Relative and absolute imports.
+- A `.pyi` stub overriding or supplementing a `.py` file.
+- A custom stub path case.
+- A circular import.
+- A star import.
+- A private symbol import.
+- A dataclass, protocol, generic class, overload, async function, generator, context manager, and pattern match.
+- One symbol exercised by hover, goto, references, rename, typecheck, and diagnostics.
 
-- **Test:** Write function without type annotations, use it with various argument types
-- **Expected:** Type inference determines correct polymorphic type, shows in hover
+Expected assertions should compare diagnostic code, severity, message fragment, and span.
 
-- **Test:** Create union types (`x: int | str`), use in function parameters
-- **Expected:** Type checking enforces union constraints, allows valid branch operations
+### Parser And Symbol Resolution
 
-- **Test:** Use generic types like `List[int]`, `Dict[str, int]`
-- **Expected:** Type applications work correctly, enforce element types
+- Advanced syntax: walrus, pattern matching, async, comprehensions, decorators, generic annotations.
+- Type-heavy syntax: Protocol, TypedDict, TypeVar bounds/constraints, ParamSpec-style syntax where supported.
+- Symbol scopes: locals, globals, nonlocals, comprehensions, class scopes, imports, and re-exports.
 
-- **Test:** Use Optional types, assign None or valid value
-- **Expected:** None compatibility works, non-None assignments type check
+### HM And Constraint Solver
 
-## Subtyping
+- Inferred local types, polymorphic functions, generic classes, and row/record-like structural behavior.
+- Type variable bounds, constraints, and variance.
+- Callable, overload, receiver, positional, keyword, defaulted, variadic, async, generator, and coroutine behavior.
+- Protocol structural conformance and negative cases.
+- Union/optional simplification, narrowing, TypeGuard, TypeIs, and pattern constraints.
 
-- **Test:** Assign union type to broader union (e.g., `x: int | str` to `y: int | str | float`)
-- **Expected:** Subtyping check passes
+### Analyzer Diagnostics
 
-- **Test:** Assign incompatible types
-- **Expected:** Type error with clear message
+- CFG construction and reachability.
+- Use-before-def, unused variable, unreachable code, constant propagation.
+- Linter rules and suppression behavior.
+- Import/export diagnostics, private imports, star imports, missing symbols, and re-export chains.
+- Taint analysis only where behavior is intentionally in the v1 contract.
 
-## Class Analysis
+### LSP Protocol
 
-- **Test:** Define class with `__init__`, methods, properties
-- **Expected:** Method resolution works, `self` types correctly inferred
-
-- **Test:** Use inheritance with method overrides
-- **Expected:** Inherited methods accessible, overrides type check correctly
-
-- **Test:** Use `@property`, `@classmethod`, `@staticmethod` decorators
-- **Expected:** Decorators recognized, method types adjusted appropriately
-
-- **Test:** Define and use `@overload` functions
-- **Expected:** Overload resolution picks correct signature based on arguments
-
-## Pattern Matching
-
-- **Test:** Use pattern matching with various patterns (literal, capture, sequence, mapping, class)
-- **Expected:** Pattern types check correctly, bindings inferred
-
-- **Test:** Write non-exhaustive pattern match
-- **Expected:** Warning about missing cases
-
-- **Test:** Write pattern with unreachable branches
-- **Expected:** Unreachable code warning
-
-## Control Flow Analysis
-
-- **Test:** Write unreachable code after return/break/continue
-- **Expected:** Unreachable code warning
-
-- **Test:** Use variable before definition
-- **Expected:** Use-before-def diagnostic
-
-- **Test:** Define unused variables
-- **Expected:** Unused variable warning
-
-## Import Resolution
-
-- **Test:** Import standard library modules (`os`, `sys`, `pathlib`)
-- **Expected:** Imports resolve, completion/hover work for imported symbols
-
-- **Test:** Import local modules with relative imports
-- **Expected:** Module resolution works, cross-file type checking active
-
-- **Test:** Create import cycle and observe behavior
-- **Expected:** Graceful handling, diagnostic reports the cycle
-
-## Linting Rules Coverage
-
-- **Test:** Trigger each BEA rule category systematically
-    - BEA001-BEA005: Undefined names, duplicate args, flow control
-    - BEA006-BEA010: Return/yield/break/continue context errors
-    - BEA011-BEA015: Exception handling issues
-    - BEA016-BEA020: String format issues
-    - BEA021-BEA025: Logic issues (if tuple, assert tuple, is literal)
-    - BEA026-BEA030: Import/unused symbol issues
-- **Expected:** Each rule fires with appropriate diagnostic message and severity
-
-## Incremental Updates
-
-- **Test:** Make edit in one file, observe diagnostics in dependent files
-- **Expected:** Dependent files re-analyzed, diagnostics update without full restart
-
-- **Test:** Fix type error and save
-- **Expected:** Diagnostic clears immediately
-
-## Performance
-
-- **Test:** Open large workspace (>100 files)
-- **Expected:** Initial indexing completes within reasonable time, no UI freeze
-
-- **Test:** Make rapid edits in large file
-- **Expected:** Incremental updates are responsive, no lag in diagnostics
-
-## Folding Range
-
-- **Test:** Open Python file with functions and classes
-- **Expected:** Folding indicators appear for function bodies, class bodies, and method bodies
-
-- **Test:** Use code folding on function with multiline body
-- **Expected:** Function body collapses, leaving only the function signature visible
-
-- **Test:** Create file with if/elif/else blocks, for/while loops, try/except/finally
-- **Expected:** Folding ranges available for each control flow block
-
-- **Test:** Write nested structures (class with methods, function with nested if statements)
-- **Expected:** Folding works at each nesting level independently
-
-- **Test:** Create import block with multiple consecutive import statements
-- **Expected:** Import group folds as a single unit with "imports" folding kind
-
-- **Test:** Use match/case statements with multiple cases
-- **Expected:** Entire match block and individual case blocks have folding ranges
-
-- **Test:** Create with statement containing multiple lines
-- **Expected:** With block body is foldable
-
-- **Test:** Write single-line function or empty function body
-- **Expected:** Reasonable folding behavior (single statement may or may not fold)
-
-## Configuration
-
-- **Test:** Verify Python interpreter detection works
-- **Expected:** Correct interpreter found and used for introspection
+- Open, change, save, close, delete, and rename file flows.
+- Diagnostics publish and clear with version safety.
+- Hover, completion, goto definition, references, rename, document symbols, workspace symbols, semantic tokens, folding, inlay hints, formatting, and code actions.
+- Refactoring edits for extract function, extract variable, inline function, move symbol, and change signature.
+
+### CLI Contract
+
+- `typecheck`, `analyze`, and `lint` produce the same diagnostics as LSP for the same workspace.
+- JSON output is stable enough for snapshots and CI.
+- Debug commands either produce real data or are clearly outside v1.
+
+## Refactor Validation
+
+Use this checklist before and after any refactor touching parser, core types, constraints, analyzer, workspace, diagnostics, CLI, LSP, formatter, editor packages, or shared test fixtures:
+
+- Identify the owner boundary: parser, core, constraints, analyzer, server, CLI, or editor package.
+- Add or update characterization tests before changing behavior.
+- Confirm CLI and LSP still route through the same analysis path where intended.
+- Verify config loading and suppressions still apply.
+- Run focused tests for the touched crate, then `cargo test --workspace`.
+- For workspace changes, test invalidation and dependency fan-out.
+- For checker changes, compare substitutions, type errors, narrowing behavior, protocol behavior, pattern behavior, and attribute/call behavior.
+- For diagnostics, compare code, severity, message, and span.
+- For refactoring features, inspect generated edits for import changes and unrelated rewrites.
+- For public API changes, confirm downstream crates compile and dependency direction stays intentional.
+- For stub or import changes, verify behavior with the initialized `typeshed` submodule.
+
+## Manual LSP QA
+
+Run the server:
+
+```sh
+cargo run -p beacon-cli -- lsp --stdio
+```
+
+For TCP smoke testing:
+
+```sh
+cargo run -p beacon-cli -- lsp --tcp --host 127.0.0.1 --port 9350
+```
+
+In VS Code, Zed, or another LSP client, verify:
+
+- Open/edit/save/close a Python file without crashes.
+- Diagnostics appear, update after edits, and clear when fixed.
+- Parse, type, lint, data-flow, import, and pattern diagnostics have correct spans.
+- Hover shows inferred types and builtin/stub documentation where available.
+- Completion works for imports, member access, calls, names, and keywords.
+- Go to definition and references work inside one file and across files.
+- Rename updates only the intended scope or workspace symbol set.
+- Document symbols, workspace symbols, document highlight, folding, semantic tokens, and inlay hints are stable.
+- Formatting works for full document, range formatting, on-type formatting, and save formatting.
+- Code actions/refactorings produce valid edits and preserve unrelated code.
+- Config changes update behavior without restarting when hot-reload is expected.
+
+## Diagnostic Matrix
+
+Every v1 diagnostic class needs at least one automated test and one LSP smoke case:
+
+- Syntax/parser errors.
+- Name resolution: undefined names, shadowing.
+- Imports: unresolved module, missing module, circular import, invalid/private import, star import, re-export.
+- HM/type system: mismatch, occurs check, generic arity, protocol failure, attribute missing, argument count/type, keyword errors, variance.
+- Annotation/mode: missing annotations, annotation mismatches, implicit `Any`, strict/balanced/relaxed severity differences.
+- Pattern matching: non-exhaustive, unreachable, type mismatch, structure mismatch.
+- Data-flow: use before definition, unreachable code, unused variable.
+- Type safety: unsafe `Any`.
+- Dunder/magic method placement.
+- Linter BEA rules and suppression behavior.
+
+## Performance QA
+
+Track these budgets once semantics are stable:
+
+- Single-file parse/check latency.
+- Cold workspace indexing time.
+- Incremental reanalysis time for one edited file.
+- Reanalysis fan-out after an exported symbol changes.
+- Memory after opening a large workspace.
+- Cache hit rate during rapid edits.
+
+Suggested commands:
+
+```sh
+cargo bench -p beacon-core
+cargo bench -p beacon-lsp
+cargo bench -p beacon-cli
+```
+
+Performance changes count only when diagnostics remain stable for the same fixture.
+
+## Release QA
+
+Before a prerelease:
+
+- `just fmt`, `just lint`, and `just test` pass from a clean checkout with submodules initialized.
+- VS Code and Zed packages compile and lint.
+- `mdbook build docs` passes.
+- JSON diagnostic output is stable.
+- All ignored tests are justified here or removed.
+- Release logging defaults are privacy-safe.
+- Known limitations appear in public docs and internal notes.
