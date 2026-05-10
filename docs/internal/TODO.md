@@ -2,7 +2,7 @@
 
 ## Milestone 0: Define The Contract
 
-- [ ] Document submodule setup in public contributor docs:
+- [x] Document submodule setup in public contributor docs:
   - `git submodule update --init --recursive`
   - expected `typeshed/stubs` layout
   - what the embedded stdlib module list means at build time

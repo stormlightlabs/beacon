@@ -4,7 +4,27 @@ Beacon integrates Python standard library type stubs from the official [python/t
 
 ## Current Version
 
-Typeshed stubs are tracked as a git submodule at `typeshed/`. To check the current version:
+Typeshed stubs are tracked as a git submodule at `typeshed/`. Make sure you initialize it after cloning:
+
+```sh
+git submodule update --init --recursive
+```
+
+The expected checkout has this layout:
+
+```text
+typeshed/
+├── README
+├── scripts/
+└── stubs/
+    ├── builtins.pyi
+    ├── typing.pyi
+    └── ...
+```
+
+Initialize the submodule before trusting analyzer, constraint, or workspace tests that depend on stdlib stubs.
+
+To check the current version:
 
 ```sh
 cd typeshed
@@ -90,6 +110,8 @@ Typeshed stubs are embedded into the Beacon binary at compile time. The build pr
 1. Reads stub files from `typeshed/stubs/` directory
 2. Embeds them using Rust's `include_str!` macro
 3. Makes stubs available via `get_embedded_stub(module_name)` API
+
+Build output such as `Bundled 7 typeshed stubs` is the count of stdlib stub modules embedded for that build. It confirms the build script found the local submodule snapshot. It is not a count of every file in upstream typeshed, and Beacon does not fetch stubs at runtime.
 
 No runtime network access or file system dependency is required for stdlib type information.
 
