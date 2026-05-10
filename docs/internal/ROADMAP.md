@@ -55,7 +55,40 @@ Make the HM engine reliable for the supported Python subset.
 - Async, generator, coroutine, context manager, and dataclass behavior.
 - Error messages that explain the real constraint failure.
 
-### 2. Stubs And Imports
+### 2. Core Type API Architecture
+
+Keep core narrow, stable, and dependency-light.
+
+- Split type model, constructors, normalization, subtyping, display, type schemes, and overloads into smaller modules.
+- Split unification by responsibility: variables, applications and variance, unions, records, tuples, forall, and error reporting.
+- Provide shared helpers for builtin names, literal/base-type conversion, type decomposition, `Any` detection, type-variable detection, and diagnostic formatting.
+- Keep annotation parsing, class metadata, protocol metadata, and overload resolution as stable APIs used by constraints, analyzer, server, and CLI.
+- Decide whether any constraint data belongs in core without adding parser, analyzer, or server dependencies.
+- Replace broad exports with an intentional public surface after downstream crates migrate.
+
+### 3. Parser And Symbol Architecture
+
+Keep syntax and symbol behavior stable while making parser work easier to isolate.
+
+- Split AST models from tree-sitter CST conversion.
+- Split CST conversion by syntax family: definitions, statements, expressions, literals, imports, comprehensions, and patterns.
+- Share node, span, body, and text extraction helpers instead of repeating tree-sitter cursor loops.
+- Keep literal parsing, import parsing, decorator extraction, docstring extraction, and pattern parsing covered by focused tests.
+- Split symbol resolution into symbol model, scope table, definition pass, reference pass, annotation references, f-string references, and query helpers.
+- Preserve spans for diagnostics, hover, goto, references, rename, and semantic tokens.
+
+### 4. Constraint Solver Architecture
+
+Keep solver behavior stable while making checker work easier to review.
+
+- Split the main solve loop from equality, call, attribute, protocol, pattern, join, and error-recovery handling.
+- Move constraint models, spans, type error wrappers, type guard metadata, and control-flow tracking out of `lib.rs`.
+- Define the `Constraint::Narrowing` contract: solver output, analyzer-only state, or replacement by more concrete constraints.
+- Deduplicate pattern and class compatibility rules across narrowing, validation, and exhaustiveness.
+- Keep protocol variance, callable compatibility, generator/coroutine compatibility, and attribute lookup covered by characterization tests.
+- Decide whether constraint data stays crate-local or moves into `beacon-core`.
+
+### 5. Stubs And Imports
 
 Make stubs part of the analysis contract.
 
@@ -64,7 +97,19 @@ Make stubs part of the analysis contract.
 - Clear precedence between workspace source, workspace stubs, custom `stubPaths`, bundled stdlib, and site-packages.
 - Tests for `.pyi` overrides, partial stubs, re-exports, and stale/missing stubs.
 
-### 3. One Analysis Pipeline
+### 6. Analyzer Architecture
+
+Make the analyzer crate easier to extend without changing behavior.
+
+- Split CFG graph data, builders, call graph resolution, and workspace wrappers.
+- Split the walker around Python constructs and analysis phases.
+- Share AST traversal helpers across data-flow, taint, lint, CFG, and type walking.
+- Keep BEA lint codes, diagnostic spans, and suppression behavior stable while rule code moves.
+- Separate stub loading concerns: cache, TypeVars, annotations, class registry, and method extraction.
+- Replace production `todo!()` paths with implemented behavior or explicit diagnostics.
+- Reduce public exports so CLI and LSP depend on the analyzer contract instead of internal modules.
+
+### 7. One Analysis Pipeline
 
 Eliminate frontend drift.
 
@@ -73,7 +118,7 @@ Eliminate frontend drift.
 - Stable diagnostic JSON shape for CI.
 - Clear boundaries between syntax, name, type, data-flow, lint, taint, import, and formatting diagnostics.
 
-### 4. Workspace Reliability
+### 8. Workspace Reliability
 
 Make cross-file behavior predictable before optimizing it.
 
@@ -83,7 +128,7 @@ Make cross-file behavior predictable before optimizing it.
 - Workspace-wide references, rename, diagnostics, and dead export analysis.
 - Graceful handling of cycles and partial information.
 
-### 5. LSP And CLI Productization
+### 9. LSP And CLI Productization
 
 Keep only what can be validated.
 
@@ -95,7 +140,7 @@ Keep only what can be validated.
 - Privacy-safe release logging with developer-grade debug logging behind flags.
 - Manual editor QA for VS Code, Zed, and at least one generic LSP client.
 
-### 6. Formatting And Lint Fixes
+### 10. Formatting And Lint Fixes
 
 Make formatter and lint fixes editor-safe.
 
@@ -105,7 +150,7 @@ Make formatter and lint fixes editor-safe.
 - Edit safety tests that prove unrelated code is preserved.
 - CLI and LSP parity for format/check/fix behavior.
 
-### 7. Multi-Root, Telemetry, And Dynamic Python
+### 11. Multi-Root, Telemetry, And Dynamic Python
 
 Cover the remaining v1 product surface.
 
@@ -115,7 +160,7 @@ Cover the remaining v1 product surface.
 - Conservative handling for monkey-patching, metaclasses, `__getattr__`, custom import hooks, and reflection.
 - Tests that define when Beacon infers a type, emits a diagnostic, or falls back to `Any`/unknown.
 
-### 8. Scale And Release Hardening
+### 12. Scale And Release Hardening
 
 Measure after semantics stabilize.
 

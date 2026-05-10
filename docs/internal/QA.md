@@ -174,7 +174,7 @@ Expected assertions should compare diagnostic code, severity, message fragment, 
 
 ## Refactor Validation
 
-Use this checklist before and after any refactor touching analysis, workspace, diagnostics, or LSP plumbing:
+Use this checklist before and after any refactor touching parser, core types, constraints, analyzer, workspace, diagnostics, CLI, LSP, formatter, editor packages, or shared test fixtures:
 
 - Identify the owner boundary: parser, core, constraints, analyzer, server, CLI, or editor package.
 - Add or update characterization tests before changing behavior.
@@ -182,8 +182,11 @@ Use this checklist before and after any refactor touching analysis, workspace, d
 - Verify config loading and suppressions still apply.
 - Run focused tests for the touched crate, then `cargo test --workspace`.
 - For workspace changes, test invalidation and dependency fan-out.
-- For refactoring features, inspect generated edits for import changes and unrelated rewrites.
+- For checker changes, compare substitutions, type errors, narrowing behavior, protocol behavior, pattern behavior, and attribute/call behavior.
 - For diagnostics, compare code, severity, message, and span.
+- For refactoring features, inspect generated edits for import changes and unrelated rewrites.
+- For public API changes, confirm downstream crates compile and dependency direction stays intentional.
+- For stub or import changes, verify behavior with the initialized `typeshed` submodule.
 
 ## Manual LSP QA
 
