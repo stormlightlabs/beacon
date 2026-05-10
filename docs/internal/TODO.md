@@ -5,7 +5,7 @@
 - [ ] Document submodule setup in public contributor docs:
   - `git submodule update --init --recursive`
   - expected `typeshed/stubs` layout
-  - what "Bundled 7 typeshed stubs" means at build time
+  - what the embedded stdlib module list means at build time
 - [x] Treat ignored doctests as intentional examples unless a future change makes one worth promoting to a runnable test.
 - [ ] Decide which commands form the v1 release gate.
 - [ ] Decide which fixtures define the v1 supported Python subset.

@@ -17,7 +17,7 @@ mdbook build docs
 Expanded Rust equivalents:
 
 ```sh
-cargo fmt --all --check
+cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
 ```
