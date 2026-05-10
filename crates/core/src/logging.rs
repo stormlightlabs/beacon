@@ -230,6 +230,12 @@ pub fn read_log_file(path: &Path) -> io::Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn test_log_config_default() {
@@ -266,6 +272,7 @@ mod tests {
 
     #[test]
     fn test_default_log_path_no_env() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
         unsafe {
             std::env::remove_var("LSP_LOG_PATH");
         }
@@ -274,6 +281,7 @@ mod tests {
 
     #[test]
     fn test_default_log_path_with_env() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
         unsafe {
             std::env::set_var("LSP_LOG_PATH", "/custom/path/log.txt");
         }

@@ -15,19 +15,25 @@ pub mod protocols;
 pub mod subst;
 pub mod suppressor;
 pub mod types;
+pub mod typevar;
 pub mod typevar_registry;
 pub mod unify;
 
-pub use annotation_parser::*;
-pub use class_metadata::*;
-pub use errors::*;
-pub use logging::*;
-pub use protocols::*;
-pub use subst::*;
-pub use suppressor::*;
-pub use types::*;
-pub use typevar_registry::*;
-pub use unify::*;
+pub use annotation_parser::AnnotationParser;
+pub use class_metadata::{ClassMetadata, ClassRegistry, MethodType};
+pub use errors::{AnalysisError, BeaconError, ConfigError, DocumentError, ParseError, ResolveError, Result, TypeError};
+pub use logging::{LogConfig, LogFormat, default_log_path, init, install_panic_hook, read_log_file};
+pub use protocols::{MethodSignature, ProtocolChecker, ProtocolDef, ProtocolName};
+pub use subst::{Subst, Substitutable};
+pub use suppressor::{Suppression, SuppressionMap};
+pub use types::{
+    Kind, LiteralType, OverloadSet, Type, TypeCtor, TypeScheme, TypeVar, Variance, builtin_type_name,
+    contains_type_var, decompose_app, decompose_class_app, decompose_protocol_app, format_type_for_diagnostic, is_any,
+    literal_base_ctor, literal_to_base_type,
+};
+pub use typevar::TypeVarGen;
+pub use typevar_registry::TypeVarConstraintRegistry;
+pub use unify::Unifier;
 
 /// Trait for expressions that can be tested for expansiveness
 ///
@@ -79,64 +85,4 @@ pub trait Expansiveness {
 /// ```
 pub fn should_generalize<E: Expansiveness>(expr: &E) -> bool {
     expr.is_non_expansive()
-}
-
-/// Type variable generator for creating fresh type variables
-use std::sync::{
-    Arc, OnceLock,
-    atomic::{AtomicU32, Ordering},
-};
-
-fn global_typevar_counter() -> Arc<AtomicU32> {
-    static GLOBAL_COUNTER: OnceLock<Arc<AtomicU32>> = OnceLock::new();
-    GLOBAL_COUNTER.get_or_init(|| Arc::new(AtomicU32::new(0))).clone()
-}
-
-#[derive(Debug, Clone)]
-pub struct TypeVarGen {
-    counter: Arc<AtomicU32>,
-}
-
-impl TypeVarGen {
-    pub fn new() -> Self {
-        Self { counter: global_typevar_counter() }
-    }
-
-    /// Generate a fresh type variable
-    pub fn fresh(&mut self) -> TypeVar {
-        let id = self.counter.fetch_add(1, Ordering::Relaxed);
-        TypeVar::new(id)
-    }
-
-    /// Generate a fresh type variable with a hint name
-    pub fn fresh_named(&mut self, hint: &str) -> TypeVar {
-        let id = self.counter.fetch_add(1, Ordering::Relaxed);
-        TypeVar::named(id, hint)
-    }
-}
-
-impl Default for TypeVarGen {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_type_var_gen() {
-        let mut generator = TypeVarGen::new();
-        let tv1 = generator.fresh();
-        let tv2 = generator.fresh();
-        assert_ne!(tv1, tv2);
-    }
-
-    #[test]
-    fn test_type_var_gen_named() {
-        let mut generator = TypeVarGen::new();
-        let tv = generator.fresh_named("test");
-        assert_eq!(tv.hint, Some("test".to_string()));
-    }
 }
