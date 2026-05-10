@@ -24,3 +24,4 @@ lsp.log*
 .claude/
 AGENTS.md
 STATUS.md
+.sandbox/
