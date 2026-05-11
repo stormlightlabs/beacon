@@ -168,6 +168,7 @@ impl From<&DiagnosticMessage> for Diagnostic {
                 RuleKind::RedundantPass => DiagnosticSeverity::HINT,
                 _ => DiagnosticSeverity::WARNING,
             }),
+            code: Some(lsp_types::NumberOrString::String(msg.rule.code().to_string())),
             message: msg.message.clone(),
             source: Some("beacon-linter".into()),
             ..Default::default()

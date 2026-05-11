@@ -3,7 +3,10 @@ mod helpers;
 
 use anyhow::{Context, Result};
 use beacon_analyzer::{DiagnosticMessage, Linter};
-use beacon_cli::diagnostics::{OutputFormat, format_lsp_diagnostics, run_workspace_diagnostics};
+use beacon_cli::diagnostics::{
+    DiagnosticFilter, OutputFormat, filter_diagnostics, format_lsp_diagnostics, run_stdin_diagnostics,
+    run_workspace_diagnostics,
+};
 use beacon_lsp::{
     Config,
     analysis::Analyzer,
@@ -13,13 +16,16 @@ use beacon_lsp::{
 };
 use beacon_parser::{AstNode, PythonHighlighter, PythonParser};
 use clap::{Parser, Subcommand};
-use formatters::{format_compact, format_human, format_json, print_parse_errors, print_symbol_table};
+use formatters::{print_parse_errors, print_symbol_table};
 use owo_colors::OwoColorize;
 use serde_json::json;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use url::Url;
+
+#[cfg(test)]
+use formatters::{format_compact, format_human, format_json};
 
 #[cfg(debug_assertions)]
 use {
@@ -276,7 +282,7 @@ async fn main() -> Result<()> {
         Commands::Analyze { target, format, show_cfg, show_types, lint_only, dataflow_only } => {
             analyze_command(target, format, show_cfg, show_types, lint_only, dataflow_only).await
         }
-        Commands::Lint { paths, format } => lint_command(paths, format),
+        Commands::Lint { paths, format } => lint_command(paths, format).await,
         Commands::Version => version_command(),
 
         #[cfg(debug_assertions)]
@@ -485,96 +491,21 @@ fn resolve_command(source: &str, verbose: bool) -> Result<()> {
 async fn typecheck_command(paths: Vec<PathBuf>, format: OutputFormat) -> Result<()> {
     if paths.is_empty() {
         let source = read_input(None)?;
-        let documents = DocumentManager::new()?;
-        let file_path = PathBuf::from("stdin.py");
-        let uri = Url::parse("file:///stdin.py").unwrap();
+        let diagnostics = filter_diagnostics(run_stdin_diagnostics(source).await?, DiagnosticFilter::Typecheck);
+        format_lsp_diagnostics(&diagnostics, &[], format)?;
 
-        documents.open_document(uri.clone(), 1, source.clone())?;
-
-        let config = Config::default();
-        let mut analyzer = Analyzer::new(config, documents);
-
-        return match analyzer.analyze(&uri) {
-            Ok(result) => {
-                let errors = result.type_errors;
-                match format {
-                    OutputFormat::Human => format_human(&source, &errors, &file_path),
-                    OutputFormat::Json => format_json(&errors)?,
-                    OutputFormat::Compact => format_compact(&errors, &file_path),
-                }
-
-                if !errors.is_empty() && !cfg!(test) {
-                    std::process::exit(1);
-                }
-                Ok(())
-            }
-            Err(e) => {
-                if cfg!(test) {
-                    anyhow::bail!("Type checking failed: {e}")
-                } else {
-                    eprintln!("Error: Type checking failed: {e}");
-                    std::process::exit(1);
-                }
-            }
-        };
-    }
-
-    let files = helpers::discover_python_files(&paths)?;
-    let documents = DocumentManager::new()?;
-    let config = Config::default();
-    let mut analyzer = Analyzer::new(config.clone(), documents.clone());
-    let mut workspace = Workspace::new(None, config, documents.clone());
-
-    let mut all_errors = Vec::new();
-    let mut failed_files = Vec::new();
-
-    for file_path in &files {
-        let source =
-            fs::read_to_string(file_path).with_context(|| format!("Failed to read file: {}", file_path.display()))?;
-
-        let uri = Url::from_file_path(file_path)
-            .map_err(|_| anyhow::anyhow!("Failed to create URL for {}", file_path.display()))?;
-
-        documents.open_document(uri.clone(), 1, source.clone())?;
-        workspace.update_dependencies(&uri);
-
-        let symbol_imports = workspace.get_symbol_imports(&uri);
-        let mut resolved_imports = Vec::new();
-        for import in &symbol_imports {
-            if let Some(resolved_uri) = workspace.resolve_import(&import.from_module) {
-                if import.symbol == "*" {
-                    let symbols = workspace.resolve_star_import(&resolved_uri);
-                    for symbol in symbols {
-                        resolved_imports.push((resolved_uri.clone(), symbol));
-                    }
-                } else {
-                    resolved_imports.push((resolved_uri, import.symbol.clone()));
-                }
-            }
-        }
-        if !resolved_imports.is_empty() {
-            analyzer.record_imports(&uri, &resolved_imports);
+        if !diagnostics.is_empty() && !cfg!(test) {
+            std::process::exit(1);
         }
 
-        match analyzer.analyze(&uri) {
-            Ok(result) => {
-                for error in result.type_errors {
-                    all_errors.push((file_path.clone(), source.clone(), error));
-                }
-            }
-            Err(e) => {
-                failed_files.push((file_path.clone(), e.to_string()));
-            }
-        }
+        return Ok(());
     }
 
-    match format {
-        OutputFormat::Human => format_typecheck_results_human(&all_errors, &failed_files),
-        OutputFormat::Json => format_typecheck_results_json(&all_errors, &failed_files)?,
-        OutputFormat::Compact => format_typecheck_results_compact(&all_errors, &failed_files),
-    }
+    let (diagnostics, failed_files) = run_workspace_diagnostics(paths, None).await?;
+    let diagnostics = filter_diagnostics(diagnostics, DiagnosticFilter::Typecheck);
+    format_lsp_diagnostics(&diagnostics, &failed_files, format)?;
 
-    if (!all_errors.is_empty() || !failed_files.is_empty()) && !cfg!(test) {
+    if (!diagnostics.is_empty() || !failed_files.is_empty()) && !cfg!(test) {
         std::process::exit(1);
     }
 
@@ -1068,20 +999,11 @@ async fn debug_cfg_command(path: PathBuf, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn lint_command(paths: Vec<PathBuf>, format: OutputFormat) -> Result<()> {
+async fn lint_command(paths: Vec<PathBuf>, format: OutputFormat) -> Result<()> {
     if paths.is_empty() {
         let source = read_input(None)?;
-        let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
-
-        let (ast, symbol_table) = parser
-            .parse_and_resolve(&source)
-            .with_context(|| "Failed to parse and resolve Python source")?;
-
-        let filename = "stdin.py".to_string();
-        let mut linter = Linter::new(&symbol_table, filename, &source);
-        let diagnostics = linter.analyze(&ast);
-
-        format_diagnostics(&diagnostics, &source, None, format)?;
+        let diagnostics = filter_diagnostics(run_stdin_diagnostics(source).await?, DiagnosticFilter::Lint);
+        format_lsp_diagnostics(&diagnostics, &[], format)?;
 
         if !diagnostics.is_empty() && !cfg!(test) {
             std::process::exit(1);
@@ -1090,43 +1012,11 @@ fn lint_command(paths: Vec<PathBuf>, format: OutputFormat) -> Result<()> {
         return Ok(());
     }
 
-    let files = helpers::discover_python_files(&paths)?;
-    let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
-    let mut all_diagnostics = Vec::new();
+    let (diagnostics, failed_files) = run_workspace_diagnostics(paths, None).await?;
+    let diagnostics = filter_diagnostics(diagnostics, DiagnosticFilter::Lint);
+    format_lsp_diagnostics(&diagnostics, &failed_files, format)?;
 
-    for file_path in &files {
-        let source =
-            fs::read_to_string(file_path).with_context(|| format!("Failed to read file: {}", file_path.display()))?;
-
-        let (ast, symbol_table) = match parser.parse_and_resolve(&source) {
-            Ok(result) => result,
-            Err(e) => {
-                eprintln!(
-                    "{} Failed to parse {}: {}",
-                    "✗".red().bold(),
-                    file_path.display().to_string().cyan(),
-                    e.to_string().bright_red()
-                );
-                continue;
-            }
-        };
-
-        let filename = file_path.display().to_string();
-        let mut linter = Linter::new(&symbol_table, filename, &source);
-        let diagnostics = linter.analyze(&ast);
-
-        for diagnostic in diagnostics {
-            all_diagnostics.push((file_path.clone(), source.clone(), diagnostic));
-        }
-    }
-
-    match format {
-        OutputFormat::Human => format_lint_results_human(&all_diagnostics),
-        OutputFormat::Json => format_lint_results_json(&all_diagnostics)?,
-        OutputFormat::Compact => format_lint_results_compact(&all_diagnostics),
-    }
-
-    if !all_diagnostics.is_empty() && !cfg!(test) {
+    if (!diagnostics.is_empty() || !failed_files.is_empty()) && !cfg!(test) {
         std::process::exit(1);
     }
 
@@ -1151,7 +1041,9 @@ async fn analyze_command(
     target: AnalyzeTarget, format: OutputFormat, show_cfg: bool, show_types: bool, lint_only: bool, dataflow_only: bool,
 ) -> Result<()> {
     match target {
-        AnalyzeTarget::File { file } => analyze_file(&file, format, show_cfg, show_types, lint_only, dataflow_only),
+        AnalyzeTarget::File { file } => {
+            analyze_file(&file, format, show_cfg, show_types, lint_only, dataflow_only).await
+        }
         AnalyzeTarget::Function { target } => {
             let (file, name) = parse_target(&target)?;
             analyze_function(&file, &name, format, show_cfg, show_types, lint_only, dataflow_only)
@@ -1179,25 +1071,9 @@ fn parse_target(target: &str) -> Result<(PathBuf, String)> {
     Ok((file, name))
 }
 
-fn analyze_file(
+async fn analyze_file(
     file: &PathBuf, format: OutputFormat, show_cfg: bool, show_types: bool, lint_only: bool, dataflow_only: bool,
 ) -> Result<()> {
-    let source = fs::read_to_string(file).with_context(|| format!("Failed to read file: {}", file.display()))?;
-    let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
-
-    let (ast, symbol_table) = parser
-        .parse_and_resolve(&source)
-        .with_context(|| "Failed to parse and resolve Python source")?;
-
-    let filename = file.display().to_string();
-    let mut all_diagnostics = Vec::new();
-
-    if !dataflow_only {
-        let mut linter = Linter::new(&symbol_table, filename.clone(), source.as_str());
-        let lint_diagnostics = linter.analyze(&ast);
-        all_diagnostics.extend(lint_diagnostics);
-    }
-
     if !lint_only && !dataflow_only && show_cfg {
         println!("{}", "TODO: CFG visualization not yet implemented".yellow());
     }
@@ -1208,13 +1084,28 @@ fn analyze_file(
         println!();
     }
 
-    format_diagnostics(&all_diagnostics, &source, Some(file), format)?;
+    let workspace_root = file
+        .parent()
+        .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()));
+    let (diagnostics, failed_files) = run_workspace_diagnostics(vec![file.clone()], workspace_root).await?;
+    let diagnostics = filter_diagnostics(diagnostics, analyze_filter(lint_only, dataflow_only));
+    format_lsp_diagnostics(&diagnostics, &failed_files, format)?;
 
-    if !all_diagnostics.is_empty() && !cfg!(test) {
+    if (!diagnostics.is_empty() || !failed_files.is_empty()) && !cfg!(test) {
         std::process::exit(1);
     }
 
     Ok(())
+}
+
+fn analyze_filter(lint_only: bool, dataflow_only: bool) -> DiagnosticFilter {
+    if lint_only {
+        DiagnosticFilter::Lint
+    } else if dataflow_only {
+        DiagnosticFilter::DataFlow
+    } else {
+        DiagnosticFilter::All
+    }
 }
 
 fn analyze_function(
@@ -1310,11 +1201,12 @@ fn analyze_class(
 }
 
 async fn analyze_package(
-    path: &Path, format: OutputFormat, _show_cfg: bool, _show_types: bool, _lint_only: bool, _dataflow_only: bool,
+    path: &Path, format: OutputFormat, _show_cfg: bool, _show_types: bool, lint_only: bool, dataflow_only: bool,
 ) -> Result<()> {
     let path = path.canonicalize().unwrap_or(path.to_path_buf());
     let paths = vec![path.clone()];
     let (diagnostics, failed_files) = run_workspace_diagnostics(paths, Some(path)).await?;
+    let diagnostics = filter_diagnostics(diagnostics, analyze_filter(lint_only, dataflow_only));
 
     format_lsp_diagnostics(&diagnostics, &failed_files, format)?;
 
@@ -1325,11 +1217,12 @@ async fn analyze_package(
 }
 
 async fn analyze_project(
-    path: &Path, format: OutputFormat, _show_cfg: bool, _show_types: bool, _lint_only: bool, _dataflow_only: bool,
+    path: &Path, format: OutputFormat, _show_cfg: bool, _show_types: bool, lint_only: bool, dataflow_only: bool,
 ) -> Result<()> {
     let path = path.canonicalize().unwrap_or(path.to_path_buf());
     let paths = vec![path.clone()];
     let (diagnostics, failed_files) = run_workspace_diagnostics(paths, Some(path)).await?;
+    let diagnostics = filter_diagnostics(diagnostics, analyze_filter(lint_only, dataflow_only));
 
     format_lsp_diagnostics(&diagnostics, &failed_files, format)?;
 
@@ -1485,117 +1378,9 @@ fn format_diagnostics_compact(diagnostics: &[DiagnosticMessage], file: Option<&P
     Ok(())
 }
 
-fn format_typecheck_results_human(
-    errors: &[(PathBuf, String, beacon_constraint::TypeErrorInfo)], failed_files: &[(PathBuf, String)],
-) {
-    if errors.is_empty() && failed_files.is_empty() {
-        println!("{} No type errors found", "✓".green().bold());
-        return;
-    }
-
-    if !failed_files.is_empty() {
-        for (file, error) in failed_files {
-            eprintln!(
-                "{} Failed to analyze {}: {}",
-                "✗".red().bold(),
-                file.display().to_string().cyan(),
-                error.bright_red()
-            );
-        }
-        println!();
-    }
-
-    if !errors.is_empty() {
-        println!("{} {} type error(s) found", "✗".red().bold(), errors.len());
-        println!();
-
-        for (file_path, source, error) in errors {
-            println!(
-                "{} {}:{}:{}",
-                "▸".bright_red(),
-                file_path.display().to_string().cyan(),
-                error.span.line.to_string().yellow(),
-                error.span.col.to_string().yellow()
-            );
-            println!("  {}", error.error.to_string().bright_white());
-
-            let lines: Vec<&str> = source.lines().collect();
-            if error.span.line > 0 && error.span.line <= lines.len() {
-                let line = lines[error.span.line - 1];
-                println!("  {} {}", error.span.line.to_string().dimmed(), line.dimmed());
-                if error.span.col > 0 {
-                    let spaces = " ".repeat(error.span.line.to_string().len() + error.span.col);
-                    let squiggly_len = if let Some(end_col) = error.span.end_col {
-                        if error.span.end_line.is_none() || error.span.end_line == Some(error.span.line) {
-                            (end_col.saturating_sub(error.span.col)).max(1)
-                        } else {
-                            1
-                        }
-                    } else {
-                        1
-                    };
-                    println!("  {}{}", spaces, "~".repeat(squiggly_len).bright_red());
-                }
-            }
-            println!();
-        }
-    }
-}
-
-fn format_typecheck_results_json(
-    errors: &[(PathBuf, String, beacon_constraint::TypeErrorInfo)], failed_files: &[(PathBuf, String)],
-) -> Result<()> {
-    let json_errors: Vec<serde_json::Value> = errors
-        .iter()
-        .map(|(file, _source, error)| {
-            json!({
-                "file": file.display().to_string(),
-                "line": error.span.line,
-                "col": error.span.col,
-                "message": error.error.to_string(),
-            })
-        })
-        .collect();
-
-    let json_failed: Vec<serde_json::Value> = failed_files
-        .iter()
-        .map(|(file, error)| {
-            json!({
-                "file": file.display().to_string(),
-                "error": error,
-            })
-        })
-        .collect();
-
-    let output = json!({
-        "type_errors": json_errors,
-        "failed_files": json_failed,
-    });
-
-    println!("{}", serde_json::to_string_pretty(&output)?);
-    Ok(())
-}
-
-fn format_typecheck_results_compact(
-    errors: &[(PathBuf, String, beacon_constraint::TypeErrorInfo)], failed_files: &[(PathBuf, String)],
-) {
-    for (file, error) in failed_files {
-        eprintln!("{}:0:0: [ERROR] Failed to analyze: {}", file.display(), error);
-    }
-
-    for (file_path, _source, error) in errors {
-        println!(
-            "{}:{}:{}: {}",
-            file_path.display(),
-            error.span.line,
-            error.span.col,
-            error.error
-        );
-    }
-}
-
 /// Find the actual span to highlight in a diagnostic
 /// Returns (column, length) both 1-indexed
+#[cfg(test)]
 fn find_diagnostic_span(line: &str, diagnostic: &DiagnosticMessage) -> (usize, usize) {
     if diagnostic.end_col > diagnostic.col {
         return (diagnostic.col, diagnostic.end_col.saturating_sub(diagnostic.col));
@@ -1614,57 +1399,7 @@ fn find_diagnostic_span(line: &str, diagnostic: &DiagnosticMessage) -> (usize, u
     (diagnostic.col, 1)
 }
 
-fn format_lint_results_human(diagnostics: &[(PathBuf, String, DiagnosticMessage)]) {
-    if diagnostics.is_empty() {
-        println!("{} No issues found", "✓".green().bold());
-        return;
-    }
-
-    println!("{} {} issue(s) found", "✗".red().bold(), diagnostics.len());
-    println!();
-
-    for (file_path, source, diagnostic) in diagnostics {
-        let is_error = matches!(
-            diagnostic.rule,
-            beacon_analyzer::RuleKind::UndefinedName | beacon_analyzer::RuleKind::DuplicateArgument
-        );
-
-        let col_display = if diagnostic.end_col > diagnostic.col {
-            format!("{}-{}", diagnostic.col, diagnostic.end_col)
-        } else {
-            diagnostic.col.to_string()
-        };
-
-        println!(
-            "{} {}:{}:{} [{}]",
-            "▸".bright_red(),
-            file_path.display().to_string().cyan(),
-            diagnostic.line.to_string().yellow(),
-            col_display.yellow(),
-            diagnostic.rule.code().dimmed()
-        );
-        println!("  {}", diagnostic.message.bright_white());
-
-        let lines: Vec<&str> = source.lines().collect();
-        if diagnostic.line > 0 && diagnostic.line <= lines.len() {
-            let line = lines[diagnostic.line - 1];
-            println!("  {} {}", diagnostic.line.to_string().dimmed(), line.dimmed());
-
-            let (highlight_col, highlight_len) = find_diagnostic_span(line, diagnostic);
-
-            if highlight_col > 0 {
-                let spaces = " ".repeat(diagnostic.line.to_string().len() + highlight_col);
-                if is_error {
-                    println!("  {}{}", spaces, "~".repeat(highlight_len).bright_red());
-                } else {
-                    println!("  {}{}", spaces, "~".repeat(highlight_len).yellow());
-                }
-            }
-        }
-        println!();
-    }
-}
-
+#[cfg(test)]
 fn lint_diagnostics_to_json(diagnostics: &[(PathBuf, String, DiagnosticMessage)]) -> Vec<serde_json::Value> {
     diagnostics
         .iter()
@@ -1679,31 +1414,6 @@ fn lint_diagnostics_to_json(diagnostics: &[(PathBuf, String, DiagnosticMessage)]
             })
         })
         .collect()
-}
-
-fn format_lint_results_json(diagnostics: &[(PathBuf, String, DiagnosticMessage)]) -> Result<()> {
-    let json_diagnostics = lint_diagnostics_to_json(diagnostics);
-
-    println!("{}", serde_json::to_string_pretty(&json_diagnostics)?);
-    Ok(())
-}
-
-fn format_lint_results_compact(diagnostics: &[(PathBuf, String, DiagnosticMessage)]) {
-    for (file_path, _source, diagnostic) in diagnostics {
-        let col_display = if diagnostic.end_col > diagnostic.col {
-            format!("{}-{}", diagnostic.col, diagnostic.end_col)
-        } else {
-            diagnostic.col.to_string()
-        };
-        println!(
-            "{}:{}:{}: [{}] {}",
-            file_path.display(),
-            diagnostic.line,
-            col_display,
-            diagnostic.rule.code(),
-            diagnostic.message
-        );
-    }
 }
 
 #[cfg(debug_assertions)]
@@ -2284,21 +1994,21 @@ result = obj.method(10)
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn test_lint_command_no_errors() {
+    #[tokio::test]
+    async fn test_lint_command_no_errors() {
         let mut temp_file = Builder::new().suffix(".py").tempfile().unwrap();
         writeln!(temp_file, "def greet(name):\n    return f'Hello {{name}}'").unwrap();
 
-        let result = lint_command(vec![temp_file.path().to_path_buf()], OutputFormat::Human);
+        let result = lint_command(vec![temp_file.path().to_path_buf()], OutputFormat::Human).await;
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn test_lint_command_with_errors() {
+    #[tokio::test]
+    async fn test_lint_command_with_errors() {
         let mut temp_file = Builder::new().suffix(".py").tempfile().unwrap();
         writeln!(temp_file, "import os\nx = 42").unwrap();
 
-        let result = lint_command(vec![temp_file.path().to_path_buf()], OutputFormat::Human);
+        let result = lint_command(vec![temp_file.path().to_path_buf()], OutputFormat::Human).await;
         assert!(result.is_ok());
     }
 
@@ -2317,9 +2027,9 @@ result = obj.method(10)
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_analyze_file() {
-        let mut temp_file = NamedTempFile::new().unwrap();
+    #[tokio::test]
+    async fn test_analyze_file() {
+        let mut temp_file = Builder::new().suffix(".py").tempfile().unwrap();
         writeln!(temp_file, "def add(x, y):\n    return x + y").unwrap();
 
         let result = analyze_file(
@@ -2329,7 +2039,8 @@ result = obj.method(10)
             false,
             false,
             false,
-        );
+        )
+        .await;
         assert!(result.is_ok());
     }
 

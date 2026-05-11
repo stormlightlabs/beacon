@@ -1,9 +1,7 @@
-use anyhow::Result;
-use beacon_constraint::TypeErrorInfo;
 use beacon_parser::SymbolTable;
 use owo_colors::OwoColorize;
-use serde_json::json;
-use std::path::Path;
+#[cfg(test)]
+use {anyhow::Result, beacon_constraint::TypeErrorInfo, serde_json::json, std::path::Path};
 
 pub fn print_parse_errors(node: tree_sitter::Node, source: &str, depth: usize) {
     if node.is_error() {
@@ -71,6 +69,7 @@ fn print_scope(table: &SymbolTable, scope_id: beacon_parser::ScopeId, depth: usi
     }
 }
 
+#[cfg(test)]
 pub fn format_human(source: &str, errors: &[TypeErrorInfo], file_path: &Path) {
     if errors.is_empty() {
         println!("{} No type errors found", "✓".green().bold());
@@ -121,6 +120,7 @@ pub fn format_human(source: &str, errors: &[TypeErrorInfo], file_path: &Path) {
     }
 }
 
+#[cfg(test)]
 pub fn format_json(errors: &[TypeErrorInfo]) -> Result<()> {
     let json_errors: Vec<_> = errors
         .iter()
@@ -144,6 +144,7 @@ pub fn format_json(errors: &[TypeErrorInfo]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 pub fn format_compact(errors: &[TypeErrorInfo], file_path: &Path) {
     for error_info in errors {
         let span = &error_info.span;
