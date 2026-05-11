@@ -31,14 +31,16 @@ Keep core dependency-light while making it the stable API that parser, constrain
 
 Keep parsed AST and symbol behavior stable while separating parser responsibilities. The parser test suite is broad and clippy-clean, but `lib.rs` and `resolve.rs` are large enough that syntax, symbol, and span work will be hard to review in place.
 
-- [ ] Move AST models, operators, patterns, parameters, imports, match cases, and helper methods out of `lib.rs` into focused modules.
-- [ ] Split tree-sitter CST conversion by syntax family: definitions, statements, expressions, literals, imports, comprehensions, and pattern matching.
-- [ ] Extract shared node/span helpers for tree-sitter child lookup, text extraction, body extraction, list delimiters, and position conversion.
-- [ ] Move Python literal parsing into a small module with integer, float, string, and prefix tests.
-- [ ] Split `resolve.rs` into symbol model, scope table, definition pass, reference pass, annotation reference scanning, f-string reference scanning, and unused/shadowed queries.
-- [ ] Keep symbol reference spans stable, especially decorators, annotations, imports, comprehensions, `with` aliases, and pattern bindings.
-- [ ] Decide whether docstring and RST parsing stay in `beacon-parser` or move behind a documented parser API boundary.
-- [ ] Make `cargo clippy -p beacon-parser --all-targets -- -D warnings` stay clean.
+- [x] Move AST models, operators, patterns, parameters, imports, match cases, and helper methods out of `lib.rs` into focused modules.
+- [x] Split tree-sitter CST conversion by syntax family: definitions, statements, expressions, literals, imports, comprehensions, and pattern matching.
+- [x] Extract shared node/span helpers for tree-sitter child lookup, text extraction, body extraction, list delimiters, and position conversion.
+- [x] Move Python literal parsing into a small module with integer, float, string, and prefix tests.
+- [x] Split `resolve.rs` into symbol model, scope table, definition pass, reference pass, annotation reference scanning, f-string reference scanning, and unused/shadowed queries.
+- [x] Keep symbol reference spans stable, especially decorators, annotations, imports, comprehensions, `with` aliases, and pattern bindings.
+- [x] Decide whether docstring and RST parsing stay in `beacon-parser` or move behind a documented parser API boundary:
+  - decision: keep docstring and RST parsing in `beacon-parser` as the documented parser-facing API for source text metadata
+  - preserve the existing public exports from `lib.rs` so analyzer, server, and CLI code do not depend on implementation modules
+- [x] Make `cargo clippy -p beacon-parser --all-targets -- -D warnings` stay clean.
 
 ## Milestone 3: Refactor The Analyzer
 
