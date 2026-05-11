@@ -8,6 +8,9 @@ pub mod highlight;
 mod literal_parse;
 pub mod resolve;
 pub mod rst;
+pub mod source_position;
+#[cfg(test)]
+pub mod test_builders;
 
 pub use ast::{
     AstNode, BinaryOperator, CompareOperator, Comprehension, ExceptHandler, ImportName, LiteralValue, MatchCase,
@@ -18,6 +21,9 @@ pub use highlight::PythonHighlighter;
 pub use resolve::{
     BUILTIN_DUNDERS, MAGIC_METHODS, NameResolver, ReferenceKind, Scope, ScopeId, ScopeKind, Symbol, SymbolKind,
     SymbolReference, SymbolTable,
+};
+pub use source_position::{
+    SourceRange, byte_offset_to_line_col, line_col_to_byte_offset, line_col_to_byte_offset_lossy,
 };
 
 /// Python parser using [tree_sitter]

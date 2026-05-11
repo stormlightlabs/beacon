@@ -19,7 +19,7 @@ pub mod typevar;
 pub mod typevar_registry;
 pub mod unify;
 
-pub use annotation_parser::AnnotationParser;
+pub use annotation_parser::{AnnotationParser, parse_annotation, parse_annotation_or_any};
 pub use class_metadata::{ClassMetadata, ClassRegistry, MethodType};
 pub use errors::{AnalysisError, BeaconError, ConfigError, DocumentError, ParseError, ResolveError, Result, TypeError};
 pub use logging::{LogConfig, LogFormat, default_log_path, init, install_panic_hook, read_log_file};
@@ -27,9 +27,9 @@ pub use protocols::{MethodSignature, ProtocolChecker, ProtocolDef, ProtocolName}
 pub use subst::{Subst, Substitutable};
 pub use suppressor::{Suppression, SuppressionMap};
 pub use types::{
-    Kind, LiteralType, OverloadSet, Type, TypeCtor, TypeScheme, TypeVar, Variance, builtin_type_name,
-    contains_type_var, decompose_app, decompose_class_app, decompose_protocol_app, format_type_for_diagnostic, is_any,
-    literal_base_ctor, literal_to_base_type,
+    Kind, LiteralType, OverloadSet, Type, TypeCtor, TypeScheme, TypeVar, Variance, builtin_type_from_name,
+    builtin_type_name, contains_type_var, decompose_app, decompose_class_app, decompose_protocol_app,
+    format_type_for_diagnostic, is_any, literal_base_ctor, literal_to_base_type,
 };
 pub use typevar::TypeVarGen;
 pub use typevar_registry::TypeVarConstraintRegistry;

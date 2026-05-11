@@ -224,19 +224,18 @@ impl InlayHintsProvider {
                         for (i, arg) in args.iter().enumerate() {
                             if i < param_names.len() {
                                 let param_name = &param_names[i];
-                                if let Some(arg_pos) = Self::get_node_position(arg) {
-                                    let position = Self::ast_to_lsp_position(arg_pos.0, arg_pos.1);
-                                    hints.push(InlayHint {
-                                        position,
-                                        label: InlayHintLabel::String(format!("{param_name}: ")),
-                                        kind: Some(InlayHintKind::PARAMETER),
-                                        text_edits: None,
-                                        tooltip: None,
-                                        padding_left: None,
-                                        padding_right: Some(true),
-                                        data: None,
-                                    });
-                                }
+                                let arg_range = arg.source_range();
+                                let position = Self::ast_to_lsp_position(arg_range.line, arg_range.col);
+                                hints.push(InlayHint {
+                                    position,
+                                    label: InlayHintLabel::String(format!("{param_name}: ")),
+                                    kind: Some(InlayHintKind::PARAMETER),
+                                    text_edits: None,
+                                    tooltip: None,
+                                    padding_left: None,
+                                    padding_right: Some(true),
+                                    data: None,
+                                });
                             }
                         }
                     }
@@ -386,20 +385,6 @@ impl InlayHintsProvider {
                 }
                 None
             }
-            _ => None,
-        }
-    }
-
-    /// Get the position (line, col) of an AST node
-    fn get_node_position(node: &AstNode) -> Option<(usize, usize)> {
-        match node {
-            AstNode::Literal { line, col, .. }
-            | AstNode::Identifier { line, col, .. }
-            | AstNode::Call { line, col, .. }
-            | AstNode::Attribute { line, col, .. }
-            | AstNode::BinaryOp { line, col, .. }
-            | AstNode::UnaryOp { line, col, .. }
-            | AstNode::Compare { line, col, .. } => Some((*line, *col)),
             _ => None,
         }
     }

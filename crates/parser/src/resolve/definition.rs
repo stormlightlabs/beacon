@@ -5,14 +5,6 @@ use crate::AstNode;
 use super::{NameResolver, ReferenceKind, ScopeKind, Symbol, SymbolKind, SymbolReference};
 
 impl NameResolver {
-    pub(crate) fn extract_comprehension_target_names(target: &str) -> Vec<String> {
-        target
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
-    }
-
     pub(crate) fn get_node_end_byte(&self, node: &AstNode) -> usize {
         match node {
             AstNode::Module { body, .. } => {
@@ -466,7 +458,7 @@ impl NameResolver {
                 for generator in generators {
                     self.visit_node(&generator.iter)?;
 
-                    for var_name in Self::extract_comprehension_target_names(&generator.target) {
+                    for var_name in generator.target_names() {
                         let symbol = Symbol {
                             name: var_name.clone(),
                             kind: SymbolKind::Variable,
@@ -490,7 +482,7 @@ impl NameResolver {
                 for generator in generators {
                     self.visit_node(&generator.iter)?;
 
-                    for var_name in Self::extract_comprehension_target_names(&generator.target) {
+                    for var_name in generator.target_names() {
                         let symbol = Symbol {
                             name: var_name.clone(),
                             kind: SymbolKind::Variable,

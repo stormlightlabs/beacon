@@ -177,9 +177,9 @@ impl SemanticTokensProvider {
                     let byte_offset = utils::position_to_byte_offset(text, pos);
                     symbol_table.find_scope_at_position(byte_offset)
                 } else if let Some(first_stmt) = body.first() {
-                    let (stmt_line, stmt_col) = Self::get_node_position(first_stmt);
-                    let line = (stmt_line as u32).saturating_sub(1);
-                    let character = (stmt_col as u32).saturating_sub(1);
+                    let stmt_range = first_stmt.source_range();
+                    let line = (stmt_range.line as u32).saturating_sub(1);
+                    let character = (stmt_range.col as u32).saturating_sub(1);
                     let pos = Position::new(line, character);
                     let byte_offset = utils::position_to_byte_offset(text, pos);
                     symbol_table.find_scope_at_position(byte_offset)
@@ -243,9 +243,9 @@ impl SemanticTokensProvider {
                 Self::add_token(name, *line, *col, token_type, modifiers, text, raw_tokens);
 
                 let class_scope = if let Some(first_stmt) = body.first() {
-                    let (stmt_line, stmt_col) = Self::get_node_position(first_stmt);
-                    let line = (stmt_line as u32).saturating_sub(1);
-                    let character = (stmt_col as u32).saturating_sub(1);
+                    let stmt_range = first_stmt.source_range();
+                    let line = (stmt_range.line as u32).saturating_sub(1);
+                    let character = (stmt_range.col as u32).saturating_sub(1);
                     let pos = Position::new(line, character);
                     let byte_offset = utils::position_to_byte_offset(text, pos);
                     symbol_table.find_scope_at_position(byte_offset)
@@ -510,56 +510,6 @@ impl SemanticTokensProvider {
         }
 
         raw_tokens.push(RawToken { line: final_line, character: final_col, length, token_type, modifiers });
-    }
-
-    /// Extract line and column from any AST node
-    fn get_node_position(node: &AstNode) -> (usize, usize) {
-        match node {
-            AstNode::Module { .. } => (1, 1),
-            AstNode::Yield { line, col, .. }
-            | AstNode::YieldFrom { line, col, .. }
-            | AstNode::Await { line, col, .. }
-            | AstNode::Tuple { line, col, .. }
-            | AstNode::List { line, col, .. }
-            | AstNode::Dict { line, col, .. }
-            | AstNode::Set { line, col, .. }
-            | AstNode::FunctionDef { line, col, .. }
-            | AstNode::ClassDef { line, col, .. }
-            | AstNode::Assignment { line, col, .. }
-            | AstNode::AnnotatedAssignment { line, col, .. }
-            | AstNode::Call { line, col, .. }
-            | AstNode::Identifier { line, col, .. }
-            | AstNode::Literal { line, col, .. }
-            | AstNode::Return { line, col, .. }
-            | AstNode::Import { line, col, .. }
-            | AstNode::ImportFrom { line, col, .. }
-            | AstNode::Attribute { line, col, .. }
-            | AstNode::If { line, col, .. }
-            | AstNode::For { line, col, .. }
-            | AstNode::While { line, col, .. }
-            | AstNode::Try { line, col, .. }
-            | AstNode::With { line, col, .. }
-            | AstNode::ListComp { line, col, .. }
-            | AstNode::DictComp { line, col, .. }
-            | AstNode::SetComp { line, col, .. }
-            | AstNode::GeneratorExp { line, col, .. }
-            | AstNode::NamedExpr { line, col, .. }
-            | AstNode::BinaryOp { line, col, .. }
-            | AstNode::UnaryOp { line, col, .. }
-            | AstNode::Compare { line, col, .. }
-            | AstNode::Lambda { line, col, .. }
-            | AstNode::Subscript { line, col, .. }
-            | AstNode::Match { line, col, .. }
-            | AstNode::Pass { line, col, .. }
-            | AstNode::Break { line, col, .. }
-            | AstNode::Continue { line, col, .. }
-            | AstNode::Global { line, col, .. }
-            | AstNode::Nonlocal { line, col, .. }
-            | AstNode::Raise { line, col, .. }
-            | AstNode::Assert { line, col, .. }
-            | AstNode::Starred { line, col, .. }
-            | AstNode::ParenthesizedExpression { line, col, .. } => (*line, *col),
-        }
     }
 
     /// Find the actual column position of a type annotation in source text

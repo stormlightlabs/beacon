@@ -30,6 +30,24 @@ pub fn builtin_type_name(ctor: &TypeCtor) -> Option<&'static str> {
     }
 }
 
+/// Return Beacon's type for a Python builtin type name.
+pub fn builtin_type_from_name(name: &str) -> Option<Type> {
+    let ctor = match name {
+        "int" => TypeCtor::Int,
+        "float" => TypeCtor::Float,
+        "str" => TypeCtor::String,
+        "bool" => TypeCtor::Bool,
+        "None" | "NoneType" => TypeCtor::NoneType,
+        "list" => TypeCtor::List,
+        "dict" => TypeCtor::Dict,
+        "set" => TypeCtor::Set,
+        "tuple" => TypeCtor::Tuple,
+        "Any" => TypeCtor::Any,
+        _ => return None,
+    };
+    Some(Type::Con(ctor))
+}
+
 /// Convert a literal singleton into its non-literal base constructor.
 pub fn literal_base_ctor(literal: &LiteralType) -> Option<TypeCtor> {
     match literal {

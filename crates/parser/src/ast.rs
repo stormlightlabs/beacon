@@ -1,5 +1,8 @@
 //! Parser AST model.
 
+use crate::SourceRange;
+use std::collections::BTreeSet;
+
 /// Function parameter with position information
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
@@ -456,6 +459,8 @@ pub struct WithItem {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Comprehension {
     pub target: String,
+    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
+    pub target_node: Option<Box<AstNode>>,
     pub iter: AstNode,
     pub ifs: Vec<AstNode>,
 }
@@ -546,6 +551,188 @@ pub enum Pattern {
 }
 
 impl AstNode {
+    /// Return this node's source range.
+    pub fn source_range(&self) -> SourceRange {
+        match self {
+            AstNode::Module { .. } => SourceRange::new(1, 1, 1, 1),
+            AstNode::FunctionDef { line, col, end_line, end_col, .. }
+            | AstNode::ClassDef { line, col, end_line, end_col, .. }
+            | AstNode::Assignment { line, col, end_line, end_col, .. }
+            | AstNode::AnnotatedAssignment { line, col, end_line, end_col, .. }
+            | AstNode::Call { line, col, end_line, end_col, .. }
+            | AstNode::Identifier { line, col, end_line, end_col, .. }
+            | AstNode::Literal { line, col, end_line, end_col, .. }
+            | AstNode::Return { line, col, end_line, end_col, .. }
+            | AstNode::Import { line, col, end_line, end_col, .. }
+            | AstNode::ImportFrom { line, col, end_line, end_col, .. }
+            | AstNode::Attribute { line, col, end_line, end_col, .. }
+            | AstNode::If { line, col, end_line, end_col, .. }
+            | AstNode::For { line, col, end_line, end_col, .. }
+            | AstNode::While { line, col, end_line, end_col, .. }
+            | AstNode::Try { line, col, end_line, end_col, .. }
+            | AstNode::With { line, col, end_line, end_col, .. }
+            | AstNode::ListComp { line, col, end_line, end_col, .. }
+            | AstNode::DictComp { line, col, end_line, end_col, .. }
+            | AstNode::SetComp { line, col, end_line, end_col, .. }
+            | AstNode::GeneratorExp { line, col, end_line, end_col, .. }
+            | AstNode::NamedExpr { line, col, end_line, end_col, .. }
+            | AstNode::BinaryOp { line, col, end_line, end_col, .. }
+            | AstNode::UnaryOp { line, col, end_line, end_col, .. }
+            | AstNode::Compare { line, col, end_line, end_col, .. }
+            | AstNode::Lambda { line, col, end_line, end_col, .. }
+            | AstNode::Subscript { line, col, end_line, end_col, .. }
+            | AstNode::Match { line, col, end_line, end_col, .. }
+            | AstNode::Pass { line, col, end_line, end_col, .. }
+            | AstNode::Break { line, col, end_line, end_col, .. }
+            | AstNode::Continue { line, col, end_line, end_col, .. }
+            | AstNode::Raise { line, col, end_line, end_col, .. }
+            | AstNode::Global { line, col, end_line, end_col, .. }
+            | AstNode::Nonlocal { line, col, end_line, end_col, .. }
+            | AstNode::Tuple { line, col, end_line, end_col, .. }
+            | AstNode::List { line, col, end_line, end_col, .. }
+            | AstNode::Dict { line, col, end_line, end_col, .. }
+            | AstNode::Set { line, col, end_line, end_col, .. }
+            | AstNode::Yield { line, col, end_line, end_col, .. }
+            | AstNode::YieldFrom { line, col, end_line, end_col, .. }
+            | AstNode::Await { line, col, end_line, end_col, .. }
+            | AstNode::Assert { line, col, end_line, end_col, .. }
+            | AstNode::Starred { line, col, end_line, end_col, .. }
+            | AstNode::ParenthesizedExpression { line, col, end_line, end_col, .. } => {
+                SourceRange::new(*line, *col, *end_line, *end_col)
+            }
+        }
+    }
+
+    /// Return direct statement blocks owned by this node.
+    pub fn body_blocks(&self) -> Vec<&[AstNode]> {
+        match self {
+            AstNode::Module { body, .. }
+            | AstNode::FunctionDef { body, .. }
+            | AstNode::ClassDef { body, .. }
+            | AstNode::With { body, .. } => vec![body.as_slice()],
+            AstNode::If { body, elif_parts, else_body, .. } => {
+                let mut blocks = vec![body.as_slice()];
+                blocks.extend(elif_parts.iter().map(|(_, block)| block.as_slice()));
+                if let Some(block) = else_body {
+                    blocks.push(block.as_slice());
+                }
+                blocks
+            }
+            AstNode::For { body, else_body, .. } | AstNode::While { body, else_body, .. } => {
+                let mut blocks = vec![body.as_slice()];
+                if let Some(block) = else_body {
+                    blocks.push(block.as_slice());
+                }
+                blocks
+            }
+            AstNode::Try { body, handlers, else_body, finally_body, .. } => {
+                let mut blocks = vec![body.as_slice()];
+                blocks.extend(handlers.iter().map(|handler| handler.body.as_slice()));
+                if let Some(block) = else_body {
+                    blocks.push(block.as_slice());
+                }
+                if let Some(block) = finally_body {
+                    blocks.push(block.as_slice());
+                }
+                blocks
+            }
+            AstNode::Match { cases, .. } => cases.iter().map(|case| case.body.as_slice()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Return direct child statements without forcing callers to duplicate body matching.
+    pub fn child_statements(&self) -> Vec<&AstNode> {
+        self.body_blocks().into_iter().flatten().collect()
+    }
+
+    /// Return direct child expressions owned by this node.
+    pub fn child_expressions(&self) -> Vec<&AstNode> {
+        match self {
+            AstNode::Assignment { target, value, .. } => vec![target.as_ref(), value.as_ref()],
+            AstNode::AnnotatedAssignment { target, value, .. } => {
+                let mut children = vec![target.as_ref()];
+                if let Some(value) = value {
+                    children.push(value.as_ref());
+                }
+                children
+            }
+            AstNode::Call { function, args, keywords, .. } => {
+                let mut children = Vec::with_capacity(1 + args.len() + keywords.len());
+                children.push(function.as_ref());
+                children.extend(args.iter());
+                children.extend(keywords.iter().map(|(_, value)| value));
+                children
+            }
+            AstNode::Return { value, .. } | AstNode::Yield { value, .. } => value.iter().map(Box::as_ref).collect(),
+            AstNode::Attribute { object, .. } => vec![object.as_ref()],
+            AstNode::If { test, elif_parts, .. } => {
+                let mut children = vec![test.as_ref()];
+                children.extend(elif_parts.iter().map(|(test, _)| test));
+                children
+            }
+            AstNode::For { target, iter, .. } => vec![target.as_ref(), iter.as_ref()],
+            AstNode::While { test, .. } => vec![test.as_ref()],
+            AstNode::With { items, .. } => items.iter().map(|item| &item.context_expr).collect(),
+            AstNode::ListComp { element, generators, .. }
+            | AstNode::SetComp { element, generators, .. }
+            | AstNode::GeneratorExp { element, generators, .. } => {
+                let mut children = vec![element.as_ref()];
+                children.extend(generators.iter().flat_map(Comprehension::child_expressions));
+                children
+            }
+            AstNode::DictComp { key, value, generators, .. } => {
+                let mut children = vec![key.as_ref(), value.as_ref()];
+                children.extend(generators.iter().flat_map(Comprehension::child_expressions));
+                children
+            }
+            AstNode::NamedExpr { value, .. } => vec![value.as_ref()],
+            AstNode::BinaryOp { left, right, .. } => vec![left.as_ref(), right.as_ref()],
+            AstNode::UnaryOp { operand, .. } => vec![operand.as_ref()],
+            AstNode::Compare { left, comparators, .. } => {
+                let mut children = vec![left.as_ref()];
+                children.extend(comparators.iter());
+                children
+            }
+            AstNode::Lambda { body, .. } => vec![body.as_ref()],
+            AstNode::Subscript { value, slice, .. } => vec![value.as_ref(), slice.as_ref()],
+            AstNode::Match { subject, cases, .. } => {
+                let mut children = vec![subject.as_ref()];
+                children.extend(cases.iter().filter_map(|case| case.guard.as_ref()));
+                children
+            }
+            AstNode::Raise { exc, .. } => exc.iter().map(Box::as_ref).collect(),
+            AstNode::Tuple { elements, .. } | AstNode::List { elements, .. } | AstNode::Set { elements, .. } => {
+                elements.iter().collect()
+            }
+            AstNode::Dict { keys, values, .. } => keys.iter().chain(values).collect(),
+            AstNode::YieldFrom { value, .. }
+            | AstNode::Await { value, .. }
+            | AstNode::Starred { value, .. }
+            | AstNode::ParenthesizedExpression { expression: value, .. } => vec![value.as_ref()],
+            AstNode::Assert { test, msg, .. } => {
+                let mut children = vec![test.as_ref()];
+                if let Some(msg) = msg {
+                    children.push(msg.as_ref());
+                }
+                children
+            }
+            AstNode::Module { .. }
+            | AstNode::FunctionDef { .. }
+            | AstNode::ClassDef { .. }
+            | AstNode::Identifier { .. }
+            | AstNode::Literal { .. }
+            | AstNode::Import { .. }
+            | AstNode::ImportFrom { .. }
+            | AstNode::Try { .. }
+            | AstNode::Pass { .. }
+            | AstNode::Break { .. }
+            | AstNode::Continue { .. }
+            | AstNode::Global { .. }
+            | AstNode::Nonlocal { .. } => Vec::new(),
+        }
+    }
+
     /// Extract variable names from an assignment target
     ///
     /// This helper extracts all identifier names that will be bound by an assignment.
@@ -562,6 +749,11 @@ impl AstNode {
             AstNode::Attribute { .. } | AstNode::Subscript { .. } => Vec::new(),
             _ => Vec::new(),
         }
+    }
+
+    /// Extract names introduced by an assignment-like target.
+    pub fn binding_names(&self) -> Vec<String> {
+        self.extract_target_names()
     }
 
     /// Convert assignment target to a string representation
@@ -604,5 +796,128 @@ impl AstNode {
             }
             _ => "<unknown>".to_string(),
         }
+    }
+}
+
+impl Comprehension {
+    pub fn target_names(&self) -> Vec<String> {
+        self.target_node
+            .as_deref()
+            .map(AstNode::binding_names)
+            .unwrap_or_else(|| split_target_names(&self.target))
+    }
+
+    pub fn target_display(&self) -> String {
+        self.target_node
+            .as_deref()
+            .map(AstNode::target_to_string)
+            .unwrap_or_else(|| self.target.clone())
+    }
+
+    pub fn child_expressions(&self) -> Vec<&AstNode> {
+        let mut children = Vec::new();
+        if let Some(target_node) = self.target_node.as_deref() {
+            children.push(target_node);
+        }
+        children.push(&self.iter);
+        children.extend(self.ifs.iter());
+        children
+    }
+}
+
+impl Pattern {
+    pub fn binding_names(&self) -> Vec<String> {
+        match self {
+            Pattern::MatchValue(_) => Vec::new(),
+            Pattern::MatchSequence(patterns) => patterns.iter().flat_map(Pattern::binding_names).collect(),
+            Pattern::MatchMapping { patterns, .. } | Pattern::MatchClass { patterns, .. } => {
+                patterns.iter().flat_map(Pattern::binding_names).collect()
+            }
+            Pattern::MatchOr(patterns) => {
+                let mut alternatives = patterns.iter();
+                let Some(first) = alternatives.next() else {
+                    return Vec::new();
+                };
+                let mut names: BTreeSet<String> = first.binding_names().into_iter().collect();
+                for alternative in alternatives {
+                    let alternative_names: BTreeSet<String> = alternative.binding_names().into_iter().collect();
+                    names.retain(|name| alternative_names.contains(name));
+                }
+                names.into_iter().collect()
+            }
+            Pattern::MatchAs { pattern, name } => {
+                let mut names = pattern.as_deref().map(Pattern::binding_names).unwrap_or_default();
+                if let Some(name) = name {
+                    names.push(name.clone());
+                }
+                names
+            }
+        }
+    }
+}
+
+fn split_target_names(target: &str) -> Vec<String> {
+    target
+        .split(',')
+        .filter_map(|part| {
+            let name = part
+                .trim()
+                .trim_start_matches('*')
+                .trim_matches(|c| matches!(c, '(' | ')' | '[' | ']'));
+            (!name.is_empty() && name.chars().all(|c| c == '_' || c.is_alphanumeric())).then(|| name.to_string())
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_builders;
+
+    #[test]
+    fn source_range_is_shared_for_all_callers() {
+        let node = test_builders::ident("value");
+        assert_eq!(node.source_range(), SourceRange::new(1, 1, 1, 6));
+    }
+
+    #[test]
+    fn child_statement_helpers_expose_blocks() {
+        let node =
+            AstNode::Module { body: vec![test_builders::assignment("x", test_builders::int(1))], docstring: None };
+        assert_eq!(node.child_statements().len(), 1);
+        assert_eq!(node.body_blocks().len(), 1);
+    }
+
+    #[test]
+    fn comprehension_uses_structured_target_when_available() {
+        let generator = Comprehension {
+            target: "x, y".to_string(),
+            target_node: Some(Box::new(AstNode::Tuple {
+                elements: vec![test_builders::ident("x"), test_builders::ident("y")],
+                is_parenthesized: false,
+                line: 1,
+                col: 1,
+                end_line: 1,
+                end_col: 5,
+            })),
+            iter: test_builders::ident("items"),
+            ifs: Vec::new(),
+        };
+
+        assert_eq!(generator.target_names(), vec!["x".to_string(), "y".to_string()]);
+        assert_eq!(generator.target_display(), "x, y");
+    }
+
+    #[test]
+    fn pattern_binding_names_keep_only_common_or_bindings() {
+        let pattern = Pattern::MatchOr(vec![
+            Pattern::MatchAs { pattern: None, name: Some("x".to_string()) },
+            Pattern::MatchSequence(vec![
+                Pattern::MatchAs { pattern: None, name: Some("x".to_string()) },
+                Pattern::MatchAs { pattern: None, name: Some("y".to_string()) },
+            ]),
+        ]);
+
+        assert_eq!(pattern.binding_names(), vec!["x".to_string()]);
     }
 }

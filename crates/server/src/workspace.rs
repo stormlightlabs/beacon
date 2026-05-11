@@ -9,7 +9,7 @@
 use crate::config::Config;
 use crate::document::DocumentManager;
 
-use beacon_core::{Type, TypeCtor};
+use beacon_core::{Type, TypeCtor, parse_annotation as parse_core_annotation};
 use beacon_parser::{AstNode, LiteralValue};
 use once_cell::sync::Lazy;
 use rayon::prelude::*;
@@ -1507,7 +1507,7 @@ impl Workspace {
 
     /// Parse an annotation string into a Type
     fn parse_annotation_string(&self, annotation: &str) -> Option<Type> {
-        parse_annotation(annotation)
+        parse_core_annotation(annotation).ok()
     }
 
     /// Get type information for a symbol from stubs
@@ -2221,8 +2221,7 @@ fn extract_all_list(node: &AstNode) -> Option<Vec<String>> {
 }
 
 fn parse_annotation(annotation: &str) -> Option<Type> {
-    let parser = beacon_core::AnnotationParser::new();
-    parser.parse(annotation).ok()
+    parse_core_annotation(annotation).ok()
 }
 
 /// Workspace errors
@@ -3070,10 +3069,10 @@ my_var: str
         let mut conflicts: FxHashMap<String, Vec<Type>> = FxHashMap::default();
 
         for symbol_name in stub1.exports.keys() {
-            if let (Some(ty1), Some(ty2)) = (stub1.exports.get(symbol_name), stub2.exports.get(symbol_name)) {
-                if ty1 != ty2 {
-                    conflicts.insert(symbol_name.clone(), vec![ty1.clone(), ty2.clone()]);
-                }
+            if let (Some(ty1), Some(ty2)) = (stub1.exports.get(symbol_name), stub2.exports.get(symbol_name))
+                && ty1 != ty2
+            {
+                conflicts.insert(symbol_name.clone(), vec![ty1.clone(), ty2.clone()]);
             }
         }
 

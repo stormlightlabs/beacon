@@ -1,5 +1,5 @@
 use super::{
-    ast_utils::{bind_comprehension_target, get_node_position},
+    ast_utils::bind_comprehension_target,
     class::{
         extract_class_metadata, extract_enum_members, has_enum_base, is_dataclass_decorator,
         is_special_class_decorator, synthesize_dataclass_init,
@@ -457,8 +457,8 @@ pub fn visit_call(
             let mut enumerate_start_arg = None;
             for (idx, arg) in args.iter().enumerate() {
                 let arg_ty = visit_node_with_env(arg, env, ctx, stub_cache)?;
-                let (arg_line, arg_col, arg_end_line, arg_end_col) = get_node_position(arg);
-                let arg_span = Span::with_end(arg_line, arg_col, arg_end_line, arg_end_col);
+                let arg_range = arg.source_range();
+                let arg_span = Span::with_end(arg_range.line, arg_range.col, arg_range.end_line, arg_range.end_col);
                 if is_enumerate_call && idx == 1 {
                     enumerate_start_arg = Some((arg_ty.clone(), arg_span));
                 }
@@ -468,8 +468,8 @@ pub fn visit_call(
             let mut keyword_arg_types = Vec::new();
             for (name, value) in keywords {
                 let kw_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
-                let (kw_line, kw_col, kw_end_line, kw_end_col) = get_node_position(value);
-                let kw_span = Span::with_end(kw_line, kw_col, kw_end_line, kw_end_col);
+                let kw_range = value.source_range();
+                let kw_span = Span::with_end(kw_range.line, kw_range.col, kw_range.end_line, kw_range.end_col);
                 if is_enumerate_call && name == "start" {
                     enumerate_start_arg = Some((kw_ty.clone(), kw_span));
                 }
@@ -1029,7 +1029,7 @@ pub fn visit_comprehension(
                     span,
                 ));
 
-                bind_comprehension_target(&mut comp_env, &generator.target, &element_ty);
+                bind_comprehension_target(&mut comp_env, generator, &element_ty);
 
                 for if_clause in &generator.ifs {
                     visit_node_with_env(if_clause, &mut comp_env, ctx, stub_cache)?;
@@ -1057,7 +1057,7 @@ pub fn visit_comprehension(
                     span,
                 ));
 
-                bind_comprehension_target(&mut comp_env, &generator.target, &element_ty);
+                bind_comprehension_target(&mut comp_env, generator, &element_ty);
 
                 for if_clause in &generator.ifs {
                     visit_node_with_env(if_clause, &mut comp_env, ctx, stub_cache)?;
@@ -1085,7 +1085,7 @@ pub fn visit_comprehension(
                     span,
                 ));
 
-                bind_comprehension_target(&mut comp_env, &generator.target, &element_ty);
+                bind_comprehension_target(&mut comp_env, generator, &element_ty);
 
                 for if_clause in &generator.ifs {
                     visit_node_with_env(if_clause, &mut comp_env, ctx, stub_cache)?;

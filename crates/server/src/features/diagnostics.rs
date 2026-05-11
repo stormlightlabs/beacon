@@ -12,7 +12,7 @@ use beacon_constraint::Span;
 use beacon_core::BeaconError;
 use beacon_core::TypeError;
 use beacon_core::{Type, TypeCtor};
-use beacon_parser::{AstNode, LiteralValue, MAGIC_METHODS, SymbolTable};
+use beacon_parser::{AstNode, LiteralValue, MAGIC_METHODS, SymbolTable, line_col_to_byte_offset_lossy};
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -1224,7 +1224,7 @@ impl DiagnosticProvider {
         match node {
             AstNode::FunctionDef { name, line, col, body, args, .. } => {
                 if MAGIC_METHODS.contains(&name.as_str()) {
-                    let byte_offset = Self::line_col_to_byte_offset_from_source(source, line, col);
+                    let byte_offset = line_col_to_byte_offset_lossy(source, *line, *col);
                     let scope_id = symbol_table.find_scope_at_position(byte_offset);
 
                     if !symbol_table.is_in_class_scope(scope_id) {
@@ -1369,28 +1369,6 @@ impl DiagnosticProvider {
                 });
             }
         }
-    }
-
-    /// Convert line/col to byte offset using the actual source
-    fn line_col_to_byte_offset_from_source(source: &str, line: &usize, col: &usize) -> usize {
-        let mut byte_offset = 0;
-        let mut current_line = 1;
-        let mut current_col = 1;
-
-        for ch in source.chars() {
-            if current_line == *line && current_col == *col {
-                return byte_offset;
-            }
-            if ch == '\n' {
-                current_line += 1;
-                current_col = 1;
-            } else {
-                current_col += 1;
-            }
-            byte_offset += ch.len_utf8();
-        }
-
-        byte_offset
     }
 
     /// Add static analysis diagnostics (use-before-def, unreachable code, unused variables, shadowing)
@@ -4859,27 +4837,6 @@ def bar():
         };
 
         assert!(!DiagnosticProvider::is_name_main_check(&test));
-    }
-
-    #[test]
-    fn test_line_col_to_byte_offset_simple() {
-        let source = "hello\nworld\ntest";
-        let offset = DiagnosticProvider::line_col_to_byte_offset_from_source(source, &2, &3);
-        assert_eq!(offset, 8);
-    }
-
-    #[test]
-    fn test_line_col_to_byte_offset_start() {
-        let source = "hello\nworld";
-        let offset = DiagnosticProvider::line_col_to_byte_offset_from_source(source, &1, &1);
-        assert_eq!(offset, 0);
-    }
-
-    #[test]
-    fn test_line_col_to_byte_offset_multiline() {
-        let source = "line1\nline2\nline3";
-        let offset = DiagnosticProvider::line_col_to_byte_offset_from_source(source, &3, &2);
-        assert_eq!(offset, 13);
     }
 
     #[test]

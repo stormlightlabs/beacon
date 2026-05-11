@@ -3,7 +3,7 @@
 //! This module provides helper functions used across the walker implementation
 //! for tasks like detecting docstrings and converting type names to Type representations.
 
-use beacon_core::{Type, TypeCtor, TypeVarGen};
+use beacon_core::{Type, TypeVarGen, builtin_type_from_name};
 use beacon_parser::{AstNode, LiteralValue};
 
 /// Check if a statement is a docstring (string literal expression)
@@ -19,17 +19,7 @@ pub fn is_docstring(node: &AstNode) -> bool {
 /// Maps common Python type names (int, str, float, bool, list, dict, set, tuple)
 /// to their corresponding Type representations. Unknown types get a fresh type variable.
 pub fn type_name_to_type(name: &str) -> Type {
-    match name {
-        "int" => Type::int(),
-        "str" => Type::string(),
-        "float" => Type::float(),
-        "bool" => Type::bool(),
-        "list" => Type::Con(TypeCtor::List),
-        "dict" => Type::Con(TypeCtor::Dict),
-        "set" => Type::Con(TypeCtor::Set),
-        "tuple" => Type::Con(TypeCtor::Tuple),
-        _ => Type::Var(TypeVarGen::new().fresh()),
-    }
+    builtin_type_from_name(name).unwrap_or_else(|| Type::Var(TypeVarGen::new().fresh()))
 }
 
 /// Detect if this is the `if __name__ == "__main__":` idiom
@@ -71,6 +61,7 @@ pub fn is_main_guard(test: &AstNode) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use beacon_core::TypeCtor;
     use beacon_parser::LiteralValue;
 
     #[test]

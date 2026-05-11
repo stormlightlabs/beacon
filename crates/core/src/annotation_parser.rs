@@ -68,6 +68,16 @@ impl AnnotationParser {
     }
 }
 
+/// Parse a Python type annotation using Beacon's shared annotation parser.
+pub fn parse_annotation(annotation: &str) -> Result<Type> {
+    AnnotationParser::new().parse(annotation)
+}
+
+/// Parse a Python type annotation, returning `Any` if parsing fails.
+pub fn parse_annotation_or_any(annotation: &str) -> Type {
+    AnnotationParser::new().parse_or_any(annotation)
+}
+
 /// Tokens for type annotation lexer
 #[derive(Debug, Clone, PartialEq)]
 enum Token {
