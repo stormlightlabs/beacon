@@ -43,16 +43,27 @@ Machine-readable JSON format for tooling integration:
 ```sh
 $ beacon typecheck --format json example.py
 {
-  "errors": [
+  "diagnostics": [
     {
-      "error": "Cannot unify types: Int ~ Str",
-      "line": 3,
-      "col": 5,
-      "end_line": null,
-      "end_col": null
+      "code": "HM001",
+      "file": "example.py",
+      "message": "Type mismatch: cannot unify str with int.",
+      "severity": "error",
+      "span": {
+        "end": {
+          "col": 17,
+          "line": 3
+        },
+        "start": {
+          "col": 5,
+          "line": 3
+        }
+      },
+      "tags": []
     }
   ],
-  "error_count": 1
+  "failures": [],
+  "schema_version": 1
 }
 ```
 

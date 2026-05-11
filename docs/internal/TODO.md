@@ -24,10 +24,10 @@
 
 - [x] Confirm CLI `typecheck`, `analyze`, and `lint` use the same diagnostic
   provider as LSP wherever possible.
-- [ ] Add expected diagnostics as structured assertions: code, severity,
+- [x] Add expected diagnostics as structured assertions: code, severity,
   message fragment, span, source file, and optional tags.
-- [ ] Add golden JSON output for `beacon typecheck --format json`.
-- [ ] Freeze the v1 diagnostic JSON shape.
+- [x] Add golden JSON output for `beacon typecheck --format json`.
+- [x] Freeze the v1 diagnostic JSON shape.
 - [ ] Verify suppressions apply consistently across type, lint, data-flow,
   import, and formatting diagnostics.
 - [ ] Add config assertions for `beacon.toml`, `pyproject.toml`, editor
