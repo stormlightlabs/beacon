@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range, TextEdit};
+use lsp_types::{Diagnostic, DiagnosticSeverity, DiagnosticTag, Position, Range, TextEdit};
 
 /// Return the repository root inferred from the core crate manifest path.
 pub fn repo_root() -> PathBuf {
@@ -68,6 +68,8 @@ pub struct ExpectedDiagnostic<'a> {
     pub severity: DiagnosticSeverity,
     pub message_fragment: &'a str,
     pub range: Range,
+    pub source_file: Option<&'a str>,
+    pub tags: Option<&'a [DiagnosticTag]>,
 }
 
 impl<'a> ExpectedDiagnostic<'a> {
@@ -79,15 +81,43 @@ impl<'a> ExpectedDiagnostic<'a> {
         );
     }
 
+    /// Assert that this expectation is present for a specific source file.
+    pub fn assert_present_for_file(&self, source_file: impl AsRef<Path>, diagnostics: &[Diagnostic]) {
+        let source_file = source_file.as_ref();
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| self.matches_for_file(source_file, diagnostic)),
+            "expected diagnostic not found in {}: {self:?}\nactual diagnostics: {diagnostics:#?}",
+            source_file.display()
+        );
+    }
+
     /// Check whether a diagnostic matches this expectation.
     pub fn matches(&self, diagnostic: &Diagnostic) -> bool {
         diagnostic.severity == Some(self.severity)
             && diagnostic.message.contains(self.message_fragment)
             && diagnostic.range == self.range
+            && self.tags_match(diagnostic)
             && diagnostic.code.as_ref().is_some_and(|code| match code {
                 lsp_types::NumberOrString::String(value) => value == self.code,
                 lsp_types::NumberOrString::Number(value) => value.to_string() == self.code,
             })
+    }
+
+    /// Check whether a diagnostic and its source file match this expectation.
+    pub fn matches_for_file(&self, source_file: &Path, diagnostic: &Diagnostic) -> bool {
+        self.matches(diagnostic) && self.source_file_matches(source_file)
+    }
+
+    fn source_file_matches(&self, source_file: &Path) -> bool {
+        self.source_file
+            .is_none_or(|expected| source_file == Path::new(expected) || source_file.ends_with(expected))
+    }
+
+    fn tags_match(&self, diagnostic: &Diagnostic) -> bool {
+        self.tags
+            .is_none_or(|expected| diagnostic.tags.as_deref().unwrap_or(&[]) == expected)
     }
 }
 

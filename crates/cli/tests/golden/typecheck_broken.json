@@ -1,0 +1,22 @@
+{
+  "diagnostics": [
+    {
+      "code": "HM001",
+      "file": "app/broken.py",
+      "message": "Type mismatch: cannot unify str with int. Ensure you're not mixing strings and integers without explicit conversion.",
+      "severity": "error",
+      "span": { "end": { "col": 24, "line": 10 }, "start": { "col": 5, "line": 10 } },
+      "tags": []
+    },
+    {
+      "code": "HM007",
+      "file": "app/broken.py",
+      "message": "Attribute 'owner' not found on type (Job str). Check that the type is correct or that you've imported the necessary modules.",
+      "severity": "error",
+      "span": { "end": { "col": 21, "line": 18 }, "start": { "col": 12, "line": 18 } },
+      "tags": []
+    }
+  ],
+  "failures": [],
+  "schema_version": 1
+}

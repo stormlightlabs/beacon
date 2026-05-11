@@ -5,7 +5,7 @@ use beacon_lsp::{
     Config, analysis::Analyzer, document::DocumentManager, features::DiagnosticProvider, workspace::Workspace,
 };
 use clap::ValueEnum;
-use lsp_types::Url;
+use lsp_types::{DiagnosticSeverity, DiagnosticTag, Position, Url};
 use owo_colors::OwoColorize;
 use serde_json::json;
 use std::path::PathBuf;
@@ -233,6 +233,7 @@ pub fn format_lsp_diagnostics(
         }
         OutputFormat::Json => {
             let output = json!({
+                "schema_version": 1,
                 "diagnostics": all_diagnostics.iter().map(|(file, _source, diagnostic)| {
                     let code_str = match &diagnostic.code {
                         Some(lsp_types::NumberOrString::String(s)) => s.clone(),
@@ -242,15 +243,14 @@ pub fn format_lsp_diagnostics(
 
                     json!({
                         "file": file,
-                        "line": diagnostic.range.start.line + 1,
-                        "col": diagnostic.range.start.character + 1,
-                        "message": diagnostic.message,
                         "code": code_str,
-                        "severity": match diagnostic.severity {
-                            Some(lsp_types::DiagnosticSeverity::ERROR) => "error",
-                            Some(lsp_types::DiagnosticSeverity::WARNING) => "warning",
-                            _ => "info",
-                        }
+                        "severity": diagnostic_severity_name(diagnostic.severity),
+                        "message": diagnostic.message,
+                        "span": {
+                            "start": diagnostic_position_json(diagnostic.range.start),
+                            "end": diagnostic_position_json(diagnostic.range.end),
+                        },
+                        "tags": diagnostic.tags.as_deref().unwrap_or(&[]).iter().map(diagnostic_tag_name).collect::<Vec<_>>(),
                     })
                 }).collect::<Vec<_>>(),
                 "failures": failed_files.iter().map(|(file, msg)| {
@@ -284,4 +284,31 @@ pub fn format_lsp_diagnostics(
         }
     }
     Ok(())
+}
+
+fn diagnostic_position_json(position: Position) -> serde_json::Value {
+    json!({
+        "line": position.line + 1,
+        "col": position.character + 1,
+    })
+}
+
+fn diagnostic_severity_name(severity: Option<DiagnosticSeverity>) -> &'static str {
+    match severity {
+        Some(DiagnosticSeverity::ERROR) => "error",
+        Some(DiagnosticSeverity::WARNING) => "warning",
+        Some(DiagnosticSeverity::INFORMATION) => "information",
+        Some(DiagnosticSeverity::HINT) => "hint",
+        _ => "information",
+    }
+}
+
+fn diagnostic_tag_name(tag: &DiagnosticTag) -> &'static str {
+    if *tag == DiagnosticTag::UNNECESSARY {
+        "unnecessary"
+    } else if *tag == DiagnosticTag::DEPRECATED {
+        "deprecated"
+    } else {
+        "unknown"
+    }
 }

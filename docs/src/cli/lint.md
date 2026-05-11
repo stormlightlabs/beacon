@@ -100,22 +100,29 @@ beacon lint test.py --format json
 Output:
 
 ```json
-[
-  {
-    "rule": "UnusedImport",
-    "message": "'os' imported but never used",
-    "filename": "test.py",
-    "line": 1,
-    "col": 1
-  },
-  {
-    "rule": "RedefinedWhileUnused",
-    "message": "'x' is redefined before being used",
-    "filename": "test.py",
-    "line": 8,
-    "col": 5
-  }
-]
+{
+  "diagnostics": [
+    {
+      "code": "BEA015",
+      "file": "test.py",
+      "message": "'os' imported but never used",
+      "severity": "warning",
+      "span": {
+        "end": {
+          "col": 10,
+          "line": 1
+        },
+        "start": {
+          "col": 1,
+          "line": 1
+        }
+      },
+      "tags": []
+    }
+  ],
+  "failures": [],
+  "schema_version": 1
+}
 ```
 
 ### Compact Format

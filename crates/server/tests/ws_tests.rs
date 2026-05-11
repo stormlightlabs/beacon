@@ -1,8 +1,9 @@
-use beacon_core::fixtures::{file, python_files, workspace as workspace_fixture};
+use beacon_core::fixtures::{ExpectedDiagnostic, file, python_files, range, workspace as workspace_fixture};
 use beacon_lsp::{
     analysis::Analyzer, config::Config, document::DocumentManager, features::diagnostics::DiagnosticProvider,
     workspace::Workspace,
 };
+use lsp_types::DiagnosticSeverity;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use url::Url;
@@ -36,5 +37,25 @@ async fn workspace_fixture_lsp_diagnostics_smoke() {
     let mut analyzer = Analyzer::new(config, documents);
     let broken_uri = Url::from_file_path(file("app/broken.py")).expect("broken file URI");
 
-    let _diagnostics = diagnostic_provider.generate_diagnostics(&broken_uri, &mut analyzer);
+    let diagnostics = diagnostic_provider.generate_diagnostics(&broken_uri, &mut analyzer);
+
+    ExpectedDiagnostic {
+        code: "HM001",
+        severity: DiagnosticSeverity::ERROR,
+        message_fragment: "cannot unify str with int",
+        range: range(9, 4, 9, 23),
+        source_file: Some("app/broken.py"),
+        tags: Some(&[]),
+    }
+    .assert_present_for_file(file("app/broken.py"), &diagnostics);
+
+    ExpectedDiagnostic {
+        code: "HM007",
+        severity: DiagnosticSeverity::ERROR,
+        message_fragment: "Attribute 'owner' not found",
+        range: range(17, 11, 17, 20),
+        source_file: Some("app/broken.py"),
+        tags: Some(&[]),
+    }
+    .assert_present_for_file(file("app/broken.py"), &diagnostics);
 }
