@@ -31,29 +31,31 @@ Keep core dependency-light while making it the stable API that parser, constrain
 
 Keep parsed AST and symbol behavior stable while separating parser responsibilities. The parser test suite is broad and clippy-clean, but `lib.rs` and `resolve.rs` are large enough that syntax, symbol, and span work will be hard to review in place.
 
-- [ ] Move AST models, operators, patterns, parameters, imports, match cases, and helper methods out of `lib.rs` into focused modules.
-- [ ] Split tree-sitter CST conversion by syntax family: definitions, statements, expressions, literals, imports, comprehensions, and pattern matching.
-- [ ] Extract shared node/span helpers for tree-sitter child lookup, text extraction, body extraction, list delimiters, and position conversion.
-- [ ] Move Python literal parsing into a small module with integer, float, string, and prefix tests.
-- [ ] Split `resolve.rs` into symbol model, scope table, definition pass, reference pass, annotation reference scanning, f-string reference scanning, and unused/shadowed queries.
-- [ ] Keep symbol reference spans stable, especially decorators, annotations, imports, comprehensions, `with` aliases, and pattern bindings.
-- [ ] Decide whether docstring and RST parsing stay in `beacon-parser` or move behind a documented parser API boundary.
-- [ ] Make `cargo clippy -p beacon-parser --all-targets -- -D warnings` stay clean.
+- [x] Move AST models, operators, patterns, parameters, imports, match cases, and helper methods out of `lib.rs` into focused modules.
+- [x] Split tree-sitter CST conversion by syntax family: definitions, statements, expressions, literals, imports, comprehensions, and pattern matching.
+- [x] Extract shared node/span helpers for tree-sitter child lookup, text extraction, body extraction, list delimiters, and position conversion.
+- [x] Move Python literal parsing into a small module with integer, float, string, and prefix tests.
+- [x] Split `resolve.rs` into symbol model, scope table, definition pass, reference pass, annotation reference scanning, f-string reference scanning, and unused/shadowed queries.
+- [x] Keep symbol reference spans stable, especially decorators, annotations, imports, comprehensions, `with` aliases, and pattern bindings.
+- [x] Decide whether docstring and RST parsing stay in `beacon-parser` or move behind a documented parser API boundary:
+  - decision: keep docstring and RST parsing in `beacon-parser` as the documented parser-facing API for source text metadata
+  - preserve the existing public exports from `lib.rs` so analyzer, server, and CLI code do not depend on implementation modules
+- [x] Make `cargo clippy -p beacon-parser --all-targets -- -D warnings` stay clean.
 
 ## Milestone 3: Refactor The Analyzer
 
 Keep behavior stable while reducing the analyzer crate's internal coupling. The current tests are useful, but several modules carry too many responsibilities for v1 work to stay predictable.
 
-- [ ] Split `cfg.rs` into graph data structures, CFG building, call graph construction, call resolution, and workspace/module wrappers.
-- [ ] Split `walker` by Python construct or analysis phase so type, import, class, function, call, match, and control-flow behavior are easier to test in isolation.
-- [ ] Replace the production `todo!()` path in `walker/visitors.rs` with implemented behavior or an explicit diagnostic.
-- [ ] Extract shared AST utilities for statement flattening, hoisted definitions, target names, use/def collection, call extraction, and source positions.
-- [ ] Split `linter.rs` into a small dispatcher plus rule groups. Keep BEA codes, messages, suppressions, and spans stable.
-- [ ] Split `loader.rs` into stub cache, TypeVar extraction, annotation conversion, and class/method registry loading.
-- [ ] Remove string-based parsing of class bases in the stub loader where AST data can carry the same information.
-- [ ] Reconcile `const_eval::ConstValue` and `data_flow::ConstantValue`, or document why both representations must exist.
-- [ ] Narrow public exports from `crates/analyzer/src/lib.rs` so server and CLI code depend on stable analyzer APIs instead of internals.
-- [ ] Make `cargo clippy -p beacon-analyzer --all-targets -- -D warnings` pass.
+- [x] Split `cfg.rs` into graph data structures, CFG building, call graph construction, call resolution, and workspace/module wrappers.
+- [x] Split `walker` by Python construct or analysis phase so type, import, class, function, call, match, and control-flow behavior are easier to test in isolation.
+- [x] Replace the production `todo!()` path in `walker/visitors.rs` with implemented behavior or an explicit diagnostic.
+- [x] Extract shared AST utilities for statement flattening, hoisted definitions, target names, use/def collection, call extraction, and source positions.
+- [x] Split `linter.rs` into a small dispatcher plus rule groups. Keep BEA codes, messages, suppressions, and spans stable.
+- [x] Split `loader.rs` into stub cache, TypeVar extraction, annotation conversion, and class/method registry loading.
+- [x] Remove string-based parsing of class bases in the stub loader where AST data can carry the same information.
+- [x] Reconcile `const_eval::ConstValue` and `data_flow::ConstantValue`, or document why both representations must exist.
+- [x] Narrow public exports from `crates/analyzer/src/lib.rs` so server and CLI code depend on stable analyzer APIs instead of internals.
+- [x] Make `cargo clippy -p beacon-analyzer --all-targets -- -D warnings` pass.
 
 ## Milestone 4: Refactor The Constraint Solver
 

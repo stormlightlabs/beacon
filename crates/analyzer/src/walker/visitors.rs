@@ -1,5 +1,5 @@
 use super::{
-    bind_comprehension_target,
+    ast_utils::{bind_comprehension_target, get_node_position},
     class::{
         extract_class_metadata, extract_enum_members, has_enum_base, is_dataclass_decorator,
         is_special_class_decorator, synthesize_dataclass_init,
@@ -7,7 +7,7 @@ use super::{
     function::{FunctionKind, analyze_return_paths, detect_function_kind},
     guards::{detect_inverse_type_guard, detect_type_guard, extract_type_guard_info, extract_type_predicate},
     loader::{self, StubCache},
-    utils::{get_node_position, is_docstring, is_main_guard, type_name_to_type},
+    utils::{is_docstring, is_main_guard, type_name_to_type},
 };
 
 use crate::pattern::extract_pattern_bindings;
@@ -259,9 +259,7 @@ pub fn visit_class_def(
             ctx.position_map.insert((*line, *col), node_id);
             Ok(decorated_type)
         }
-        _ => {
-            todo!()
-        }
+        _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
     }
 }
 

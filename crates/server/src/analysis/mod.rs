@@ -2566,8 +2566,7 @@ class Calculator:
         let mut class_registry = ClassRegistry::new();
         let mut ctx = loader::StubTypeContext::new();
         loader::collect_stub_type_vars(&parse_result.ast, &mut ctx);
-        let base_map = std::collections::HashMap::new();
-        loader::extract_stub_classes_into_registry(&parse_result.ast, &mut class_registry, &mut ctx, &base_map);
+        loader::extract_stub_classes_into_registry(&parse_result.ast, &mut class_registry, &mut ctx);
 
         let calc_meta = class_registry.get_class("Calculator");
         assert!(calc_meta.is_some(), "Calculator class should be in registry");

@@ -1,8 +1,8 @@
 //! Integration tests for transitive type propagation across module boundaries
 
 use beacon_analyzer::{
-    BlockId, CallSite, CrossModuleTypeResolver, FunctionId, ModuleTypeInfo, WorkspaceCFG, WorkspaceTypeEnvironment,
-    WorkspaceTypeEnvironmentBuilder, cfg::CallKind,
+    CrossModuleTypeResolver, ModuleTypeInfo, WorkspaceTypeEnvironment, WorkspaceTypeEnvironmentBuilder,
+    cfg::{BlockId, CallKind, CallSite, FunctionId, WorkspaceCFG},
 };
 use beacon_constraint::{ConstraintGenContext, ConstraintSet};
 use beacon_parser::{ScopeId, SymbolTable};

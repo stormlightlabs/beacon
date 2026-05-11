@@ -1,6 +1,6 @@
-use beacon_analyzer::{
-    BlockId, CallGraph, CallResolver, CallSite, CfgBuilder, ControlFlowGraph, FunctionId, ModuleCFG, ModuleCFGBuilder,
-    WorkspaceCFG, cfg::CallKind,
+use beacon_analyzer::cfg::{
+    BlockId, CallGraph, CallKind, CallResolver, CallSite, CfgBuilder, ControlFlowGraph, FunctionId, ModuleCFG,
+    ModuleCFGBuilder, WorkspaceCFG,
 };
 use beacon_parser::{AstNode, LiteralValue, ScopeId, ScopeKind, Symbol, SymbolKind, SymbolTable};
 use url::Url;
@@ -136,7 +136,7 @@ fn test_call_graph_reachable_functions_simple_chain() {
         &CallSite::new(BlockId(1), 0, Some(func3.clone()), CallKind::Direct, 20, 5),
     );
 
-    let reachable = call_graph.reachable_functions(&[func1.clone()]);
+    let reachable = call_graph.reachable_functions(std::slice::from_ref(&func1));
 
     assert_eq!(reachable.len(), 3);
     assert!(reachable.contains(&func1));
@@ -170,7 +170,7 @@ fn test_call_graph_reachable_functions_diamond() {
         &CallSite::new(BlockId(1), 0, Some(bottom.clone()), CallKind::Direct, 25, 5),
     );
 
-    let reachable = call_graph.reachable_functions(&[entry.clone()]);
+    let reachable = call_graph.reachable_functions(std::slice::from_ref(&entry));
 
     assert_eq!(reachable.len(), 4);
     assert!(reachable.contains(&entry));
@@ -200,7 +200,7 @@ fn test_call_graph_reachable_functions_cycle() {
         &CallSite::new(BlockId(1), 0, Some(func1.clone()), CallKind::Direct, 30, 5),
     );
 
-    let reachable = call_graph.reachable_functions(&[func1.clone()]);
+    let reachable = call_graph.reachable_functions(std::slice::from_ref(&func1));
 
     assert_eq!(reachable.len(), 3);
     assert!(reachable.contains(&func1));
@@ -221,7 +221,7 @@ fn test_call_graph_unreachable_functions() {
         &CallSite::new(BlockId(1), 0, Some(func2.clone()), CallKind::Direct, 10, 5),
     );
 
-    let reachable = call_graph.reachable_functions(&[func1.clone()]);
+    let reachable = call_graph.reachable_functions(std::slice::from_ref(&func1));
 
     assert_eq!(reachable.len(), 2);
     assert!(reachable.contains(&func1));
@@ -341,7 +341,7 @@ fn test_workspace_cfg_cross_module_reachable_blocks() {
     let call_site = CallSite::new(BlockId(1), 0, Some(func2.clone()), CallKind::Direct, 10, 5);
     workspace_cfg.call_graph_mut().add_call_site(func1.clone(), &call_site);
 
-    let reachable = workspace_cfg.cross_module_reachable_blocks(&[func1.clone()]);
+    let reachable = workspace_cfg.cross_module_reachable_blocks(std::slice::from_ref(&func1));
 
     assert_eq!(reachable.len(), 2);
     assert!(reachable.contains_key(&func1));
@@ -1142,7 +1142,7 @@ fn test_scc_reachability_with_cycles() {
         &CallSite::new(BlockId(4), 0, Some(func_d.clone()), CallKind::Direct, 4, 1),
     );
 
-    let reachable = call_graph.reachable_functions(&[func_a.clone()]);
+    let reachable = call_graph.reachable_functions(std::slice::from_ref(&func_a));
 
     assert_eq!(reachable.len(), 4);
     assert!(reachable.contains(&func_a));
@@ -1222,8 +1222,8 @@ fn test_relink_callee_updates_call_sites() {
     let uri_b = test_uri("b.py");
 
     let caller = FunctionId::new(uri_a.clone(), ScopeId::from_raw(1), "caller".to_string());
-    let old_callee = FunctionId::new(uri_a.clone(), ScopeId::from_raw(2), "import_stub".to_string());
-    let new_callee = FunctionId::new(uri_b.clone(), ScopeId::from_raw(1), "actual_func".to_string());
+    let old_callee = FunctionId::new(uri_a, ScopeId::from_raw(2), "import_stub".to_string());
+    let new_callee = FunctionId::new(uri_b, ScopeId::from_raw(1), "actual_func".to_string());
 
     call_graph.add_call_site(
         caller.clone(),
@@ -1268,11 +1268,11 @@ fn test_link_cross_module_calls() {
 
     workspace_cfg.call_graph_mut().add_call_site(
         func_b.clone(),
-        &CallSite::new(BlockId(1), 0, Some(import_stub.clone()), CallKind::Direct, 5, 1),
+        &CallSite::new(BlockId(1), 0, Some(import_stub), CallKind::Direct, 5, 1),
     );
 
     let mut import_map = FxHashMap::default();
-    import_map.insert((uri_b.clone(), "func_a".to_string()), actual_func_a.clone());
+    import_map.insert((uri_b, "func_a".to_string()), actual_func_a);
 
     workspace_cfg.link_cross_module_calls(&import_map);
     let callees = workspace_cfg.call_graph().get_callees(&func_b);
@@ -1308,18 +1308,18 @@ fn test_link_cross_module_circular_dependency_detection() {
 
     workspace_cfg.call_graph_mut().add_call_site(
         func_a.clone(),
-        &CallSite::new(BlockId(1), 0, Some(stub_b_in_a.clone()), CallKind::Direct, 1, 1),
+        &CallSite::new(BlockId(1), 0, Some(stub_b_in_a), CallKind::Direct, 1, 1),
     );
     workspace_cfg.call_graph_mut().add_call_site(
         func_b.clone(),
-        &CallSite::new(BlockId(1), 0, Some(stub_a_in_b.clone()), CallKind::Direct, 1, 1),
+        &CallSite::new(BlockId(1), 0, Some(stub_a_in_b), CallKind::Direct, 1, 1),
     );
 
     assert!(!workspace_cfg.call_graph().has_circular_dependencies());
 
     let mut import_map = FxHashMap::default();
-    import_map.insert((uri_a.clone(), "func_b".to_string()), func_b.clone());
-    import_map.insert((uri_b.clone(), "func_a".to_string()), func_a.clone());
+    import_map.insert((uri_a, "func_b".to_string()), func_b);
+    import_map.insert((uri_b, "func_a".to_string()), func_a);
 
     workspace_cfg.link_cross_module_calls(&import_map);
     assert!(workspace_cfg.call_graph().has_circular_dependencies());

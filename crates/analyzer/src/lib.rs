@@ -23,19 +23,13 @@ pub mod type_env;
 pub mod walker;
 pub mod workspace;
 
-pub use cfg::{
-    BasicBlock, BlockId, CallEdgeSummary, CallGraph, CallResolver, CallSite, CfgBuilder, ControlFlowGraph, EdgeKind,
-    FunctionId, FunctionSummary, ModuleCFG, ModuleCFGBuilder, WorkspaceCFG, WorkspaceCfgSummary,
-};
-pub use const_eval::{ConstValue, evaluate_const_expr};
+pub use cfg::{FunctionId, ModuleCFG, ModuleCFGBuilder, WorkspaceCFG};
 pub use cross_module_resolver::{CrossModuleTypeResolver, PropagationResult};
 pub use data_flow::{DataFlowAnalyzer, DataFlowResult, UnreachableCode, UnusedVariable, UseBeforeDef};
 pub use embedded_stdlib_modules::EMBEDDED_STDLIB_MODULES;
 pub use embedded_stubs::{TypeshedVersion, available_stubs, get_embedded_stub, version_info};
 pub use linter::Linter;
-pub use loader::{
-    StubCache, StubFile, StubTypeContext, new_class_registry_with_stdlib, new_typevar_registry_with_stdlib,
-};
+pub use loader::{StubCache, StubFile};
 pub use rules::{DiagnosticMessage, Rule, RuleKind, RuleSeverity};
 pub use taint::{
     CrossModuleTaintAnalyzer, CrossModuleTaintResult, CrossModuleTaintViolation, IntraModuleTaintAnalyzer,
