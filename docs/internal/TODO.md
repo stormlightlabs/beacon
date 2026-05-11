@@ -30,9 +30,9 @@
 - [x] Freeze the v1 diagnostic JSON shape.
 - [x] Verify suppressions apply consistently across type, lint, data-flow,
   import, and formatting diagnostics.
-- [ ] Add config assertions for `beacon.toml`, `pyproject.toml`, editor
+- [x] Add config assertions for `beacon.toml`, `pyproject.toml`, editor
   settings, and file mode directives.
-- [ ] Ensure strict/balanced/relaxed modes change severity predictably.
+- [x] Ensure strict/balanced/relaxed modes change severity predictably.
 - [ ] Implement placeholder v1-path CLI output:
     - unification trace
     - CFG visualization
