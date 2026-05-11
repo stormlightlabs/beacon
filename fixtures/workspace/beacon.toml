@@ -1,9 +1,9 @@
-[type_checking]
-mode = "balanced"
-
 python_version = "3.12"
 stub_paths = ["stubs"]
 source_roots = ["."]
+
+[type_checking]
+mode = "balanced"
 
 [inlay_hints]
 enable = true
