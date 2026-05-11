@@ -1,5 +1,6 @@
 use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
+use std::fmt;
 
 /// Unique identifier for basic blocks
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -22,6 +23,21 @@ pub enum EdgeKind {
     Continue,
     /// Finally edge (always executed)
     Finally,
+}
+
+impl fmt::Display for EdgeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = match self {
+            EdgeKind::Normal => "normal",
+            EdgeKind::True => "true",
+            EdgeKind::False => "false",
+            EdgeKind::Exception => "exception",
+            EdgeKind::Break => "break",
+            EdgeKind::Continue => "continue",
+            EdgeKind::Finally => "finally",
+        };
+        f.write_str(label)
+    }
 }
 
 /// A basic block in the control flow graph
