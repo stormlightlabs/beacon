@@ -16,6 +16,8 @@ pub enum Suppression {
     NoQA { codes: Option<Vec<String>> },
     /// `# type: ignore` or `# type: ignore[code1, code2]`
     TypeIgnore { codes: Option<Vec<String>> },
+    /// `# beacon: ignore` or `# beacon: ignore[code1, code2]`
+    BeaconIgnore { codes: Option<Vec<String>> },
     /// `# fmt: skip` - Skip formatting for this statement
     FmtSkip,
     /// `# fmt: off` - Disable formatting until `# fmt: on`
@@ -40,6 +42,10 @@ impl Suppression {
                 None => true,
                 Some(codes) => codes.iter().any(|c| c.eq_ignore_ascii_case(code)),
             },
+            Suppression::BeaconIgnore { codes } => match codes {
+                None => true,
+                Some(codes) => codes.iter().any(|c| c.eq_ignore_ascii_case(code)),
+            },
             Suppression::FmtSkip | Suppression::FmtOff | Suppression::FmtOn => false,
         }
     }
@@ -57,6 +63,8 @@ pub struct SuppressionMap {
     suppressions: FxHashMap<usize, Vec<Suppression>>,
     /// Ranges where formatting is disabled (start_line, end_line)
     fmt_off_ranges: Vec<(usize, usize)>,
+    /// Ranges where diagnostics are disabled (start_line, end_line, codes)
+    diagnostic_off_ranges: Vec<(usize, usize, Option<Vec<String>>)>,
 }
 
 impl SuppressionMap {
@@ -65,6 +73,8 @@ impl SuppressionMap {
         let mut suppressions = FxHashMap::default();
         let mut fmt_off_ranges = Vec::new();
         let mut fmt_off_start: Option<usize> = None;
+        let mut diagnostic_off_ranges = Vec::new();
+        let mut diagnostic_off_start: Option<(usize, Option<Vec<String>>)> = None;
 
         for (line_num, line) in source.lines().enumerate() {
             let line_num = line_num + 1;
@@ -73,24 +83,44 @@ impl SuppressionMap {
             if let Some(suppression_list) = Self::parse_line(line) {
                 for suppression in suppression_list {
                     match &suppression {
+                        Suppression::BeaconIgnore { .. } if line.trim_start().starts_with('#') => {
+                            suppressions
+                                .entry(line_num + 1)
+                                .or_insert_with(Vec::new)
+                                .push(suppression.clone());
+                        }
                         Suppression::FmtOff => {
                             if fmt_off_start.is_none() {
                                 fmt_off_start = Some(line_num);
                             }
+                            line_suppressions.push(suppression);
                         }
                         Suppression::FmtOn => {
                             if let Some(start) = fmt_off_start.take() {
                                 fmt_off_ranges.push((start, line_num));
                             }
+                            line_suppressions.push(suppression);
                         }
-                        _ => {}
+                        _ => line_suppressions.push(suppression),
                     }
-                    line_suppressions.push(suppression);
+                }
+            }
+
+            if let Some((codes, is_enable)) = Self::parse_beacon_disable(line) {
+                if is_enable {
+                    if let Some((start, active_codes)) = diagnostic_off_start.take() {
+                        diagnostic_off_ranges.push((start, line_num.saturating_sub(1), active_codes));
+                    }
+                } else if diagnostic_off_start.is_none() {
+                    diagnostic_off_start = Some((line_num + 1, codes));
                 }
             }
 
             if !line_suppressions.is_empty() {
-                suppressions.insert(line_num, line_suppressions);
+                suppressions
+                    .entry(line_num)
+                    .or_insert_with(Vec::new)
+                    .extend(line_suppressions);
             }
         }
 
@@ -98,41 +128,61 @@ impl SuppressionMap {
             fmt_off_ranges.push((start, usize::MAX));
         }
 
-        Self { suppressions, fmt_off_ranges }
+        if let Some((start, codes)) = diagnostic_off_start {
+            diagnostic_off_ranges.push((start, usize::MAX, codes));
+        }
+
+        Self { suppressions, fmt_off_ranges, diagnostic_off_ranges }
+    }
+
+    fn parse_codes(codes: &str) -> Vec<String> {
+        codes
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    }
+
+    fn parse_beacon_disable(line: &str) -> Option<(Option<Vec<String>>, bool)> {
+        static BEACON_DISABLE_RE: OnceLock<Regex> = OnceLock::new();
+        let beacon_disable_re = BEACON_DISABLE_RE
+            .get_or_init(|| Regex::new(r"#\s*beacon:\s*(disable|enable)(?:\s*=\s*([A-Za-z0-9_,\-\s]+))?").unwrap());
+
+        let captures = beacon_disable_re.captures(line)?;
+        let directive = captures.get(1)?.as_str();
+        let codes = captures.get(2).map(|m| Self::parse_codes(m.as_str()));
+        Some((codes, directive == "enable"))
     }
 
     /// Parse a single line for suppression comments
     fn parse_line(line: &str) -> Option<Vec<Suppression>> {
         static NOQA_RE: OnceLock<Regex> = OnceLock::new();
         static TYPE_IGNORE_RE: OnceLock<Regex> = OnceLock::new();
+        static BEACON_IGNORE_RE: OnceLock<Regex> = OnceLock::new();
         static FMT_RE: OnceLock<Regex> = OnceLock::new();
 
         let noqa_re = NOQA_RE.get_or_init(|| Regex::new(r"#\s*noqa(?::\s*([A-Za-z0-9,\s]+))?").unwrap());
         let type_ignore_re = TYPE_IGNORE_RE.get_or_init(|| Regex::new(r"#\s*type:\s*ignore(?:\[([^\]]+)\])?").unwrap());
-        let fmt_re = FMT_RE.get_or_init(|| Regex::new(r"#\s*fmt:\s*(off|on|skip)").unwrap());
+        let beacon_ignore_re =
+            BEACON_IGNORE_RE.get_or_init(|| Regex::new(r"#\s*beacon:\s*ignore(?:\[([^\]]+)\])?").unwrap());
+        let fmt_re =
+            FMT_RE.get_or_init(|| Regex::new(r"#\s*(?:(?:beacon\s*:\s*|beacon-))?fmt:\s*(off|on|skip)").unwrap());
 
         let mut result = Vec::new();
 
         if let Some(captures) = noqa_re.captures(line) {
-            let codes = captures.get(1).map(|m| {
-                m.as_str()
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            });
+            let codes = captures.get(1).map(|m| Self::parse_codes(m.as_str()));
             result.push(Suppression::NoQA { codes });
         }
 
         if let Some(captures) = type_ignore_re.captures(line) {
-            let codes = captures.get(1).map(|m| {
-                m.as_str()
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            });
+            let codes = captures.get(1).map(|m| Self::parse_codes(m.as_str()));
             result.push(Suppression::TypeIgnore { codes });
+        }
+
+        if let Some(captures) = beacon_ignore_re.captures(line) {
+            let codes = captures.get(1).map(|m| Self::parse_codes(m.as_str()));
+            result.push(Suppression::BeaconIgnore { codes });
         }
 
         if let Some(captures) = fmt_re.captures(line) {
@@ -149,32 +199,54 @@ impl SuppressionMap {
         if result.is_empty() { None } else { Some(result) }
     }
 
-    /// Check if a diagnostic at the given line should be suppressed
+    /// Check if a linter diagnostic at the given line should be suppressed.
+    pub fn is_lint_suppressed(&self, line: usize, code: Option<&str>) -> bool {
+        self.has_line_suppression(line, code, |suppression| {
+            matches!(suppression, Suppression::NoQA { .. } | Suppression::BeaconIgnore { .. })
+        }) || self.is_disabled_by_beacon_range(line, code)
+    }
+
+    /// Check if a checker diagnostic at the given line should be suppressed.
+    pub fn is_type_suppressed(&self, line: usize, code: Option<&str>) -> bool {
+        self.has_line_suppression(line, code, |suppression| {
+            matches!(
+                suppression,
+                Suppression::TypeIgnore { .. } | Suppression::BeaconIgnore { .. }
+            )
+        }) || self.is_disabled_by_beacon_range(line, code)
+    }
+
+    fn has_line_suppression(&self, line: usize, code: Option<&str>, predicate: impl Fn(&Suppression) -> bool) -> bool {
+        let Some(suppressions) = self.suppressions.get(&line) else {
+            return false;
+        };
+
+        suppressions
+            .iter()
+            .filter(|suppression| predicate(suppression))
+            .any(|suppression| suppression.applies_to_optional(code))
+    }
+
+    fn is_disabled_by_beacon_range(&self, line: usize, code: Option<&str>) -> bool {
+        self.diagnostic_off_ranges
+            .iter()
+            .any(|(start, end, codes)| line >= *start && line <= *end && Self::codes_apply(codes.as_deref(), code))
+    }
+
+    fn codes_apply(codes: Option<&[String]>, code: Option<&str>) -> bool {
+        match (codes, code) {
+            (None, _) => true,
+            (Some(_), None) => true,
+            (Some(codes), Some(code)) => codes.iter().any(|candidate| candidate.eq_ignore_ascii_case(code)),
+        }
+    }
+
+    /// Check if a diagnostic at the given line should be suppressed.
     ///
     /// For linter diagnostics, pass the rule code (e.g., "BEA001").
     /// For type errors, pass None or a type error code if available.
     pub fn is_suppressed(&self, line: usize, code: Option<&str>) -> bool {
-        if let Some(suppressions) = self.suppressions.get(&line) {
-            for suppression in suppressions {
-                match (suppression, code) {
-                    (Suppression::NoQA { codes: None }, Some(_)) => return true,
-                    (Suppression::NoQA { codes: Some(_) }, Some(code)) => {
-                        if suppression.applies_to(code) {
-                            return true;
-                        }
-                    }
-                    (Suppression::TypeIgnore { codes: None }, _) => return true,
-                    (Suppression::TypeIgnore { codes: Some(_) }, Some(code)) => {
-                        if suppression.applies_to(code) {
-                            return true;
-                        }
-                    }
-                    (Suppression::TypeIgnore { codes: Some(_) }, None) => return true,
-                    _ => {}
-                }
-            }
-        }
-        false
+        self.is_lint_suppressed(line, code) || self.is_type_suppressed(line, code)
     }
 
     /// Check if formatting should be disabled at the given line
@@ -197,6 +269,17 @@ impl SuppressionMap {
     /// Get all suppressions on a specific line
     pub fn get_suppressions(&self, line: usize) -> Option<&[Suppression]> {
         self.suppressions.get(&line).map(|v| v.as_slice())
+    }
+}
+
+impl Suppression {
+    fn applies_to_optional(&self, code: Option<&str>) -> bool {
+        match self {
+            Suppression::NoQA { codes } | Suppression::TypeIgnore { codes } | Suppression::BeaconIgnore { codes } => {
+                SuppressionMap::codes_apply(codes.as_deref(), code)
+            }
+            Suppression::FmtSkip | Suppression::FmtOff | Suppression::FmtOn => false,
+        }
     }
 }
 
@@ -241,11 +324,49 @@ mod tests {
     #[test]
     fn test_parse_type_ignore() {
         let map = SuppressionMap::from_source("x: int = 'str'  # type: ignore");
-        assert!(map.is_suppressed(1, None));
+        assert!(map.is_type_suppressed(1, None));
 
         let map = SuppressionMap::from_source("x: int = 'str'  # type: ignore[assignment]");
-        assert!(map.is_suppressed(1, Some("assignment")));
-        assert!(!map.is_suppressed(1, Some("other-error")));
+        assert!(map.is_type_suppressed(1, Some("assignment")));
+        assert!(!map.is_type_suppressed(1, Some("other-error")));
+        assert!(!map.is_lint_suppressed(1, Some("assignment")));
+    }
+
+    #[test]
+    fn test_parse_beacon_ignore_next_line() {
+        let source = "# beacon: ignore[HM007]\nvalue.missing";
+        let map = SuppressionMap::from_source(source);
+        assert!(map.is_type_suppressed(2, Some("HM007")));
+        assert!(map.is_lint_suppressed(2, Some("HM007")));
+        assert!(!map.is_type_suppressed(1, Some("HM007")));
+    }
+
+    #[test]
+    fn test_parse_beacon_disable_enable() {
+        let source = "\
+# beacon: disable=unused-variable
+unused = 1
+# beacon: enable=unused-variable
+still_unused = 2
+";
+        let map = SuppressionMap::from_source(source);
+        assert!(map.is_type_suppressed(2, Some("unused-variable")));
+        assert!(!map.is_type_suppressed(4, Some("unused-variable")));
+    }
+
+    #[test]
+    fn test_parse_beacon_fmt_directives() {
+        let source = "\
+# beacon: fmt: off
+x=1
+# beacon: fmt: on
+y=2  # beacon-fmt: skip
+";
+        let map = SuppressionMap::from_source(source);
+        assert!(map.is_formatting_disabled(1));
+        assert!(map.is_formatting_disabled(2));
+        assert!(map.is_formatting_disabled(3));
+        assert!(map.is_formatting_disabled(4));
     }
 
     #[test]
@@ -293,8 +414,8 @@ z = 3
     #[test]
     fn test_combined_suppressions() {
         let map = SuppressionMap::from_source("x: int = 'str'  # type: ignore  # noqa: BEA001");
-        assert!(map.is_suppressed(1, None));
-        assert!(map.is_suppressed(1, Some("BEA001")));
+        assert!(map.is_type_suppressed(1, None));
+        assert!(map.is_lint_suppressed(1, Some("BEA001")));
     }
 
     #[test]

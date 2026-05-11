@@ -1,4 +1,5 @@
 use assert_cmd::{Command, cargo::cargo_bin_cmd};
+use beacon_core::fixtures::file;
 use predicates::prelude::*;
 use std::fs;
 use std::io::Write;
@@ -22,6 +23,36 @@ fn format_check_detects_differences() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("Formatting would change"));
+}
+
+#[test]
+fn format_check_respects_fmt_skip() {
+    let mut cmd = cli();
+    cmd.args(["format", "--check"])
+        .write_stdin("x=1  # fmt: skip\n")
+        .assert()
+        .success();
+}
+
+#[test]
+fn format_check_respects_fmt_off_block() {
+    let mut cmd = cli();
+    cmd.args(["format", "--check"])
+        .write_stdin("# fmt: off\nx=1\n# fmt: on\n")
+        .assert()
+        .success();
+}
+
+#[test]
+fn format_check_respects_workspace_suppression_fixture() {
+    let mut cmd = cli();
+    cmd.args([
+        "format",
+        "--check",
+        file("cases/formatting/suppressions.py").to_str().expect("fixture path"),
+    ])
+    .assert()
+    .success();
 }
 
 #[test]

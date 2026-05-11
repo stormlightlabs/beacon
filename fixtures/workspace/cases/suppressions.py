@@ -4,9 +4,9 @@ from __future__ import annotations
 
 
 def unused_suppressed() -> None:
-    ignored = 1  # noqa: F841
-    also_ignored = "x"  # type: ignore[assignment]
-    _ = also_ignored
+    ignored = 1  # type: ignore[ANN002, unused-variable]
+    also_ignored = "x"  # type: ignore[ANN002]
+    _ = also_ignored  # type: ignore[ANN002]
 
 
 def beacon_suppression(value: object) -> int:
@@ -19,8 +19,8 @@ def inline_type_ignore(value: object) -> str:
 
 
 def block_suppression() -> None:
-    # beacon: disable=unused-variable
+    # beacon: disable=ANN002, unused-variable
     local_value = 42
     another_value = local_value + 1
-    # beacon: enable=unused-variable
-    _ = another_value
+    # beacon: enable=ANN002, unused-variable
+    _ = another_value  # type: ignore[ANN002]

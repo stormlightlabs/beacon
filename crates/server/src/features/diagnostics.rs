@@ -9,6 +9,7 @@ use crate::parser::{self, ParseError};
 use crate::workspace::Workspace;
 use beacon_constraint::Span;
 use beacon_core::BeaconError;
+use beacon_core::SuppressionMap;
 use beacon_core::TypeError;
 use beacon_core::{Type, TypeCtor};
 use beacon_parser::{AstNode, LiteralValue, MAGIC_METHODS, SymbolTable, line_col_to_byte_offset_lossy};
@@ -277,6 +278,8 @@ impl DiagnosticProvider {
             start.elapsed()
         );
 
+        diagnostics = self.apply_suppressions(uri, diagnostics);
+
         tracing::info!(
             "Generated {} total diagnostics for {} (mode: {})",
             diagnostics.len(),
@@ -289,6 +292,38 @@ impl DiagnosticProvider {
         }
 
         diagnostics
+    }
+
+    fn apply_suppressions(&self, uri: &Url, diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
+        let Some(suppression_map) = self
+            .documents
+            .get_document(uri, |doc| SuppressionMap::from_source(&doc.text()))
+        else {
+            return diagnostics;
+        };
+
+        diagnostics
+            .into_iter()
+            .filter(|diagnostic| !Self::is_suppressed_diagnostic(&suppression_map, diagnostic))
+            .collect()
+    }
+
+    fn is_suppressed_diagnostic(suppression_map: &SuppressionMap, diagnostic: &Diagnostic) -> bool {
+        let line = diagnostic.range.start.line as usize + 1;
+        let code = Self::diagnostic_code(diagnostic);
+
+        if diagnostic.source.as_deref() == Some("beacon-linter") {
+            suppression_map.is_lint_suppressed(line, code)
+        } else {
+            suppression_map.is_type_suppressed(line, code)
+        }
+    }
+
+    fn diagnostic_code(diagnostic: &Diagnostic) -> Option<&str> {
+        match diagnostic.code.as_ref()? {
+            lsp_types::NumberOrString::String(code) => Some(code.as_str()),
+            lsp_types::NumberOrString::Number(_) => None,
+        }
     }
 
     /// Get the effective type checking mode for a document

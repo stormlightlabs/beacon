@@ -216,6 +216,15 @@ impl Formatter {
         tracing::debug!(start_line, end_line, "Cache miss, performing full format");
 
         let parsed = self.parser.parse(source)?;
+        if start_line == 0 && end_line >= source.lines().count() {
+            let formatted = self.format_file(&parsed)?;
+            if self.config.cache_enabled {
+                self.cache
+                    .put(source, &self.config, start_line, end_line, formatted.clone());
+            }
+            return Ok(formatted);
+        }
+
         let ast = self.parser.to_ast(&parsed)?;
 
         let sorted_ast = self.sort_imports_in_module(&ast);
