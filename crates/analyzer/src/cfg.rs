@@ -28,6 +28,17 @@ mod tests {
     }
 
     #[test]
+    fn test_edge_kind_display_labels_are_stable() {
+        assert_eq!(EdgeKind::Normal.to_string(), "normal");
+        assert_eq!(EdgeKind::True.to_string(), "true");
+        assert_eq!(EdgeKind::False.to_string(), "false");
+        assert_eq!(EdgeKind::Exception.to_string(), "exception");
+        assert_eq!(EdgeKind::Break.to_string(), "break");
+        assert_eq!(EdgeKind::Continue.to_string(), "continue");
+        assert_eq!(EdgeKind::Finally.to_string(), "finally");
+    }
+
+    #[test]
     fn test_cfg_builder_empty_function() {
         let mut builder = CfgBuilder::new();
         builder.build_function(&[]);

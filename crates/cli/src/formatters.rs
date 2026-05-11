@@ -1,7 +1,13 @@
+use crate::cfg;
+
+use anyhow::Result;
+use beacon_analyzer::DiagnosticMessage;
+use beacon_cli::diagnostics::{CliDiagnostic, OutputFormat, format_lsp_diagnostics};
 use beacon_parser::SymbolTable;
+use lsp_types::{DiagnosticSeverity, DiagnosticTag, NumberOrString, Position};
 use owo_colors::OwoColorize;
-#[cfg(test)]
-use {anyhow::Result, beacon_constraint::TypeErrorInfo, serde_json::json, std::path::Path};
+use serde_json::json;
+use std::path::{Path, PathBuf};
 
 pub fn print_parse_errors(node: tree_sitter::Node, source: &str, depth: usize) {
     if node.is_error() {
@@ -69,91 +75,239 @@ fn print_scope(table: &SymbolTable, scope_id: beacon_parser::ScopeId, depth: usi
     }
 }
 
-#[cfg(test)]
-pub fn format_human(source: &str, errors: &[TypeErrorInfo], file_path: &Path) {
-    if errors.is_empty() {
-        println!("{} No type errors found", "✓".green().bold());
-        return;
-    }
-
-    let lines: Vec<&str> = source.lines().collect();
-    println!(
-        "{} Found {} type error(s):\n",
-        "✗".red().bold(),
-        errors.len().to_string().yellow()
-    );
-
-    for (idx, error_info) in errors.iter().enumerate() {
-        let span = &error_info.span;
-        println!(
-            "{} {}: {} {}",
-            format!("Error {}", idx + 1).red().bold(),
-            error_info.error.to_string().bright_red(),
-            "at".dimmed(),
-            format!("line {}, col {}", span.line, span.col).cyan()
-        );
-        println!(
-            "  {} {}:{}:{}",
-            "-->".blue().bold(),
-            file_path.display(),
-            span.line.to_string().cyan(),
-            span.col.to_string().cyan()
-        );
-
-        if span.line > 0 && span.line <= lines.len() {
-            let line_content = lines[span.line - 1];
-            println!("   {}", "|".blue());
-            println!(
-                "{} {} {}",
-                span.line.to_string().cyan().bold(),
-                "|".blue(),
-                line_content
-            );
-            println!(
-                "   {} {}{}",
-                "|".blue(),
-                " ".repeat(span.col.saturating_sub(1)),
-                "^".red().bold()
-            );
-        }
-        println!();
+pub fn format_diagnostics(
+    diagnostics: &[DiagnosticMessage], source: &str, file: Option<&Path>, format: OutputFormat,
+) -> Result<()> {
+    match format {
+        OutputFormat::Human => format_diagnostics_human(diagnostics, source, file),
+        OutputFormat::Json => format_diagnostics_json(diagnostics),
+        OutputFormat::Compact => format_diagnostics_compact(diagnostics, file),
     }
 }
 
-#[cfg(test)]
-pub fn format_json(errors: &[TypeErrorInfo]) -> Result<()> {
-    let json_errors: Vec<_> = errors
-        .iter()
-        .map(|e| {
-            json!({
-                "error": e.error.to_string(),
-                "line": e.span.line,
-                "col": e.span.col,
-                "end_line": e.span.end_line,
-                "end_col": e.span.end_col,
-            })
-        })
-        .collect();
+pub fn format_analysis_lsp_output(
+    extras: &cfg::AnalysisExtras, diagnostics: &[CliDiagnostic], failed_files: &[(PathBuf, String)],
+    format: OutputFormat,
+) -> Result<()> {
+    if extras.is_empty() {
+        return format_lsp_diagnostics(diagnostics, failed_files, format);
+    }
 
-    let output = json!({
-        "errors": json_errors,
-        "error_count": errors.len(),
+    match format {
+        OutputFormat::Human => {
+            extras.format_human();
+            format_lsp_diagnostics(diagnostics, failed_files, format)
+        }
+        OutputFormat::Json => {
+            let output = json!({
+                "schema_version": 1,
+                "cfg": extras.cfg_json(),
+                "inferred_types": extras.inferred_types_json(),
+                "diagnostics": lsp_diagnostics_json(diagnostics),
+                "failures": failures_json(failed_files),
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+            Ok(())
+        }
+        OutputFormat::Compact => {
+            extras.format_compact();
+            format_lsp_diagnostics(diagnostics, failed_files, format)
+        }
+    }
+}
+
+pub fn format_analysis_local_output(
+    extras: &cfg::AnalysisExtras, diagnostics: &[DiagnosticMessage], source: &str, file: Option<&Path>,
+    format: OutputFormat,
+) -> Result<()> {
+    if extras.is_empty() {
+        return format_diagnostics(diagnostics, source, file, format);
+    }
+
+    match format {
+        OutputFormat::Human => {
+            extras.format_human();
+            format_diagnostics(diagnostics, source, file, format)
+        }
+        OutputFormat::Json => {
+            let output = json!({
+                "schema_version": 1,
+                "cfg": extras.cfg_json(),
+                "inferred_types": extras.inferred_types_json(),
+                "diagnostics": diagnostics,
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+            Ok(())
+        }
+        OutputFormat::Compact => {
+            extras.format_compact();
+            format_diagnostics(diagnostics, source, file, format)
+        }
+    }
+}
+
+fn lsp_diagnostics_json(diagnostics: &[CliDiagnostic]) -> Vec<serde_json::Value> {
+    let mut diagnostics = diagnostics.to_vec();
+    diagnostics.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.2.range.start.line.cmp(&b.2.range.start.line))
+            .then_with(|| a.2.range.start.character.cmp(&b.2.range.start.character))
     });
 
-    println!("{}", serde_json::to_string_pretty(&output)?);
+    diagnostics
+        .iter()
+        .map(|(file, _source, diagnostic)| {
+            let code = match &diagnostic.code {
+                Some(NumberOrString::String(code)) => code.clone(),
+                Some(NumberOrString::Number(code)) => code.to_string(),
+                None => "unknown".to_string(),
+            };
+
+            json!({
+                "file": file,
+                "code": code,
+                "severity": lsp_severity_name(diagnostic.severity),
+                "message": diagnostic.message,
+                "span": {
+                    "start": lsp_position_json(diagnostic.range.start),
+                    "end": lsp_position_json(diagnostic.range.end),
+                },
+                "tags": diagnostic.tags.as_deref().unwrap_or(&[]).iter().map(lsp_tag_name).collect::<Vec<_>>(),
+            })
+        })
+        .collect()
+}
+
+fn failures_json(failed_files: &[(PathBuf, String)]) -> Vec<serde_json::Value> {
+    failed_files
+        .iter()
+        .map(|(file, message)| {
+            json!({
+                "file": file,
+                "error": message,
+            })
+        })
+        .collect()
+}
+
+fn lsp_position_json(position: Position) -> serde_json::Value {
+    json!({
+        "line": position.line + 1,
+        "col": position.character + 1,
+    })
+}
+
+fn lsp_severity_name(severity: Option<DiagnosticSeverity>) -> &'static str {
+    match severity {
+        Some(DiagnosticSeverity::ERROR) => "error",
+        Some(DiagnosticSeverity::WARNING) => "warning",
+        Some(DiagnosticSeverity::INFORMATION) => "information",
+        Some(DiagnosticSeverity::HINT) => "hint",
+        _ => "information",
+    }
+}
+
+fn lsp_tag_name(tag: &DiagnosticTag) -> &'static str {
+    if *tag == DiagnosticTag::UNNECESSARY {
+        "unnecessary"
+    } else if *tag == DiagnosticTag::DEPRECATED {
+        "deprecated"
+    } else {
+        "unknown"
+    }
+}
+
+pub fn format_diagnostics_human(diagnostics: &[DiagnosticMessage], source: &str, file: Option<&Path>) -> Result<()> {
+    if diagnostics.is_empty() {
+        println!("{} No issues found", "✓".green().bold());
+        return Ok(());
+    }
+
+    let filename = file
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "stdin".to_string());
+    println!(
+        "{} {} issues found in {}",
+        "✗".red().bold(),
+        diagnostics.len(),
+        filename.cyan()
+    );
+    println!();
+
+    for diagnostic in diagnostics {
+        println!(
+            "{} {}:{}:{} [{}]",
+            "▸".bright_red(),
+            diagnostic.filename.cyan(),
+            diagnostic.line.to_string().yellow(),
+            diagnostic.col.to_string().yellow(),
+            diagnostic.rule.code().dimmed()
+        );
+        println!("  {}", diagnostic.message.bright_white());
+
+        let lines: Vec<&str> = source.lines().collect();
+        if diagnostic.line > 0 && diagnostic.line <= lines.len() {
+            let line = lines[diagnostic.line - 1];
+            println!("  {} {}", diagnostic.line.to_string().dimmed(), line.dimmed());
+            if diagnostic.col > 0 {
+                let spaces = " ".repeat(diagnostic.line.to_string().len() + diagnostic.col);
+                println!("  {}{}", spaces, "^".bright_red());
+            }
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
+pub fn format_diagnostics_json(diagnostics: &[DiagnosticMessage]) -> Result<()> {
+    let json_output = serde_json::to_string_pretty(&diagnostics)?;
+    println!("{json_output}");
+    Ok(())
+}
+
+pub fn format_diagnostics_compact(diagnostics: &[DiagnosticMessage], file: Option<&Path>) -> Result<()> {
+    let filename = file
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "stdin".to_string());
+
+    for diagnostic in diagnostics {
+        println!(
+            "{}:{}:{}: [{}] {}",
+            filename,
+            diagnostic.line,
+            diagnostic.col,
+            diagnostic.rule.code(),
+            diagnostic.message
+        );
+    }
+
     Ok(())
 }
 
 #[cfg(test)]
-pub fn format_compact(errors: &[TypeErrorInfo], file_path: &Path) {
-    for error_info in errors {
-        let span = &error_info.span;
-        println!(
-            "{}:{}:{}: {}",
-            file_path.display(),
-            span.line,
-            span.col,
-            error_info.error
-        );
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_diagnostics_json() {
+        let diagnostics = vec![];
+        let result = format_diagnostics_json(&diagnostics);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_format_diagnostics_compact() {
+        let diagnostics = vec![];
+        let result = format_diagnostics_compact(&diagnostics, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_format_diagnostics_human_no_errors() {
+        let diagnostics = vec![];
+        let source = "x = 42";
+        let result = format_diagnostics_human(&diagnostics, source, None);
+        assert!(result.is_ok());
     }
 }

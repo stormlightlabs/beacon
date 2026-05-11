@@ -139,6 +139,69 @@ fn workspace_fixture_cli_analyze_file_json_uses_lsp_diagnostics() {
 }
 
 #[test]
+fn workspace_fixture_cli_analyze_show_types_json_is_structured() {
+    let temp_file = write_temp_python("value: int = 1\nname: str = \"beacon\"\n");
+
+    let assert = cargo_bin_cmd!("beacon")
+        .arg("analyze")
+        .arg("--format")
+        .arg("json")
+        .arg("--show-types")
+        .arg("file")
+        .arg(temp_file.path())
+        .assert()
+        .success();
+
+    let stdout = &assert.get_output().stdout;
+    let output: serde_json::Value = serde_json::from_slice(stdout).expect("CLI output should be valid JSON");
+    assert_eq!(output["schema_version"], 1);
+    assert!(output["inferred_types"].as_array().unwrap().len() >= 2);
+    assert!(output["diagnostics"].as_array().unwrap().is_empty());
+    assert!(!String::from_utf8_lossy(stdout).contains("TODO"));
+}
+
+#[test]
+fn workspace_fixture_cli_analyze_show_cfg_compact_uses_cfg_blocks() {
+    let temp_file = write_temp_python(
+        "# beacon: mode=relaxed\ndef choose(flag: bool) -> int:\n    if flag:\n        return 1\n    return 0\n",
+    );
+
+    let assert = cargo_bin_cmd!("beacon")
+        .arg("analyze")
+        .arg("--format")
+        .arg("compact")
+        .arg("--show-cfg")
+        .arg("file")
+        .arg(temp_file.path())
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(stdout.contains("cfg:"));
+    assert!(stdout.contains("cfg-block:"));
+    assert!(!stdout.contains("TODO"));
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn workspace_fixture_cli_debug_unify_prints_trace() {
+    let temp_file = write_temp_python("value: int = 1\n");
+
+    let assert = cargo_bin_cmd!("beacon")
+        .arg("debug")
+        .arg("unify")
+        .arg(temp_file.path())
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(stdout.contains("Unification trace"));
+    assert!(stdout.contains("generated constraints and invoked solver"));
+    assert!(stdout.contains("Unification completed"));
+    assert!(!stdout.contains("TODO"));
+}
+
+#[test]
 fn workspace_fixture_cli_analyze_suppressions_fixture_has_no_diagnostics() {
     cargo_bin_cmd!("beacon")
         .arg("analyze")
