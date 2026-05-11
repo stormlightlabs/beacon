@@ -33,7 +33,7 @@
 - [ ] Add config assertions for `beacon.toml`, `pyproject.toml`, editor
   settings, and file mode directives.
 - [ ] Ensure strict/balanced/relaxed modes change severity predictably.
-- [ ] Remove, implement, or hide placeholder v1-path CLI output:
+- [ ] Implement placeholder v1-path CLI output:
     - unification trace
     - CFG visualization
     - inferred type display
