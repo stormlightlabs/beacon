@@ -2,8 +2,13 @@
 //!
 //! Validates pattern type compatibility and structure during constraint solving.
 
+use crate::pattern_compat::{
+    class_pattern_matches_type, extract_tuple_arity, is_mapping_type, is_open_subject_type, is_sequence_type,
+    literal_pattern_type, types_could_match,
+};
+
 use beacon_core::{ClassRegistry, Type, TypeCtor, TypeError};
-use beacon_parser::{AstNode, LiteralValue, Pattern};
+use beacon_parser::{AstNode, Pattern};
 
 /// Validate that a pattern is type-compatible with the subject type
 ///
@@ -39,16 +44,8 @@ fn validate_literal_pattern_type(literal: &AstNode, subject_type: &Type) -> Resu
         return Ok(());
     }
 
-    let pattern_type = match literal {
-        AstNode::Literal { value, .. } => match value {
-            LiteralValue::Integer(_) => Type::int(),
-            LiteralValue::Float(_) => Type::float(),
-            LiteralValue::String { .. } => Type::string(),
-            LiteralValue::Boolean(_) => Type::bool(),
-            LiteralValue::None => Type::none(),
-        },
-        AstNode::Identifier { .. } => return Ok(()),
-        _ => return Ok(()),
+    let Some(pattern_type) = literal_pattern_type(literal) else {
+        return Ok(());
     };
 
     if !types_could_match(&pattern_type, subject_type) {
@@ -94,28 +91,6 @@ fn validate_class_pattern_type(
             pattern_type: format!("class {cls}"),
             subject_type: subject_type.to_string(),
         }),
-    }
-}
-
-/// Check if a class pattern matches a given type
-///
-/// Handles both built-in types (int, str, bool, float) and user-defined classes.
-///
-/// Python-specific semantics:
-/// - bool is a subtype of int, so `case int():` matches bool values
-/// - However, `case bool():` only matches bool, not all ints
-/// - User-defined classes support inheritance checking via the class registry
-fn class_pattern_matches_type(cls: &str, ty: &Type, class_registry: &ClassRegistry) -> bool {
-    match (cls, ty) {
-        ("int", Type::Con(TypeCtor::Int))
-        | ("int", Type::Con(TypeCtor::Bool))
-        | ("str", Type::Con(TypeCtor::String))
-        | ("bool", Type::Con(TypeCtor::Bool))
-        | ("float", Type::Con(TypeCtor::Float)) => true,
-        (pattern_class, Type::Con(TypeCtor::Class(subject_class))) => {
-            pattern_class == subject_class || class_registry.is_subclass_of(subject_class, pattern_class)
-        }
-        _ => false,
     }
 }
 
@@ -169,48 +144,6 @@ fn validate_sequence_pattern_type(subject_type: &Type) -> Result<(), TypeError> 
     }
 }
 
-fn is_open_subject_type(subject_type: &Type) -> bool {
-    match subject_type {
-        Type::Con(TypeCtor::Any) | Type::Con(TypeCtor::Top) => true,
-        Type::Con(TypeCtor::Class(class_name)) if class_name == "object" => true,
-        _ => false,
-    }
-}
-
-/// Check if two types could potentially unify
-fn types_could_match(pattern_type: &Type, subject_type: &Type) -> bool {
-    match (pattern_type, subject_type) {
-        // Type variables can match anything
-        (Type::Var(_), _) | (_, Type::Var(_)) => true,
-        // Same concrete types match
-        (Type::Con(a), Type::Con(b)) => a == b,
-        // Union types - pattern must match at least one variant
-        (pt, Type::Union(variants)) => variants.iter().any(|v| types_could_match(pt, v)),
-        // Type applications - check structural compatibility
-        (Type::App(a_ctor, _), Type::App(b_ctor, _)) => types_could_match(a_ctor, b_ctor),
-        // Default: conservative - allow it
-        _ => true,
-    }
-}
-
-/// Check if a type is a sequence type (list, tuple, etc.)
-fn is_sequence_type(ty: &Type) -> bool {
-    match ty {
-        Type::App(ctor, _) => matches!(ctor.as_ref(), Type::Con(TypeCtor::List) | Type::Con(TypeCtor::Tuple)),
-        _ => false,
-    }
-}
-
-/// Check if a type is a mapping type (dict, etc.)
-fn is_mapping_type(ty: &Type) -> bool {
-    match ty {
-        Type::App(inner, _) => {
-            matches!(inner.as_ref(), Type::App(ctor, _) if matches!(ctor.as_ref(), Type::Con(TypeCtor::Dict)))
-        }
-        _ => false,
-    }
-}
-
 /// Validate pattern structure compatibility with subject type
 ///
 /// TODO: Add validation for sequences where we can infer constraints.
@@ -230,16 +163,6 @@ pub fn validate_pattern_structure(pattern: &Pattern, subject_type: &Type) -> Res
             Ok(())
         }
         _ => Ok(()),
-    }
-}
-
-/// Extract tuple arity if the type is a concrete heterogeneous tuple with known length
-fn extract_tuple_arity(ty: &Type) -> Option<usize> {
-    match ty {
-        // Heterogeneous tuple: tuple[T1, T2, ..., Tn] - has known arity
-        Type::Tuple(types) => Some(types.len()),
-        // Homogeneous tuple: tuple[T] - arbitrary length, no known arity
-        _ => None,
     }
 }
 

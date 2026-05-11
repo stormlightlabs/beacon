@@ -61,14 +61,14 @@ Keep behavior stable while reducing the analyzer crate's internal coupling. The 
 
 Keep solver behavior stable while moving the main pieces into smaller modules. The crate has strong tests, but `solver.rs` and `lib.rs` carry enough policy that v1 checker work will be hard to review in place.
 
-- [ ] Split `solver.rs` into solve loop, equality/unification handling, call handling, attribute handling, protocol/variance checks, generator compatibility, pattern constraints, and error recovery.
-- [ ] Move `Constraint`, `ConstraintSet`, `ConstraintResult`, `Span`, `TypeErrorInfo`, and type guard metadata into focused model modules.
-- [ ] Move `ControlFlowContext`, `TypeSetTracker`, and narrowing scope tracking out of `lib.rs`.
-- [ ] Decide whether `Constraint::Narrowing` should affect solver output or stay as analyzer-side state, then update tests to assert that contract.
-- [ ] Deduplicate pattern/class compatibility helpers across `pattern.rs`, `pattern_validation.rs`, `exhaustiveness.rs`, and `lib.rs`.
-- [ ] Keep protocol inheritance, variance, callable compatibility, generator/coroutine compatibility, and attribute lookup behavior covered by characterization tests before moving code.
-- [ ] Replace the `ConstraintSet` TODO with a concrete decision: keep crate-local constraint types or move shared forms into `beacon-core`.
-- [ ] Make `cargo clippy -p beacon-constraint --all-targets -- -D warnings` pass.
+- [x] Split `solver.rs` into solve loop, equality/unification handling, call handling, attribute handling, protocol/variance checks, generator compatibility, pattern constraints, and error recovery.
+- [x] Move `Constraint`, `ConstraintSet`, `ConstraintResult`, `Span`, `TypeErrorInfo`, and type guard metadata into focused model modules.
+- [x] Move `ControlFlowContext`, `TypeSetTracker`, and narrowing scope tracking out of `lib.rs`.
+- [x] Decide whether `Constraint::Narrowing` should affect solver output or stay as analyzer-side state, then update tests to assert that contract.
+- [x] Deduplicate pattern/class compatibility helpers across `pattern.rs`, `pattern_validation.rs`, `exhaustiveness.rs`, and `lib.rs`.
+- [x] Keep protocol inheritance, variance, callable compatibility, generator/coroutine compatibility, and attribute lookup behavior covered by characterization tests before moving code.
+- [x] Replace the `ConstraintSet` TODO with a concrete decision: keep crate-local constraint types or move shared forms into `beacon-core`.
+- [x] Make `cargo clippy -p beacon-constraint --all-targets -- -D warnings` pass.
 
 ## Milestone 5: Deduplicate Shared Analysis Mechanics
 

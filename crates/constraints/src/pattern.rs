@@ -1,4 +1,4 @@
-use crate::{is_dict_type, is_sequence_type, type_compatible_with_class};
+use crate::pattern_compat::{is_dict_type, is_sequence_type, type_compatible_with_class};
 
 use beacon_core::{Type, TypeCtor};
 use beacon_parser::Pattern;

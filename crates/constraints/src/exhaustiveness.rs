@@ -639,7 +639,7 @@ mod tests {
     #[test]
     fn test_literal_int_different_values() {
         let subject = Type::int();
-        let patterns = vec![int_pattern(1), int_pattern(2)];
+        let patterns = [int_pattern(1), int_pattern(2)];
         let coverage1 = compute_coverage(&patterns[0], &subject, &beacon_core::ClassRegistry::new());
         let coverage2 = compute_coverage(&patterns[1], &subject, &beacon_core::ClassRegistry::new());
 
