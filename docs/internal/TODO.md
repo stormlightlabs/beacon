@@ -49,7 +49,7 @@ Keep behavior stable while reducing the analyzer crate's internal coupling. The 
 - [x] Split `cfg.rs` into graph data structures, CFG building, call graph construction, call resolution, and workspace/module wrappers.
 - [x] Split `walker` by Python construct or analysis phase so type, import, class, function, call, match, and control-flow behavior are easier to test in isolation.
 - [x] Replace the production `todo!()` path in `walker/visitors.rs` with implemented behavior or an explicit diagnostic.
-- [x] Extract shared AST utilities for statement flattening, hoisted definitions, target names, use/def collection, call extraction, and source positions.
+- [x] Move the walker-specific AST helpers that were already repeated locally into `walker/ast_utils.rs`.
 - [x] Split `linter.rs` into a small dispatcher plus rule groups. Keep BEA codes, messages, suppressions, and spans stable.
 - [x] Split `loader.rs` into stub cache, TypeVar extraction, annotation conversion, and class/method registry loading.
 - [x] Remove string-based parsing of class bases in the stub loader where AST data can carry the same information.
@@ -70,7 +70,29 @@ Keep solver behavior stable while moving the main pieces into smaller modules. T
 - [ ] Replace the `ConstraintSet` TODO with a concrete decision: keep crate-local constraint types or move shared forms into `beacon-core`.
 - [ ] Make `cargo clippy -p beacon-constraint --all-targets -- -D warnings` pass.
 
-## Milestone 5: Write The V1 Contract As Tests
+## Milestone 5: Deduplicate Shared Analysis Mechanics
+
+The parser and analyzer refactors split large files into smaller modules, but several passes still duplicate AST traversal, source-position conversion, name extraction, and type/annotation handling. Consolidate the mechanics that are genuinely shared while preserving pass-specific semantics.
+
+Current duplication audit:
+
+- AST traversal shape is repeated across analyzer data flow, linter traversal, CFG call extraction, taint analysis, server workspace indexing, inlay hints, semantic tokens, and diagnostics. The pass-specific decisions are intentional; the mechanics of walking child statements, child expressions, and nested body blocks are not.
+- Source span and byte-offset conversion is repeated across parser resolve, analyzer CFG/data-flow, server analysis, diagnostics, and constraint error mapping. Different callers may need different fallbacks, but the core line/column-to-byte and node-position logic should not be copied.
+- Target and binding extraction is split across parser AST helpers, analyzer taint, analyzer loader, server diagnostics, and workspace symbol indexing. Pass-specific filtering is intentional; extracting binding names from the same AST shapes should be shared.
+- Annotation and type parsing has overlapping paths in core `AnnotationParser`, analyzer loader, analyzer walker utilities, server workspace parsing, and diagnostics. Stub-specific TypeVar context is legitimate, but generic annotation parsing and conversion should have one shared path.
+- Pattern and class compatibility logic overlaps across constraint pattern validation, exhaustiveness, solver logic, and analyzer pattern handling. Constraint-specific error reporting is intentional; shape compatibility and binding extraction should be shared.
+- Test code repeatedly hand-builds verbose `AstNode` values. Local test setup is fine, but common node shapes should use builders or fixtures.
+
+- [ ] Create shared AST traversal helpers that expose child statements, child expressions, and body blocks without forcing every analysis pass to duplicate large `match AstNode` walks.
+- [ ] Move source location helpers to a single public parser/core-facing API for line/column spans, byte offsets, and node positions; migrate analyzer, constraints, and server callers.
+- [ ] Consolidate target/binding extraction into parser AST helpers that cover identifiers, tuple/list destructuring, starred targets, attributes, subscripts, imports, `with` aliases, comprehensions, and pattern bindings.
+- [ ] Replace string-based comprehension target handling with AST-backed binding extraction where parser data can carry the original structure.
+- [ ] Reuse one annotation/type conversion path for stub loading and analysis-time annotations, with tests for TypeVars, bounds, constraints, unions, generics, callables, and qualified names.
+- [ ] Introduce test AST builders or fixture helpers for common node shapes so unit tests do not repeatedly hand-build verbose `AstNode` values.
+- [ ] Add duplication regression checks to the v1 gate once the shared helpers land, either through a lightweight local script or a documented manual audit if no Rust-aware tool is adopted.
+- [ ] Keep all moved helpers covered by behavior-preserving tests before deleting pass-local copies.
+
+## Milestone 6: Write The V1 Contract As Tests
 
 - [ ] Create one shared multi-file "v1 package" fixture used by parser, analyzer, CLI, and LSP tests.
 - [ ] Add expected diagnostics as structured assertions: code, severity, message fragment, span.
@@ -79,7 +101,7 @@ Keep solver behavior stable while moving the main pieces into smaller modules. T
 - [ ] Add config fixtures for `beacon.toml`, `pyproject.toml`, editor settings, and file mode directives.
 - [ ] Add tests for unsupported behavior that assert graceful fallback.
 
-## Milestone 6: Unify Diagnostics Across Frontends
+## Milestone 7: Unify Diagnostics Across Frontends
 
 - [ ] Confirm CLI `typecheck`, `analyze`, and `lint` use the same diagnostic provider as LSP wherever possible.
 - [ ] Remove, implement, or hide placeholder v1-path CLI output:
@@ -90,7 +112,7 @@ Keep solver behavior stable while moving the main pieces into smaller modules. T
 - [ ] Freeze the v1 diagnostic JSON shape.
 - [ ] Ensure strict/balanced/relaxed modes change severity predictably.
 
-## Milestone 7: Checker Reliability Pass
+## Milestone 8: Checker Reliability Pass
 
 - [ ] Audit value restriction/generalization behavior and add regression fixtures.
 - [ ] Add focused call-constraint tests for positional, keyword, defaulted, variadic, and bound receiver calls.
@@ -100,7 +122,7 @@ Keep solver behavior stable while moving the main pieces into smaller modules. T
 - [ ] Add async/generator/coroutine/context-manager fixtures that assert inferred types.
 - [ ] Review unification errors for actionable messages and source spans.
 
-## Milestone 8: Stubs And Workspace Reliability
+## Milestone 9: Stubs And Workspace Reliability
 
 - [ ] Add setup validation for absent or partially initialized `typeshed`.
 - [ ] Report embedded stub version/hash/count in a debug or version command.
@@ -109,7 +131,7 @@ Keep solver behavior stable while moving the main pieces into smaller modules. T
 - [ ] Verify dependency invalidation when an imported file, exported symbol, or stub changes.
 - [ ] Add workspace-wide reference/rename tests that include imports and re-exports.
 
-## Milestone 9: LSP And Editor Hardening
+## Milestone 10: LSP And Editor Hardening
 
 - [ ] Add version-safe diagnostics publishing tests.
 - [ ] Verify hover, completion, goto definition, references, rename, symbols, semantic tokens, and inlay hints against the v1 fixture.
@@ -120,7 +142,7 @@ Keep solver behavior stable while moving the main pieces into smaller modules. T
 - [ ] Confirm release logging omits source code, absolute paths, and symbol names by default.
 - [ ] Run manual QA in VS Code, Zed, and one generic LSP client.
 
-## Milestone 10: Dynamic Python And Product Surface
+## Milestone 11: Dynamic Python And Product Surface
 
 - [ ] Define supported fallback behavior for monkey-patching, metaclasses, `__getattr__`, custom import hooks, and reflection.
 - [ ] Add tests that assert when dynamic behavior resolves to a concrete type, emits a diagnostic, or falls back to `Any`/unknown.
@@ -128,7 +150,7 @@ Keep solver behavior stable while moving the main pieces into smaller modules. T
 - [ ] Add telemetry event tests for timing, cache behavior, crashes, and feature errors.
 - [ ] Add formatter config validation and editor formatting QA cases.
 
-## Milestone 11: Performance Gates
+## Milestone 12: Performance Gates
 
 - [ ] Define budgets for single-file checks, cold workspace indexing, incremental reanalysis, dependency fan-out, and memory.
 - [ ] Add benchmarks for those budgets.
