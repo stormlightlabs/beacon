@@ -4,7 +4,10 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Status - CI/CD](https://github.com/stormlightlabs/beacon/actions/workflows/ci.yml/badge.svg)
 
-Beacon is a Rust implementation of the language server protocol & a hindley-milner type system for Python, inspired by languages like F# & OCaml and the work of [Astral](https://astral.sh) & [BASED](https://docs.basedpyright.com/latest/) pyright.
+Beacon is a Rust implementation of the language server protocol & a
+hindley-milner type system for Python, inspired by languages like F#
+& OCaml and the work of [Astral](https://astral.sh) & [BASED](https://docs.basedpyright.com/latest/)
+pyright.
 
 ## Features
 
@@ -50,11 +53,13 @@ beacon lsp --tcp --host 127.0.0.1 --port 9350
 
 ## Quick Start
 
-See the [Development Quick Start Guide](./docs/src/development.md) for more detailed installation, usage, and editor setup instructions
+See the [Development Quick Start Guide](./docs/src/development.md) for more
+detailed installation, usage, and editor setup instructions
 
 ### Build & Run from Source
 
-Install the prerequisites listed in [CONTRIBUTING.md](./CONTRIBUTING.md#prerequisites), then clone the repo and bootstrap:
+Install the prerequisites listed in [CONTRIBUTING.md](./CONTRIBUTING.md#prerequisites),
+then clone the repo and bootstrap:
 
 ```sh
 git clone https://github.com/stormlightlabs/beacon
@@ -65,13 +70,12 @@ Use cargo or the `just` recipes to build (`just build`), then run directly
 
 ```sh
 # CLI
-cargo run -p beacon-cli -- typecheck samples/basic.py
+cargo run -p beacon-cli -- typecheck fixtures/workspace/app/dynamic.py
 # Language server (stdio mode)
 cargo run -p beacon-lsp -- --stdio
 ```
 
 ---
 
-Made with ⚡️ by Stormlight Labs.
-
-Stormlight Labs is just me, [Owais](https://github.com/desertthunder). Sponsor my work [here on github](https://github.com/sponsors/desertthunder)
+Made with ⚡️ by Stormlight Labs, which is just me, [Owais](https://github.com/desertthunder).
+Sponsor my work [here on github](https://github.com/sponsors/desertthunder)

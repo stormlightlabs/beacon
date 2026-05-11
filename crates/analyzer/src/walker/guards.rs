@@ -4,13 +4,11 @@
 //! from conditional expressions, enabling flow-sensitive typing where types are
 //! narrowed based on runtime checks like isinstance, None checks, and user-defined guards.
 
+use super::TypeEnvironment;
+use super::utils::type_name_to_type;
 use beacon_constraint::{TypeGuardInfo, TypeGuardKind, TypePredicate};
 use beacon_core::Type;
 use beacon_parser::{AstNode, CompareOperator, LiteralValue, UnaryOperator};
-
-use crate::TypeEnvironment;
-
-use super::utils::type_name_to_type;
 
 /// Detect type guard patterns for flow-sensitive type narrowing
 ///
@@ -35,7 +33,7 @@ pub fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<S
     }
 
     if let AstNode::Call { function, args, keywords, .. } = test
-        && function.function_to_string() == "isinstance"
+        && function.qualified_name().as_deref() == Some("isinstance")
         && args.len() == 2
         && keywords.is_empty()
         && let AstNode::Identifier { name: var_name, .. } = &args[0]
@@ -105,7 +103,7 @@ pub fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (
     }
 
     if let AstNode::Call { function, args, keywords, .. } = test
-        && function.function_to_string() == "isinstance"
+        && function.qualified_name().as_deref() == Some("isinstance")
         && args.len() == 2
         && keywords.is_empty()
         && let AstNode::Identifier { name: var_name, .. } = &args[0]
@@ -203,7 +201,7 @@ pub fn extract_type_predicate(test: &AstNode, env: &TypeEnvironment) -> Option<T
         }
 
         AstNode::Call { function, args, keywords, .. }
-            if function.function_to_string() == "isinstance" && args.len() == 2 && keywords.is_empty() =>
+            if function.qualified_name().as_deref() == Some("isinstance") && args.len() == 2 && keywords.is_empty() =>
         {
             let target_type = match &args[1] {
                 AstNode::Identifier { name: type_name, .. } => Some(type_name_to_type(type_name)),
@@ -233,7 +231,8 @@ pub fn extract_type_predicate(test: &AstNode, env: &TypeEnvironment) -> Option<T
             Some(TypePredicate::IsInstance(target_type))
         }
         AstNode::Call { function, args, .. } if !args.is_empty() => {
-            if let Some(guard_info) = env.get_type_guard(&function.function_to_string())
+            if let Some(function_name) = function.qualified_name()
+                && let Some(guard_info) = env.get_type_guard(&function_name)
                 && args.len() > guard_info.param_index
             {
                 return Some(TypePredicate::UserDefinedGuard(guard_info.guarded_type.clone()));

@@ -8,9 +8,11 @@
       "runtimeExecutable": "${execPath}",
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}/pkg/vscode",
-        "${workspaceFolder}/samples"
+        "${workspaceFolder}/fixtures"
       ],
-      "outFiles": ["${workspaceFolder}/pkg/vscode/client/out/**/*.js"],
+      "outFiles": [
+        "${workspaceFolder}/pkg/vscode/client/out/**/*.js"
+      ],
       "autoAttachChildProcesses": true,
       "preLaunchTask": "build extension"
     },
@@ -21,9 +23,11 @@
       "runtimeExecutable": "${execPath}",
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}/pkg/vscode",
-        "${workspaceFolder}/samples"
+        "${workspaceFolder}/fixtures"
       ],
-      "outFiles": ["${workspaceFolder}/pkg/vscode/client/out/**/*.js"],
+      "outFiles": [
+        "${workspaceFolder}/pkg/vscode/client/out/**/*.js"
+      ],
       "autoAttachChildProcesses": true,
       "preLaunchTask": "pnpm: watch"
     }

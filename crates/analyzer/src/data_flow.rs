@@ -593,17 +593,17 @@ impl<'a> DataFlowAnalyzer<'a> {
         match stmt {
             AstNode::Assignment { target, value, .. } => {
                 Self::collect_uses(value, &mut uses);
-                defs.extend(target.extract_target_names());
+                defs.extend(target.binding_names());
             }
             AstNode::AnnotatedAssignment { target, value, .. } => {
                 if let Some(val) = value {
                     Self::collect_uses(val, &mut uses);
                 }
-                defs.extend(target.extract_target_names());
+                defs.extend(target.binding_names());
             }
             AstNode::For { target, iter, .. } => {
                 Self::collect_uses(iter, &mut uses);
-                defs.extend(target.extract_target_names());
+                defs.extend(target.binding_names());
             }
             AstNode::NamedExpr { target, value, .. } => {
                 Self::collect_uses(value, &mut uses);
@@ -773,18 +773,18 @@ impl<'a> DataFlowAnalyzer<'a> {
         match stmt {
             AstNode::Assignment { target, value, .. } => {
                 let const_value = self.evaluate_to_constant(value, constants);
-                for name in target.extract_target_names() {
+                for name in target.binding_names() {
                     constants.insert(name, const_value.clone());
                 }
             }
             AstNode::AnnotatedAssignment { target, value: Some(val), .. } => {
                 let const_value = self.evaluate_to_constant(val, constants);
-                for name in target.extract_target_names() {
+                for name in target.binding_names() {
                     constants.insert(name, const_value.clone());
                 }
             }
             AstNode::For { target, .. } => {
-                for name in target.extract_target_names() {
+                for name in target.binding_names() {
                     constants.insert(name, ConstantValue::Unknown);
                 }
             }

@@ -13,7 +13,8 @@ Thanks for helping make Beacon better! This document walks through the expectati
 - **Bug reports** – include version, platform, Python sample, expected vs. actual behaviour, and logs/diagnostics (`beacon-cli … --format json` helps).
 - **Feature proposals/requests** – outline the problem and why it belongs in Beacon.
 - **Code contributions** – improvements across Rust crates (`crates/*`), the CLI, LSP server, or editor packages in `pkg/`.
-- **Docs & samples** – expand `docs/src`, add walkthroughs, or provide new programs under `samples/` that highlight tricky typing scenarios.
+- **Docs & fixtures** – expand `docs/src`, add walkthroughs, or provide new
+  programs under `fixtures/workspace/` that highlight tricky typing scenarios.
 
 ### Filing issues
 
@@ -149,8 +150,10 @@ See [docs](./docs/src/lsp/logging.md)
 - [ ] Discussed large design changes beforehand.
 - [ ] Code builds (`cargo build --workspace`) and tests pass (`cargo test --workspace`).
 - [ ] `cargo fmt`, `cargo clippy`, and any editor-package lints all succeed.
-- [ ] Added or updated tests plus documentation (README snippets, docs, samples) when behaviour changes.
-- [ ] Included reproduction steps or sample programs for bug fixes under `samples/` when helpful.
+- [ ] Added or updated tests plus documentation (README snippets, docs,
+  fixtures) when behaviour changes.
+- [ ] Included reproduction steps or fixture programs for bug fixes under
+  `fixtures/workspace/` when helpful.
 - [ ] Confirmed `pnpm lint`, `pnpm compile`, and `mdbook build docs` (if touched) pass.
 - [ ] Verified that generated files (coverage artifacts, target/, node_modules/) are not committed.
 

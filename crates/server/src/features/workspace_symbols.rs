@@ -4,7 +4,6 @@
 
 use crate::document::DocumentManager;
 use crate::workspace::Workspace;
-
 use beacon_parser::{AstNode, SymbolKind, SymbolTable};
 use lsp_types::{
     Location, OneOf, Position, Range, SymbolInformation, SymbolKind as LspSymbolKind, SymbolTag, Url, WorkspaceSymbol,
@@ -189,7 +188,7 @@ impl WorkspaceSymbolsProvider {
                 }
             }
             AstNode::Assignment { target, value, line, col, .. } => {
-                let target_str = target.target_to_string();
+                let target_str = target.target_display();
                 if target_str == symbol_name {
                     let position =
                         Position { line: (*line as u32).saturating_sub(1), character: (*col as u32).saturating_sub(1) };
@@ -278,7 +277,7 @@ impl WorkspaceSymbolsProvider {
                 }
             }
             AstNode::Assignment { target, value, line, col, .. } => {
-                let target_str = target.target_to_string();
+                let target_str = target.target_display();
                 if query.is_empty() || target_str.to_lowercase().contains(query) {
                     let symbol_kind = symbol_table
                         .lookup_symbol(&target_str, symbol_table.root_scope)

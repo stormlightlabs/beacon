@@ -1375,7 +1375,7 @@ fn test_for_loop_list_target() {
 }
 
 #[test]
-fn test_for_loop_target_to_string() {
+fn test_for_loop_target_display() {
     let mut parser = PythonParser::new().unwrap();
 
     let source = "for x in items:\n    pass";
@@ -1383,7 +1383,7 @@ fn test_for_loop_target_to_string() {
     match parser.to_ast(&parsed).unwrap() {
         AstNode::Module { body, .. } => match &body[0] {
             AstNode::For { target, .. } => {
-                assert_eq!(target.target_to_string(), "x");
+                assert_eq!(target.target_display(), "x");
             }
             _ => panic!("Expected For node"),
         },
@@ -1395,7 +1395,7 @@ fn test_for_loop_target_to_string() {
     match parser.to_ast(&parsed).unwrap() {
         AstNode::Module { body, .. } => match &body[0] {
             AstNode::For { target, .. } => {
-                assert_eq!(target.target_to_string(), "x, y");
+                assert_eq!(target.target_display(), "x, y");
             }
             _ => panic!("Expected For node"),
         },
@@ -1407,7 +1407,7 @@ fn test_for_loop_target_to_string() {
     match parser.to_ast(&parsed).unwrap() {
         AstNode::Module { body, .. } => match &body[0] {
             AstNode::For { target, .. } => {
-                assert_eq!(target.target_to_string(), "[a, b]");
+                assert_eq!(target.target_display(), "[a, b]");
             }
             _ => panic!("Expected For node"),
         },
@@ -1424,7 +1424,7 @@ fn test_for_loop_target_extract_names() {
     match parser.to_ast(&parsed).unwrap() {
         AstNode::Module { body, .. } => match &body[0] {
             AstNode::For { target, .. } => {
-                let names = target.extract_target_names();
+                let names = target.binding_names();
                 assert_eq!(names, vec!["x"]);
             }
             _ => panic!("Expected For node"),
@@ -1437,7 +1437,7 @@ fn test_for_loop_target_extract_names() {
     match parser.to_ast(&parsed).unwrap() {
         AstNode::Module { body, .. } => match &body[0] {
             AstNode::For { target, .. } => {
-                let names = target.extract_target_names();
+                let names = target.binding_names();
                 assert_eq!(names, vec!["x", "y", "z"]);
             }
             _ => panic!("Expected For node"),
@@ -1450,7 +1450,7 @@ fn test_for_loop_target_extract_names() {
     match parser.to_ast(&parsed).unwrap() {
         AstNode::Module { body, .. } => match &body[0] {
             AstNode::For { target, .. } => {
-                let names = target.extract_target_names();
+                let names = target.binding_names();
                 assert_eq!(names, vec!["a", "b"]);
             }
             _ => panic!("Expected For node"),

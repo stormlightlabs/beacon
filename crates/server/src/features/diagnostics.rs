@@ -7,7 +7,6 @@ use crate::document::DocumentManager;
 use crate::features::completion::algorithms::{FuzzyMatcher, StringSimilarity};
 use crate::parser::{self, ParseError};
 use crate::workspace::Workspace;
-
 use beacon_constraint::Span;
 use beacon_core::BeaconError;
 use beacon_core::TypeError;
@@ -697,8 +696,9 @@ impl DiagnosticProvider {
 
     fn is_typevar_assignment(value: &AstNode) -> bool {
         if let AstNode::Call { function, .. } = value {
-            let func_name = function.function_to_string();
-            func_name == "TypeVar" || func_name.ends_with(".TypeVar")
+            function
+                .qualified_name()
+                .is_some_and(|func_name| func_name == "TypeVar" || func_name.ends_with(".TypeVar"))
         } else {
             false
         }
@@ -1894,7 +1894,7 @@ impl DiagnosticProvider {
                 }
             }
             AstNode::Assignment { target, value, line, col, .. } => {
-                let target_name = target.target_to_string();
+                let target_name = target.target_display();
                 if target_name == "__all__"
                     && let AstNode::List { elements, .. } = value.as_ref()
                 {
@@ -2220,13 +2220,13 @@ impl DiagnosticProvider {
                         defined_symbols.insert(name.clone());
                     }
                     AstNode::Assignment { target, .. } => {
-                        let target_name = target.target_to_string();
+                        let target_name = target.target_display();
                         if !target_name.is_empty() && target_name != "__all__" {
                             defined_symbols.insert(target_name);
                         }
                     }
                     AstNode::AnnotatedAssignment { target, .. } => {
-                        let target_name = target.target_to_string();
+                        let target_name = target.target_display();
                         if !target_name.is_empty() {
                             defined_symbols.insert(target_name);
                         }
@@ -2237,7 +2237,7 @@ impl DiagnosticProvider {
 
             for stmt in body {
                 if let AstNode::Assignment { target, value, line, col, .. } = stmt {
-                    let target_name = target.target_to_string();
+                    let target_name = target.target_display();
                     if target_name == "__all__"
                         && let AstNode::List { elements, .. } = value.as_ref()
                     {

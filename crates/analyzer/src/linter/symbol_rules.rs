@@ -10,7 +10,7 @@ impl<'a> Linter<'a> {
             AstNode::Module { body, .. } => {
                 for stmt in body {
                     if let AstNode::Assignment { target, value, .. } = stmt {
-                        let target_name = target.target_to_string();
+                        let target_name = target.target_display();
                         if target_name == "__all__" {
                             return Self::extract_list_literals(value);
                         }

@@ -87,7 +87,7 @@ cargo build -p beacon-lsp --release    # release binary
 1. Open `pkg/vscode` in VS Code.
 2. Select the **Run and Debug** panel and choose the **Beacon LSP** launch configuration (provided in `.vscode/launch.json`).
 3. Press **F5** to start the Extension Development Host.
-4. In the new window, open a Python file (the repository’s `samples/` directory is a good starting point).
+4. In the new window, open a Python file from `fixtures/workspace/`.
 
 The launch configuration compiles the TypeScript client and relies on the previously built Rust binary.
 In debug mode, `RUST_LOG=beacon_lsp=debug` is set automatically so server logs appear in the “Beacon LSP” output channel.
@@ -99,8 +99,8 @@ All settings are under the `beacon.*` namespace and can be configured per-worksp
 
 ### Type Checking
 
-| Setting                    | Type     | Default      | Description                                                      |
-| -------------------------- | -------- | ------------ | ---------------------------------------------------------------- |
+| Setting                    | Type     | Default      | Description                                                        |
+| -------------------------- | -------- | ------------ | ------------------------------------------------------------------ |
 | `beacon.typeChecking.mode` | `string` | `"balanced"` | Type checking strictness: `"strict"`, `"balanced"`, or `"relaxed"` |
 
 ### Inlay Hints

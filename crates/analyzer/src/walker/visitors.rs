@@ -428,7 +428,7 @@ pub fn visit_call(
 ) -> Result<Type> {
     match node {
         AstNode::Call { function, args, keywords, line, col, end_line, end_col, .. } => {
-            let function_name = function.function_to_string();
+            let function_name = function.qualified_name().unwrap_or_default();
             let is_enumerate_call = function_name == "enumerate";
             let func_ty = if function_name.contains('.') {
                 if let Some(last_dot_idx) = function_name.rfind('.') {
@@ -774,7 +774,7 @@ pub fn visit_for(
             ctx.constraints
                 .push(Constraint::Protocol(iter_ty, protocol, element_ty.clone(), span));
 
-            for var_name in target.extract_target_names() {
+            for var_name in target.binding_names() {
                 env.bind(var_name, TypeScheme::mono(element_ty.clone()));
             }
 
@@ -910,12 +910,12 @@ pub fn visit_assignments(
     match node {
         AstNode::Assignment { target, value, line, col, end_line, end_col, .. } => {
             if let AstNode::Call { function, args, keywords, .. } = value.as_ref() {
-                let function_name = function.function_to_string();
+                let function_name = function.qualified_name().unwrap_or_default();
                 if function_name == "TypeVar" || function_name.ends_with(".TypeVar") {
                     let metadata = extract_typevar_metadata(args, keywords, env, ctx, stub_cache)?;
 
                     let type_var =
-                        TypeVar::with_variance(env.fresh_var().id, Some(target.target_to_string()), metadata.variance);
+                        TypeVar::with_variance(env.fresh_var().id, Some(target.target_display()), metadata.variance);
                     let type_var_ty = Type::Var(type_var.clone());
 
                     if let Some(bound) = metadata.bound {
@@ -925,7 +925,7 @@ pub fn visit_assignments(
                         ctx.typevar_registry.set_constraints(type_var.id, metadata.constraints);
                     }
 
-                    for name in target.extract_target_names() {
+                    for name in target.binding_names() {
                         env.bind(name, TypeScheme::mono(type_var_ty.clone()));
                     }
                     ctx.record_type_with_end(*line, *col, *end_line, *end_col, type_var_ty.clone());
@@ -934,7 +934,7 @@ pub fn visit_assignments(
             }
 
             let value_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
-            for name in target.extract_target_names() {
+            for name in target.binding_names() {
                 env.bind(name, TypeScheme::mono(value_ty.clone()));
             }
             ctx.record_type_with_end(*line, *col, *end_line, *end_col, value_ty.clone());
@@ -948,7 +948,7 @@ pub fn visit_assignments(
                 ctx.constraints
                     .push(Constraint::Equal(value_ty, annotated_ty.clone(), span));
             }
-            for name in target.extract_target_names() {
+            for name in target.binding_names() {
                 env.bind(name, TypeScheme::mono(annotated_ty.clone()));
             }
             ctx.record_type_with_end(*line, *col, *end_line, *end_col, annotated_ty.clone());

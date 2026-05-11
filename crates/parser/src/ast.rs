@@ -458,9 +458,7 @@ pub struct WithItem {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Comprehension {
-    pub target: String,
-    #[cfg_attr(feature = "serde", serde(default, skip_serializing_if = "Option::is_none"))]
-    pub target_node: Option<Box<AstNode>>,
+    pub target: Box<AstNode>,
     pub iter: AstNode,
     pub ifs: Vec<AstNode>,
 }
@@ -733,92 +731,71 @@ impl AstNode {
         }
     }
 
-    /// Extract variable names from an assignment target
+    /// Extract names introduced by an assignment-like target.
     ///
     /// This helper extracts all identifier names that will be bound by an assignment.
-    /// For simple identifiers, returns a vec with one name. For tuple/list unpacking,
-    /// returns all names. For starred expressions, includes the starred variable.
-    /// For attribute access or subscripts, returns empty vec (no new variables bound).
-    pub fn extract_target_names(&self) -> Vec<String> {
+    /// - For simple identifiers, returns a vec with one name.
+    /// - For tuple/list unpacking, returns all names.
+    /// - For starred expressions, includes the starred variable.
+    /// - For attribute access or subscripts, returns empty vec (no new variables bound).
+    pub fn binding_names(&self) -> Vec<String> {
         match self {
             AstNode::Identifier { name, .. } => vec![name.clone()],
             AstNode::Tuple { elements, .. } | AstNode::List { elements, .. } => {
-                elements.iter().flat_map(|e| e.extract_target_names()).collect()
+                elements.iter().flat_map(|e| e.binding_names()).collect()
             }
-            AstNode::Starred { value, .. } => value.extract_target_names(),
+            AstNode::Starred { value, .. } => value.binding_names(),
             AstNode::Attribute { .. } | AstNode::Subscript { .. } => Vec::new(),
             _ => Vec::new(),
         }
     }
 
-    /// Extract names introduced by an assignment-like target.
-    pub fn binding_names(&self) -> Vec<String> {
-        self.extract_target_names()
-    }
-
-    /// Convert assignment target to a string representation
-    ///
-    /// This is a compatibility helper for code that expects string targets.
-    /// For simple identifiers, returns the name. For complex patterns, returns
-    /// a formatted representation.
-    pub fn target_to_string(&self) -> String {
+    /// Return a display string for an assignment-like target.
+    pub fn target_display(&self) -> String {
         match self {
             AstNode::Identifier { name, .. } => name.clone(),
             AstNode::Tuple { elements, is_parenthesized, .. } => {
-                let names: Vec<String> = elements.iter().map(|e| e.target_to_string()).collect();
+                let names: Vec<String> = elements.iter().map(|e| e.target_display()).collect();
                 if *is_parenthesized { format!("({})", names.join(", ")) } else { names.join(", ") }
             }
             AstNode::List { elements, .. } => {
-                let names: Vec<String> = elements.iter().map(|e| e.target_to_string()).collect();
+                let names: Vec<String> = elements.iter().map(|e| e.target_display()).collect();
                 format!("[{}]", names.join(", "))
             }
-            AstNode::Starred { value, .. } => format!("*{}", value.target_to_string()),
+            AstNode::Starred { value, .. } => format!("*{}", value.target_display()),
             AstNode::Attribute { object, attribute, .. } => {
-                format!("{}.{}", object.target_to_string(), attribute)
+                format!("{}.{}", object.target_display(), attribute)
             }
             AstNode::Subscript { value, slice, .. } => {
-                format!("{}[{}]", value.target_to_string(), slice.target_to_string())
+                format!("{}[{}]", value.target_display(), slice.target_display())
             }
             _ => "<unknown>".to_string(),
         }
     }
 
-    /// Extract function name as a string from a call function node
-    ///
-    /// This is a compatibility helper for code that expects string function names.
-    /// For simple identifiers, returns the name. For attributes, returns the full
-    /// dotted path (e.g., "obj.method").
-    pub fn function_to_string(&self) -> String {
+    /// Return a dotted qualified name for identifier and attribute expressions.
+    pub fn qualified_name(&self) -> Option<String> {
         match self {
-            AstNode::Identifier { name, .. } => name.clone(),
-            AstNode::Attribute { object, attribute, .. } => {
-                format!("{}.{}", object.function_to_string(), attribute)
-            }
-            _ => "<unknown>".to_string(),
+            AstNode::Identifier { name, .. } => Some(name.clone()),
+            AstNode::Attribute { object, attribute, .. } => object
+                .qualified_name()
+                .map(|object_name| format!("{object_name}.{attribute}")),
+            _ => None,
         }
     }
 }
 
 impl Comprehension {
     pub fn target_names(&self) -> Vec<String> {
-        self.target_node
-            .as_deref()
-            .map(AstNode::binding_names)
-            .unwrap_or_else(|| split_target_names(&self.target))
+        self.target.binding_names()
     }
 
     pub fn target_display(&self) -> String {
-        self.target_node
-            .as_deref()
-            .map(AstNode::target_to_string)
-            .unwrap_or_else(|| self.target.clone())
+        self.target.target_display()
     }
 
     pub fn child_expressions(&self) -> Vec<&AstNode> {
-        let mut children = Vec::new();
-        if let Some(target_node) = self.target_node.as_deref() {
-            children.push(target_node);
-        }
+        let mut children = vec![self.target.as_ref()];
         children.push(&self.iter);
         children.extend(self.ifs.iter());
         children
@@ -856,19 +833,6 @@ impl Pattern {
     }
 }
 
-fn split_target_names(target: &str) -> Vec<String> {
-    target
-        .split(',')
-        .filter_map(|part| {
-            let name = part
-                .trim()
-                .trim_start_matches('*')
-                .trim_matches(|c| matches!(c, '(' | ')' | '[' | ']'));
-            (!name.is_empty() && name.chars().all(|c| c == '_' || c.is_alphanumeric())).then(|| name.to_string())
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -889,17 +853,16 @@ mod tests {
     }
 
     #[test]
-    fn comprehension_uses_structured_target_when_available() {
+    fn comprehension_uses_structured_target() {
         let generator = Comprehension {
-            target: "x, y".to_string(),
-            target_node: Some(Box::new(AstNode::Tuple {
+            target: Box::new(AstNode::Tuple {
                 elements: vec![test_builders::ident("x"), test_builders::ident("y")],
                 is_parenthesized: false,
                 line: 1,
                 col: 1,
                 end_line: 1,
                 end_col: 5,
-            })),
+            }),
             iter: test_builders::ident("items"),
             ifs: Vec::new(),
         };

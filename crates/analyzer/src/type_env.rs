@@ -15,7 +15,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Type environment for a module
 ///
-/// Maps identifiers to their type schemes, allowing polymorphic types to be instantiated with fresh type variables when looked up.
+/// Maps identifiers to their type schemes, allowing polymorphic types
+/// to be instantiated with fresh type variables when looked up.
 #[derive(Debug, Clone)]
 pub struct TypeEnvironment {
     /// Symbol name → Type scheme
@@ -354,7 +355,7 @@ impl TypeEnvironment {
             }
             AstNode::AnnotatedAssignment { target, type_annotation, .. } => {
                 let ty = self.parse_annotation_or_any(type_annotation);
-                for name in target.extract_target_names() {
+                for name in target.binding_names() {
                     self.bind(name, TypeScheme::mono(ty.clone()));
                 }
             }

@@ -207,7 +207,7 @@ fn add_field_from_annotation(
     metadata: &mut ClassMetadata, ctx: &mut StubTypeContext, target: &AstNode, type_annotation: &str,
 ) {
     if let Some(attr_type) = parse_type_annotation(type_annotation, ctx) {
-        metadata.add_field(target.target_to_string(), attr_type);
+        metadata.add_field(target.target_display(), attr_type);
     }
 }
 

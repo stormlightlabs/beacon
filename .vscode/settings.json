@@ -1,34 +1,12 @@
 {
-  "[rust]": {
-    "editor.defaultFormatter": "rust-lang.rust-analyzer",
-    "editor.formatOnSave": true
-  },
-  "typescript.tsc.autoDetect": "off",
-  "typescript.preferences.quoteStyle": "single",
-  "editor.codeActionsOnSave": {
-    "source.fixAll.eslint": "explicit"
-  },
-  "[typescript]": {
-    "editor.formatOnSave": true,
-    "editor.defaultFormatter": "dprint.dprint"
-  },
-  "[javascript]": {
-    "editor.formatOnSave": true,
-    "editor.defaultFormatter": "dprint.dprint"
-  },
-  "[jsonc]": {
-    "editor.formatOnSave": true,
-    "editor.defaultFormatter": "vscode.json-language-features"
-  },
-  "[json]": {
-    "editor.formatOnSave": true,
-    "editor.defaultFormatter": "dprint.dprint"
-  },
-  "files.exclude": {
-    "**/node_modules": true,
-    "**/target": false
-  },
-  "markdownlint.config": {
-    "MD033": false
-  }
+  "[rust]": { "editor.defaultFormatter": "rust-lang.rust-analyzer", "editor.formatOnSave": true },
+  "js/ts.tsc.autoDetect": "off",
+  "js/ts.preferences.quoteStyle": "single",
+  "editor.codeActionsOnSave": { "source.fixAll.eslint": "explicit" },
+  "[typescript]": { "editor.formatOnSave": true, "editor.defaultFormatter": "dprint.dprint" },
+  "[javascript]": { "editor.formatOnSave": true, "editor.defaultFormatter": "dprint.dprint" },
+  "[jsonc]": { "editor.formatOnSave": true, "editor.defaultFormatter": "dprint.dprint" },
+  "[json]": { "editor.formatOnSave": true, "editor.defaultFormatter": "dprint.dprint" },
+  "files.exclude": { "**/node_modules": true, "**/target": false },
+  "markdownlint.config": { "MD033": false, "MD007": { "indent": 4 } }
 }
