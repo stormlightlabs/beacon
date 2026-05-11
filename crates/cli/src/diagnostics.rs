@@ -10,6 +10,16 @@ use owo_colors::OwoColorize;
 use serde_json::json;
 use std::path::PathBuf;
 
+pub type CliDiagnostic = (PathBuf, String, lsp_types::Diagnostic);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiagnosticFilter {
+    All,
+    Typecheck,
+    Lint,
+    DataFlow,
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum, Default)]
 pub enum OutputFormat {
     #[default]
@@ -20,7 +30,7 @@ pub enum OutputFormat {
 
 pub async fn run_workspace_diagnostics(
     paths: Vec<PathBuf>, workspace_root: Option<PathBuf>,
-) -> Result<(Vec<(PathBuf, String, lsp_types::Diagnostic)>, Vec<(PathBuf, String)>)> {
+) -> Result<(Vec<CliDiagnostic>, Vec<(PathBuf, String)>)> {
     let files = helpers::discover_python_files(&paths)?;
     let files: Vec<PathBuf> = files.into_iter().filter_map(|p| p.canonicalize().ok()).collect();
 
@@ -79,8 +89,64 @@ pub async fn run_workspace_diagnostics(
     Ok((all_diagnostics, failed_files))
 }
 
+pub async fn run_stdin_diagnostics(source: String) -> Result<Vec<CliDiagnostic>> {
+    let documents = DocumentManager::new()?;
+    let config = Config::default();
+    let mut analyzer = Analyzer::new(config.clone(), documents.clone());
+    let file_path = PathBuf::from("stdin.py");
+    let uri = Url::parse("file:///stdin.py")?;
+
+    documents.open_document(uri.clone(), 1, source.clone())?;
+
+    let mut workspace = Workspace::new(None, config, documents.clone());
+    workspace.initialize()?;
+    let workspace = std::sync::Arc::new(tokio::sync::RwLock::new(workspace));
+    let diagnostic_provider = DiagnosticProvider::new(documents, workspace);
+
+    Ok(diagnostic_provider
+        .generate_diagnostics(&uri, &mut analyzer)
+        .into_iter()
+        .map(|diagnostic| (file_path.clone(), source.clone(), diagnostic))
+        .collect())
+}
+
+pub fn filter_diagnostics(diagnostics: Vec<CliDiagnostic>, filter: DiagnosticFilter) -> Vec<CliDiagnostic> {
+    diagnostics
+        .into_iter()
+        .filter(|(_, _, diagnostic)| diagnostic_matches_filter(diagnostic, filter))
+        .collect()
+}
+
+fn diagnostic_matches_filter(diagnostic: &lsp_types::Diagnostic, filter: DiagnosticFilter) -> bool {
+    match filter {
+        DiagnosticFilter::All => true,
+        DiagnosticFilter::Lint => diagnostic.source.as_deref() == Some("beacon-linter"),
+        DiagnosticFilter::DataFlow => diagnostic_code(diagnostic).is_some_and(|code| {
+            matches!(
+                code,
+                "use-before-def" | "unreachable-code" | "unused-variable" | "shadowed-variable"
+            )
+        }),
+        DiagnosticFilter::Typecheck => {
+            let Some(code) = diagnostic_code(diagnostic) else {
+                return diagnostic.source.as_deref() == Some("beacon")
+                    && diagnostic.severity == Some(lsp_types::DiagnosticSeverity::ERROR);
+            };
+
+            code.starts_with("HM") || code.starts_with("PM") || code == "undefined-variable"
+        }
+    }
+}
+
+fn diagnostic_code(diagnostic: &lsp_types::Diagnostic) -> Option<&str> {
+    match diagnostic.code.as_ref()? {
+        lsp_types::NumberOrString::String(code) => Some(code.as_str()),
+        lsp_types::NumberOrString::Number(_) => None,
+    }
+}
+
 pub fn format_lsp_diagnostics(
-    diagnostics: &[(PathBuf, String, lsp_types::Diagnostic)], failed_files: &[(PathBuf, String)], format: OutputFormat,
+    diagnostics: &[CliDiagnostic], failed_files: &[(PathBuf, String)], format: OutputFormat,
 ) -> Result<()> {
     let mut all_diagnostics = diagnostics.to_vec();
     all_diagnostics.sort_by(|a, b| {

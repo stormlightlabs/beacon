@@ -22,7 +22,7 @@
 
 ## Milestone 2: Diagnostics, Config, And CLI Parity
 
-- [ ] Confirm CLI `typecheck`, `analyze`, and `lint` use the same diagnostic
+- [x] Confirm CLI `typecheck`, `analyze`, and `lint` use the same diagnostic
   provider as LSP wherever possible.
 - [ ] Add expected diagnostics as structured assertions: code, severity,
   message fragment, span, source file, and optional tags.
