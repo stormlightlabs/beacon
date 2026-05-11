@@ -46,16 +46,16 @@ Keep parsed AST and symbol behavior stable while separating parser responsibilit
 
 Keep behavior stable while reducing the analyzer crate's internal coupling. The current tests are useful, but several modules carry too many responsibilities for v1 work to stay predictable.
 
-- [ ] Split `cfg.rs` into graph data structures, CFG building, call graph construction, call resolution, and workspace/module wrappers.
-- [ ] Split `walker` by Python construct or analysis phase so type, import, class, function, call, match, and control-flow behavior are easier to test in isolation.
-- [ ] Replace the production `todo!()` path in `walker/visitors.rs` with implemented behavior or an explicit diagnostic.
-- [ ] Extract shared AST utilities for statement flattening, hoisted definitions, target names, use/def collection, call extraction, and source positions.
-- [ ] Split `linter.rs` into a small dispatcher plus rule groups. Keep BEA codes, messages, suppressions, and spans stable.
-- [ ] Split `loader.rs` into stub cache, TypeVar extraction, annotation conversion, and class/method registry loading.
-- [ ] Remove string-based parsing of class bases in the stub loader where AST data can carry the same information.
-- [ ] Reconcile `const_eval::ConstValue` and `data_flow::ConstantValue`, or document why both representations must exist.
-- [ ] Narrow public exports from `crates/analyzer/src/lib.rs` so server and CLI code depend on stable analyzer APIs instead of internals.
-- [ ] Make `cargo clippy -p beacon-analyzer --all-targets -- -D warnings` pass.
+- [x] Split `cfg.rs` into graph data structures, CFG building, call graph construction, call resolution, and workspace/module wrappers.
+- [x] Split `walker` by Python construct or analysis phase so type, import, class, function, call, match, and control-flow behavior are easier to test in isolation.
+- [x] Replace the production `todo!()` path in `walker/visitors.rs` with implemented behavior or an explicit diagnostic.
+- [x] Extract shared AST utilities for statement flattening, hoisted definitions, target names, use/def collection, call extraction, and source positions.
+- [x] Split `linter.rs` into a small dispatcher plus rule groups. Keep BEA codes, messages, suppressions, and spans stable.
+- [x] Split `loader.rs` into stub cache, TypeVar extraction, annotation conversion, and class/method registry loading.
+- [x] Remove string-based parsing of class bases in the stub loader where AST data can carry the same information.
+- [x] Reconcile `const_eval::ConstValue` and `data_flow::ConstantValue`, or document why both representations must exist.
+- [x] Narrow public exports from `crates/analyzer/src/lib.rs` so server and CLI code depend on stable analyzer APIs instead of internals.
+- [x] Make `cargo clippy -p beacon-analyzer --all-targets -- -D warnings` pass.
 
 ## Milestone 4: Refactor The Constraint Solver
 

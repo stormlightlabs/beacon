@@ -1,4 +1,5 @@
 // Submodules
+mod ast_utils;
 mod class;
 mod function;
 mod guards;
@@ -11,6 +12,8 @@ use super::type_env::TypeEnvironment;
 use beacon_constraint::{Constraint, ConstraintGenContext, ConstraintResult, ConstraintSet, Span};
 use beacon_core::{Type, TypeCtor, TypeScheme, errors::Result};
 use beacon_parser::{AstNode, LiteralValue, SymbolTable};
+
+use ast_utils::bind_comprehension_target;
 
 /// Expression context for constraint generation
 ///
@@ -69,18 +72,6 @@ pub fn visit_node_with_env(
     stub_cache: Option<&visitors::TStubCache>,
 ) -> Result<Type> {
     visit_node_with_context(node, env, ctx, stub_cache, ExprContext::Value)
-}
-
-pub(super) fn bind_comprehension_target(env: &mut TypeEnvironment, target: &str, ty: &Type) {
-    let parts: Vec<&str> = if target.contains(',') { target.split(',').collect() } else { vec![target] };
-
-    for part in parts {
-        let name = part.trim().trim_matches(|c| matches!(c, '(' | ')' | '[' | ']'));
-        if name.is_empty() {
-            continue;
-        }
-        env.bind(name.to_string(), TypeScheme::mono(ty.clone()));
-    }
 }
 
 /// Internal visitor with expression context tracking

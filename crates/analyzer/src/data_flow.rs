@@ -45,7 +45,13 @@ pub struct UnusedVariable {
     pub col: usize,
 }
 
-/// A constant value that can be propagated through data flow analysis
+/// A constant value that can be propagated through data flow analysis.
+///
+/// This is intentionally separate from [`super::const_eval::ConstValue`]:
+/// this enum is a small forward-analysis lattice with `Unknown` as the
+/// conservative top value, while `ConstValue` represents exact AST
+/// literal/evaluation results used by diagnostics that need equality
+/// and hashing across literal shapes.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstantValue {
     /// Boolean constant
