@@ -1,8 +1,5 @@
+use super::{AstNode, NameResolver, ReferenceKind, ScopeKind, Symbol, SymbolKind, SymbolReference};
 use beacon_core::Result;
-
-use crate::AstNode;
-
-use super::{NameResolver, ReferenceKind, ScopeKind, Symbol, SymbolKind, SymbolReference};
 
 impl NameResolver {
     pub(crate) fn get_node_end_byte(&self, node: &AstNode) -> usize {
@@ -200,7 +197,7 @@ impl NameResolver {
             AstNode::Assignment { target, value, line, col, .. } => {
                 self.visit_node(value)?;
 
-                for name in target.extract_target_names() {
+                for name in target.binding_names() {
                     if name == "__all__"
                         && let AstNode::List { elements, .. } = value.as_ref()
                     {
@@ -256,7 +253,7 @@ impl NameResolver {
                 }
             }
             AstNode::AnnotatedAssignment { target, value, line, col, .. } => {
-                for name in target.extract_target_names() {
+                for name in target.binding_names() {
                     if let Some(scope) = self.symbol_table.scopes.get(&self.current_scope) {
                         if scope.symbols.contains_key(&name) {
                             let end_col = *col + name.len();
@@ -363,7 +360,7 @@ impl NameResolver {
             AstNode::For { target, iter, body, else_body, line, col, .. } => {
                 self.visit_node(iter)?;
 
-                for var_name in target.extract_target_names() {
+                for var_name in target.binding_names() {
                     let symbol = Symbol {
                         name: var_name.clone(),
                         kind: SymbolKind::Variable,

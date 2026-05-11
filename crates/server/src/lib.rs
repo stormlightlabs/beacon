@@ -12,11 +12,11 @@
 //! # Example
 //!
 //! ```no_run
-//! use beacon_lsp::run_server;
+//! use beacon_lsp::run_server_stdio;
 //!
 //! #[tokio::main]
 //! async fn main() {
-//!     run_server().await;
+//!     run_server_stdio().await;
 //! }
 //! ```
 
@@ -80,13 +80,6 @@ pub async fn run_server_tcp(host: &str, port: u16) -> std::io::Result<()> {
             }
         }
     }
-}
-
-/// Run the Beacon LSP server (backward compatibility wrapper)
-///
-/// Defaults to stdio mode. For TCP mode, use `run_server_tcp()` directly.
-pub async fn run_server() {
-    run_server_stdio().await;
 }
 
 #[cfg(test)]

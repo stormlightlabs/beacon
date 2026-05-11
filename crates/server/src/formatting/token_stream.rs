@@ -853,7 +853,7 @@ impl TokenGenerator {
                     .push(Token::Keyword { text: "for".to_string(), line: *line, col: *col });
                 self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
                 self.tokens
-                    .push(Token::Identifier { text: target.target_to_string(), line: *line, col: *col });
+                    .push(Token::Identifier { text: target.target_display(), line: *line, col: *col });
                 self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
                 self.tokens
                     .push(Token::Keyword { text: "in".to_string(), line: *line, col: *col });
@@ -1305,7 +1305,7 @@ impl TokenGenerator {
                         .push(Token::Keyword { text: "for".to_string(), line: *line, col: *col });
                     self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
                     self.tokens
-                        .push(Token::Identifier { text: comp.target.clone(), line: *line, col: *col });
+                        .push(Token::Identifier { text: comp.target_display(), line: *line, col: *col });
                     self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
                     self.tokens
                         .push(Token::Keyword { text: "in".to_string(), line: *line, col: *col });
@@ -1339,7 +1339,7 @@ impl TokenGenerator {
                         .push(Token::Keyword { text: "for".to_string(), line: *line, col: *col });
                     self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
                     self.tokens
-                        .push(Token::Identifier { text: comp.target.clone(), line: *line, col: *col });
+                        .push(Token::Identifier { text: comp.target_display(), line: *line, col: *col });
                     self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
                     self.tokens
                         .push(Token::Keyword { text: "in".to_string(), line: *line, col: *col });
@@ -1369,7 +1369,7 @@ impl TokenGenerator {
                         .push(Token::Keyword { text: "for".to_string(), line: *line, col: *col });
                     self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
                     self.tokens
-                        .push(Token::Identifier { text: comp.target.clone(), line: *line, col: *col });
+                        .push(Token::Identifier { text: comp.target_display(), line: *line, col: *col });
                     self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
                     self.tokens
                         .push(Token::Keyword { text: "in".to_string(), line: *line, col: *col });
@@ -1399,7 +1399,7 @@ impl TokenGenerator {
                         .push(Token::Keyword { text: "for".to_string(), line: *line, col: *col });
                     self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
                     self.tokens
-                        .push(Token::Identifier { text: g.target.clone(), line: *line, col: *col });
+                        .push(Token::Identifier { text: g.target_display(), line: *line, col: *col });
                     self.tokens.push(Token::Whitespace { count: 1, line: *line, col: *col });
                     self.tokens
                         .push(Token::Keyword { text: "in".to_string(), line: *line, col: *col });

@@ -8,7 +8,6 @@
 
 use crate::document::DocumentManager;
 use crate::utils;
-
 use beacon_parser::{AstNode, ScopeId, SymbolKind, SymbolTable};
 use lsp_types::{
     Position, Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensParams,
@@ -264,7 +263,7 @@ impl SemanticTokensProvider {
             AstNode::Assignment { target, value, line, col, .. } => {
                 let token_type = self.get_token_type_index(&SymbolKind::Variable);
                 let modifiers = self.get_definition_modifier();
-                let target_str = target.target_to_string();
+                let target_str = target.target_display();
                 Self::add_token(&target_str, *line, *col, token_type, modifiers, text, raw_tokens);
                 self.collect_tokens_from_node(value, symbol_table, current_scope, text, raw_tokens);
             }
@@ -272,7 +271,7 @@ impl SemanticTokensProvider {
             AstNode::AnnotatedAssignment { target, type_annotation, value, line, col, .. } => {
                 let token_type = self.get_token_type_index(&SymbolKind::Variable);
                 let modifiers = self.get_definition_modifier();
-                let target_str = target.target_to_string();
+                let target_str = target.target_display();
                 Self::add_token(&target_str, *line, *col, token_type, modifiers, text, raw_tokens);
 
                 let type_token_type = SUPPORTED_TYPES
@@ -292,7 +291,7 @@ impl SemanticTokensProvider {
             }
 
             AstNode::Call { function, args, keywords, line, col, .. } => {
-                let function_name = function.function_to_string();
+                let function_name = function.qualified_name().unwrap_or_default();
                 if function_name.contains('.') {
                     let parts: Vec<&str> = function_name.split('.').collect();
                     let mut current_col = *col;

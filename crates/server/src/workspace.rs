@@ -6,9 +6,8 @@
 //! - Project-wide type checking
 //! - Cross-file CFG and taint analysis
 
-use crate::config::Config;
-use crate::document::DocumentManager;
-
+use super::Config;
+use super::document::DocumentManager;
 use beacon_core::{Type, TypeCtor, parse_annotation as parse_core_annotation};
 use beacon_parser::{AstNode, LiteralValue};
 use once_cell::sync::Lazy;
@@ -624,7 +623,7 @@ impl Workspace {
             AstNode::Module { body, .. } => {
                 for stmt in body {
                     if let AstNode::Assignment { target, value, .. } = stmt {
-                        let target_name = target.target_to_string();
+                        let target_name = target.target_display();
                         if target_name == "__all__" {
                             return extract_all_list(value);
                         }
@@ -1771,13 +1770,13 @@ impl Workspace {
                         symbols.insert(name.clone());
                     }
                     AstNode::Assignment { target, .. } => {
-                        let target_name = target.target_to_string();
+                        let target_name = target.target_display();
                         if !target_name.is_empty() {
                             symbols.insert(target_name);
                         }
                     }
                     AstNode::AnnotatedAssignment { target, .. } => {
-                        let target_name = target.target_to_string();
+                        let target_name = target.target_display();
                         if !target_name.is_empty() {
                             symbols.insert(target_name);
                         }
@@ -2163,7 +2162,7 @@ fn extract_stub_signatures(
         }
         AstNode::AnnotatedAssignment { target, type_annotation: annotation, .. } => {
             if let Some(ty) = parse_annotation(annotation) {
-                exports.insert(target.target_to_string(), ty);
+                exports.insert(target.target_display(), ty);
             }
         }
         AstNode::ImportFrom { module, names, .. } => {
@@ -2188,7 +2187,7 @@ fn extract_stub_signatures(
             }
         }
         AstNode::Assignment { target, value, .. } => {
-            let target_name = target.target_to_string();
+            let target_name = target.target_display();
             if target_name == "__all__" {
                 if let Some(names) = extract_all_list(value) {
                     for name in &names {

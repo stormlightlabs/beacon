@@ -101,7 +101,7 @@ impl DocumentSymbolsProvider {
             }
 
             AstNode::Assignment { target, value, line, col, .. } => {
-                let target_str = target.target_to_string();
+                let target_str = target.target_display();
                 let range = self.assignment_range(*line, *col, value);
                 let selection_range = self.identifier_range(*line, *col, target_str.len());
 

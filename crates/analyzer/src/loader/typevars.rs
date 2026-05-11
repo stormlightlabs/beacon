@@ -79,14 +79,19 @@ pub fn collect_stub_type_vars(node: &AstNode, ctx: &mut StubTypeContext) {
             }
         }
         AstNode::Assignment { target, value, .. } => {
-            if let AstNode::Call { function, args, keywords, .. } = value.as_ref() {
-                let function_name = function.function_to_string();
-                if function_name == "TypeVar" || function_name.ends_with(".TypeVar") {
-                    let target_str = target.target_to_string();
-                    let (variance, bound, constraints) = extract_typevar_metadata_from_stub(args, keywords, ctx);
-                    ctx.register_type_var(&target_str, variance, bound, constraints);
-                }
+            let AstNode::Call { function, args, keywords, .. } = value.as_ref() else {
+                return;
+            };
+            if !function
+                .qualified_name()
+                .is_some_and(|function_name| function_name == "TypeVar" || function_name.ends_with(".TypeVar"))
+            {
+                return;
             }
+
+            let target_str = target.target_display();
+            let (variance, bound, constraints) = extract_typevar_metadata_from_stub(args, keywords, ctx);
+            ctx.register_type_var(&target_str, variance, bound, constraints);
         }
         AstNode::ClassDef { body, .. } => {
             for stmt in body {

@@ -76,7 +76,7 @@ impl<'a> Linter<'a> {
                 self.check_forward_annotation_syntax(type_annotation, *line, *col, *end_col);
 
                 if self.ctx.function_depth > 0 {
-                    for name in target.extract_target_names() {
+                    for name in target.binding_names() {
                         self.ctx.track_assignment(name);
                     }
                 }
@@ -212,7 +212,7 @@ impl<'a> Linter<'a> {
     ) {
         self.visit_node(iter);
 
-        for var_name in target.extract_target_names() {
+        for var_name in target.binding_names() {
             if self.ctx.is_import(&var_name) {
                 self.report(
                     RuleKind::ImportShadowedByLoopVar,
@@ -363,7 +363,7 @@ impl<'a> Linter<'a> {
         self.check_too_many_expressions_in_starred_assignment(target, value, line, col, end_col);
 
         if self.ctx.function_depth > 0 {
-            for name in target.extract_target_names() {
+            for name in target.binding_names() {
                 self.ctx.track_assignment(name);
             }
         }

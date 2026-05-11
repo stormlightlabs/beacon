@@ -35,7 +35,8 @@ use super::TypeEnvironment;
 ///
 /// Classes with multiple methods (beyond just __init__) experience type unification errors during construction.
 /// The issue appears to be related to how Type::fun() constructs function types when processing multiple
-/// methods with a shared environment. Type variables or parameter lists may be getting confused between methods.
+/// methods with a shared environment.
+/// Type variables or parameter lists may be getting confused between methods.
 /// Consider cloning env for each method to isolate type variable generation.
 pub fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnvironment) -> ClassMetadata {
     let mut metadata = ClassMetadata::new(name.to_string());
@@ -44,11 +45,11 @@ pub fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnviro
         match stmt {
             AstNode::AnnotatedAssignment { target, type_annotation, .. } => {
                 let field_type = env.parse_annotation_or_any(type_annotation);
-                metadata.add_field(target.target_to_string(), field_type);
+                metadata.add_field(target.target_display(), field_type);
             }
             AstNode::Assignment { target, .. } => {
                 let field_type = Type::Var(env.fresh_var());
-                metadata.add_field(target.target_to_string(), field_type);
+                metadata.add_field(target.target_display(), field_type);
             }
             _ => {}
         }
@@ -110,13 +111,13 @@ pub fn extract_class_metadata(name: &str, body: &[AstNode], env: &mut TypeEnviro
 pub fn extract_field_assignments(stmt: &AstNode, metadata: &mut ClassMetadata, env: &mut TypeEnvironment) {
     match stmt {
         AstNode::Assignment { target, .. } => {
-            if let Some(field_name) = target.target_to_string().strip_prefix("self.") {
+            if let Some(field_name) = target.target_display().strip_prefix("self.") {
                 let field_type = Type::Var(env.fresh_var());
                 metadata.add_field(field_name.to_string(), field_type);
             }
         }
         AstNode::AnnotatedAssignment { target, type_annotation, .. } => {
-            if let Some(field_name) = target.target_to_string().strip_prefix("self.") {
+            if let Some(field_name) = target.target_display().strip_prefix("self.") {
                 let field_type = env.parse_annotation_or_any(type_annotation);
                 metadata.add_field(field_name.to_string(), field_type);
             }
@@ -244,7 +245,7 @@ pub fn extract_enum_members(
     for stmt in body {
         match stmt {
             AstNode::Assignment { target, .. } | AstNode::AnnotatedAssignment { target, .. } => {
-                let target_str = target.target_to_string();
+                let target_str = target.target_display();
                 if !target_str.contains('.') && !target_str.starts_with('_') {
                     metadata.add_field(target_str, enum_type.clone());
                 }

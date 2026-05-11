@@ -1,7 +1,7 @@
+use super::{AstNode, PythonParser};
+use crate::ast::Comprehension;
 use beacon_core::{ParseError, Result};
 use tree_sitter::Node;
-
-use crate::{AstNode, Comprehension, PythonParser};
 
 impl PythonParser {
     pub(crate) fn extract_list_comp_info(&self, node: &Node, source: &str) -> Result<(AstNode, Vec<Comprehension>)> {
@@ -69,11 +69,7 @@ impl PythonParser {
                 let left = child
                     .child_by_field_name("left")
                     .ok_or_else(|| ParseError::TreeSitterError("Missing comprehension target".to_string()))?;
-                let target = left
-                    .utf8_text(source.as_bytes())
-                    .map_err(|_| ParseError::InvalidUtf8)?
-                    .to_string();
-                let target_node = Some(Box::new(self.node_to_ast(left, source)?));
+                let target = Box::new(self.node_to_ast(left, source)?);
 
                 let right = child
                     .child_by_field_name("right")
@@ -93,7 +89,7 @@ impl PythonParser {
                     }
                 }
 
-                generators.push(Comprehension { target, target_node, iter, ifs });
+                generators.push(Comprehension { target, iter, ifs });
             }
         }
 

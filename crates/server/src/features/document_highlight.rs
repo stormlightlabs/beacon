@@ -77,7 +77,7 @@ impl DocumentHighlightProvider {
                 });
             }
             AstNode::Assignment { target, value, line, col, .. } => {
-                if target.target_to_string() == symbol_name {
+                if target.target_display() == symbol_name {
                     let position =
                         Position { line: (*line as u32).saturating_sub(1), character: (*col as u32).saturating_sub(1) };
                     let end_position =
@@ -132,8 +132,9 @@ impl DocumentHighlightProvider {
                 }
             }
             AstNode::Call { function, args, line, col, .. } => {
-                let function_name = function.function_to_string();
-                if function_name == symbol_name {
+                if let Some(function_name) = function.qualified_name()
+                    && function_name == symbol_name
+                {
                     let position =
                         Position { line: (*line as u32).saturating_sub(1), character: (*col as u32).saturating_sub(1) };
                     let end_position =

@@ -5,7 +5,6 @@
 use crate::analysis::Analyzer;
 use crate::config::InlayHintsConfig;
 use crate::document::DocumentManager;
-
 use beacon_core::Type;
 use beacon_parser::AstNode;
 use lsp_types::{InlayHint, InlayHintKind, InlayHintLabel, InlayHintParams, Position, Range};
@@ -99,7 +98,7 @@ impl InlayHintsProvider {
                 {
                     let type_str = ty.to_string();
                     if !type_str.contains("'") && type_str != "Any" {
-                        let target_str = target.target_to_string();
+                        let target_str = target.target_display();
                         let position = Self::calculate_hint_position(*line, *col, &target_str, text);
                         hints.push(InlayHint {
                             position,
@@ -218,25 +217,26 @@ impl InlayHintsProvider {
     ) {
         match node {
             AstNode::Call { function, args, line, col, .. } => {
-                if Self::is_in_range(*line, *col, range) && !args.is_empty() {
-                    let function_name = function.function_to_string();
-                    if let Some(param_names) = Self::get_parameter_names(&function_name, ast_root) {
-                        for (i, arg) in args.iter().enumerate() {
-                            if i < param_names.len() {
-                                let param_name = &param_names[i];
-                                let arg_range = arg.source_range();
-                                let position = Self::ast_to_lsp_position(arg_range.line, arg_range.col);
-                                hints.push(InlayHint {
-                                    position,
-                                    label: InlayHintLabel::String(format!("{param_name}: ")),
-                                    kind: Some(InlayHintKind::PARAMETER),
-                                    text_edits: None,
-                                    tooltip: None,
-                                    padding_left: None,
-                                    padding_right: Some(true),
-                                    data: None,
-                                });
-                            }
+                if Self::is_in_range(*line, *col, range)
+                    && !args.is_empty()
+                    && let Some(function_name) = function.qualified_name()
+                    && let Some(param_names) = Self::get_parameter_names(&function_name, ast_root)
+                {
+                    for (i, arg) in args.iter().enumerate() {
+                        if i < param_names.len() {
+                            let param_name = &param_names[i];
+                            let arg_range = arg.source_range();
+                            let position = Self::ast_to_lsp_position(arg_range.line, arg_range.col);
+                            hints.push(InlayHint {
+                                position,
+                                label: InlayHintLabel::String(format!("{param_name}: ")),
+                                kind: Some(InlayHintKind::PARAMETER),
+                                text_edits: None,
+                                tooltip: None,
+                                padding_left: None,
+                                padding_right: Some(true),
+                                data: None,
+                            });
                         }
                     }
                 }

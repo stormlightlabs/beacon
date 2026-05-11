@@ -25,7 +25,7 @@ use url::Url;
 use {
     beacon_constraint::ConstraintResult,
     beacon_core::logging::default_log_path,
-    io::{BufRead, Seek},
+    std::io::{BufRead, Seek},
     std::time,
 };
 
@@ -971,7 +971,7 @@ async fn debug_cfg_command(path: PathBuf, json: bool) -> Result<()> {
 
     workspace.initialize()?;
 
-    let python_files = helpers::discover_python_files(&[canonical_path.clone()])?;
+    let python_files = helpers::discover_python_files(std::slice::from_ref(&canonical_path))?;
     println!(
         "{} {} Python files",
         "Found".green(),
