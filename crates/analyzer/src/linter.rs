@@ -57,7 +57,11 @@ impl<'a> Linter<'a> {
 
         diagnostics
             .into_iter()
-            .filter(|diag| !self.suppression_map.is_suppressed(diag.line, Some(diag.rule.code())))
+            .filter(|diag| {
+                !self
+                    .suppression_map
+                    .is_lint_suppressed(diag.line, Some(diag.rule.code()))
+            })
             .collect()
     }
 

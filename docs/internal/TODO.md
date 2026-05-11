@@ -28,7 +28,7 @@
   message fragment, span, source file, and optional tags.
 - [x] Add golden JSON output for `beacon typecheck --format json`.
 - [x] Freeze the v1 diagnostic JSON shape.
-- [ ] Verify suppressions apply consistently across type, lint, data-flow,
+- [x] Verify suppressions apply consistently across type, lint, data-flow,
   import, and formatting diagnostics.
 - [ ] Add config assertions for `beacon.toml`, `pyproject.toml`, editor
   settings, and file mode directives.

@@ -19,6 +19,12 @@ fn diagnostic_codes(stdout: &[u8]) -> Vec<String> {
         .collect()
 }
 
+fn write_temp_python(source: &str) -> tempfile::NamedTempFile {
+    let mut temp_file = Builder::new().suffix(".py").tempfile().unwrap();
+    write!(temp_file, "{source}").unwrap();
+    temp_file
+}
+
 fn normalize_fixture_paths(output: &mut serde_json::Value) {
     normalize_path_array(output, "diagnostics");
     normalize_path_array(output, "failures");
@@ -130,4 +136,73 @@ fn workspace_fixture_cli_analyze_file_json_uses_lsp_diagnostics() {
     let codes = diagnostic_codes(&assert.get_output().stdout);
     assert!(codes.contains(&"HM001".to_string()));
     assert!(codes.contains(&"MODE_INFO".to_string()));
+}
+
+#[test]
+fn workspace_fixture_cli_analyze_suppressions_fixture_has_no_diagnostics() {
+    cargo_bin_cmd!("beacon")
+        .arg("analyze")
+        .arg("--format")
+        .arg("json")
+        .arg("file")
+        .arg(file("cases/suppressions.py"))
+        .assert()
+        .success();
+}
+
+#[test]
+fn workspace_fixture_cli_analyze_respects_suppression_categories() {
+    let cases = [
+        "def type_error() -> int:\n    return \"bad\"  # type: ignore[HM001]\n",
+        "return 42  # noqa: BEA003\n",
+        "def data_flow() -> None:\n    print(value)  # type: ignore\n    value = 1  # type: ignore[ANN002]\n    _ = value  # type: ignore[ANN002]\n",
+        "import missing_module  # type: ignore  # noqa: BEA015\n",
+    ];
+
+    for source in cases {
+        let temp_file = write_temp_python(source);
+        let assert = cargo_bin_cmd!("beacon")
+            .arg("analyze")
+            .arg("--format")
+            .arg("json")
+            .arg("file")
+            .arg(temp_file.path())
+            .assert()
+            .success();
+
+        let output: serde_json::Value =
+            serde_json::from_slice(&assert.get_output().stdout).expect("CLI output should be JSON");
+        assert_eq!(output["diagnostics"].as_array().unwrap().len(), 0);
+    }
+}
+
+#[test]
+fn workspace_fixture_cli_analyze_reports_unsuppressed_categories() {
+    let cases = [
+        ("def type_error() -> int:\n    return \"bad\"\n", "HM001"),
+        ("return 42\n", "BEA003"),
+        (
+            "def data_flow() -> None:\n    print(value)\n    value = 1\n    _ = value\n",
+            "use-before-def",
+        ),
+        ("import missing_module\n", "unresolved-import"),
+    ];
+
+    for (source, expected_code) in cases {
+        let temp_file = write_temp_python(source);
+        let assert = cargo_bin_cmd!("beacon")
+            .arg("analyze")
+            .arg("--format")
+            .arg("json")
+            .arg("file")
+            .arg(temp_file.path())
+            .assert()
+            .failure();
+
+        let codes = diagnostic_codes(&assert.get_output().stdout);
+        assert!(
+            codes.contains(&expected_code.to_string()),
+            "expected {expected_code} in {codes:?}"
+        );
+    }
 }
