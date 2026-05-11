@@ -1,6 +1,6 @@
 use super::{Constraint, ControlFlowContext, Span};
 use beacon_core::{ClassRegistry, Type};
-use beacon_parser::ScopeId;
+use beacon_parser::{ScopeId, line_col_to_byte_offset};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Context for tracking node information during constraint generation.
@@ -32,41 +32,11 @@ impl<'a> ConstraintGenContext<'a> {
         self.source = Some(source);
     }
 
-    pub(crate) fn line_col_to_byte_offset(&self, line: usize, col: usize) -> Option<usize> {
-        let source = self.source?;
-        let mut current_line = 1;
-
-        for (idx, ch) in source.char_indices() {
-            if current_line == line {
-                let line_start = source[..idx].rfind('\n').map(|pos| pos + 1).unwrap_or(0);
-                let chars_in_line = source[line_start..idx].chars().count();
-                if chars_in_line + 1 == col {
-                    return Some(idx);
-                }
-            }
-
-            if ch == '\n' {
-                current_line += 1;
-                if current_line > line {
-                    break;
-                }
-            }
-        }
-
-        if current_line == line {
-            let line_start = source.rfind('\n').map(|pos| pos + 1).unwrap_or(0);
-            let chars_in_line = source[line_start..].chars().count();
-            if chars_in_line + 1 >= col {
-                return Some(source.len());
-            }
-        }
-
-        None
-    }
-
     pub fn find_scope_at_position(&self, line: usize, col: usize) -> Option<ScopeId> {
         let symbol_table = self.symbol_table?;
-        let byte_offset = self.line_col_to_byte_offset(line, col)?;
+        let byte_offset = self
+            .source
+            .and_then(|source| line_col_to_byte_offset(source, line, col))?;
         Some(symbol_table.find_scope_at_position(byte_offset))
     }
 

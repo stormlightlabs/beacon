@@ -55,7 +55,7 @@ from module_a import NonexistentClass  # ERROR: symbol doesn't exist
     let invalid_import_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "invalid-import",
                 _ => false,
             })
@@ -133,7 +133,7 @@ from module_a import _PRIVATE_CONSTANT  # WARNING: private symbol
     let private_import_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "private-import",
                 _ => false,
             })
@@ -204,7 +204,7 @@ __all__ = [
     let reexport_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "broken-reexport",
                 _ => false,
             })
@@ -271,7 +271,7 @@ from module_a import CONSTANT
     let invalid_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "invalid-import" || s == "broken-reexport",
                 _ => false,
             })
@@ -321,7 +321,7 @@ from module_a import *
     let invalid_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "invalid-import",
                 _ => false,
             })
@@ -378,7 +378,7 @@ def main():
     let dead_code_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "BEA033",
                 _ => false,
             })
@@ -434,7 +434,7 @@ def not_exported_function():
     let dead_code_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "BEA033",
                 _ => false,
             })
@@ -479,7 +479,7 @@ def public_function():
     let dead_code_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "BEA033",
                 _ => false,
             })

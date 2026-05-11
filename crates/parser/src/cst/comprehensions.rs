@@ -73,6 +73,7 @@ impl PythonParser {
                     .utf8_text(source.as_bytes())
                     .map_err(|_| ParseError::InvalidUtf8)?
                     .to_string();
+                let target_node = Some(Box::new(self.node_to_ast(left, source)?));
 
                 let right = child
                     .child_by_field_name("right")
@@ -92,7 +93,7 @@ impl PythonParser {
                     }
                 }
 
-                generators.push(Comprehension { target, iter, ifs });
+                generators.push(Comprehension { target, target_node, iter, ifs });
             }
         }
 

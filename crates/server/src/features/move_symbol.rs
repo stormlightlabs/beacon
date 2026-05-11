@@ -155,10 +155,11 @@ impl MoveSymbolProvider {
 
         let start_point = node.start_position();
 
-        if start_point.row == target_line && start_point.column == target_col {
-            if let Some(def) = Self::find_parent_definition(node) {
-                return Some(def);
-            }
+        if start_point.row == target_line
+            && start_point.column == target_col
+            && let Some(def) = Self::find_parent_definition(node)
+        {
+            return Some(def);
         }
 
         let mut cursor = node.walk();

@@ -76,25 +76,6 @@ impl NameResolver {
     }
 
     pub(crate) fn line_col_to_byte_offset(&self, line: usize, col: usize) -> usize {
-        let mut byte_offset = 0;
-        let mut current_line = 1;
-        let mut current_col = 1;
-
-        for ch in self.source.chars() {
-            if current_line == line && current_col == col {
-                return byte_offset;
-            }
-
-            if ch == '\n' {
-                current_line += 1;
-                current_col = 1;
-            } else {
-                current_col += 1;
-            }
-
-            byte_offset += ch.len_utf8();
-        }
-
-        byte_offset
+        crate::line_col_to_byte_offset_lossy(&self.source, line, col)
     }
 }

@@ -23,7 +23,7 @@ use beacon_core::{
     SuppressionMap, Type, TypeVarGen,
     errors::{AnalysisError, Result},
 };
-use beacon_parser::{AstNode, Pattern, ScopeId, SymbolTable, resolve::Scope};
+use beacon_parser::{AstNode, Pattern, ScopeId, SymbolTable, line_col_to_byte_offset_lossy, resolve::Scope};
 use lsp_types::Position;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::{collections::HashSet, sync::Arc};
@@ -89,43 +89,7 @@ impl Analyzer {
     }
 
     fn collect_pattern_binding_names(pattern: &Pattern) -> FxHashSet<String> {
-        match pattern {
-            Pattern::MatchValue(_) => FxHashSet::default(),
-            Pattern::MatchSequence(patterns) => patterns.iter().flat_map(Self::collect_pattern_binding_names).collect(),
-            Pattern::MatchMapping { patterns, .. } => {
-                patterns.iter().flat_map(Self::collect_pattern_binding_names).collect()
-            }
-            Pattern::MatchClass { patterns, .. } => {
-                patterns.iter().flat_map(Self::collect_pattern_binding_names).collect()
-            }
-            Pattern::MatchAs { pattern: Some(sub), name } => {
-                let mut names = Self::collect_pattern_binding_names(sub);
-                if let Some(alias) = name {
-                    names.insert(alias.clone());
-                }
-                names
-            }
-            Pattern::MatchAs { pattern: None, name } => {
-                let mut names = FxHashSet::default();
-                if let Some(alias) = name {
-                    names.insert(alias.clone());
-                }
-                names
-            }
-            Pattern::MatchOr(alternatives) => {
-                if alternatives.is_empty() {
-                    FxHashSet::default()
-                } else {
-                    let mut iter = alternatives.iter();
-                    let mut names = Self::collect_pattern_binding_names(iter.next().unwrap());
-                    for alt in iter {
-                        let alt_names = Self::collect_pattern_binding_names(alt);
-                        names.retain(|name| alt_names.contains(name));
-                    }
-                    names
-                }
-            }
-        }
+        pattern.binding_names().into_iter().collect()
     }
 
     /// Create a new analyzer with workspace support for stub resolution
@@ -562,7 +526,7 @@ impl Analyzer {
 
                 for (symbol_name, symbol) in &root_scope.symbols {
                     if symbol.scope_id == root_scope_id {
-                        let symbol_byte = Self::line_col_to_byte_offset(&source, symbol.line, symbol.col);
+                        let symbol_byte = line_col_to_byte_offset_lossy(&source, symbol.line, symbol.col);
 
                         if (symbol_byte <= scope_start_byte && scope_start_byte - symbol_byte < 200)
                             || (symbol_byte >= scope_start_byte && symbol_byte < scope_end_byte)
@@ -604,7 +568,7 @@ impl Analyzer {
                         builder.build_function(func_body);
                         let cfg = builder.build();
 
-                        let byte_offset = Self::line_col_to_byte_offset(source, *line, *col);
+                        let byte_offset = line_col_to_byte_offset_lossy(source, *line, *col);
                         let scope_id = symbol_table.find_scope_at_position(byte_offset);
 
                         let analyzer = data_flow::DataFlowAnalyzer::new(
@@ -624,7 +588,7 @@ impl Analyzer {
                 builder.build_function(body);
                 let cfg = builder.build();
 
-                let byte_offset = Self::line_col_to_byte_offset(source, *line, *col);
+                let byte_offset = line_col_to_byte_offset_lossy(source, *line, *col);
                 let scope_id = symbol_table.find_scope_at_position(byte_offset);
 
                 let analyzer = data_flow::DataFlowAnalyzer::new(&cfg, body, symbol_table, scope_id, None);
@@ -632,28 +596,6 @@ impl Analyzer {
             }
             _ => None,
         }
-    }
-
-    /// Convert line/col (1-indexed) to byte offset
-    fn line_col_to_byte_offset(source: &str, line: usize, col: usize) -> usize {
-        let mut byte_offset = 0;
-        let mut current_line = 1;
-        let mut current_col = 1;
-
-        for ch in source.chars() {
-            if current_line == line && current_col == col {
-                return byte_offset;
-            }
-            if ch == '\n' {
-                current_line += 1;
-                current_col = 1;
-            } else {
-                current_col += 1;
-            }
-            byte_offset += ch.len_utf8();
-        }
-
-        byte_offset
     }
 
     /// Find unbound variables in the AST

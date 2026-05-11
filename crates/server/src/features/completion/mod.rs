@@ -9,7 +9,7 @@ use crate::features::dunders;
 use crate::parser::LspParser;
 use crate::workspace::Workspace;
 use algorithms::{FuzzyMatcher, PrefixMatcher, RocchioScorer, StringSimilarity};
-use beacon_parser::{BUILTIN_DUNDERS, MAGIC_METHODS, ScopeId, Symbol, SymbolKind};
+use beacon_parser::{BUILTIN_DUNDERS, MAGIC_METHODS, ScopeId, Symbol, SymbolKind, line_col_to_byte_offset_lossy};
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse, Documentation, MarkupContent, MarkupKind,
     Position,
@@ -218,24 +218,7 @@ impl CompletionProvider {
 
     /// Convert line/col position to byte offset
     fn position_to_byte_offset(content: &str, line: usize, col: usize) -> usize {
-        let mut byte_offset = 0;
-        let mut current_line = 1;
-        let mut current_col = 1;
-
-        for ch in content.chars() {
-            if current_line == line && current_col == col {
-                return byte_offset;
-            }
-            if ch == '\n' {
-                current_line += 1;
-                current_col = 1;
-            } else {
-                current_col += 1;
-            }
-            byte_offset += ch.len_utf8();
-        }
-
-        byte_offset
+        line_col_to_byte_offset_lossy(content, line, col)
     }
 
     /// Detect the completion context at the cursor position

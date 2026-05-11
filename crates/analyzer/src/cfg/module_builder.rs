@@ -1,4 +1,4 @@
-use beacon_parser::AstNode;
+use beacon_parser::{AstNode, line_col_to_byte_offset_lossy};
 use url::Url;
 
 use super::builder::CfgBuilder;
@@ -44,7 +44,7 @@ impl<'a> ModuleCFGBuilder<'a> {
         for stmt in body {
             match stmt {
                 AstNode::FunctionDef { name, body: func_body, line, col, .. } => {
-                    let byte_offset = self.line_col_to_byte_offset(*line, *col);
+                    let byte_offset = line_col_to_byte_offset_lossy(self.source, *line, *col);
                     let scope_id = self.symbol_table.find_scope_at_position(byte_offset);
 
                     let mut builder = CfgBuilder::new();
@@ -60,30 +60,5 @@ impl<'a> ModuleCFGBuilder<'a> {
                 _ => {}
             }
         }
-    }
-
-    fn line_col_to_byte_offset(&self, line: usize, col: usize) -> usize {
-        let mut current_line = 1;
-        let mut byte_offset = 0;
-
-        for (i, ch) in self.source.char_indices() {
-            if current_line == line {
-                let mut current_col = 1;
-                for (j, _) in self.source[i..].char_indices() {
-                    if current_col == col {
-                        return i + j;
-                    }
-                    current_col += 1;
-                }
-                return i + self.source[i..].len();
-            }
-
-            if ch == '\n' {
-                current_line += 1;
-                byte_offset = i + 1;
-            }
-        }
-
-        byte_offset
     }
 }

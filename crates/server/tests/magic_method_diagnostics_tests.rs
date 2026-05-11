@@ -40,7 +40,7 @@ class MyClass:
     let magic_method_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "DUNDER002",
                 _ => false,
             })
@@ -83,7 +83,7 @@ class MyClass:
     let magic_method_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "DUNDER002",
                 _ => false,
             })
@@ -140,7 +140,7 @@ class MyClass:
     let magic_method_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "DUNDER002",
                 _ => false,
             })
@@ -195,7 +195,7 @@ def __str__(self):
     let dunder_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "DUNDER001",
                 _ => false,
             })
@@ -253,7 +253,7 @@ class MyClass:
     let magic_method_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "DUNDER002",
                 _ => false,
             })

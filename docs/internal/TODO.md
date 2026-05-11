@@ -83,14 +83,18 @@ Current duplication audit:
 - Pattern and class compatibility logic overlaps across constraint pattern validation, exhaustiveness, solver logic, and analyzer pattern handling. Constraint-specific error reporting is intentional; shape compatibility and binding extraction should be shared.
 - Test code repeatedly hand-builds verbose `AstNode` values. Local test setup is fine, but common node shapes should use builders or fixtures.
 
-- [ ] Create shared AST traversal helpers that expose child statements, child expressions, and body blocks without forcing every analysis pass to duplicate large `match AstNode` walks.
-- [ ] Move source location helpers to a single public parser/core-facing API for line/column spans, byte offsets, and node positions; migrate analyzer, constraints, and server callers.
-- [ ] Consolidate target/binding extraction into parser AST helpers that cover identifiers, tuple/list destructuring, starred targets, attributes, subscripts, imports, `with` aliases, comprehensions, and pattern bindings.
-- [ ] Replace string-based comprehension target handling with AST-backed binding extraction where parser data can carry the original structure.
-- [ ] Reuse one annotation/type conversion path for stub loading and analysis-time annotations, with tests for TypeVars, bounds, constraints, unions, generics, callables, and qualified names.
-- [ ] Introduce test AST builders or fixture helpers for common node shapes so unit tests do not repeatedly hand-build verbose `AstNode` values.
-- [ ] Add duplication regression checks to the v1 gate once the shared helpers land, either through a lightweight local script or a documented manual audit if no Rust-aware tool is adopted.
-- [ ] Keep all moved helpers covered by behavior-preserving tests before deleting pass-local copies.
+Regression audit:
+
+- Treat parser AST/source helpers and core annotation helpers as the canonical APIs during review. New analyzer, constraint, or server code that needs AST child traversal, node spans, byte offsets, binding names, pattern bindings, or generic annotation parsing should call those helpers unless it has a pass-specific semantic reason not to.
+
+- [x] Create shared AST traversal helpers that expose child statements, child expressions, and body blocks without forcing every analysis pass to duplicate large `match AstNode` walks.
+- [x] Move source location helpers to a single public parser/core-facing API for line/column spans, byte offsets, and node positions; migrate analyzer, constraints, and server callers.
+- [x] Consolidate target/binding extraction into parser AST helpers that cover identifiers, tuple/list destructuring, starred targets, attributes, subscripts, imports, `with` aliases, comprehensions, and pattern bindings.
+- [x] Replace string-based comprehension target handling with AST-backed binding extraction where parser data can carry the original structure.
+- [x] Reuse one annotation/type conversion path for stub loading and analysis-time annotations, with tests for TypeVars, bounds, constraints, unions, generics, callables, and qualified names.
+- [x] Introduce test AST builders or fixture helpers for common node shapes so unit tests do not repeatedly hand-build verbose `AstNode` values.
+- [x] Add duplication regression checks to the v1 gate once the shared helpers land, using the documented manual audit until a Rust-aware tool is adopted.
+- [x] Keep all moved helpers covered by behavior-preserving tests before deleting pass-local copies.
 
 ## Milestone 6: Write The V1 Contract As Tests
 

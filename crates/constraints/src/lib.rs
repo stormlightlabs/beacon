@@ -438,17 +438,14 @@ mod tests {
     #[test]
     fn test_line_col_to_byte_offset() {
         let source = "def foo():\n    return 42\n";
-        let mut ctx = ConstraintGenContext::new();
-        let symbol_table = beacon_parser::SymbolTable::new();
-        ctx.set_context(&symbol_table, source);
 
-        assert_eq!(ctx.line_col_to_byte_offset(1, 1), Some(0));
+        assert_eq!(beacon_parser::line_col_to_byte_offset(source, 1, 1), Some(0));
 
-        assert_eq!(ctx.line_col_to_byte_offset(1, 4), Some(3));
+        assert_eq!(beacon_parser::line_col_to_byte_offset(source, 1, 4), Some(3));
 
-        assert_eq!(ctx.line_col_to_byte_offset(2, 1), Some(11));
+        assert_eq!(beacon_parser::line_col_to_byte_offset(source, 2, 1), Some(11));
 
-        assert_eq!(ctx.line_col_to_byte_offset(2, 5), Some(15));
+        assert_eq!(beacon_parser::line_col_to_byte_offset(source, 2, 5), Some(15));
     }
 
     #[test]

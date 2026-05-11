@@ -229,7 +229,7 @@ fn visit_node_with_context(
                     span,
                 ));
 
-                bind_comprehension_target(&mut comp_env, &generator.target, &element_ty);
+                bind_comprehension_target(&mut comp_env, generator, &element_ty);
 
                 for if_clause in &generator.ifs {
                     visit_node_with_env(if_clause, &mut comp_env, ctx, stub_cache)?;

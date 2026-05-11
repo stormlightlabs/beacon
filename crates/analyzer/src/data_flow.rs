@@ -945,7 +945,7 @@ impl<'a> DataFlowAnalyzer<'a> {
 mod tests {
     use super::*;
     use crate::cfg::{CfgBuilder, ControlFlowGraph};
-    use beacon_parser::{NameResolver, PythonParser, ScopeId, ScopeKind};
+    use beacon_parser::{NameResolver, PythonParser, ScopeId, ScopeKind, line_col_to_byte_offset_lossy};
     use serde_json;
 
     macro_rules! data_flow_fixture {
@@ -982,7 +982,7 @@ mod tests {
                 AstNode::FunctionDef { line, col, .. } => (*line, *col),
                 _ => unreachable!("selected node must be a function"),
             };
-            let byte_offset = line_col_to_byte_offset(source, line, col);
+            let byte_offset = line_col_to_byte_offset_lossy(source, line, col);
             let scope_id = resolver.symbol_table.find_scope_at_position(byte_offset);
             debug_assert!(
                 resolver
@@ -1061,29 +1061,6 @@ mod tests {
         let mut parser = PythonParser::new().expect("failed to initialize parser");
         let parsed = parser.parse(source).expect("failed to parse source");
         parser.to_ast(&parsed).expect("failed to convert parse tree to AST")
-    }
-
-    fn line_col_to_byte_offset(source: &str, line: usize, col: usize) -> usize {
-        let mut current_line = 1;
-        let mut current_col = 1;
-        let mut offset = 0;
-
-        for ch in source.chars() {
-            if current_line == line && current_col == col {
-                return offset;
-            }
-
-            if ch == '\n' {
-                current_line += 1;
-                current_col = 1;
-            } else {
-                current_col += 1;
-            }
-
-            offset += ch.len_utf8();
-        }
-
-        offset
     }
 
     #[test]
@@ -1516,7 +1493,7 @@ mod tests {
             builder.build_function(body);
 
             let cfg = builder.build();
-            let byte_offset = line_col_to_byte_offset(&source, *line, *col);
+            let byte_offset = line_col_to_byte_offset_lossy(&source, *line, *col);
             let scope_id = resolver.symbol_table.find_scope_at_position(byte_offset);
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
@@ -1611,7 +1588,7 @@ mod tests {
             builder.build_function(body);
             let cfg = builder.build();
 
-            let byte_offset = line_col_to_byte_offset(&source, *line, *col);
+            let byte_offset = line_col_to_byte_offset_lossy(&source, *line, *col);
             let scope_id = resolver.symbol_table.find_scope_at_position(byte_offset);
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();
@@ -1735,7 +1712,7 @@ mod tests {
             builder.build_function(body);
             let cfg = builder.build();
 
-            let byte_offset = line_col_to_byte_offset(&source, *line, *col);
+            let byte_offset = line_col_to_byte_offset_lossy(&source, *line, *col);
             let scope_id = resolver.symbol_table.find_scope_at_position(byte_offset);
             let analyzer = DataFlowAnalyzer::new(&cfg, body, &resolver.symbol_table, scope_id, None);
             let result = analyzer.find_use_before_def();

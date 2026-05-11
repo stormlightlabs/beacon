@@ -50,7 +50,7 @@ result = greet("Alice", "Bob")  # ERROR: expects 1 argument, got 2
     let mismatch_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "argument-count-mismatch",
                 _ => false,
             })
@@ -115,7 +115,7 @@ total = count([1, 2, 3])  # OK: list argument
     let mismatch_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "argument-count-mismatch",
                 _ => false,
             })
@@ -167,7 +167,7 @@ result = add("hello", 42)  # ERROR: first arg should be int, got str
     let type_mismatch_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "type-mismatch-argument",
                 _ => false,
             })
@@ -232,7 +232,7 @@ result3 = process([1, 2, 3])  # OK: Any accepts list
     let mismatch_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "argument-count-mismatch",
                 _ => false,
             })
@@ -283,7 +283,7 @@ result = do_something("a", "b")  # Should not error: no type info available
     let mismatch_diagnostics: Vec<_> = diagnostics
         .iter()
         .filter(|d| {
-            d.code.as_ref().map_or(false, |c| match c {
+            d.code.as_ref().is_some_and(|c| match c {
                 lsp_types::NumberOrString::String(s) => s == "argument-count-mismatch",
                 _ => false,
             })

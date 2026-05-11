@@ -589,6 +589,13 @@ mod tests {
             element: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 2, end_line: 1, end_col: 3 }),
             generators: vec![crate::Comprehension {
                 target: "x".to_string(),
+                target_node: Some(Box::new(AstNode::Identifier {
+                    name: "x".to_string(),
+                    line: 1,
+                    col: 8,
+                    end_line: 1,
+                    end_col: 9,
+                })),
                 iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 13, end_line: 1, end_col: 18 },
                 ifs: vec![],
             }],
@@ -610,6 +617,13 @@ mod tests {
             value: Box::new(AstNode::Identifier { name: "v".to_string(), line: 1, col: 5, end_line: 1, end_col: 6 }),
             generators: vec![crate::Comprehension {
                 target: "k".to_string(),
+                target_node: Some(Box::new(AstNode::Identifier {
+                    name: "k".to_string(),
+                    line: 1,
+                    col: 11,
+                    end_line: 1,
+                    end_col: 12,
+                })),
                 iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 19, end_line: 1, end_col: 24 },
                 ifs: vec![],
             }],
@@ -630,6 +644,13 @@ mod tests {
             element: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 2, end_line: 1, end_col: 3 }),
             generators: vec![crate::Comprehension {
                 target: "x".to_string(),
+                target_node: Some(Box::new(AstNode::Identifier {
+                    name: "x".to_string(),
+                    line: 1,
+                    col: 8,
+                    end_line: 1,
+                    end_col: 9,
+                })),
                 iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 13, end_line: 1, end_col: 18 },
                 ifs: vec![],
             }],
@@ -650,6 +671,13 @@ mod tests {
             element: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 2, end_line: 1, end_col: 3 }),
             generators: vec![crate::Comprehension {
                 target: "x".to_string(),
+                target_node: Some(Box::new(AstNode::Identifier {
+                    name: "x".to_string(),
+                    line: 1,
+                    col: 8,
+                    end_line: 1,
+                    end_col: 9,
+                })),
                 iter: AstNode::Identifier { name: "items".to_string(), line: 1, col: 13, end_line: 1, end_col: 18 },
                 ifs: vec![],
             }],
