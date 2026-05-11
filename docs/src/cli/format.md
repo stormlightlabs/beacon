@@ -1,8 +1,8 @@
 # Formatter CLI
 
 The `format` command exposes Beacon's Python formatter without having to spin up the language server.
-It is helpful for debugging formatter behaviour (for example, while comparing
-`samples/capabilities_support.py` against the generated `samples/capabilities_support_formatted.py`).
+It is helpful for debugging formatter behaviour against files in
+`fixtures/workspace/`.
 
 ## Usage
 
@@ -32,13 +32,13 @@ Accepts:
 ### Format a single file and display to terminal
 
 ```sh
-beacon format samples/capabilities_support.py
+beacon format fixtures/workspace/app/dynamic.py
 ```
 
 ### Format file in-place
 
 ```sh
-beacon format samples/capabilities_support.py --write
+beacon format fixtures/workspace/app/dynamic.py --write
 ```
 
 ### Format all files in a directory
@@ -62,7 +62,7 @@ beacon format src/ --check
 ### Write formatted output to a different file
 
 ```sh
-beacon format samples/capabilities_support.py --output samples/capabilities_support_formatted.py
+beacon format fixtures/workspace/app/dynamic.py --output /tmp/dynamic.py
 ```
 
 ## Directory Traversal

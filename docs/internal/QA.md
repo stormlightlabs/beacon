@@ -93,25 +93,27 @@ cargo test -p beacon-cli
 
 ## CLI Smoke Tests
 
-Use samples and a temporary workspace to verify frontend behavior without an editor:
+Use `fixtures/workspace/` and a temporary workspace to verify frontend
+behavior without an editor:
 
 ```sh
-cargo run -p beacon-cli -- check samples/basic.py
-cargo run -p beacon-cli -- resolve samples/basic.py --verbose
-cargo run -p beacon-cli -- typecheck samples/basic.py
-cargo run -p beacon-cli -- typecheck --format json samples/basic.py
-cargo run -p beacon-cli -- lint samples
-cargo run -p beacon-cli -- analyze project samples
-cargo run -p beacon-cli -- format --check samples
+cargo run -p beacon-cli -- check fixtures/workspace/app/dynamic.py
+cargo run -p beacon-cli -- resolve fixtures/workspace/app/dynamic.py --verbose
+cargo run -p beacon-cli -- typecheck fixtures/workspace/app/dynamic.py
+cargo run -p beacon-cli -- typecheck --format json \
+  fixtures/workspace/app/dynamic.py
+cargo run -p beacon-cli -- lint fixtures/workspace
+cargo run -p beacon-cli -- analyze project fixtures/workspace
+cargo run -p beacon-cli -- format --check fixtures/workspace
 ```
 
 Debug build probes:
 
 ```sh
-cargo run -p beacon-cli -- debug tree samples/basic.py
-cargo run -p beacon-cli -- debug ast samples/basic.py
-cargo run -p beacon-cli -- debug constraints samples/basic.py
-cargo run -p beacon-cli -- debug diagnostics samples
+cargo run -p beacon-cli -- debug tree fixtures/workspace/app/dynamic.py
+cargo run -p beacon-cli -- debug ast fixtures/workspace/app/dynamic.py
+cargo run -p beacon-cli -- debug constraints fixtures/workspace/app/dynamic.py
+cargo run -p beacon-cli -- debug diagnostics fixtures/workspace
 ```
 
 Commands that print placeholder `TODO` output stay outside the v1 contract until implemented or hidden.

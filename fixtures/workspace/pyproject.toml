@@ -1,0 +1,10 @@
+[project]
+name = "beacon-workspace-fixture"
+version = "0.0.0"
+
+[tool.beacon]
+python_version = "3.12"
+stub_paths = ["stubs"]
+
+[tool.beacon.type_checking]
+mode = "strict"

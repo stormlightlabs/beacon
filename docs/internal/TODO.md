@@ -1,25 +1,23 @@
 # Beacon TODO
 
-## Milestone 1: Contract Workspace And Harness
+## Milestone 1: Workspace Fixture And Harness
 
-- [ ] Create one shared top-level `fixtures/workspace/` fixture used by parser,
+- [x] Create one shared top-level `fixtures/workspace/` fixture used by parser,
   analyzer, CLI, and LSP tests.
-  - include a normal package, subpackage, config files, custom stubs, and
+    - include a normal package, subpackage, config files, custom stubs, and
     intentionally broken modules
-  - avoid a special "v1 package" concept; this fixture is the representative
-    workspace contract
-- [ ] Backmerge `samples/` into `fixtures/workspace/`.
-  - preserve useful sample scenarios as modules, config cases, or expected
+    - avoid a special "v1 package" concept; this fixture is the representative
+    workspace fixture
+- [x] Backmerge former sample programs into `fixtures/workspace/`.
+    - preserve useful sample scenarios as modules, config cases, or expected
     diagnostic cases in the workspace fixture
-  - remove or relocate migrated samples so `samples/` does not become a
-    parallel contract surface
-  - keep only examples that are intentionally outside the release gate, and
-    label their purpose clearly
-- [ ] Add shared fixture helpers so crates can load `fixtures/workspace/`
+    - remove the old sample directory so it does not become a parallel fixture
+    surface
+- [x] Add shared fixture helpers so crates can load `fixtures/workspace/`
   without copying files.
-- [ ] Add structured assertion helpers for diagnostics, inferred types, LSP
+- [x] Add structured assertion helpers for diagnostics, inferred types, LSP
   ranges, and edit payloads.
-- [ ] Add parser, analyzer, CLI, and LSP smoke tests proving the shared
+- [x] Add parser, analyzer, CLI, and LSP smoke tests proving the shared
   fixture loads consistently.
 
 ## Milestone 2: Diagnostics, Config, And CLI Parity
@@ -36,9 +34,9 @@
   settings, and file mode directives.
 - [ ] Ensure strict/balanced/relaxed modes change severity predictably.
 - [ ] Remove, implement, or hide placeholder v1-path CLI output:
-  - unification trace
-  - CFG visualization
-  - inferred type display
+    - unification trace
+    - CFG visualization
+    - inferred type display
 
 ## Milestone 3: Typing Breadth
 

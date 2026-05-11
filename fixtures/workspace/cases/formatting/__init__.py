@@ -1,0 +1,1 @@
+"""Formatter fixture cases."""

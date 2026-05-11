@@ -56,9 +56,10 @@ The LSP server is implemented in Rust and located at `../../crates/server`.
    - Build the Rust LSP server in debug mode
    - Compile the TypeScript client
    - Open a new Extension Development Host window
-   - Load the `samples/` directory with Python test files
+   - Load the `fixtures/` directory with Python test files
 
-6. In the Extension Development Host window, open a Python file from the `samples/` directory to activate the extension
+6. In the Extension Development Host window, open a Python file from
+   `fixtures/workspace/` to activate the extension
 
 ## Running the Extension
 
@@ -69,7 +70,7 @@ The launch configuration will:
 - Build the Rust LSP server (debug mode)
 - Compile the TypeScript client
 - Open a new VSCode window with the extension loaded
-- Open the `samples/` directory with Python test files
+- Open the `fixtures/` directory with Python test files
 
 **Note:** Launch configurations are in `../../.vscode/launch.json` at the project root.
 

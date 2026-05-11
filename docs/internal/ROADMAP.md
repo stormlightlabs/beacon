@@ -90,11 +90,8 @@ The fixture should be shared by parser, analyzer, CLI, and LSP tests through
 helpers rather than copied into each crate. Each crate can still add focused
 fixtures for local edge cases.
 
-Existing `samples/` should be backmerged into this workspace where they cover
-supported behavior. After that, `samples/` should contain only clearly labeled
-manual or non-contract examples, or disappear entirely.
-
-Every contract assertion should prefer structured data over text-only checks:
+Every shared fixture assertion should prefer structured data over text-only
+checks:
 
 - diagnostic code, severity, message fragment, span, and optional tags;
 - inferred symbol type or hover text where the type is part of the contract;
@@ -104,7 +101,7 @@ Every contract assertion should prefer structured data over text-only checks:
 
 ## Test Bed Coverage
 
-The contract workspace should cover these v1 behaviors.
+The shared workspace fixture should cover these v1 behaviors.
 
 ### Syntax And Symbols
 
@@ -146,7 +143,7 @@ The contract workspace should cover these v1 behaviors.
   workspace.
 - Human, compact, and JSON output preserve stable codes, severities, spans,
   paths, and exit behavior.
-- Placeholder v1-path output is implemented, hidden, or outside the contract.
+- Placeholder v1-path output is implemented, hidden, or outside v1 scope.
 
 ### LSP
 
@@ -168,12 +165,12 @@ See [dynamic Python](./specs/dynamic.md).
 ### v0.6: Contract Freeze
 
 Freeze the v1 behavior list, diagnostic categories, config shape, fixture
-layout, and CLI/LSP parity expectations. Build the shared contract workspace
+layout, and CLI/LSP parity expectations. Build the shared workspace fixture
 and convert milestone 1 into executable tests.
 
 ### v0.7: Checker Stabilization
 
-Close semantic holes exposed by the contract tests. Prioritize calls,
+Close semantic holes exposed by the v1 tests. Prioritize calls,
 generics, protocols, narrowing, dataclasses, async/generator behavior, and
 actionable diagnostics.
 

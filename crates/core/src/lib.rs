@@ -10,6 +10,7 @@
 pub mod annotation_parser;
 pub mod class_metadata;
 pub mod errors;
+pub mod fixtures;
 pub mod logging;
 pub mod protocols;
 pub mod subst;
