@@ -31,9 +31,9 @@ Controlled **subtyping-like** features via **union/optionals** and **protocols/s
 **Soundness modes**: "strict", "balanced", "relaxed" (affecting treatment of `Any`, unknown attributes, dynamic imports).
 
 ```text
-               ┌──────────────────────────────────────────────────┐
-               │                  LSP Frontend                    │
-               │ (tower-lsp or custom) using lsp-types for models │
+               ┌───────────────────────────────────────────────────┐
+               │                  LSP Frontend                     │
+               │ (tower-lsp or custom) using lsp-types for models  │
                └───────────────▲───────────────────────▲──────────┘
                                │                       │
                      Requests / Notifications    Diagnostics, hovers
@@ -72,9 +72,3 @@ Beacon's LSP focuses on delivering a fast, editor-friendly surface for the Beaco
 **Refactoring primitives**: offer cross-file rename, extract function/variable, inline function, change signature, and move symbol refactorings with comprehensive code actions.
 
 **Modular design**: isolate feature logic behind provider traits so contributors can evolve features independently.
-
-### Out-of-Scope (For Now)
-
-- **Formatting and linting**: formatting endpoints and lint integrations are planned but not part of the initial release.
-- **Editor-specific UX**: we stick to LSP-standard capabilities instead of bespoke VS Code UI components.
-- **Automatic import suggestions**: while refactorings manage imports, automatic import suggestions for undefined symbols remain unimplemented.

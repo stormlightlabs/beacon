@@ -2469,6 +2469,17 @@ method = s.upper
                 overload_set.implementation.is_some(),
                 "convert should have an implementation signature"
             );
+            assert!(
+                overload_set
+                    .signatures
+                    .iter()
+                    .all(|sig| matches!(sig, Type::FunWithParams(_, _))),
+                "stub overload signatures should preserve function parameter metadata"
+            );
+            assert!(
+                matches!(overload_set.implementation.as_ref(), Some(Type::FunWithParams(_, _))),
+                "stub implementation signature should preserve function parameter metadata"
+            );
         } else {
             panic!("convert method should be overloaded");
         }

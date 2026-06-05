@@ -46,7 +46,7 @@
 - [x] Add focused call-constraint tests for positional, keyword, defaulted,
   keyword-only, variadic, and bound receiver calls.
 - [x] Add overload selection, overlap, and implementation compatibility tests.
-- [ ] Add generic function and class fixtures for TypeVar bounds,
+- [x] Add generic function and class fixtures for TypeVar bounds,
   constraints, variance, defaults, ParamSpec, and TypeVarTuple.
 - [ ] Add protocol tests for inheritance, generic protocols, callback
   protocols, bounds, and missing methods.

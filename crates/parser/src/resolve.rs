@@ -163,6 +163,7 @@ mod tests {
                     end_col: 21,
                     type_annotation: None,
                     default_value: None,
+                    kind: crate::ParameterKind::PositionalOrKeyword,
                 },
                 Parameter {
                     name: "param2".to_string(),
@@ -172,6 +173,7 @@ mod tests {
                     end_col: 29,
                     type_annotation: None,
                     default_value: None,
+                    kind: crate::ParameterKind::PositionalOrKeyword,
                 },
             ],
             body: vec![AstNode::Assignment {
@@ -390,6 +392,7 @@ mod tests {
                         end_col: 16,
                         type_annotation: None,
                         default_value: None,
+                        kind: crate::ParameterKind::PositionalOrKeyword,
                     }],
                     body: vec![AstNode::Assignment {
                         target: Box::new(AstNode::Identifier {
@@ -720,6 +723,7 @@ mod tests {
                         end_col: 20,
                         type_annotation: None,
                         default_value: None,
+                        kind: crate::ParameterKind::PositionalOrKeyword,
                     }],
                     body: vec![AstNode::Pass { line: 3, col: 9, end_line: 3, end_col: 13 }],
                     line: 2,
@@ -1122,6 +1126,7 @@ mod tests {
                         end_col: 10,
                         type_annotation: None,
                         default_value: None,
+                        kind: crate::ParameterKind::PositionalOrKeyword,
                     }],
                     body: vec![AstNode::Pass { line: 3, col: 5, end_line: 3, end_col: 9 }],
                     line: 2,

@@ -1171,6 +1171,38 @@ fn test_mixed_parameters() {
 }
 
 #[test]
+fn test_parameter_kinds_for_positional_keyword_varargs_and_kwargs() {
+    let mut parser = PythonParser::new().unwrap();
+    let source = "def foo(a, /, b: int = 1, *args: str, c: bool, d=2, **kwargs: object): pass";
+    let parsed = parser.parse(source).unwrap();
+    let ast = parser.to_ast(&parsed).unwrap();
+
+    match ast {
+        AstNode::Module { body, .. } => match &body[0] {
+            AstNode::FunctionDef { args, .. } => {
+                assert_eq!(args.len(), 6);
+                assert_eq!(args[0].name, "a");
+                assert_eq!(args[0].kind, ParameterKind::PositionalOnly);
+                assert_eq!(args[1].name, "b");
+                assert_eq!(args[1].kind, ParameterKind::PositionalOrKeyword);
+                assert!(args[1].default_value.is_some());
+                assert_eq!(args[2].name, "*args");
+                assert_eq!(args[2].kind, ParameterKind::VarArgs);
+                assert_eq!(args[3].name, "c");
+                assert_eq!(args[3].kind, ParameterKind::KeywordOnly);
+                assert_eq!(args[4].name, "d");
+                assert_eq!(args[4].kind, ParameterKind::KeywordOnly);
+                assert!(args[4].default_value.is_some());
+                assert_eq!(args[5].name, "**kwargs");
+                assert_eq!(args[5].kind, ParameterKind::KwArgs);
+            }
+            _ => panic!("Expected function definition"),
+        },
+        _ => panic!("Expected module"),
+    }
+}
+
+#[test]
 fn test_default_with_identifier() {
     let mut parser = PythonParser::new().unwrap();
     let source = "def foo(x=CONST): pass";

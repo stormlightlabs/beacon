@@ -2,7 +2,17 @@ use beacon_core::{ParseError, Result};
 use tree_sitter::Node;
 
 use super::helpers::field_text;
-use crate::{AstNode, Parameter, PythonParser};
+use crate::{AstNode, Parameter, ParameterKind, PythonParser};
+
+fn parameter_kind_from_name(name: &str) -> ParameterKind {
+    if name.starts_with("**") {
+        ParameterKind::KwArgs
+    } else if name.starts_with('*') {
+        ParameterKind::VarArgs
+    } else {
+        ParameterKind::PositionalOrKeyword
+    }
+}
 
 impl PythonParser {
     pub(crate) fn extract_identifier(&self, node: &Node, source: &str, field: &str) -> Result<String> {
@@ -22,13 +32,35 @@ impl PythonParser {
     }
 
     pub(crate) fn extract_parameter_list(&self, params: &Node, source: &str) -> Result<Vec<Parameter>> {
-        let mut args = Vec::new();
+        let mut args: Vec<Parameter> = Vec::new();
+        let mut keyword_only = false;
         let mut cursor = params.walk();
         for child in params.children(&mut cursor) {
-            if child.is_extra() || child.kind() == "," {
+            if child.is_extra() || matches!(child.kind(), "," | "(" | ")") {
                 continue;
             }
-            if let Some(param) = self.extract_parameter(&child, source)? {
+            match child.kind() {
+                "positional_separator" => {
+                    for param in &mut args {
+                        if matches!(param.kind, ParameterKind::PositionalOrKeyword) {
+                            param.kind = ParameterKind::PositionalOnly;
+                        }
+                    }
+                    continue;
+                }
+                "keyword_separator" => {
+                    keyword_only = true;
+                    continue;
+                }
+                _ => {}
+            }
+            if let Some(mut param) = self.extract_parameter(&child, source)? {
+                if keyword_only && matches!(param.kind, ParameterKind::PositionalOrKeyword) {
+                    param.kind = ParameterKind::KeywordOnly;
+                }
+                if matches!(param.kind, ParameterKind::VarArgs) {
+                    keyword_only = true;
+                }
                 args.push(param);
             }
         }
@@ -49,6 +81,7 @@ impl PythonParser {
                     end_col: end_position.column + 1,
                     type_annotation: None,
                     default_value: None,
+                    kind: ParameterKind::PositionalOrKeyword,
                 }))
             }
             "list_splat_pattern" | "dictionary_splat_pattern" => {
@@ -63,6 +96,11 @@ impl PythonParser {
                     end_col: end_position.column + 1,
                     type_annotation: None,
                     default_value: None,
+                    kind: if node.kind() == "dictionary_splat_pattern" {
+                        ParameterKind::KwArgs
+                    } else {
+                        ParameterKind::VarArgs
+                    },
                 }))
             }
             "typed_parameter" | "typed_default_parameter" => {
@@ -83,7 +121,10 @@ impl PythonParser {
                 } else {
                     let mut cursor = node.walk();
                     for child in node.children(&mut cursor) {
-                        if child.kind() == "identifier" {
+                        if matches!(
+                            child.kind(),
+                            "identifier" | "list_splat_pattern" | "dictionary_splat_pattern"
+                        ) {
                             name = Some(
                                 child
                                     .utf8_text(source.as_bytes())
@@ -111,13 +152,14 @@ impl PythonParser {
 
                 match name {
                     Some(n) => Ok(Some(Parameter {
-                        name: n,
+                        name: n.clone(),
                         line: position.row + 1,
                         col: position.column + 1,
                         end_line: end_position.row + 1,
                         end_col: end_position.column + 1,
                         type_annotation,
                         default_value,
+                        kind: parameter_kind_from_name(&n),
                     })),
                     None => Ok(None),
                 }
@@ -151,6 +193,7 @@ impl PythonParser {
                         end_col: end_position.column + 1,
                         type_annotation: None,
                         default_value,
+                        kind: ParameterKind::PositionalOrKeyword,
                     })),
                     None => Ok(None),
                 }

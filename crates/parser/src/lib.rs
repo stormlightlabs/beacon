@@ -14,7 +14,7 @@ pub mod test_builders;
 
 pub use ast::{
     AstNode, BinaryOperator, CompareOperator, Comprehension, ExceptHandler, ImportName, LiteralValue, MatchCase,
-    Parameter, Pattern, UnaryOperator, WithItem,
+    Parameter, ParameterKind, Pattern, UnaryOperator, WithItem,
 };
 pub use docstring::{DocstringStyle, ParsedDocstring, parse as parse_docstring};
 pub use highlight::PythonHighlighter;

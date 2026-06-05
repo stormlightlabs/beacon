@@ -3,6 +3,16 @@
 use crate::SourceRange;
 use std::collections::BTreeSet;
 
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParameterKind {
+    PositionalOnly,
+    PositionalOrKeyword,
+    VarArgs,
+    KeywordOnly,
+    KwArgs,
+}
+
 /// Function parameter with position information
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
@@ -14,6 +24,7 @@ pub struct Parameter {
     pub end_col: usize,
     pub type_annotation: Option<String>,
     pub default_value: Option<Box<AstNode>>,
+    pub kind: ParameterKind,
 }
 
 /// Imported name with position information

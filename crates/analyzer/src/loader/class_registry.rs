@@ -1,14 +1,16 @@
 use super::annotations::{extract_generic_params, parse_type_annotation};
 use super::typevars::StubTypeContext;
 
-use beacon_core::{ClassMetadata, ClassRegistry, MethodType, Type, TypeCtor, TypeVar, Variance};
-use beacon_parser::AstNode;
+use beacon_core::{
+    ClassMetadata, ClassRegistry, FunctionParam, FunctionParamKind, MethodType, Type, TypeCtor, TypeVar, Variance,
+};
+use beacon_parser::{AstNode, ParameterKind};
 use rustc_hash::FxHashSet;
 use std::collections::HashMap;
 
 #[derive(Debug)]
 pub(crate) struct MethodInfo {
-    pub params: Vec<(String, Type)>,
+    pub params: Vec<FunctionParam>,
     pub return_type: Type,
     pub decorators: Vec<String>,
     pub is_overload: bool,
@@ -31,6 +33,12 @@ fn collect_type_vars_from_type(ty: &Type, acc: &mut FxHashSet<String>) {
         Type::Fun(params, ret) => {
             for param in params {
                 collect_type_vars_from_type(&param.1, acc);
+            }
+            collect_type_vars_from_type(ret, acc);
+        }
+        Type::FunWithParams(params, ret) => {
+            for param in params {
+                collect_type_vars_from_type(&param.ty, acc);
             }
             collect_type_vars_from_type(ret, acc);
         }
@@ -214,14 +222,14 @@ fn add_field_from_annotation(
 fn build_method_info(
     params: &[beacon_parser::Parameter], return_type: &Option<String>, decorators: &[String], ctx: &mut StubTypeContext,
 ) -> MethodInfo {
-    let mut param_list: Vec<(String, Type)> = Vec::new();
+    let mut param_list: Vec<FunctionParam> = Vec::new();
     let has_self = params.first().map(|p| p.name == "self").unwrap_or(false);
     let has_cls = params.first().map(|p| p.name == "cls").unwrap_or(false);
 
     if has_self {
-        param_list.push(("self".to_string(), Type::any()));
+        param_list.push(FunctionParam::new("self", Type::any()));
     } else if has_cls {
-        param_list.push(("cls".to_string(), Type::any()));
+        param_list.push(FunctionParam::new("cls", Type::any()));
     }
 
     let start_idx = if has_self || has_cls { 1 } else { 0 };
@@ -229,7 +237,12 @@ fn build_method_info(
         if let Some(ann) = &param.type_annotation
             && let Some(ty) = parse_type_annotation(ann, ctx)
         {
-            param_list.push((param.name.clone(), ty));
+            param_list.push(FunctionParam::with_metadata(
+                param.name.trim_start_matches('*').to_string(),
+                ty,
+                function_param_kind(param.kind),
+                param.default_value.is_some(),
+            ));
         }
     }
 
@@ -270,7 +283,7 @@ fn handle_method_group(method_name: String, method_infos: Vec<MethodInfo>, metad
 fn handle_special_method(method_name: &str, method_infos: &[MethodInfo], metadata: &mut ClassMetadata) -> bool {
     if method_name == "__init__" {
         if let Some(info) = method_infos.first() {
-            let func_type = Type::fun(info.params.clone(), info.return_type.clone());
+            let func_type = Type::fun_with_params(info.params.clone(), info.return_type.clone());
             metadata.set_init_type(func_type);
         }
         return true;
@@ -278,7 +291,7 @@ fn handle_special_method(method_name: &str, method_infos: &[MethodInfo], metadat
 
     if method_name == "__new__" {
         if let Some(info) = method_infos.first() {
-            let func_type = Type::fun(info.params.clone(), info.return_type.clone());
+            let func_type = Type::fun_with_params(info.params.clone(), info.return_type.clone());
             metadata.set_new_type(func_type);
         }
         return true;
@@ -316,7 +329,7 @@ fn build_overload_set(method_infos: Vec<MethodInfo>, treat_as_static: bool) -> b
 
     for info in method_infos {
         let params = adjust_params_for_static(&info.params, treat_as_static);
-        let func_type = Type::fun(params, info.return_type.clone());
+        let func_type = Type::fun_with_params(params, info.return_type.clone());
 
         if info.is_overload {
             overload_sigs.push(func_type);
@@ -332,7 +345,7 @@ fn register_non_overloaded_method(
     method_name: String, method_info: &MethodInfo, decorator_flags: MethodDecoratorFlags, metadata: &mut ClassMetadata,
 ) {
     let params = adjust_params_for_static(&method_info.params, decorator_flags.staticmethod);
-    let func_type = Type::fun(params, method_info.return_type.clone());
+    let func_type = Type::fun_with_params(params, method_info.return_type.clone());
 
     if decorator_flags.staticmethod {
         metadata.add_staticmethod(method_name, func_type);
@@ -343,11 +356,21 @@ fn register_non_overloaded_method(
     }
 }
 
-fn adjust_params_for_static(params: &[(String, Type)], is_static: bool) -> Vec<(String, Type)> {
+fn adjust_params_for_static(params: &[FunctionParam], is_static: bool) -> Vec<FunctionParam> {
     if is_static && !params.is_empty() {
         params.iter().skip(1).cloned().collect()
     } else {
         params.to_vec()
+    }
+}
+
+fn function_param_kind(kind: ParameterKind) -> FunctionParamKind {
+    match kind {
+        ParameterKind::PositionalOnly => FunctionParamKind::PositionalOnly,
+        ParameterKind::PositionalOrKeyword => FunctionParamKind::PositionalOrKeyword,
+        ParameterKind::VarArgs => FunctionParamKind::VarArgs,
+        ParameterKind::KeywordOnly => FunctionParamKind::KeywordOnly,
+        ParameterKind::KwArgs => FunctionParamKind::KwArgs,
     }
 }
 

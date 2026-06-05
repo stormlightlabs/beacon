@@ -161,6 +161,17 @@ fn workspace_fixture_cli_analyze_show_types_json_is_structured() {
 }
 
 #[test]
+fn workspace_fixture_cli_generics_typecheck_smoke() {
+    cargo_bin_cmd!("beacon")
+        .arg("typecheck")
+        .arg("--format")
+        .arg("json")
+        .arg(file("cases/generics.py"))
+        .assert()
+        .success();
+}
+
+#[test]
 fn workspace_fixture_cli_typing_breadth_show_types_has_stable_fragments() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("analyze")

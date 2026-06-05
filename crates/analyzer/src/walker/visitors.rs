@@ -17,7 +17,7 @@ use crate::walker::{ExprContext, visit_node_with_context, visit_node_with_env};
 use beacon_constraint::{Constraint, ConstraintGenContext, Span, TypePredicate};
 use beacon_core::{AnalysisError, BeaconError, FunctionParam, FunctionParamKind, TypeCtor, TypeVar, Variance};
 use beacon_core::{Type, TypeScheme, errors::Result};
-use beacon_parser::{AstNode, BinaryOperator};
+use beacon_parser::{AstNode, BinaryOperator, ParameterKind};
 use std::sync::Arc;
 
 pub type TStubCache = Arc<std::sync::RwLock<StubCache>>;
@@ -427,12 +427,12 @@ fn function_params_with_metadata(args: &[beacon_parser::Parameter], params: &[(S
     args.iter()
         .zip(params.iter())
         .map(|(param, (name, ty))| {
-            let kind = if name.starts_with("**") {
-                FunctionParamKind::KwArgs
-            } else if name.starts_with('*') {
-                FunctionParamKind::VarArgs
-            } else {
-                FunctionParamKind::PositionalOrKeyword
+            let kind = match param.kind {
+                ParameterKind::PositionalOnly => FunctionParamKind::PositionalOnly,
+                ParameterKind::PositionalOrKeyword => FunctionParamKind::PositionalOrKeyword,
+                ParameterKind::VarArgs => FunctionParamKind::VarArgs,
+                ParameterKind::KeywordOnly => FunctionParamKind::KeywordOnly,
+                ParameterKind::KwArgs => FunctionParamKind::KwArgs,
             };
             let clean_name = name.trim_start_matches('*').to_string();
             FunctionParam::with_metadata(clean_name, ty.clone(), kind, param.default_value.is_some())
