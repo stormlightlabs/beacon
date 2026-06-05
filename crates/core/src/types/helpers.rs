@@ -78,6 +78,9 @@ pub fn contains_type_var(ty: &Type) -> bool {
         Type::Con(_) => false,
         Type::App(ctor, arg) => contains_type_var(ctor) || contains_type_var(arg),
         Type::Fun(args, ret) => args.iter().any(|(_, arg)| contains_type_var(arg)) || contains_type_var(ret),
+        Type::FunWithParams(params, ret) => {
+            params.iter().any(|param| contains_type_var(&param.ty)) || contains_type_var(ret)
+        }
         Type::ForAll(_, body) => contains_type_var(body),
         Type::Union(types) | Type::Intersection(types) | Type::Tuple(types) => types.iter().any(contains_type_var),
         Type::Record(fields, row) => row.is_some() || fields.iter().any(|(_, field)| contains_type_var(field)),

@@ -32,6 +32,9 @@ impl Unifier {
             Type::Fun(args, ret) => {
                 args.iter().any(|(_, ty)| Self::occurs_check(tv, ty)) || Self::occurs_check(tv, ret)
             }
+            Type::FunWithParams(params, ret) => {
+                params.iter().any(|param| Self::occurs_check(tv, &param.ty)) || Self::occurs_check(tv, ret)
+            }
             Type::ForAll(quantified, t_inner) => {
                 if quantified.contains(tv) {
                     false

@@ -708,6 +708,23 @@ fn test_value_restriction_with_free_vars() {
 }
 
 #[test]
+fn test_function_param_metadata_display() {
+    let fn_ty = Type::fun_with_params(
+        vec![
+            FunctionParam::with_metadata("path", Type::string(), FunctionParamKind::PositionalOrKeyword, false),
+            FunctionParam::with_metadata("encoding", Type::string(), FunctionParamKind::KeywordOnly, true),
+            FunctionParam::with_metadata("args", Type::int(), FunctionParamKind::VarArgs, false),
+        ],
+        Type::bool(),
+    );
+
+    let display = fn_ty.to_string();
+    assert!(display.contains("path: str"));
+    assert!(display.contains("encoding: str = ..."));
+    assert!(display.contains("*args: int"));
+}
+
+#[test]
 fn test_default_generalize_assumes_non_expansive() {
     let tv = TypeVar::new(50);
     let ty = Type::Var(tv.clone());
@@ -718,6 +735,62 @@ fn test_default_generalize_assumes_non_expansive() {
 
     assert_eq!(scheme1.quantified_vars, scheme2.quantified_vars);
     assert_eq!(scheme1.ty, scheme2.ty);
+}
+
+#[test]
+fn test_overload_resolution_uses_first_matching_signature_with_metadata() {
+    let overloads = OverloadSet::new(vec![
+        Type::fun_with_params(vec![FunctionParam::new("value", Type::int())], Type::string()),
+        Type::fun_with_params(vec![FunctionParam::new("value", Type::string())], Type::int()),
+    ]);
+
+    let resolved = overloads
+        .resolve(&[Type::string()])
+        .expect("str overload should resolve");
+
+    match resolved {
+        Type::FunWithParams(_, ret) => assert_eq!(ret.as_ref(), &Type::int()),
+        other => panic!("expected metadata function overload, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_overload_overlap_detection_reports_compatible_domains() {
+    let overloads = OverloadSet::new(vec![
+        Type::fun_with_params(vec![FunctionParam::new("value", Type::int())], Type::string()),
+        Type::fun_with_params(vec![FunctionParam::new("value", Type::any())], Type::string()),
+        Type::fun_with_params(vec![FunctionParam::new("value", Type::string())], Type::string()),
+    ]);
+
+    assert_eq!(overloads.overlapping_pairs(), vec![(0, 1), (1, 2)]);
+}
+
+#[test]
+fn test_overload_implementation_compatibility_accepts_broad_implementation() {
+    let overloads = OverloadSet::with_implementation(
+        vec![
+            Type::fun_with_params(vec![FunctionParam::new("value", Type::int())], Type::string()),
+            Type::fun_with_params(vec![FunctionParam::new("value", Type::string())], Type::string()),
+        ],
+        Type::fun_with_params(vec![FunctionParam::new("value", Type::any())], Type::string()),
+    );
+
+    assert!(overloads.implementation_compatibility_errors().is_empty());
+}
+
+#[test]
+fn test_overload_implementation_compatibility_rejects_narrow_implementation() {
+    let overloads = OverloadSet::with_implementation(
+        vec![Type::fun_with_params(
+            vec![FunctionParam::new("value", Type::string())],
+            Type::string(),
+        )],
+        Type::fun_with_params(vec![FunctionParam::new("value", Type::int())], Type::string()),
+    );
+
+    let errors = overloads.implementation_compatibility_errors();
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].contains("implementation parameter"));
 }
 
 #[test]

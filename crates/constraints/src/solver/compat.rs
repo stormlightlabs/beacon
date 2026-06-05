@@ -485,22 +485,37 @@ pub(super) fn function_compatible(
     actual: &Type, expected: &Type, class_registry: &ClassRegistry,
     typevar_registry: &beacon_core::TypeVarConstraintRegistry,
 ) -> bool {
-    match (actual, expected) {
-        (Type::Fun(params_a, ret_a), Type::Fun(params_e, ret_e)) => {
-            if params_a.len() != params_e.len() {
-                return false;
-            }
+    let Some((params_a, ret_a)) = function_parts(actual) else {
+        return false;
+    };
+    let Some((params_e, ret_e)) = function_parts(expected) else {
+        return false;
+    };
+    if params_a.len() != params_e.len() {
+        return false;
+    }
 
-            let params_ok = params_a
+    let params_ok = params_a
+        .iter()
+        .zip(params_e.iter())
+        .all(|((_, a), (_, e))| types_compatible(e, a, class_registry, typevar_registry));
+
+    let ret_ok = types_compatible(ret_a, ret_e, class_registry, typevar_registry);
+
+    params_ok && ret_ok
+}
+
+fn function_parts(ty: &Type) -> Option<(Vec<(String, Type)>, &Type)> {
+    match ty {
+        Type::Fun(params, ret) => Some((params.clone(), ret)),
+        Type::FunWithParams(params, ret) => Some((
+            params
                 .iter()
-                .zip(params_e.iter())
-                .all(|((_, a), (_, e))| types_compatible(e, a, class_registry, typevar_registry));
-
-            let ret_ok = types_compatible(ret_a, ret_e, class_registry, typevar_registry);
-
-            params_ok && ret_ok
-        }
-        _ => false,
+                .map(|param| (param.name.clone(), param.ty.clone()))
+                .collect(),
+            ret,
+        )),
+        _ => None,
     }
 }
 

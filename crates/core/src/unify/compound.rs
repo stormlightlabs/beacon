@@ -1,7 +1,7 @@
 //! Compound type unification for functions, tuples, and quantified types.
 
 use super::Unifier;
-use crate::{ClassRegistry, Result, Subst, Type, TypeVar, TypeVarConstraintRegistry};
+use crate::{ClassRegistry, FunctionParam, Result, Subst, Type, TypeVar, TypeVarConstraintRegistry};
 
 impl Unifier {
     pub(super) fn unify_functions(
@@ -23,6 +23,15 @@ impl Unifier {
 
         let s = Self::unify_impl(&subst.apply(ret1), &subst.apply(ret2), registry, class_registry)?;
         Ok(s.compose(subst))
+    }
+
+    pub(super) fn unify_function_param_metadata(
+        args1: &[FunctionParam], ret1: &Type, args2: &[FunctionParam], ret2: &Type,
+        registry: &TypeVarConstraintRegistry, class_registry: Option<&ClassRegistry>,
+    ) -> Result<Subst> {
+        let args1 = args1.iter().map(|p| (p.name.clone(), p.ty.clone())).collect::<Vec<_>>();
+        let args2 = args2.iter().map(|p| (p.name.clone(), p.ty.clone())).collect::<Vec<_>>();
+        Self::unify_functions(&args1, ret1, &args2, ret2, registry, class_registry)
     }
 
     pub(super) fn unify_tuples(

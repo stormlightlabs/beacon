@@ -21,14 +21,9 @@ impl Kind {
     /// Create a kind for a type constructor that takes n arguments
     /// e.g., arity(2) creates * -> * -> *
     pub fn arity(n: usize) -> Self {
-        if n == 0 {
-            Kind::Star
-        } else {
-            let mut kind = Kind::Star;
-            for _ in 0..n {
-                kind = Kind::Arrow(Box::new(Kind::Star), Box::new(kind));
-            }
-            kind
+        match n {
+            0 => Kind::Star,
+            _ => (0..n).fold(Kind::Star, |acc, _| Kind::Arrow(Box::new(Kind::Star), Box::new(acc))),
         }
     }
 }
@@ -320,6 +315,45 @@ impl TypeCtor {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FunctionParamKind {
+    PositionalOnly,
+    PositionalOrKeyword,
+    VarArgs,
+    KeywordOnly,
+    KwArgs,
+}
+
+impl std::fmt::Display for FunctionParamKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FunctionParamKind::PositionalOnly => write!(f, "positional-only"),
+            FunctionParamKind::PositionalOrKeyword => write!(f, "positional-or-keyword"),
+            FunctionParamKind::VarArgs => write!(f, "varargs"),
+            FunctionParamKind::KeywordOnly => write!(f, "keyword-only"),
+            FunctionParamKind::KwArgs => write!(f, "kwargs"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FunctionParam {
+    pub name: String,
+    pub ty: Type,
+    pub kind: FunctionParamKind,
+    pub has_default: bool,
+}
+
+impl FunctionParam {
+    pub fn new(name: impl Into<String>, ty: Type) -> Self {
+        Self { name: name.into(), ty, kind: FunctionParamKind::PositionalOrKeyword, has_default: false }
+    }
+
+    pub fn with_metadata(name: impl Into<String>, ty: Type, kind: FunctionParamKind, has_default: bool) -> Self {
+        Self { name: name.into(), ty, kind, has_default }
+    }
+}
+
 /// Core type representation for the Hindley-Milner type system
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Type {
@@ -333,6 +367,8 @@ pub enum Type {
     /// args -> return
     /// Each parameter is a (name, type) pair where name is used for keyword argument matching
     Fun(Vec<(String, Type)>, Box<Type>),
+    /// Function type with explicit Python parameter metadata.
+    FunWithParams(Vec<FunctionParam>, Box<Type>),
     /// Forall quantification (type schemes)
     ForAll(Vec<TypeVar>, Box<Type>),
     /// Union types (for Python's Union[A, B])
@@ -398,6 +434,30 @@ impl std::fmt::Display for Type {
                             ret
                         )
                     }
+                }
+            }
+            Type::FunWithParams(params, ret) => {
+                if params.is_empty() {
+                    write!(f, "() -> {ret}")
+                } else {
+                    write!(
+                        f,
+                        "({}) -> {}",
+                        params
+                            .iter()
+                            .map(|param| {
+                                let prefix = match param.kind {
+                                    FunctionParamKind::VarArgs => "*",
+                                    FunctionParamKind::KwArgs => "**",
+                                    _ => "",
+                                };
+                                let default = if param.has_default { " = ..." } else { "" };
+                                format!("{prefix}{}: {}{default}", param.name, param.ty)
+                            })
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        ret
+                    )
                 }
             }
             Type::ForAll(tvs, t) => {

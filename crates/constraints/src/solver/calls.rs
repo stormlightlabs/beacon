@@ -4,7 +4,10 @@ use super::{
 };
 use crate::{Span, TypeErrorInfo};
 
-use beacon_core::{BeaconError, ClassMetadata, ClassRegistry, Subst, Type, TypeCtor, TypeError, TypeVar, Unifier};
+use beacon_core::{
+    BeaconError, ClassMetadata, ClassRegistry, FunctionParam, FunctionParamKind, Subst, Type, TypeCtor, TypeError,
+    TypeVar, Unifier,
+};
 use std::{collections::HashSet, result};
 
 pub(super) struct CallContext<'a> {
@@ -15,8 +18,17 @@ pub(super) struct CallContext<'a> {
     pub(super) span: Span,
 }
 
-pub(super) fn merge_and_validate_args(
-    pos_args: &[(Type, Span)], kw_args: &[(String, Type, Span)], params: &[(String, Type)], skip_first: bool,
+fn legacy_params(params: &[(String, Type)]) -> Vec<FunctionParam> {
+    params
+        .iter()
+        .map(|(name, ty)| {
+            FunctionParam::with_metadata(name.clone(), ty.clone(), FunctionParamKind::PositionalOrKeyword, true)
+        })
+        .collect()
+}
+
+pub(super) fn merge_and_validate_param_metadata(
+    pos_args: &[(Type, Span)], kw_args: &[(String, Type, Span)], params: &[FunctionParam], skip_first: bool,
 ) -> result::Result<Vec<(Type, Span, String)>, String> {
     let effective_params: Vec<_> =
         if skip_first && !params.is_empty() { params[1..].to_vec() } else { params.to_vec() };
@@ -28,42 +40,105 @@ pub(super) fn merge_and_validate_args(
         }
     }
 
-    let param_names: HashSet<_> = effective_params.iter().map(|(n, _)| n.as_str()).collect();
-    for (kw_name, _, _) in kw_args {
-        if !param_names.contains(kw_name.as_str()) {
-            return Err(format!("unexpected keyword argument: '{kw_name}'"));
-        }
-    }
+    let positional_capacity = effective_params
+        .iter()
+        .filter(|param| {
+            matches!(
+                param.kind,
+                FunctionParamKind::PositionalOnly | FunctionParamKind::PositionalOrKeyword
+            )
+        })
+        .count();
+    let has_varargs = effective_params
+        .iter()
+        .any(|param| matches!(param.kind, FunctionParamKind::VarArgs));
 
-    for (i, (param_name, _)) in effective_params.iter().enumerate() {
-        if i < pos_args.len() {
-            for (kw_name, _, _) in kw_args {
-                if kw_name == param_name {
-                    return Err(format!(
-                        "argument '{param_name}' specified both positionally and as keyword"
-                    ));
-                }
-            }
-        }
-    }
-
-    if pos_args.len() > effective_params.len() {
+    if !has_varargs && pos_args.len() > positional_capacity {
         return Err(format!(
             "too many positional arguments: expected at most {}, got {}",
-            effective_params.len(),
+            positional_capacity,
             pos_args.len()
         ));
     }
 
+    let has_kwargs = effective_params
+        .iter()
+        .any(|param| matches!(param.kind, FunctionParamKind::KwArgs));
+    let keywordable_names: HashSet<_> = effective_params
+        .iter()
+        .filter(|param| {
+            matches!(
+                param.kind,
+                FunctionParamKind::PositionalOrKeyword | FunctionParamKind::KeywordOnly
+            )
+        })
+        .map(|param| param.name.as_str())
+        .collect();
+    for (kw_name, _, _) in kw_args {
+        if !has_kwargs && !keywordable_names.contains(kw_name.as_str()) {
+            return Err(format!("unexpected keyword argument: '{kw_name}'"));
+        }
+    }
+
+    let positional_params: Vec<_> = effective_params
+        .iter()
+        .filter(|param| {
+            matches!(
+                param.kind,
+                FunctionParamKind::PositionalOnly | FunctionParamKind::PositionalOrKeyword
+            )
+        })
+        .collect();
+    for (i, param) in positional_params.iter().enumerate() {
+        if i < pos_args.len() && kw_args.iter().any(|(kw_name, _, _)| kw_name == &param.name) {
+            return Err(format!(
+                "argument '{}' specified both positionally and as keyword",
+                param.name
+            ));
+        }
+    }
+
     let mut merged = Vec::new();
-    for (i, (param_name, _param_ty)) in effective_params.iter().enumerate() {
-        if i < pos_args.len() {
-            let (arg_ty, arg_span) = &pos_args[i];
-            merged.push((arg_ty.clone(), *arg_span, param_name.clone()));
-        } else if let Some((_, kw_ty, kw_span)) = kw_args.iter().find(|(name, _, _)| name == param_name) {
-            merged.push((kw_ty.clone(), *kw_span, param_name.clone()));
-        } else {
-            break;
+    for (i, (arg_ty, arg_span)) in pos_args.iter().enumerate() {
+        if let Some(param) = positional_params.get(i) {
+            merged.push((arg_ty.clone(), *arg_span, param.name.clone()));
+        } else if let Some(varargs) = effective_params
+            .iter()
+            .find(|param| matches!(param.kind, FunctionParamKind::VarArgs))
+        {
+            merged.push((arg_ty.clone(), *arg_span, varargs.name.clone()));
+        }
+    }
+
+    for param in &effective_params {
+        if matches!(
+            param.kind,
+            FunctionParamKind::PositionalOnly | FunctionParamKind::VarArgs | FunctionParamKind::KwArgs
+        ) {
+            continue;
+        }
+        if positional_params
+            .iter()
+            .position(|pos_param| pos_param.name == param.name)
+            .is_some_and(|idx| idx < pos_args.len())
+        {
+            continue;
+        }
+        if let Some((_, kw_ty, kw_span)) = kw_args.iter().find(|(name, _, _)| name == &param.name) {
+            merged.push((kw_ty.clone(), *kw_span, param.name.clone()));
+        } else if !param.has_default {
+            return Err(format!("missing required argument: '{}'", param.name));
+        }
+    }
+
+    if let Some(kwargs) = effective_params
+        .iter()
+        .find(|param| matches!(param.kind, FunctionParamKind::KwArgs))
+    {
+        for (kw_name, kw_ty, kw_span) in kw_args {
+            if !keywordable_names.contains(kw_name.as_str()) {
+                merged.push((kw_ty.clone(), *kw_span, kwargs.name.clone()));
+            }
         }
     }
 
@@ -101,15 +176,28 @@ pub(super) fn handle_call_args(
     ctx: &mut CallContext<'_>, pos_args: &[(Type, Span)], kw_args: &[(String, Type, Span)], params: &[(String, Type)],
     has_bound_receiver: bool,
 ) {
-    match merge_and_validate_args(pos_args, kw_args, params, has_bound_receiver) {
+    handle_call_param_metadata(ctx, pos_args, kw_args, &legacy_params(params), has_bound_receiver)
+}
+
+pub(super) fn handle_call_param_metadata(
+    ctx: &mut CallContext<'_>, pos_args: &[(Type, Span)], kw_args: &[(String, Type, Span)], params: &[FunctionParam],
+    has_bound_receiver: bool,
+) {
+    match merge_and_validate_param_metadata(pos_args, kw_args, params, has_bound_receiver) {
         Ok(merged_args) => {
-            let expected_params: Vec<(String, Type)> =
+            let expected_params: Vec<FunctionParam> =
                 if has_bound_receiver { params.iter().skip(1).cloned().collect() } else { params.to_vec() };
 
-            if merged_args.len() <= expected_params.len() {
-                for ((provided_ty, arg_span, param_name), (_pname, expected_param_ty)) in
-                    merged_args.iter().zip(expected_params.iter())
-                {
+            if merged_args.len() <= expected_params.len()
+                || expected_params
+                    .iter()
+                    .any(|param| matches!(param.kind, FunctionParamKind::VarArgs | FunctionParamKind::KwArgs))
+            {
+                for (provided_ty, arg_span, param_name) in merged_args.iter() {
+                    let Some(expected_param) = expected_params.iter().find(|param| param.name == *param_name) else {
+                        continue;
+                    };
+                    let expected_param_ty = &expected_param.ty;
                     let provided_ty = ctx.subst.apply(provided_ty);
                     let expected_ty = ctx.subst.apply(expected_param_ty);
 
@@ -235,7 +323,7 @@ pub(super) fn solve_call_constraint(
 
     if let Type::Con(TypeCtor::Class(class_name)) = &applied_func {
         if let Some(metadata) = state.class_registry.get_class(class_name) {
-            if let Some(Type::Fun(params, _)) = metadata.new_type.as_ref().or(metadata.init_type.as_ref()) {
+            if let Some(init_type) = metadata.new_type.as_ref().or(metadata.init_type.as_ref()) {
                 let mut ctx = CallContext {
                     subst: &mut *state.subst,
                     type_errors: state.type_errors,
@@ -243,7 +331,13 @@ pub(super) fn solve_call_constraint(
                     typevar_registry: state.typevar_registry,
                     span,
                 };
-                handle_call_args(&mut ctx, &pos_args, &kw_args, params, true);
+                match init_type {
+                    Type::Fun(params, _) => handle_call_args(&mut ctx, &pos_args, &kw_args, params, true),
+                    Type::FunWithParams(params, _) => {
+                        handle_call_param_metadata(&mut ctx, &pos_args, &kw_args, params, true)
+                    }
+                    _ => {}
+                }
             }
 
             let class_result_ty = instantiate_class_type(metadata, class_name, state.subst);
@@ -277,6 +371,17 @@ pub(super) fn solve_call_constraint(
 
             handle_call_args(&mut ctx, &pos_args, &kw_args, params, true);
             unify_return_type(&mut ctx, &ret_ty, method_ret);
+        } else if let Type::FunWithParams(params, method_ret) = resolved_method {
+            let mut ctx = CallContext {
+                subst: &mut *state.subst,
+                type_errors: state.type_errors,
+                class_registry: state.class_registry,
+                typevar_registry: state.typevar_registry,
+                span,
+            };
+
+            handle_call_param_metadata(&mut ctx, &pos_args, &kw_args, params, true);
+            unify_return_type(&mut ctx, &ret_ty, method_ret);
         } else {
             let mut ctx = CallContext {
                 subst: &mut *state.subst,
@@ -298,6 +403,16 @@ pub(super) fn solve_call_constraint(
                 span,
             };
             handle_call_args(&mut ctx, &pos_args, &kw_args, params, false);
+            unify_return_type(&mut ctx, &ret_ty, fn_ret);
+        } else if let Type::FunWithParams(params, fn_ret) = &applied_func {
+            let mut ctx = CallContext {
+                subst: &mut *state.subst,
+                type_errors: state.type_errors,
+                class_registry: state.class_registry,
+                typevar_registry: state.typevar_registry,
+                span,
+            };
+            handle_call_param_metadata(&mut ctx, &pos_args, &kw_args, params, false);
             unify_return_type(&mut ctx, &ret_ty, fn_ret);
         } else {
             let mut ctx = CallContext {

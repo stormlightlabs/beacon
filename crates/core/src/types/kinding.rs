@@ -31,7 +31,7 @@ impl Type {
                 }
                 Kind::Star => Err(format!("Cannot apply type {f} :: * to argument {a}")),
             },
-            Type::Fun(_, _) => Ok(Kind::Star),
+            Type::Fun(_, _) | Type::FunWithParams(_, _) => Ok(Kind::Star),
             Type::ForAll(_, t) => t.kind_of(),
             Type::Union(_) => Ok(Kind::Star),
             Type::Intersection(_) => Ok(Kind::Star),
@@ -70,6 +70,12 @@ impl Type {
             Type::Fun(args, ret) => {
                 for (_, ty) in args {
                     ty.collect_free_vars(vars, bound);
+                }
+                ret.collect_free_vars(vars, bound);
+            }
+            Type::FunWithParams(params, ret) => {
+                for param in params {
+                    param.ty.collect_free_vars(vars, bound);
                 }
                 ret.collect_free_vars(vars, bound);
             }

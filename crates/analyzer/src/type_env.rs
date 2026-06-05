@@ -294,6 +294,17 @@ impl TypeEnvironment {
                 let converted_ret = Box::new(self.convert_class_to_protocol_if_needed(*ret));
                 Type::Fun(converted_params, converted_ret)
             }
+            Type::FunWithParams(params, ret) => {
+                let converted_params = params
+                    .into_iter()
+                    .map(|mut param| {
+                        param.ty = self.convert_class_to_protocol_if_needed(param.ty);
+                        param
+                    })
+                    .collect();
+                let converted_ret = Box::new(self.convert_class_to_protocol_if_needed(*ret));
+                Type::FunWithParams(converted_params, converted_ret)
+            }
             Type::Tuple(types) => Type::Tuple(
                 types
                     .into_iter()

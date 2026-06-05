@@ -93,6 +93,17 @@ impl Subst {
                     args.iter().map(|(name, ty)| (name.clone(), self.apply(ty))).collect();
                 Type::Fun(new_args, Box::new(self.apply(ret)))
             }
+            Type::FunWithParams(params, ret) => {
+                let new_params = params
+                    .iter()
+                    .map(|param| {
+                        let mut param = param.clone();
+                        param.ty = self.apply(&param.ty);
+                        param
+                    })
+                    .collect();
+                Type::FunWithParams(new_params, Box::new(self.apply(ret)))
+            }
             Type::ForAll(tvs, t) => {
                 let filtered_subst = Subst {
                     map: self

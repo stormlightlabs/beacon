@@ -81,6 +81,17 @@ impl Unifier {
             (Type::Fun(args1, ret1), Type::Fun(args2, ret2)) => {
                 Self::unify_functions(args1, ret1, args2, ret2, registry, class_registry)
             }
+            (Type::FunWithParams(args1, ret1), Type::FunWithParams(args2, ret2)) => {
+                Self::unify_function_param_metadata(args1, ret1, args2, ret2, registry, class_registry)
+            }
+            (Type::Fun(args1, ret1), Type::FunWithParams(args2, ret2)) => {
+                let args2 = args2.iter().map(|p| (p.name.clone(), p.ty.clone())).collect::<Vec<_>>();
+                Self::unify_functions(args1, ret1, &args2, ret2, registry, class_registry)
+            }
+            (Type::FunWithParams(args1, ret1), Type::Fun(args2, ret2)) => {
+                let args1 = args1.iter().map(|p| (p.name.clone(), p.ty.clone())).collect::<Vec<_>>();
+                Self::unify_functions(&args1, ret1, args2, ret2, registry, class_registry)
+            }
             (Type::Union(types1), Type::Union(types2)) => Self::unify_unions(types1, types2, registry, class_registry),
             (Type::Union(types), t) | (t, Type::Union(types)) => {
                 Self::unify_union_with_type(types, t, registry, class_registry)
@@ -93,19 +104,25 @@ impl Unifier {
                 let s2 = Self::unify_impl(&s1.apply(method1), &s1.apply(method2), registry, class_registry)?;
                 Ok(s2.compose(s1))
             }
-            (Type::BoundMethod(_, _, method), fun @ Type::Fun(_, _)) => {
+            (Type::BoundMethod(_, _, method), fun @ (Type::Fun(_, _) | Type::FunWithParams(_, _))) => {
                 Self::unify_impl(method, fun, registry, class_registry)
             }
-            (fun @ Type::Fun(_, _), Type::BoundMethod(_, _, method)) => {
+            (fun @ (Type::Fun(_, _) | Type::FunWithParams(_, _)), Type::BoundMethod(_, _, method)) => {
                 Self::unify_impl(fun, method, registry, class_registry)
             }
             (Type::BoundMethod(_, _, method), other)
-                if !matches!(other, Type::BoundMethod(_, _, _) | Type::Fun(_, _)) =>
+                if !matches!(
+                    other,
+                    Type::BoundMethod(_, _, _) | Type::Fun(_, _) | Type::FunWithParams(_, _)
+                ) =>
             {
                 Self::unify_impl(method, other, registry, class_registry)
             }
             (other, Type::BoundMethod(_, _, method))
-                if !matches!(other, Type::BoundMethod(_, _, _) | Type::Fun(_, _)) =>
+                if !matches!(
+                    other,
+                    Type::BoundMethod(_, _, _) | Type::Fun(_, _) | Type::FunWithParams(_, _)
+                ) =>
             {
                 Self::unify_impl(other, method, registry, class_registry)
             }

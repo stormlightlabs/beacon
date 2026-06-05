@@ -285,6 +285,17 @@ impl ClassMetadata {
                     .collect(),
                 Box::new(Self::substitute_type_params(ret, subst)),
             ),
+            Type::FunWithParams(params, ret) => Type::FunWithParams(
+                params
+                    .iter()
+                    .map(|param| {
+                        let mut param = param.clone();
+                        param.ty = Self::substitute_type_params(&param.ty, subst);
+                        param
+                    })
+                    .collect(),
+                Box::new(Self::substitute_type_params(ret, subst)),
+            ),
             Type::ForAll(tvs, t) => Type::ForAll(tvs.clone(), Box::new(Self::substitute_type_params(t, subst))),
             Type::Union(types) => Type::Union(types.iter().map(|t| Self::substitute_type_params(t, subst)).collect()),
             Type::Intersection(types) => {

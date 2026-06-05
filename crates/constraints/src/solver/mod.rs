@@ -124,7 +124,10 @@ mod tests {
     use super::*;
     use crate::Span;
     use crate::predicate::TypePredicate;
-    use beacon_core::{ClassMetadata, MethodType, ProtocolName, TypeCtor, TypeVar, TypeVarConstraintRegistry};
+    use beacon_core::{
+        ClassMetadata, FunctionParam, FunctionParamKind, MethodType, ProtocolName, TypeCtor, TypeVar,
+        TypeVarConstraintRegistry,
+    };
     use beacon_parser::{AstNode, LiteralValue, Pattern};
 
     /// Helper to create a test span
@@ -396,10 +399,10 @@ mod tests {
     #[test]
     fn test_call_constraints_accept_defaulted_trailing_arguments() {
         let ret_var = TypeVar::new(1002);
-        let func_ty = Type::fun(
+        let func_ty = Type::fun_with_params(
             vec![
-                ("required".to_string(), Type::string()),
-                ("defaulted".to_string(), Type::int()),
+                FunctionParam::new("required", Type::string()),
+                FunctionParam::with_metadata("defaulted", Type::int(), FunctionParamKind::PositionalOrKeyword, true),
             ],
             Type::string(),
         );
@@ -430,10 +433,10 @@ mod tests {
     #[test]
     fn test_call_constraints_accept_keyword_only_style_arguments() {
         let ret_var = TypeVar::new(1003);
-        let func_ty = Type::fun(
+        let func_ty = Type::fun_with_params(
             vec![
-                ("path".to_string(), Type::string()),
-                ("encoding".to_string(), Type::string()),
+                FunctionParam::new("path", Type::string()),
+                FunctionParam::with_metadata("encoding", Type::string(), FunctionParamKind::KeywordOnly, false),
             ],
             Type::string(),
         );
@@ -496,13 +499,51 @@ mod tests {
     }
 
     #[test]
+    fn test_call_constraints_accept_explicit_varargs_metadata() {
+        let ret_var = TypeVar::new(1010);
+        let func_ty = Type::fun_with_params(
+            vec![
+                FunctionParam::new("head", Type::int()),
+                FunctionParam::with_metadata("rest", Type::string(), FunctionParamKind::VarArgs, false),
+            ],
+            Type::bool(),
+        );
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Call(
+                func_ty,
+                vec![
+                    (Type::int(), test_span()),
+                    (Type::string(), test_span()),
+                    (Type::string(), test_span()),
+                ],
+                vec![],
+                Type::Var(ret_var.clone()),
+                test_span(),
+            )],
+        };
+
+        let (subst, errors) = solve_constraints(
+            constraints,
+            &ClassRegistry::new(),
+            &beacon_core::TypeVarConstraintRegistry::new(),
+        )
+        .unwrap();
+
+        assert!(
+            errors.is_empty(),
+            "explicit *args metadata should accept extra positional args: {errors:?}"
+        );
+        assert_eq!(subst.get(&ret_var), Some(&Type::bool()));
+    }
+
+    #[test]
     fn test_call_constraints_skip_bound_receiver_for_methods() {
         let ret_var = TypeVar::new(1006);
         let receiver = Type::Con(TypeCtor::Class("Service".to_string()));
-        let method_ty = Type::fun(
+        let method_ty = Type::fun_with_params(
             vec![
-                ("self".to_string(), receiver.clone()),
-                ("payload".to_string(), Type::string()),
+                FunctionParam::new("self", receiver.clone()),
+                FunctionParam::new("payload", Type::string()),
             ],
             Type::bool(),
         );

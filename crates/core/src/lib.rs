@@ -28,9 +28,9 @@ pub use protocols::{MethodSignature, ProtocolChecker, ProtocolDef, ProtocolName}
 pub use subst::{Subst, Substitutable};
 pub use suppressor::{Suppression, SuppressionMap};
 pub use types::{
-    Kind, LiteralType, OverloadSet, Type, TypeCtor, TypeScheme, TypeVar, Variance, builtin_type_from_name,
-    builtin_type_name, contains_type_var, decompose_app, decompose_class_app, decompose_protocol_app,
-    format_type_for_diagnostic, is_any, literal_base_ctor, literal_to_base_type,
+    FunctionParam, FunctionParamKind, Kind, LiteralType, OverloadSet, Type, TypeCtor, TypeScheme, TypeVar, Variance,
+    builtin_type_from_name, builtin_type_name, contains_type_var, decompose_app, decompose_class_app,
+    decompose_protocol_app, format_type_for_diagnostic, is_any, literal_base_ctor, literal_to_base_type,
 };
 pub use typevar::TypeVarGen;
 pub use typevar_registry::TypeVarConstraintRegistry;

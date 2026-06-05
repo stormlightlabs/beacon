@@ -15,7 +15,7 @@ use crate::type_env::TypeEnvironment;
 use crate::walker::{ExprContext, visit_node_with_context, visit_node_with_env};
 
 use beacon_constraint::{Constraint, ConstraintGenContext, Span, TypePredicate};
-use beacon_core::{AnalysisError, BeaconError, TypeCtor, TypeVar, Variance};
+use beacon_core::{AnalysisError, BeaconError, FunctionParam, FunctionParamKind, TypeCtor, TypeVar, Variance};
 use beacon_core::{Type, TypeScheme, errors::Result};
 use beacon_parser::{AstNode, BinaryOperator};
 use std::sync::Arc;
@@ -368,7 +368,7 @@ pub fn visit_function(
                 (ret, gen_params)
             };
 
-            let fn_type = Type::fun(params.clone(), ret_type.clone());
+            let fn_type = Type::fun_with_params(function_params_with_metadata(args, &params), ret_type.clone());
 
             let mut body_env = env.clone();
             for (param_name, param_type) in &params {
@@ -421,6 +421,23 @@ pub fn visit_function(
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
     }
+}
+
+fn function_params_with_metadata(args: &[beacon_parser::Parameter], params: &[(String, Type)]) -> Vec<FunctionParam> {
+    args.iter()
+        .zip(params.iter())
+        .map(|(param, (name, ty))| {
+            let kind = if name.starts_with("**") {
+                FunctionParamKind::KwArgs
+            } else if name.starts_with('*') {
+                FunctionParamKind::VarArgs
+            } else {
+                FunctionParamKind::PositionalOrKeyword
+            };
+            let clean_name = name.trim_start_matches('*').to_string();
+            FunctionParam::with_metadata(clean_name, ty.clone(), kind, param.default_value.is_some())
+        })
+        .collect()
 }
 
 pub fn visit_call(

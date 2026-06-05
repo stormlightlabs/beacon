@@ -1,6 +1,6 @@
 //! Type application decomposition and protocol application helpers.
 
-use super::{Type, TypeCtor, Variance};
+use super::{FunctionParam, Type, TypeCtor, Variance};
 
 impl Type {
     pub fn extract_generator_params(&self) -> Option<(&Type, &Type, &Type)> {
@@ -66,6 +66,11 @@ impl Type {
         Type::Fun(args, Box::new(ret))
     }
 
+    /// Create a function type with explicit Python parameter metadata.
+    pub fn fun_with_params(params: Vec<FunctionParam>, ret: Type) -> Self {
+        Type::FunWithParams(params, Box::new(ret))
+    }
+
     /// Create a function type with unnamed parameters (generates default names _0, _1, etc.)
     ///
     /// This is a convenience method for creating function types when parameter
@@ -87,19 +92,14 @@ impl Type {
     /// - Union[int, Any] → Any (int is subtype of Any)
     pub fn unapply(&self) -> Option<(&TypeCtor, Vec<Type>)> {
         match self {
-            Type::App(constructor, arg) => {
-                if let Type::Con(ctor) = constructor.as_ref() {
-                    Some((ctor, vec![arg.as_ref().clone()]))
-                } else if let Type::App(inner_constructor, first_arg) = constructor.as_ref() {
-                    if let Type::Con(ctor) = inner_constructor.as_ref() {
-                        Some((ctor, vec![first_arg.as_ref().clone(), arg.as_ref().clone()]))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
+            Type::App(constructor, arg) => match constructor.as_ref() {
+                Type::Con(ctor) => Some((ctor, vec![arg.as_ref().clone()])),
+                Type::App(inner_constructor, first_arg) => match inner_constructor.as_ref() {
+                    Type::Con(ctor) => Some((ctor, vec![first_arg.as_ref().clone(), arg.as_ref().clone()])),
+                    _ => None,
+                },
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -217,11 +217,9 @@ impl Type {
             current = ctor.as_ref();
         }
 
-        if let Type::Con(tc) = current {
-            let param_index = param_count.saturating_sub(1);
-            tc.variance(param_index)
-        } else {
-            Variance::Invariant
+        match current {
+            Type::Con(tc) => tc.variance(param_count.saturating_sub(1)),
+            _ => Variance::Invariant,
         }
     }
 }
