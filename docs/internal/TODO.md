@@ -54,7 +54,7 @@
   decorator, `Final`, `ClassVar`, and override fixtures.
 - [x] Add async/generator/coroutine/context-manager fixtures that assert
   inferred types.
-- [ ] Review unification errors for actionable messages and source spans.
+- [x] Review unification errors for actionable messages and source spans.
 
 ## Milestone 4: Narrowing And Data Flow
 

@@ -28,8 +28,8 @@ class Job:
     name: str
     config: Config
     tags: list[str] = field(default_factory=list)
-    queue: ClassVar[str]
-    max_retries: Final[int]
+    queue: ClassVar[str] = "default"
+    max_retries: Final[int] = 3
 
     @property
     def label(self) -> str:

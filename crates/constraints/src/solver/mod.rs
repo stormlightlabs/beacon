@@ -499,6 +499,40 @@ mod tests {
     }
 
     #[test]
+    fn test_call_constraints_resolve_protocol_call_method() {
+        let mut registry = ClassRegistry::new();
+        let mut callback = ClassMetadata::new("Callback".to_string());
+        callback.is_protocol = true;
+        callback.methods.insert(
+            "__call__".to_string(),
+            MethodType::Single(Type::fun_with_params(
+                vec![
+                    FunctionParam::new("self", Type::any()),
+                    FunctionParam::new("value", Type::int()),
+                ],
+                Type::string(),
+            )),
+        );
+        registry.register_class("Callback".to_string(), callback);
+        let ret_var = TypeVar::new(1011);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Call(
+                Type::Con(TypeCtor::Protocol(Some("Callback".to_string()), vec![])),
+                vec![(Type::int(), test_span())],
+                vec![],
+                Type::Var(ret_var.clone()),
+                test_span(),
+            )],
+        };
+
+        let (subst, errors) =
+            solve_constraints(constraints, &registry, &beacon_core::TypeVarConstraintRegistry::new()).unwrap();
+
+        assert!(errors.is_empty(), "protocol __call__ should be callable: {errors:?}");
+        assert_eq!(subst.get(&ret_var), Some(&Type::string()));
+    }
+
+    #[test]
     fn test_call_constraints_accept_explicit_varargs_metadata() {
         let ret_var = TypeVar::new(1010);
         let func_ty = Type::fun_with_params(

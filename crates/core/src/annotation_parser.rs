@@ -360,6 +360,16 @@ impl Parser {
                 self.expect(Token::RBracket)?;
                 Type::optional(ty)
             }
+            "ClassVar" | "Final" => {
+                if matches!(self.peek(), Some(Token::LBracket)) {
+                    self.advance();
+                    let ty = self.parse_type()?;
+                    self.expect(Token::RBracket)?;
+                    ty
+                } else {
+                    Type::any()
+                }
+            }
             "Callable" => {
                 if matches!(self.peek(), Some(Token::LBracket)) {
                     self.advance();
@@ -611,6 +621,13 @@ mod tests {
             }
             _ => panic!("Expected union type for Optional"),
         }
+    }
+
+    #[test]
+    fn test_parse_classvar_and_final_unwrap_inner_type() {
+        let parser = AnnotationParser::new();
+        assert_eq!(parser.parse("ClassVar[str]").unwrap(), Type::string());
+        assert_eq!(parser.parse("Final[int]").unwrap(), Type::int());
     }
 
     #[test]

@@ -63,8 +63,7 @@ def load(resource: Resource) -> str:
 
 
 def invoke(callback: Callback[int]) -> str:
-    _ = callback
-    return "called"
+    return callback(1)
 
 
 def use_reader(reader: Readable[T]) -> T:

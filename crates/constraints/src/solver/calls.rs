@@ -5,8 +5,8 @@ use super::{
 use crate::{Span, TypeErrorInfo};
 
 use beacon_core::{
-    BeaconError, ClassMetadata, ClassRegistry, FunctionParam, FunctionParamKind, Subst, Type, TypeCtor, TypeError,
-    TypeVar, Unifier,
+    BeaconError, ClassMetadata, ClassRegistry, FunctionParam, FunctionParamKind, MethodType, Subst, Type, TypeCtor,
+    TypeError, TypeVar, Unifier,
 };
 use std::{collections::HashSet, result};
 
@@ -298,6 +298,24 @@ pub(super) fn unify_with_adhoc_fun(
 /// For generic classes and protocols with type parameters, the method type
 /// should already have substitution applied when the BoundMethod was created,
 /// so we should just use that directly.
+fn resolve_protocol_call_type<'a>(callable: &Type, reg: &'a ClassRegistry) -> Option<&'a Type> {
+    let protocol_name = match callable {
+        Type::Con(TypeCtor::Protocol(Some(name), _)) => name.as_str(),
+        _ => callable.unapply_protocol()?.0,
+    };
+    let metadata = reg.get_class(protocol_name)?;
+    if !metadata.is_protocol {
+        return None;
+    }
+    match metadata.lookup_method_type("__call__")? {
+        MethodType::Single(ty) => Some(ty),
+        MethodType::Overloaded(overload_set) => overload_set
+            .implementation
+            .as_ref()
+            .or_else(|| overload_set.signatures.first()),
+    }
+}
+
 pub(super) fn resolve_bound_method_type<'a>(
     rec: Box<Type>, name: &str, method: &'a Type, pos_args: &[(Type, Span)], subst: &Subst, reg: &'a ClassRegistry,
 ) -> &'a Type {
@@ -414,6 +432,25 @@ pub(super) fn solve_call_constraint(
             };
             handle_call_param_metadata(&mut ctx, &pos_args, &kw_args, params, false);
             unify_return_type(&mut ctx, &ret_ty, fn_ret);
+        } else if let Some(call_ty) = resolve_protocol_call_type(&applied_func, state.class_registry) {
+            let mut ctx = CallContext {
+                subst: &mut *state.subst,
+                type_errors: state.type_errors,
+                class_registry: state.class_registry,
+                typevar_registry: state.typevar_registry,
+                span,
+            };
+            match call_ty {
+                Type::Fun(params, fn_ret) => {
+                    handle_call_args(&mut ctx, &pos_args, &kw_args, params, true);
+                    unify_return_type(&mut ctx, &ret_ty, fn_ret);
+                }
+                Type::FunWithParams(params, fn_ret) => {
+                    handle_call_param_metadata(&mut ctx, &pos_args, &kw_args, params, true);
+                    unify_return_type(&mut ctx, &ret_ty, fn_ret);
+                }
+                other => unify_with_adhoc_fun(&mut ctx, other, &pos_args, &kw_args, &ret_ty),
+            }
         } else {
             let mut ctx = CallContext {
                 subst: &mut *state.subst,
