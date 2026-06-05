@@ -163,10 +163,17 @@ impl TypeEnvironment {
         subst.apply(&scheme.ty)
     }
 
-    /// Generalize a type into a type scheme by quantifing over free type variables not in the environment
+    /// Generalize a type into a type scheme by quantifying over free type variables not in the environment.
     pub fn generalize(&self, ty: Type) -> TypeScheme {
+        self.generalize_with_restriction(ty, true)
+    }
+
+    /// Generalize a type with value-restriction control. Expansive Python
+    /// expressions stay monomorphic so later lookups share the same free type
+    /// variables instead of receiving fresh instantiations.
+    pub fn generalize_with_restriction(&self, ty: Type, is_non_expansive: bool) -> TypeScheme {
         let env_vars = self.free_vars();
-        TypeScheme::generalize(ty, &env_vars)
+        TypeScheme::generalize_with_restriction(ty, &env_vars, is_non_expansive)
     }
 
     /// Get the stored type scheme for a symbol without instantiating it.
@@ -218,7 +225,7 @@ impl TypeEnvironment {
     fn free_vars(&self) -> FxHashMap<TypeVar, ()> {
         let mut vars = FxHashMap::default();
         for scheme in self.bindings.values() {
-            vars.extend(scheme.ty.free_vars());
+            vars.extend(scheme.free_vars());
         }
         vars
     }
@@ -532,6 +539,29 @@ mod tests {
         let scheme = env.generalize(ty);
         assert_eq!(scheme.quantified_vars.len(), 1);
         assert_eq!(scheme.quantified_vars[0], tv);
+    }
+
+    #[test]
+    fn test_value_restriction_keeps_expansive_binding_monomorphic() {
+        let mut env = TypeEnvironment::new();
+        let tv = env.fresh_var();
+        let ty = Type::fun(vec![(String::new(), Type::Var(tv.clone()))], Type::Var(tv.clone()));
+
+        let scheme = env.generalize_with_restriction(ty.clone(), false);
+
+        assert!(scheme.quantified_vars.is_empty());
+        assert_eq!(scheme.ty, ty);
+    }
+
+    #[test]
+    fn test_environment_free_vars_ignore_builtin_quantifiers() {
+        let mut env = TypeEnvironment::new();
+        let tv = env.fresh_var();
+        let ty = Type::fun(vec![(String::new(), Type::Var(tv.clone()))], Type::Var(tv.clone()));
+
+        let scheme = env.generalize(ty);
+
+        assert_eq!(scheme.quantified_vars, vec![tv]);
     }
 
     #[test]

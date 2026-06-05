@@ -40,10 +40,10 @@
 
 ## Milestone 3: Typing Breadth
 
-- [ ] Implement the coverage in [typing-breadth.md](./specs/typing-breadth.md).
-- [ ] Audit value restriction/generalization behavior and add regression
+- [x] Implement the coverage in [typing-breadth.md](./specs/typing-breadth.md).
+- [x] Audit value restriction/generalization behavior and add regression
   fixtures.
-- [ ] Add focused call-constraint tests for positional, keyword, defaulted,
+- [x] Add focused call-constraint tests for positional, keyword, defaulted,
   keyword-only, variadic, and bound receiver calls.
 - [ ] Add overload selection, overlap, and implementation compatibility tests.
 - [ ] Add generic function and class fixtures for TypeVar bounds,

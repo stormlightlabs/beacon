@@ -934,8 +934,9 @@ pub fn visit_assignments(
             }
 
             let value_ty = visit_node_with_env(value, env, ctx, stub_cache)?;
+            let scheme = env.generalize_with_restriction(value_ty.clone(), is_non_expansive_expr(value));
             for name in target.binding_names() {
-                env.bind(name, TypeScheme::mono(value_ty.clone()));
+                env.bind(name, scheme.clone());
             }
             ctx.record_type_with_end(*line, *col, *end_line, *end_col, value_ty.clone());
             Ok(value_ty)
@@ -955,6 +956,20 @@ pub fn visit_assignments(
             Ok(annotated_ty)
         }
         _ => Err(BeaconError::from(AnalysisError::NotImplemented)),
+    }
+}
+
+fn is_non_expansive_expr(node: &AstNode) -> bool {
+    match node {
+        AstNode::Literal { .. } | AstNode::Identifier { .. } | AstNode::Lambda { .. } => true,
+        AstNode::ParenthesizedExpression { expression, .. } => is_non_expansive_expr(expression),
+        AstNode::Tuple { elements, .. } | AstNode::List { elements, .. } | AstNode::Set { elements, .. } => {
+            elements.iter().all(is_non_expansive_expr)
+        }
+        AstNode::Dict { keys, values, .. } => {
+            keys.iter().all(is_non_expansive_expr) && values.iter().all(is_non_expansive_expr)
+        }
+        _ => false,
     }
 }
 
@@ -1455,6 +1470,77 @@ pub fn visit_collections(
 mod tests {
     use super::*;
     use beacon_parser::LiteralValue;
+
+    #[test]
+    fn test_value_restriction_marks_lambda_and_literals_non_expansive() {
+        let lambda = AstNode::Lambda {
+            args: vec![],
+            body: Box::new(AstNode::Literal {
+                value: LiteralValue::Integer(1),
+                line: 1,
+                col: 10,
+                end_line: 1,
+                end_col: 11,
+            }),
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 11,
+        };
+        let tuple = AstNode::Tuple {
+            elements: vec![
+                AstNode::Literal { value: LiteralValue::Integer(1), line: 1, col: 1, end_line: 1, end_col: 2 },
+                AstNode::Identifier { name: "x".to_string(), line: 1, col: 4, end_line: 1, end_col: 5 },
+            ],
+            is_parenthesized: true,
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 6,
+        };
+
+        assert!(is_non_expansive_expr(&lambda));
+        assert!(is_non_expansive_expr(&tuple));
+    }
+
+    #[test]
+    fn test_value_restriction_marks_calls_attributes_and_comprehensions_expansive() {
+        let call = AstNode::Call {
+            function: Box::new(AstNode::Identifier {
+                name: "factory".to_string(),
+                line: 1,
+                col: 0,
+                end_line: 1,
+                end_col: 7,
+            }),
+            args: vec![],
+            keywords: vec![],
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 9,
+        };
+        let attribute = AstNode::Attribute {
+            object: Box::new(AstNode::Identifier { name: "obj".to_string(), line: 1, col: 0, end_line: 1, end_col: 3 }),
+            attribute: "value".to_string(),
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 9,
+        };
+        let list_comp = AstNode::ListComp {
+            element: Box::new(AstNode::Identifier { name: "x".to_string(), line: 1, col: 1, end_line: 1, end_col: 2 }),
+            generators: vec![],
+            line: 1,
+            col: 0,
+            end_line: 1,
+            end_col: 20,
+        };
+
+        assert!(!is_non_expansive_expr(&call));
+        assert!(!is_non_expansive_expr(&attribute));
+        assert!(!is_non_expansive_expr(&list_comp));
+    }
 
     #[test]
     fn test_extract_guard_variables_identifier() {

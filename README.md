@@ -53,7 +53,7 @@ beacon lsp --tcp --host 127.0.0.1 --port 9350
 
 ## Quick Start
 
-See the [Development Quick Start Guide](./docs/src/development.md) for more
+See the [Development Quick Start Guide](./docs/src/development/overview.md) for more
 detailed installation, usage, and editor setup instructions
 
 ### Build & Run from Source

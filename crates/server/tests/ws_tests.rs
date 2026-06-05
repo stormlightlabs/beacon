@@ -1,9 +1,11 @@
-use beacon_core::fixtures::{ExpectedDiagnostic, file, python_files, range, workspace as workspace_fixture};
+use beacon_core::fixtures::{
+    ExpectedDiagnostic, assert_type_display_contains, file, python_files, range, workspace as workspace_fixture,
+};
 use beacon_lsp::{
     analysis::Analyzer, config::Config, document::DocumentManager, features::diagnostics::DiagnosticProvider,
     workspace::Workspace,
 };
-use lsp_types::DiagnosticSeverity;
+use lsp_types::{DiagnosticSeverity, Position};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use url::Url;
@@ -58,4 +60,35 @@ async fn workspace_fixture_lsp_diagnostics_smoke() {
         tags: Some(&[]),
     }
     .assert_present_for_file(file("app/broken.py"), &diagnostics);
+}
+
+#[tokio::test]
+async fn workspace_fixture_typing_breadth_lsp_type_positions() {
+    let documents = DocumentManager::new().expect("document manager should initialize");
+    let config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");
+    let mut analyzer = Analyzer::new(config, documents.clone());
+    let source = std::fs::read_to_string(file("cases/typing_breadth.py")).expect("typing breadth fixture should read");
+    let uri = Url::from_file_path(file("cases/typing_breadth.py")).expect("fixture file URI");
+
+    documents
+        .open_document(uri.clone(), 1, source)
+        .expect("typing breadth fixture should open");
+
+    let identity_ty = analyzer
+        .type_at_position(&uri, Position::new(64, 4))
+        .expect("type lookup should succeed")
+        .expect("identity function type should be recorded");
+    assert_type_display_contains(identity_ty, "(value: T) -> T");
+
+    let containers_ty = analyzer
+        .type_at_position(&uri, Position::new(103, 4))
+        .expect("type lookup should succeed")
+        .expect("containers function type should be recorded");
+    assert_type_display_contains(containers_ty, "tuple[list[str], dict[str, int], set[Status]]");
+
+    let operator_results_ty = analyzer
+        .type_at_position(&uri, Position::new(139, 4))
+        .expect("type lookup should succeed")
+        .expect("operator_results function type should be recorded");
+    assert_type_display_contains(operator_results_ty, "tuple[bool, str, int]");
 }

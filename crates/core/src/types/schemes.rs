@@ -19,10 +19,17 @@ impl TypeScheme {
         Self::new(Vec::new(), ty)
     }
 
-    /// Generalize a type into a type scheme by quantifying over free variables
-    ///
-    /// This respects the value restriction: if `is_non_expansive` is false,
-    /// the type is not generalized (returns a monomorphic scheme).
+    /// Return free variables in the scheme's body that are not quantified by
+    /// the scheme itself.
+    pub fn free_vars(&self) -> FxHashMap<TypeVar, ()> {
+        let mut vars = self.ty.free_vars();
+        for quantified in &self.quantified_vars {
+            vars.remove(quantified);
+        }
+        vars
+    }
+
+    /// Generalize a type into a type scheme by quantifying over free variables.
     pub fn generalize(ty: Type, env_vars: &FxHashMap<TypeVar, ()>) -> Self {
         Self::generalize_with_restriction(ty, env_vars, true)
     }
@@ -42,11 +49,12 @@ impl TypeScheme {
         }
 
         let free_vars = ty.free_vars();
-        let quantified: Vec<TypeVar> = free_vars
+        let mut quantified: Vec<TypeVar> = free_vars
             .keys()
             .filter(|tv| !env_vars.contains_key(tv))
             .cloned()
             .collect();
+        quantified.sort_by_key(|tv| tv.id);
 
         Self::new(quantified, ty)
     }

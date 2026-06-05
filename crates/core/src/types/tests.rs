@@ -594,6 +594,18 @@ fn test_type_scheme_monomorphic() {
 }
 
 #[test]
+fn test_type_scheme_free_vars_excludes_quantified_vars() {
+    let quantified = TypeVar::new(0);
+    let env_owned = TypeVar::new(1);
+    let ty = Type::fun_unnamed(vec![Type::Var(quantified.clone())], Type::Var(env_owned.clone()));
+    let scheme = TypeScheme::new(vec![quantified], ty);
+
+    let free_vars = scheme.free_vars();
+    assert_eq!(free_vars.len(), 1);
+    assert!(free_vars.contains_key(&env_owned));
+}
+
+#[test]
 fn test_type_scheme_display_polymorphic() {
     let tv = TypeVar::new(0);
     let ty = Type::fun_unnamed(vec![Type::Var(tv.clone())], Type::Var(tv.clone()));
@@ -648,6 +660,18 @@ fn test_generalization_excludes_concrete_types() {
 
     assert_eq!(scheme.quantified_vars.len(), 1);
     assert_eq!(scheme.quantified_vars[0], tv);
+}
+
+#[test]
+fn test_generalization_quantified_vars_are_deterministic() {
+    let tv_b = TypeVar::new(80);
+    let tv_a = TypeVar::new(79);
+    let ty = Type::dict(Type::Var(tv_b.clone()), Type::Var(tv_a.clone()));
+
+    let env_vars = FxHashMap::default();
+    let scheme = TypeScheme::generalize(ty, &env_vars);
+
+    assert_eq!(scheme.quantified_vars, vec![tv_a, tv_b]);
 }
 
 #[test]

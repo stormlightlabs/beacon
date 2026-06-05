@@ -161,6 +161,36 @@ fn workspace_fixture_cli_analyze_show_types_json_is_structured() {
 }
 
 #[test]
+fn workspace_fixture_cli_typing_breadth_show_types_has_stable_fragments() {
+    let assert = cargo_bin_cmd!("beacon")
+        .arg("analyze")
+        .arg("--format")
+        .arg("json")
+        .arg("--show-types")
+        .arg("file")
+        .arg(file("cases/typing_breadth.py"))
+        .assert()
+        .failure();
+
+    let output: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("CLI output should be JSON");
+    let inferred = output["inferred_types"]
+        .as_array()
+        .expect("inferred_types should be an array");
+    let has_type_at = |line: u64, col: u64, expected: &str| {
+        inferred.iter().any(|item| {
+            item["span"]["start"]["line"].as_u64() == Some(line)
+                && item["span"]["start"]["col"].as_u64() == Some(col)
+                && item["type"].as_str().is_some_and(|ty| ty.contains(expected))
+        })
+    };
+
+    assert!(has_type_at(65, 5, "(value: T) -> T"), "identity function type missing");
+    assert!(has_type_at(104, 5, "tuple[list[str], dict[str, int], set[Status]]"));
+    assert!(has_type_at(140, 5, "tuple[bool, str, int]"));
+}
+
+#[test]
 fn workspace_fixture_cli_analyze_show_cfg_compact_uses_cfg_blocks() {
     let temp_file = write_temp_python(
         "# beacon: mode=relaxed\ndef choose(flag: bool) -> int:\n    if flag:\n        return 1\n    return 0\n",

@@ -333,6 +333,205 @@ mod tests {
     }
 
     #[test]
+    fn test_call_constraints_accept_positional_arguments() {
+        let ret_var = TypeVar::new(1000);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Call(
+                Type::fun_unnamed(vec![Type::int(), Type::string()], Type::bool()),
+                vec![(Type::int(), test_span()), (Type::string(), test_span())],
+                vec![],
+                Type::Var(ret_var.clone()),
+                test_span(),
+            )],
+        };
+
+        let (subst, errors) = solve_constraints(
+            constraints,
+            &ClassRegistry::new(),
+            &beacon_core::TypeVarConstraintRegistry::new(),
+        )
+        .unwrap();
+
+        assert!(
+            errors.is_empty(),
+            "positional arguments should match by order: {errors:?}"
+        );
+        assert_eq!(subst.get(&ret_var), Some(&Type::bool()));
+    }
+
+    #[test]
+    fn test_call_constraints_accept_keyword_arguments() {
+        let ret_var = TypeVar::new(1001);
+        let func_ty = Type::fun(
+            vec![("name".to_string(), Type::string()), ("count".to_string(), Type::int())],
+            Type::string(),
+        );
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Call(
+                func_ty,
+                vec![],
+                vec![
+                    ("count".to_string(), Type::int(), test_span()),
+                    ("name".to_string(), Type::string(), test_span()),
+                ],
+                Type::Var(ret_var.clone()),
+                test_span(),
+            )],
+        };
+
+        let (subst, errors) = solve_constraints(
+            constraints,
+            &ClassRegistry::new(),
+            &beacon_core::TypeVarConstraintRegistry::new(),
+        )
+        .unwrap();
+
+        assert!(
+            errors.is_empty(),
+            "keyword arguments should match by parameter name: {errors:?}"
+        );
+        assert_eq!(subst.get(&ret_var), Some(&Type::string()));
+    }
+
+    #[test]
+    fn test_call_constraints_accept_defaulted_trailing_arguments() {
+        let ret_var = TypeVar::new(1002);
+        let func_ty = Type::fun(
+            vec![
+                ("required".to_string(), Type::string()),
+                ("defaulted".to_string(), Type::int()),
+            ],
+            Type::string(),
+        );
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Call(
+                func_ty,
+                vec![(Type::string(), test_span())],
+                vec![],
+                Type::Var(ret_var.clone()),
+                test_span(),
+            )],
+        };
+
+        let (subst, errors) = solve_constraints(
+            constraints,
+            &ClassRegistry::new(),
+            &beacon_core::TypeVarConstraintRegistry::new(),
+        )
+        .unwrap();
+
+        assert!(
+            errors.is_empty(),
+            "omitted trailing defaulted arguments should be accepted: {errors:?}"
+        );
+        assert_eq!(subst.get(&ret_var), Some(&Type::string()));
+    }
+
+    #[test]
+    fn test_call_constraints_accept_keyword_only_style_arguments() {
+        let ret_var = TypeVar::new(1003);
+        let func_ty = Type::fun(
+            vec![
+                ("path".to_string(), Type::string()),
+                ("encoding".to_string(), Type::string()),
+            ],
+            Type::string(),
+        );
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Call(
+                func_ty,
+                vec![(Type::string(), test_span())],
+                vec![("encoding".to_string(), Type::string(), test_span())],
+                Type::Var(ret_var.clone()),
+                test_span(),
+            )],
+        };
+
+        let (subst, errors) = solve_constraints(
+            constraints,
+            &ClassRegistry::new(),
+            &beacon_core::TypeVarConstraintRegistry::new(),
+        )
+        .unwrap();
+
+        assert!(
+            errors.is_empty(),
+            "keyword-only-style arguments should bind by name: {errors:?}"
+        );
+        assert_eq!(subst.get(&ret_var), Some(&Type::string()));
+    }
+
+    #[test]
+    fn test_call_constraints_infer_variadic_ad_hoc_callable_shape() {
+        let callable_var = TypeVar::new(1004);
+        let ret_var = TypeVar::new(1005);
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Call(
+                Type::Var(callable_var.clone()),
+                vec![(Type::int(), test_span()), (Type::string(), test_span())],
+                vec![],
+                Type::Var(ret_var.clone()),
+                test_span(),
+            )],
+        };
+
+        let (subst, errors) = solve_constraints(
+            constraints,
+            &ClassRegistry::new(),
+            &beacon_core::TypeVarConstraintRegistry::new(),
+        )
+        .unwrap();
+
+        assert!(
+            errors.is_empty(),
+            "ad-hoc callable inference should accept multiple arguments: {errors:?}"
+        );
+        assert_eq!(
+            subst.get(&callable_var),
+            Some(&Type::fun_unnamed(
+                vec![Type::int(), Type::string()],
+                Type::Var(ret_var)
+            ))
+        );
+    }
+
+    #[test]
+    fn test_call_constraints_skip_bound_receiver_for_methods() {
+        let ret_var = TypeVar::new(1006);
+        let receiver = Type::Con(TypeCtor::Class("Service".to_string()));
+        let method_ty = Type::fun(
+            vec![
+                ("self".to_string(), receiver.clone()),
+                ("payload".to_string(), Type::string()),
+            ],
+            Type::bool(),
+        );
+        let bound_method = Type::BoundMethod(Box::new(receiver), "send".to_string(), Box::new(method_ty));
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Call(
+                bound_method,
+                vec![(Type::string(), test_span())],
+                vec![],
+                Type::Var(ret_var.clone()),
+                test_span(),
+            )],
+        };
+
+        let (subst, errors) = solve_constraints(
+            constraints,
+            &ClassRegistry::new(),
+            &beacon_core::TypeVarConstraintRegistry::new(),
+        )
+        .unwrap();
+
+        assert!(
+            errors.is_empty(),
+            "bound method calls should not require an explicit self argument: {errors:?}"
+        );
+        assert_eq!(subst.get(&ret_var), Some(&Type::bool()));
+    }
+
+    #[test]
     fn test_solve_has_attr_on_class() {
         let mut registry = ClassRegistry::new();
         let mut class_meta = ClassMetadata::new("TestClass".to_string());
