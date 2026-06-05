@@ -63,6 +63,37 @@ async fn workspace_fixture_lsp_diagnostics_smoke() {
 }
 
 #[tokio::test]
+async fn workspace_fixture_protocol_mismatch_lsp_diagnostics() {
+    let documents = DocumentManager::new().expect("document manager should initialize");
+    let config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");
+    let root_uri = Url::from_directory_path(workspace_fixture()).expect("workspace path should become file URI");
+    let mut workspace = Workspace::new(Some(root_uri), config.clone(), documents.clone());
+    let protocol_file = file("cases/protocol_mismatch.py");
+    let source = std::fs::read_to_string(&protocol_file).expect("protocol mismatch fixture should read");
+    let uri = Url::from_file_path(&protocol_file).expect("fixture file URI");
+
+    documents
+        .open_document(uri.clone(), 1, source)
+        .expect("protocol mismatch fixture should open");
+    workspace.update_dependencies(&uri);
+
+    let workspace = Arc::new(RwLock::new(workspace));
+    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace);
+    let mut analyzer = Analyzer::new(config, documents);
+    let diagnostics = diagnostic_provider.generate_diagnostics(&uri, &mut analyzer);
+
+    ExpectedDiagnostic {
+        code: "HM009",
+        severity: DiagnosticSeverity::ERROR,
+        message_fragment: "Protocol<Closeable>",
+        range: range(20, 9, 20, 23),
+        source_file: Some("cases/protocol_mismatch.py"),
+        tags: Some(&[]),
+    }
+    .assert_present_for_file(&protocol_file, &diagnostics);
+}
+
+#[tokio::test]
 async fn workspace_fixture_call_parameter_metadata_lsp_diagnostics() {
     let documents = DocumentManager::new().expect("document manager should initialize");
     let config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");

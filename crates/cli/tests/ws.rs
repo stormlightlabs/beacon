@@ -183,6 +183,53 @@ fn workspace_fixture_cli_protocols_typecheck_smoke() {
 }
 
 #[test]
+fn workspace_fixture_cli_data_model_extra_typecheck_smoke() {
+    cargo_bin_cmd!("beacon")
+        .arg("typecheck")
+        .arg("--format")
+        .arg("json")
+        .arg(file("cases/data_model_extra.py"))
+        .assert()
+        .success();
+}
+
+#[test]
+fn workspace_fixture_cli_async_extra_typecheck_smoke() {
+    cargo_bin_cmd!("beacon")
+        .arg("typecheck")
+        .arg("--format")
+        .arg("json")
+        .arg(file("cases/async_extra.py"))
+        .assert()
+        .success();
+}
+
+#[test]
+fn workspace_fixture_cli_protocol_mismatch_reports_hm009() {
+    let assert = cargo_bin_cmd!("beacon")
+        .arg("typecheck")
+        .arg("--format")
+        .arg("json")
+        .arg(file("cases/protocol_mismatch.py"))
+        .assert()
+        .failure();
+
+    let output: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("CLI output should be JSON");
+    let diagnostics = output["diagnostics"]
+        .as_array()
+        .expect("diagnostics should be an array");
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == "HM009"
+            && diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("MissingClose") && message.contains("Protocol<Closeable>"))
+            && diagnostic["span"]["start"]["line"] == 21
+            && diagnostic["span"]["start"]["col"] == 10
+    }));
+}
+
+#[test]
 fn workspace_fixture_cli_call_parameter_metadata_reports_hm011() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("typecheck")
@@ -209,6 +256,67 @@ fn workspace_fixture_cli_call_parameter_metadata_reports_hm011() {
                 .as_str()
                 .is_some_and(|message| message.contains("missing required argument: 'required'"))
     }));
+}
+
+#[test]
+fn workspace_fixture_cli_data_model_show_types_has_stable_fragments() {
+    let assert = cargo_bin_cmd!("beacon")
+        .arg("analyze")
+        .arg("--format")
+        .arg("json")
+        .arg("--show-types")
+        .arg("file")
+        .arg(file("cases/data_model_extra.py"))
+        .assert()
+        .failure();
+
+    let output: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("CLI output should be JSON");
+    let inferred = output["inferred_types"]
+        .as_array()
+        .expect("inferred_types should be an array");
+    let has_type_at = |line: u64, col: u64, expected: &str| {
+        inferred.iter().any(|item| {
+            item["span"]["start"]["line"].as_u64() == Some(line)
+                && item["span"]["start"]["col"].as_u64() == Some(col)
+                && item["type"].as_str().is_some_and(|ty| ty.contains(expected))
+        })
+    };
+
+    assert!(has_type_at(55, 5, "(name: str) -> Config"));
+    assert!(has_type_at(59, 5, "(job: Job, state: State) -> str"));
+    assert!(has_type_at(65, 1, "Job"));
+}
+
+#[test]
+fn workspace_fixture_cli_async_show_types_has_stable_fragments() {
+    let assert = cargo_bin_cmd!("beacon")
+        .arg("analyze")
+        .arg("--format")
+        .arg("json")
+        .arg("--show-types")
+        .arg("file")
+        .arg(file("cases/async_extra.py"))
+        .assert()
+        .failure();
+
+    let output: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("CLI output should be JSON");
+    let inferred = output["inferred_types"]
+        .as_array()
+        .expect("inferred_types should be an array");
+    let has_type_at = |line: u64, col: u64, expected: &str| {
+        inferred.iter().any(|item| {
+            item["span"]["start"]["line"].as_u64() == Some(line)
+                && item["span"]["start"]["col"].as_u64() == Some(col)
+                && item["type"].as_str().is_some_and(|ty| ty.contains(expected))
+        })
+    };
+
+    assert!(has_type_at(15, 11, "Coroutine"));
+    assert!(has_type_at(19, 11, "AsyncGenerator Record"));
+    assert!(has_type_at(24, 5, "Generator str"));
+    assert!(has_type_at(39, 11, "Coroutine"));
 }
 
 #[test]

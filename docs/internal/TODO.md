@@ -50,9 +50,9 @@
   constraints, variance, defaults, ParamSpec, and TypeVarTuple.
 - [x] Add protocol tests for inheritance, generic protocols, callback
   protocols, bounds, and missing methods.
-- [ ] Add dataclass, dataclass transform, enum, TypedDict, property,
+- [x] Add dataclass, dataclass transform, enum, TypedDict, property,
   decorator, `Final`, `ClassVar`, and override fixtures.
-- [ ] Add async/generator/coroutine/context-manager fixtures that assert
+- [x] Add async/generator/coroutine/context-manager fixtures that assert
   inferred types.
 - [ ] Review unification errors for actionable messages and source spans.
 
