@@ -172,6 +172,46 @@ fn workspace_fixture_cli_generics_typecheck_smoke() {
 }
 
 #[test]
+fn workspace_fixture_cli_protocols_typecheck_smoke() {
+    cargo_bin_cmd!("beacon")
+        .arg("typecheck")
+        .arg("--format")
+        .arg("json")
+        .arg(file("cases/protocols_extra.py"))
+        .assert()
+        .success();
+}
+
+#[test]
+fn workspace_fixture_cli_call_parameter_metadata_reports_hm011() {
+    let assert = cargo_bin_cmd!("beacon")
+        .arg("typecheck")
+        .arg("--format")
+        .arg("json")
+        .arg(file("cases/call_diagnostics.py"))
+        .assert()
+        .failure();
+
+    let output: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("CLI output should be JSON");
+    let diagnostics = output["diagnostics"]
+        .as_array()
+        .expect("diagnostics should be an array");
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == "HM011"
+            && diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("unexpected keyword argument: 'user_id'"))
+    }));
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"] == "HM011"
+            && diagnostic["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("missing required argument: 'required'"))
+    }));
+}
+
+#[test]
 fn workspace_fixture_cli_typing_breadth_show_types_has_stable_fragments() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("analyze")

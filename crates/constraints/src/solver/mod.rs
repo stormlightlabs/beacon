@@ -2615,6 +2615,117 @@ mod tests {
     }
 
     #[test]
+    fn test_protocol_callback_protocol_requires_call_method() {
+        let mut registry = ClassRegistry::new();
+        let tv_registry = TypeVarConstraintRegistry::new();
+        let mut callback = ClassMetadata::new("Callback".to_string());
+        callback.is_protocol = true;
+        callback.methods.insert(
+            "__call__".to_string(),
+            MethodType::Single(Type::fun_with_params(
+                vec![
+                    FunctionParam::new("self", Type::any()),
+                    FunctionParam::new("value", Type::int()),
+                ],
+                Type::string(),
+            )),
+        );
+        registry.register_class("Callback".to_string(), callback);
+
+        let mut callable = ClassMetadata::new("IntCallback".to_string());
+        callable.methods.insert(
+            "__call__".to_string(),
+            MethodType::Single(Type::fun_with_params(
+                vec![
+                    FunctionParam::new("self", Type::any()),
+                    FunctionParam::new("value", Type::int()),
+                ],
+                Type::string(),
+            )),
+        );
+        registry.register_class("IntCallback".to_string(), callable);
+
+        assert!(check_user_defined_protocol(
+            &Type::Con(TypeCtor::Class("IntCallback".to_string())),
+            "Callback",
+            &registry,
+            &tv_registry,
+        ));
+    }
+
+    #[test]
+    fn test_protocol_missing_method_fails() {
+        let mut registry = ClassRegistry::new();
+        let tv_registry = TypeVarConstraintRegistry::new();
+        let mut closeable = ClassMetadata::new("Closeable".to_string());
+        closeable.is_protocol = true;
+        closeable.methods.insert(
+            "close".to_string(),
+            MethodType::Single(Type::fun_with_params(
+                vec![FunctionParam::new("self", Type::any())],
+                Type::none(),
+            )),
+        );
+        registry.register_class("Closeable".to_string(), closeable);
+        registry.register_class(
+            "MissingClose".to_string(),
+            ClassMetadata::new("MissingClose".to_string()),
+        );
+
+        assert!(!check_user_defined_protocol(
+            &Type::Con(TypeCtor::Class("MissingClose".to_string())),
+            "Closeable",
+            &registry,
+            &tv_registry,
+        ));
+    }
+
+    #[test]
+    fn test_protocol_typevar_bound_accepts_structural_implementation() {
+        let mut registry = ClassRegistry::new();
+        let mut readable = ClassMetadata::new("Readable".to_string());
+        readable.is_protocol = true;
+        readable.methods.insert(
+            "read".to_string(),
+            MethodType::Single(Type::fun_with_params(
+                vec![FunctionParam::new("self", Type::any())],
+                Type::string(),
+            )),
+        );
+        registry.register_class("Readable".to_string(), readable);
+
+        let mut file = ClassMetadata::new("File".to_string());
+        file.methods.insert(
+            "read".to_string(),
+            MethodType::Single(Type::fun_with_params(
+                vec![FunctionParam::new("self", Type::any())],
+                Type::string(),
+            )),
+        );
+        registry.register_class("File".to_string(), file);
+
+        let tv = TypeVar::new(9100);
+        let mut tv_registry = TypeVarConstraintRegistry::new();
+        tv_registry.set_bound(
+            tv.id,
+            Type::Con(TypeCtor::Protocol(Some("Readable".to_string()), vec![])),
+        );
+        let constraints = ConstraintSet {
+            constraints: vec![Constraint::Equal(
+                Type::Var(tv),
+                Type::Con(TypeCtor::Class("File".to_string())),
+                test_span(),
+            )],
+        };
+
+        let (_subst, errors) = solve_constraints(constraints, &registry, &tv_registry).unwrap();
+        assert!(
+            errors.is_empty(),
+            "File should satisfy a protocol TypeVar bound: {errors:?}"
+        );
+    }
+
+    #[test]
     fn test_types_compatible_any() {
         let registry = ClassRegistry::new();
         let tv_registry = TypeVarConstraintRegistry::new();

@@ -21,11 +21,15 @@ pub(super) fn extract_base_constructor(ty: &Type) -> Option<&str> {
     }
 }
 
-/// Convert a [Type::Fun] to a [MethodSignature] by extracting parameters and return types from a function type.
+/// Convert a function type to a [MethodSignature] by extracting parameters and return types.
 pub(super) fn type_to_method_signature(name: &str, ty: &Type) -> Option<MethodSignature> {
     match ty {
         Type::Fun(params, ret) => {
             let param_types: Vec<Type> = params.iter().map(|(_, ty)| ty.clone()).collect();
+            Some(MethodSignature { name: name.to_string(), params: param_types, return_type: ret.as_ref().clone() })
+        }
+        Type::FunWithParams(params, ret) => {
+            let param_types: Vec<Type> = params.iter().map(|param| param.ty.clone()).collect();
             Some(MethodSignature { name: name.to_string(), params: param_types, return_type: ret.as_ref().clone() })
         }
         _ => None,

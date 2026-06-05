@@ -63,6 +63,47 @@ async fn workspace_fixture_lsp_diagnostics_smoke() {
 }
 
 #[tokio::test]
+async fn workspace_fixture_call_parameter_metadata_lsp_diagnostics() {
+    let documents = DocumentManager::new().expect("document manager should initialize");
+    let config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");
+    let root_uri = Url::from_directory_path(workspace_fixture()).expect("workspace path should become file URI");
+    let mut workspace = Workspace::new(Some(root_uri), config.clone(), documents.clone());
+    let call_file = file("cases/call_diagnostics.py");
+    let source = std::fs::read_to_string(&call_file).expect("call diagnostics fixture should read");
+    let uri = Url::from_file_path(&call_file).expect("fixture file URI");
+
+    documents
+        .open_document(uri.clone(), 1, source)
+        .expect("call diagnostics fixture should open");
+    workspace.update_dependencies(&uri);
+
+    let workspace = Arc::new(RwLock::new(workspace));
+    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace);
+    let mut analyzer = Analyzer::new(config, documents);
+    let diagnostics = diagnostic_provider.generate_diagnostics(&uri, &mut analyzer);
+
+    ExpectedDiagnostic {
+        code: "HM011",
+        severity: DiagnosticSeverity::ERROR,
+        message_fragment: "unexpected keyword argument: 'user_id'",
+        range: range(13, 22, 13, 56),
+        source_file: Some("cases/call_diagnostics.py"),
+        tags: Some(&[]),
+    }
+    .assert_present_for_file(&call_file, &diagnostics);
+
+    ExpectedDiagnostic {
+        code: "HM011",
+        severity: DiagnosticSeverity::ERROR,
+        message_fragment: "missing required argument: 'required'",
+        range: range(14, 27, 14, 36),
+        source_file: Some("cases/call_diagnostics.py"),
+        tags: Some(&[]),
+    }
+    .assert_present_for_file(&call_file, &diagnostics);
+}
+
+#[tokio::test]
 async fn workspace_fixture_typing_breadth_lsp_type_positions() {
     let documents = DocumentManager::new().expect("document manager should initialize");
     let config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");

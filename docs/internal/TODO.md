@@ -48,7 +48,7 @@
 - [x] Add overload selection, overlap, and implementation compatibility tests.
 - [x] Add generic function and class fixtures for TypeVar bounds,
   constraints, variance, defaults, ParamSpec, and TypeVarTuple.
-- [ ] Add protocol tests for inheritance, generic protocols, callback
+- [x] Add protocol tests for inheritance, generic protocols, callback
   protocols, bounds, and missing methods.
 - [ ] Add dataclass, dataclass transform, enum, TypedDict, property,
   decorator, `Final`, `ClassVar`, and override fixtures.
