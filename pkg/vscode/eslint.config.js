@@ -12,6 +12,7 @@ export default tseslint.config(
     plugins: { "@stylistic": stylistic },
     rules: {
       curly: "warn",
+      "@typescript-eslint/consistent-type-definitions": ["warn", "type"],
       "@stylistic/semi": ["warn", "always"],
       "@typescript-eslint/no-empty-function": "off",
       "@typescript-eslint/naming-convention": ["warn", { selector: "import", format: ["camelCase", "PascalCase"] }],

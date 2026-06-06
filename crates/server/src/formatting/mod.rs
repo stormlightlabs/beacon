@@ -520,7 +520,7 @@ impl Formatter {
         let mut comments = Vec::new();
         let root = parsed.tree.root_node();
         Self::collect_comments_recursive(root, &parsed.source, normalized_start, normalized_end, 0, &mut comments);
-        comments.sort_by(|a, b| (a.line, a.col).cmp(&(b.line, b.col)));
+        comments.sort_by_key(|a| (a.line, a.col));
         comments
     }
 

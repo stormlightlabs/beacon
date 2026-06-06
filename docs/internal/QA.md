@@ -218,6 +218,25 @@ In VS Code, Zed, or another LSP client, verify:
 - Code actions/refactorings produce valid edits and preserve unrelated code.
 - Config changes update behavior without restarting when hot-reload is expected.
 
+### Formatting And Editor QA Probes
+
+Automated probes for the editor-formatting surface:
+
+```sh
+cargo test -p beacon-lsp test_partial_editor_config_uses_defaults --lib
+cargo test -p beacon-lsp test_invalid_editor_config_values_are_rejected --lib
+cargo test -p beacon-lsp \
+  test_lsp_formatting_respects_disabled_config_for_editor_requests \
+  --test lsp_formatting_integration_tests
+pnpm --filter beacon-lsp compile
+pnpm --filter beacon-lsp lint
+cargo check --manifest-path pkg/zed/Cargo.toml
+```
+
+These cover partial editor formatter config, invalid config rejection, disabled
+formatting across full/range/save/on-type LSP requests, VS Code extension
+compile/lint, and Zed extension compile checks.
+
 ## Diagnostic Matrix
 
 Every v1 diagnostic class needs at least one automated test and one LSP smoke case:

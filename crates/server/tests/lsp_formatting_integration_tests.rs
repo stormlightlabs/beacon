@@ -96,6 +96,59 @@ fn test_lsp_format_document_already_formatted() {
 }
 
 #[test]
+fn test_lsp_formatting_respects_disabled_config_for_editor_requests() {
+    let (documents, provider) = setup();
+    let config = FormatterConfig { enabled: false, ..Default::default() };
+    config.validate().expect("disabled formatter config should validate");
+    let uri = Url::parse("file:///test_disabled_formatting.py").unwrap();
+    let source = "def foo(x,y):\n    return x+y\n";
+
+    open_document(&documents, &uri, source);
+
+    let text_document = TextDocumentIdentifier { uri: uri.clone() };
+    let format_params = DocumentFormattingParams {
+        text_document: text_document.clone(),
+        options: FormattingOptions { tab_size: 2, insert_spaces: true, ..FormattingOptions::default() },
+        work_done_progress_params: Default::default(),
+    };
+    assert!(
+        provider.format_document(&format_params, &config).is_none(),
+        "disabled formatting should not produce document edits"
+    );
+
+    let range_params = DocumentRangeFormattingParams {
+        text_document: text_document.clone(),
+        range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 2, character: 0 } },
+        options: FormattingOptions::default(),
+        work_done_progress_params: Default::default(),
+    };
+    assert!(
+        provider.format_range(&range_params, &config).is_none(),
+        "disabled formatting should not produce range edits"
+    );
+
+    let save_params =
+        WillSaveTextDocumentParams { text_document: text_document.clone(), reason: TextSaveReason::MANUAL };
+    assert!(
+        provider.format_on_save(&save_params, &config).is_none(),
+        "disabled formatting should not produce save edits"
+    );
+
+    let on_type_params = DocumentOnTypeFormattingParams {
+        text_document_position: lsp_types::TextDocumentPositionParams {
+            text_document,
+            position: Position { line: 0, character: 13 },
+        },
+        ch: ":".to_string(),
+        options: FormattingOptions::default(),
+    };
+    assert!(
+        provider.on_type_format(&on_type_params, &config).is_none(),
+        "disabled formatting should not produce on-type edits"
+    );
+}
+
+#[test]
 fn test_lsp_format_document_with_imports() {
     let (documents, provider) = setup();
     let config = FormatterConfig::default();

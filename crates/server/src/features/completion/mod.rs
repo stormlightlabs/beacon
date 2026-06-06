@@ -84,7 +84,7 @@ struct KeywordInfo {
 const KEYWORDS_JSON: &[u8] = include_bytes!("keywords.json");
 
 pub struct CompletionProvider {
-    _documents: DocumentManager,
+    documents: DocumentManager,
     builtins: Vec<BuiltinInfo>,
     keywords: Vec<KeywordInfo>,
     workspace: Arc<RwLock<Workspace>>,
@@ -99,7 +99,7 @@ impl CompletionProvider {
         let keywords = serde_json::from_slice(KEYWORDS_JSON).expect("Invalid keywords.json");
         let builtins = serde_json::from_slice(BUILTINS_JSON).expect("Invalid builtins.json");
         Self {
-            _documents: documents,
+            documents,
             keywords,
             builtins,
             workspace,
@@ -117,7 +117,7 @@ impl CompletionProvider {
 
         let mut items = Vec::new();
 
-        let text = self._documents.get_document(uri, |doc| Some(doc.text()))??;
+        let text = self.documents.get_document(uri, |doc| Some(doc.text()))??;
         let line_text = text.lines().nth(position.line as usize)?;
         let prefix = &line_text[..position.character.min(line_text.len() as u32) as usize];
 
@@ -126,7 +126,7 @@ impl CompletionProvider {
             return Some(CompletionResponse::Array(items));
         }
 
-        let context = self._documents.get_document(uri, |doc| {
+        let context = self.documents.get_document(uri, |doc| {
             let tree = doc.tree()?;
             let symbol_table = doc.symbol_table()?;
             self.detect_context(uri, position, &text, tree, symbol_table)
@@ -134,7 +134,7 @@ impl CompletionProvider {
 
         match context.context_type {
             CompletionContextType::Expression => {
-                let symbol_table = self._documents.get_document(uri, |doc| doc.symbol_table().cloned())?;
+                let symbol_table = self.documents.get_document(uri, |doc| doc.symbol_table().cloned())?;
                 if let Some(st) = symbol_table {
                     let mut completions = self
                         .symbol_completions(&st, context.scope_id, &context.prefix, uri)
@@ -164,7 +164,7 @@ impl CompletionProvider {
         let mut items = Vec::new();
 
         let in_class = self
-            ._documents
+            .documents
             .get_document(uri, |doc| {
                 if let Some(symbol_table) = doc.symbol_table() {
                     let line = (position.line + 1) as usize;
@@ -678,7 +678,7 @@ impl CompletionProvider {
     async fn attribute_completions(&self, uri: &Url, position: Position, prefix: &str) -> Option<Vec<CompletionItem>> {
         let mut scored_items = Vec::new();
 
-        let (_, expr_position) = self._documents.get_document(uri, |doc| {
+        let (_, expr_position) = self.documents.get_document(uri, |doc| {
             let text = doc.text();
             let line_idx = position.line as usize;
             let char_idx = position.character as usize;
@@ -793,7 +793,7 @@ impl CompletionProvider {
                 continue;
             }
 
-            if let Some(symbols) = Self::collect_document_symbols(&self._documents, &uri) {
+            if let Some(symbols) = Self::collect_document_symbols(&self.documents, &uri) {
                 for symbol in symbols {
                     if symbol.name.starts_with('_') {
                         continue;
@@ -847,7 +847,7 @@ impl CompletionProvider {
                         let stub_exports = resolved_name.as_ref().and_then(|name| workspace.get_stub_exports(name));
 
                         let offline_symbols = resolved_uri.as_ref().and_then(|target_uri| {
-                            if self._documents.has_document(target_uri) {
+                            if self.documents.has_document(target_uri) {
                                 None
                             } else {
                                 workspace.load_workspace_file(target_uri).and_then(|parse_result| {
@@ -869,7 +869,7 @@ impl CompletionProvider {
                     if module_uri.is_none()
                         && let Some(name) = module_name.as_ref()
                     {
-                        module_uri = Self::find_document_for_module(&self._documents, name);
+                        module_uri = Self::find_document_for_module(&self.documents, name);
                     }
 
                     if let Some(exports) = stub_exports {
@@ -901,7 +901,7 @@ impl CompletionProvider {
 
                     let mut module_symbols = Vec::new();
                     if let Some(ref module_uri) = module_uri {
-                        if let Some(symbols) = Self::collect_document_symbols(&self._documents, module_uri) {
+                        if let Some(symbols) = Self::collect_document_symbols(&self.documents, module_uri) {
                             module_symbols = symbols;
                         } else if let Some(symbols) = offline_symbols.take() {
                             module_symbols = symbols;
@@ -953,7 +953,7 @@ impl CompletionProvider {
 
             if module_names.is_empty() {
                 module_names = self
-                    ._documents
+                    .documents
                     .all_documents()
                     .into_iter()
                     .filter_map(|doc_uri| {

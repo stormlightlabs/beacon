@@ -267,6 +267,32 @@ mod tests {
     }
 
     #[test]
+    fn test_partial_editor_config_uses_defaults() {
+        let json = r#"{"enabled":false,"lineLength":100,"indentSize":2,"quoteStyle":"single"}"#;
+        let config: FormatterConfig = serde_json::from_str(json).unwrap();
+
+        assert!(!config.enabled);
+        assert_eq!(config.line_length, 100);
+        assert_eq!(config.indent_size, 2);
+        assert_eq!(config.quote_style, QuoteStyle::Single);
+        assert_eq!(config.trailing_commas, TrailingCommas::Multiline);
+        assert_eq!(config.compatibility_mode, CompatibilityMode::Black);
+        assert!(config.cache_enabled);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_invalid_editor_config_values_are_rejected() {
+        let invalid_quote = r#"{"quoteStyle":"curly"}"#;
+        let invalid_import_sorting = r#"{"importSorting":"alphabetical"}"#;
+        let invalid_compatibility = r#"{"compatibilityMode":"yapf"}"#;
+
+        assert!(serde_json::from_str::<FormatterConfig>(invalid_quote).is_err());
+        assert!(serde_json::from_str::<FormatterConfig>(invalid_import_sorting).is_err());
+        assert!(serde_json::from_str::<FormatterConfig>(invalid_compatibility).is_err());
+    }
+
+    #[test]
     fn test_cache_defaults() {
         let config = FormatterConfig::default();
         assert!(config.cache_enabled);

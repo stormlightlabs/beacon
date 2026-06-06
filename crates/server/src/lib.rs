@@ -30,6 +30,7 @@ pub mod formatting;
 pub mod interpreter;
 pub mod introspection;
 pub mod parser;
+pub mod telemetry;
 pub mod utils;
 pub mod workspace;
 

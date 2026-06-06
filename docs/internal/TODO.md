@@ -110,15 +110,15 @@
 - [x] Add auto-import tests using workspace symbols, stubs, and re-exports.
 - [x] Add refactoring edit tests for extract function, extract variable,
       inline function, move symbol, change signature, and rename.
-- [ ] Add autofix tests for mechanical lint/import edits.
-- [ ] Add telemetry event tests for timing, cache behavior, crashes, and
+- [x] Add autofix tests for mechanical lint/import edits.
+- [x] Add telemetry event tests for timing, cache behavior, crashes, and
       feature errors.
-- [ ] Confirm release logging omits source code, absolute paths, and symbol
+- [x] Confirm release logging omits source code, absolute paths, and symbol
       names by default.
 
 ### QA
 
-- [ ] Add formatter config validation and editor formatting QA cases.
+- [x] Add formatter config validation and editor formatting QA cases.
 - [ ] Run manual QA in VS Code, Zed, and one generic LSP client.
 
 ## Milestone 8: Performance Gates
