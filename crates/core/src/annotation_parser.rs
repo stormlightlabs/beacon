@@ -64,7 +64,7 @@ impl AnnotationParser {
 
     /// Parse a type annotation, returning Any if parsing fails
     pub fn parse_or_any(&self, annotation: &str) -> Type {
-        self.parse(annotation).unwrap_or(Type::any())
+        self.parse(annotation).unwrap_or_else(|_| Type::any())
     }
 }
 
@@ -216,9 +216,9 @@ impl Parser {
         }
     }
 
-    fn expect(&mut self, expected: Token) -> Result<()> {
+    fn expect(&mut self, expected: &Token) -> Result<()> {
         match self.advance() {
-            Some(token) if token == expected => Ok(()),
+            Some(token) if token == *expected => Ok(()),
             Some(token) => Err(TypeError::UnificationError(format!("{expected:?}"), format!("{token:?}")).into()),
             None => Err(TypeError::UnificationError(format!("{expected:?}"), "end of input".to_string()).into()),
         }
@@ -269,7 +269,7 @@ impl Parser {
             Some(Token::Ident(name)) => self.parse_named_type(&name),
             Some(Token::LParen) => {
                 let ty = self.parse_type()?;
-                self.expect(Token::RParen)?;
+                self.expect(&Token::RParen)?;
                 Ok(ty)
             }
             Some(token) => Err(TypeError::UnificationError("type name".to_string(), format!("{token:?}")).into()),
@@ -299,19 +299,19 @@ impl Parser {
                 if matches!(self.peek(), Some(Token::LBracket)) {
                     self.advance();
                     let element_type = self.parse_type()?;
-                    self.expect(Token::RBracket)?;
+                    self.expect(&Token::RBracket)?;
                     Type::list(element_type)
                 } else {
                     Type::list(Type::any())
                 }
             }
             "dict" => {
-                if matches!(self.peek(), Some(Token::LBracket)) {
+                if matches!(self.peek(), Some(&Token::LBracket)) {
                     self.advance();
                     let key_type = self.parse_type()?;
-                    self.expect(Token::Comma)?;
+                    self.expect(&Token::Comma)?;
                     let value_type = self.parse_type()?;
-                    self.expect(Token::RBracket)?;
+                    self.expect(&Token::RBracket)?;
                     Type::dict(key_type, value_type)
                 } else {
                     Type::dict(Type::any(), Type::any())
@@ -321,7 +321,7 @@ impl Parser {
                 if matches!(self.peek(), Some(Token::LBracket)) {
                     self.advance();
                     let element_type = self.parse_type()?;
-                    self.expect(Token::RBracket)?;
+                    self.expect(&Token::RBracket)?;
                     Type::App(Box::new(Type::Con(TypeCtor::Set)), Box::new(element_type))
                 } else {
                     Type::App(Box::new(Type::Con(TypeCtor::Set)), Box::new(Type::any()))
@@ -340,7 +340,7 @@ impl Parser {
                         element_types.push(self.parse_type()?);
                     }
 
-                    self.expect(Token::RBracket)?;
+                    self.expect(&Token::RBracket)?;
 
                     if element_types.len() == 1 {
                         Type::App(Box::new(Type::Con(TypeCtor::Tuple)), Box::new(element_types[0].clone()))
@@ -352,26 +352,26 @@ impl Parser {
                 }
             }
             "Union" => {
-                self.expect(Token::LBracket)?;
+                self.expect(&Token::LBracket)?;
                 let mut types = vec![self.parse_type()?];
                 while matches!(self.peek(), Some(Token::Comma)) {
                     self.advance();
                     types.push(self.parse_type()?);
                 }
-                self.expect(Token::RBracket)?;
+                self.expect(&Token::RBracket)?;
                 Type::union(types)
             }
             "Optional" => {
-                self.expect(Token::LBracket)?;
+                self.expect(&Token::LBracket)?;
                 let ty = self.parse_type()?;
-                self.expect(Token::RBracket)?;
+                self.expect(&Token::RBracket)?;
                 Type::optional(ty)
             }
             "ClassVar" | "Final" => {
-                if matches!(self.peek(), Some(Token::LBracket)) {
+                if matches!(self.peek(), Some(&Token::LBracket)) {
                     self.advance();
                     let ty = self.parse_type()?;
-                    self.expect(Token::RBracket)?;
+                    self.expect(&Token::RBracket)?;
                     ty
                 } else {
                     Type::any()
@@ -391,23 +391,23 @@ impl Parser {
                     if matches!(self.peek(), Some(Token::Ellipsis)) {
                         self.advance();
                     } else {
-                        self.expect(Token::LBracket)?;
-                        if !matches!(self.peek(), Some(Token::RBracket)) {
+                        self.expect(&Token::LBracket)?;
+                        if !matches!(self.peek(), Some(&Token::RBracket)) {
                             arg_types.push(self.parse_type()?);
-                            while matches!(self.peek(), Some(Token::Comma)) {
+                            while matches!(self.peek(), Some(&Token::Comma)) {
                                 self.advance();
-                                if matches!(self.peek(), Some(Token::RBracket)) {
+                                if matches!(self.peek(), Some(&Token::RBracket)) {
                                     break;
                                 }
                                 arg_types.push(self.parse_type()?);
                             }
                         }
-                        self.expect(Token::RBracket)?;
+                        self.expect(&Token::RBracket)?;
                     }
 
-                    self.expect(Token::Comma)?;
+                    self.expect(&Token::Comma)?;
                     let return_type = self.parse_type()?;
-                    self.expect(Token::RBracket)?;
+                    self.expect(&Token::RBracket)?;
 
                     Type::fun_unnamed(arg_types, return_type)
                 } else {
@@ -422,7 +422,7 @@ impl Parser {
                         self.advance();
                         type_params.push(self.parse_type()?);
                     }
-                    self.expect(Token::RBracket)?;
+                    self.expect(&Token::RBracket)?;
 
                     let mut result = Type::Con(TypeCtor::Generic);
                     for param in type_params {
@@ -441,7 +441,7 @@ impl Parser {
                         self.advance();
                         type_params.push(self.parse_type()?);
                     }
-                    self.expect(Token::RBracket)?;
+                    self.expect(&Token::RBracket)?;
                     let mut result = Type::Con(TypeCtor::Protocol(None, vec![]));
                     for param in type_params {
                         result = Type::App(Box::new(result), Box::new(param));
@@ -456,13 +456,13 @@ impl Parser {
                     self.advance();
 
                     let yield_ty = self.parse_type()?;
-                    self.expect(Token::Comma)?;
+                    self.expect(&Token::Comma)?;
 
                     let send_ty = self.parse_type()?;
-                    self.expect(Token::Comma)?;
+                    self.expect(&Token::Comma)?;
 
                     let return_ty = self.parse_type()?;
-                    self.expect(Token::RBracket)?;
+                    self.expect(&Token::RBracket)?;
 
                     Type::generator(yield_ty, send_ty, return_ty)
                 } else {
@@ -473,9 +473,9 @@ impl Parser {
                 if matches!(self.peek(), Some(Token::LBracket)) {
                     self.advance();
                     let yield_ty = self.parse_type()?;
-                    self.expect(Token::Comma)?;
+                    self.expect(&Token::Comma)?;
                     let send_ty = self.parse_type()?;
-                    self.expect(Token::RBracket)?;
+                    self.expect(&Token::RBracket)?;
                     Type::async_generator(yield_ty, send_ty)
                 } else {
                     Type::async_generator(Type::any(), Type::none())
@@ -485,11 +485,11 @@ impl Parser {
                 if matches!(self.peek(), Some(Token::LBracket)) {
                     self.advance();
                     let yield_ty = self.parse_type()?;
-                    self.expect(Token::Comma)?;
+                    self.expect(&Token::Comma)?;
                     let send_ty = self.parse_type()?;
-                    self.expect(Token::Comma)?;
+                    self.expect(&Token::Comma)?;
                     let return_ty = self.parse_type()?;
-                    self.expect(Token::RBracket)?;
+                    self.expect(&Token::RBracket)?;
                     Type::coroutine(yield_ty, send_ty, return_ty)
                 } else {
                     Type::coroutine(Type::any(), Type::none(), Type::any())
@@ -499,7 +499,7 @@ impl Parser {
                 if matches!(self.peek(), Some(Token::LBracket)) {
                     self.advance();
                     let inner_ty = self.parse_type()?;
-                    self.expect(Token::RBracket)?;
+                    self.expect(&Token::RBracket)?;
                     Type::Con(TypeCtor::Class(format!("_{name}_{inner_ty}")))
                 } else {
                     Type::bool()
@@ -527,7 +527,7 @@ impl Parser {
                         }
                     }
 
-                    self.expect(Token::RBracket)?;
+                    self.expect(&Token::RBracket)?;
 
                     for arg in args {
                         result = Type::App(Box::new(result), Box::new(arg));

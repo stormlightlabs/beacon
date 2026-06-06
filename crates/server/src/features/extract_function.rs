@@ -76,7 +76,7 @@ impl ExtractFunctionProvider {
         );
 
         collector.add_edit(
-            params.uri.clone(),
+            params.uri,
             TextEdit {
                 range: Range { start: insertion_point, end: insertion_point },
                 new_text: format!("{function_def}\n\n"),

@@ -37,9 +37,7 @@ PUBLIC_VAR = 42
 _PRIVATE_VAR = 99
 "#;
 
-    documents
-        .open_document(module_uri.clone(), 1, source.to_string())
-        .unwrap();
+    documents.open_document(module_uri.clone(), 1, source).unwrap();
     workspace.update_dependencies(&module_uri);
 
     let symbols = workspace.resolve_star_import(&module_uri);
@@ -76,9 +74,7 @@ PUBLIC_VAR = 42
 _PRIVATE_VAR = 99
 "#;
 
-    documents
-        .open_document(module_uri.clone(), 1, source.to_string())
-        .unwrap();
+    documents.open_document(module_uri.clone(), 1, source).unwrap();
     workspace.update_dependencies(&module_uri);
 
     let symbols = workspace.resolve_star_import(&module_uri);
@@ -109,9 +105,7 @@ class PublicClass:
     pass
 "#;
 
-    documents
-        .open_document(module_uri.clone(), 1, source.to_string())
-        .unwrap();
+    documents.open_document(module_uri.clone(), 1, source).unwrap();
     workspace.update_dependencies(&module_uri);
 
     let symbols = workspace.resolve_star_import(&module_uri);
@@ -144,9 +138,7 @@ def public_func():
     pass
 "#;
 
-    documents
-        .open_document(module_uri.clone(), 1, source.to_string())
-        .unwrap();
+    documents.open_document(module_uri.clone(), 1, source).unwrap();
     workspace.update_dependencies(&module_uri);
 
     let symbols = workspace.resolve_star_import(&module_uri);
@@ -171,9 +163,7 @@ from os import path
 from sys import argv
 "#;
 
-    documents
-        .open_document(module_uri.clone(), 1, source.to_string())
-        .unwrap();
+    documents.open_document(module_uri.clone(), 1, source).unwrap();
     workspace.update_dependencies(&module_uri);
 
     let symbols = workspace.resolve_star_import(&module_uri);
@@ -206,9 +196,7 @@ def _internal():
     pass
 "#;
 
-    documents
-        .open_document(module_uri.clone(), 1, source.to_string())
-        .unwrap();
+    documents.open_document(module_uri.clone(), 1, source).unwrap();
     workspace.update_dependencies(&module_uri);
 
     let symbols = workspace.resolve_star_import(&module_uri);

@@ -30,16 +30,12 @@ def moved_function():
 def other_function():
     moved_function()
 "#;
-    documents
-        .open_document(source_uri.clone(), 0, source_content.to_string())
-        .unwrap();
+    documents.open_document(source_uri.clone(), 0, source_content).unwrap();
     workspace.update_dependencies(&source_uri);
 
     let target_uri = file_uri(workspace_root.as_str(), "target.py");
     let target_content = "";
-    documents
-        .open_document(target_uri.clone(), 0, target_content.to_string())
-        .unwrap();
+    documents.open_document(target_uri.clone(), 0, target_content).unwrap();
     workspace.update_dependencies(&target_uri);
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
@@ -81,16 +77,12 @@ async fn test_move_symbol_updates_dependencies() {
 def moved_function():
     pass
 "#;
-    documents
-        .open_document(source_uri.clone(), 0, source_content.to_string())
-        .unwrap();
+    documents.open_document(source_uri.clone(), 0, source_content).unwrap();
     workspace.update_dependencies(&source_uri);
 
     let target_uri = file_uri(workspace_root.as_str(), "target.py");
     let target_content = "";
-    documents
-        .open_document(target_uri.clone(), 0, target_content.to_string())
-        .unwrap();
+    documents.open_document(target_uri.clone(), 0, target_content).unwrap();
     workspace.update_dependencies(&target_uri);
 
     let client_uri = file_uri(workspace_root.as_str(), "client.py");
@@ -100,9 +92,7 @@ from source import moved_function
 def main():
     moved_function()
 "#;
-    documents
-        .open_document(client_uri.clone(), 0, client_content.to_string())
-        .unwrap();
+    documents.open_document(client_uri.clone(), 0, client_content).unwrap();
     workspace.update_dependencies(&client_uri);
 
     let workspace_arc = Arc::new(RwLock::new(workspace));

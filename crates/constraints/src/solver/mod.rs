@@ -44,34 +44,34 @@ pub fn solve_constraints(
         match constraint {
             Constraint::Equal(t1, t2, span) => {
                 let mut state = SolveState::new(&mut subst, &mut type_errors, class_registry, typevar_registry);
-                solve_equal_constraint(t1, t2, span, &mut state);
+                solve_equal_constraint(&t1, &t2, span, &mut state);
             }
             Constraint::Call(func_ty, pos_args, kw_args, ret_ty, span) => {
                 let mut state = SolveState::new(&mut subst, &mut type_errors, class_registry, typevar_registry);
-                solve_call_constraint(func_ty, pos_args, kw_args, ret_ty, span, &mut state);
+                solve_call_constraint(&func_ty, &pos_args, &kw_args, &ret_ty, span, &mut state);
             }
             Constraint::HasAttr(obj_ty, attr_name, attr_ty, span) => {
                 let mut state = SolveState::new(&mut subst, &mut type_errors, class_registry, typevar_registry);
-                solve_attribute_constraint(obj_ty, attr_name, attr_ty, span, &mut state);
+                solve_attribute_constraint(&obj_ty, attr_name, &attr_ty, span, &mut state);
             }
             Constraint::Protocol(obj_ty, protocol_name, elem_ty, span) => {
                 let mut state = SolveState::new(&mut subst, &mut type_errors, class_registry, typevar_registry);
-                solve_protocol_constraint(obj_ty, protocol_name, elem_ty, span, &mut state);
+                solve_protocol_constraint(&obj_ty, &protocol_name, &elem_ty, span, &mut state);
             }
             Constraint::MatchPattern(_subject_ty, _pattern, bindings, _span) => {
                 solve_match_pattern_constraint(bindings, &subst);
             }
             Constraint::PatternExhaustive(subject_ty, patterns, span) => {
-                solve_pattern_exhaustive_constraint(subject_ty, patterns, span, &mut type_errors, class_registry);
+                solve_pattern_exhaustive_constraint(&subject_ty, &patterns, span, &mut type_errors, class_registry);
             }
             Constraint::PatternReachable(pattern, previous_patterns, span) => {
-                solve_pattern_reachable_constraint(pattern, previous_patterns, span, &mut type_errors);
+                solve_pattern_reachable_constraint(&pattern, &previous_patterns, span, &mut type_errors);
             }
             Constraint::PatternTypeCompatible(pattern, subject_ty, span) => {
-                solve_pattern_type_compatible_constraint(pattern, subject_ty, span, &mut type_errors, class_registry);
+                solve_pattern_type_compatible_constraint(&pattern, &subject_ty, span, &mut type_errors, class_registry);
             }
             Constraint::PatternStructureValid(pattern, subject_ty, span) => {
-                solve_pattern_structure_valid_constraint(pattern, subject_ty, span, &mut type_errors);
+                solve_pattern_structure_valid_constraint(&pattern, &subject_ty, span, &mut type_errors);
             }
             Constraint::Narrowing(variable, predicate, narrowed_type, span) => {
                 record_narrowing_constraint(variable, predicate, narrowed_type, span);
@@ -79,7 +79,7 @@ pub fn solve_constraints(
             Constraint::Join(_, incoming_types, result_type, span) => {
                 solve_join_constraint(
                     incoming_types,
-                    result_type,
+                    &result_type,
                     span,
                     &mut subst,
                     &mut type_errors,
@@ -90,7 +90,7 @@ pub fn solve_constraints(
         }
     }
 
-    let simplified_subst = simplify_substitution(subst);
+    let simplified_subst = simplify_substitution(&subst);
 
     tracing::debug!("Constraint solving completed: {} type errors found", type_errors.len());
 
@@ -1380,7 +1380,7 @@ mod tests {
         let mut subst = Subst::empty();
         subst.insert(TypeVar::new(0), union_with_any);
 
-        let simplified = simplify_substitution(subst);
+        let simplified = simplify_substitution(&subst);
         let result = simplified.apply(&tv);
         assert_eq!(result, Type::any(), "Union with Any should simplify to Any");
     }
@@ -1394,7 +1394,7 @@ mod tests {
         subst.insert(TypeVar::new(0), Type::int());
         subst.insert(TypeVar::new(1), Type::union(vec![Type::string(), Type::bool()]));
 
-        let simplified = simplify_substitution(subst);
+        let simplified = simplify_substitution(&subst);
 
         assert_eq!(simplified.apply(&tv1), Type::int());
         match simplified.apply(&tv2) {

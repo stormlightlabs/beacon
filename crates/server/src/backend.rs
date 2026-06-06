@@ -81,7 +81,7 @@ impl Features {
             goto_definition: GotoDefinitionProvider::new(documents.clone(), workspace.clone()),
             references: ReferencesProvider::new(documents.clone(), workspace.clone()),
             inlay_hints: InlayHintsProvider::new(documents.clone()),
-            code_actions: CodeActionsProvider::new(documents.clone(), analyzer.clone()),
+            code_actions: CodeActionsProvider::new(documents.clone(), analyzer),
             semantic_tokens: SemanticTokensProvider::new(documents.clone()),
             document_symbols: DocumentSymbolsProvider::new(documents.clone()),
             document_highlight: DocumentHighlightProvider::new(documents.clone()),
@@ -124,7 +124,7 @@ impl SharedState {
         let analyzer = Arc::new(RwLock::new(analysis::Analyzer::with_workspace(
             config,
             (*documents).clone(),
-            workspace.clone(),
+            &workspace,
         )));
 
         let interpreter_path = interpreter::find_python_interpreter(None);
@@ -152,7 +152,7 @@ impl Backend {
         let analyzer = Arc::new(RwLock::new(analysis::Analyzer::with_workspace(
             config,
             (*documents).clone(),
-            workspace.clone(),
+            &workspace,
         )));
 
         let interpreter_path = interpreter::find_python_interpreter(None);
@@ -396,7 +396,7 @@ impl LanguageServer for Backend {
         tracing::info!(uri = %url, version, "Document opened");
         tracing::trace!(uri = %url, text_length = text.len(), "Document content");
 
-        if let Err(e) = self.documents.open_document(url.clone(), version, text) {
+        if let Err(e) = self.documents.open_document(url.clone(), version, &text) {
             tracing::error!(uri = %url, ?e, "Failed to open document");
             self.client
                 .log_message(MessageType::ERROR, format!("Failed to open document: {e}"))
@@ -446,7 +446,7 @@ impl LanguageServer for Backend {
 
         match self
             .documents
-            .update_document(params.text_document, params.content_changes)
+            .update_document(&params.text_document, params.content_changes)
         {
             Ok(_) => {
                 tracing::trace!(uri = %uri, "Document updated, performing selective invalidation");
@@ -657,7 +657,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(skip(self), level = "debug")]
     async fn symbol(&self, params: WorkspaceSymbolParams) -> Result<Option<Vec<SymbolInformation>>> {
-        Ok(self.features.workspace_symbols.workspace_symbol(params))
+        Ok(self.features.workspace_symbols.workspace_symbol(&params))
     }
 
     async fn symbol_resolve(&self, params: WorkspaceSymbol) -> Result<WorkspaceSymbol> {
@@ -996,10 +996,7 @@ mod tests {
         let backend = service.inner();
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        backend
-            .documents
-            .open_document(uri.clone(), 1, "x = 42".to_string())
-            .unwrap();
+        backend.documents.open_document(uri.clone(), 1, "x = 42").unwrap();
 
         let params = DidChangeTextDocumentParams {
             text_document: VersionedTextDocumentIdentifier { uri: uri.clone(), version: 2 },
@@ -1022,10 +1019,7 @@ mod tests {
         let backend = service.inner();
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        backend
-            .documents
-            .open_document(uri.clone(), 1, "x = 42".to_string())
-            .unwrap();
+        backend.documents.open_document(uri.clone(), 1, "x = 42").unwrap();
 
         let params = DidCloseTextDocumentParams { text_document: TextDocumentIdentifier { uri: uri.clone() } };
 
@@ -1040,10 +1034,7 @@ mod tests {
         let backend = service.inner();
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        backend
-            .documents
-            .open_document(uri.clone(), 1, "x = 42".to_string())
-            .unwrap();
+        backend.documents.open_document(uri.clone(), 1, "x = 42").unwrap();
 
         let params =
             DidSaveTextDocumentParams { text_document: TextDocumentIdentifier { uri: uri.clone() }, text: None };
@@ -1057,10 +1048,7 @@ mod tests {
         let backend = service.inner();
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        backend
-            .documents
-            .open_document(uri.clone(), 1, "x = 42".to_string())
-            .unwrap();
+        backend.documents.open_document(uri.clone(), 1, "x = 42").unwrap();
 
         let params = HoverParams {
             text_document_position_params: TextDocumentPositionParams {
@@ -1085,7 +1073,7 @@ mod tests {
             .open_document(
                 uri.clone(),
                 1,
-                "def greet(name: str) -> str:\n    return f\"Hello {name}\"\n\ngreet(".to_string(),
+                "def greet(name: str) -> str:\n    return f\"Hello {name}\"\n\ngreet(",
             )
             .unwrap();
 
@@ -1108,10 +1096,7 @@ mod tests {
         let backend = service.inner();
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        backend
-            .documents
-            .open_document(uri.clone(), 1, "x = 42\ny = ".to_string())
-            .unwrap();
+        backend.documents.open_document(uri.clone(), 1, "x = 42\ny = ").unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1135,7 +1120,7 @@ mod tests {
 
         backend
             .documents
-            .open_document(uri.clone(), 1, "def hello():\n    pass".to_string())
+            .open_document(uri.clone(), 1, "def hello():\n    pass")
             .unwrap();
 
         let params = GotoDefinitionParams {
@@ -1159,7 +1144,7 @@ mod tests {
 
         backend
             .documents
-            .open_document(uri.clone(), 1, "x = 42\ny = x".to_string())
+            .open_document(uri.clone(), 1, "x = 42\ny = x")
             .unwrap();
 
         let params = ReferenceParams {
@@ -1182,10 +1167,7 @@ mod tests {
         let backend = service.inner();
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        backend
-            .documents
-            .open_document(uri.clone(), 1, "x = 42".to_string())
-            .unwrap();
+        backend.documents.open_document(uri.clone(), 1, "x = 42").unwrap();
 
         let params = InlayHintParams {
             text_document: TextDocumentIdentifier { uri },
@@ -1203,10 +1185,7 @@ mod tests {
         let backend = service.inner();
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        backend
-            .documents
-            .open_document(uri.clone(), 1, "x = 42".to_string())
-            .unwrap();
+        backend.documents.open_document(uri.clone(), 1, "x = 42").unwrap();
 
         let params = CodeActionParams {
             text_document: TextDocumentIdentifier { uri },
@@ -1226,10 +1205,7 @@ mod tests {
         let backend = service.inner();
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        backend
-            .documents
-            .open_document(uri.clone(), 1, "x = 42".to_string())
-            .unwrap();
+        backend.documents.open_document(uri.clone(), 1, "x = 42").unwrap();
 
         let params = SemanticTokensParams {
             text_document: TextDocumentIdentifier { uri },
@@ -1247,10 +1223,7 @@ mod tests {
         let backend = service.inner();
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        backend
-            .documents
-            .open_document(uri.clone(), 1, "x = 42".to_string())
-            .unwrap();
+        backend.documents.open_document(uri.clone(), 1, "x = 42").unwrap();
 
         let params = SemanticTokensRangeParams {
             text_document: TextDocumentIdentifier { uri },
@@ -1271,7 +1244,7 @@ mod tests {
 
         backend
             .documents
-            .open_document(uri.clone(), 1, "def hello():\n    pass".to_string())
+            .open_document(uri.clone(), 1, "def hello():\n    pass")
             .unwrap();
 
         let params = DocumentSymbolParams {
@@ -1292,7 +1265,7 @@ mod tests {
 
         backend
             .documents
-            .open_document(uri.clone(), 1, "x = 42\ny = x".to_string())
+            .open_document(uri.clone(), 1, "x = 42\ny = x")
             .unwrap();
 
         let params = DocumentHighlightParams {
@@ -1316,7 +1289,7 @@ mod tests {
 
         backend
             .documents
-            .open_document(uri.clone(), 1, "x = 42\ny = x".to_string())
+            .open_document(uri.clone(), 1, "x = 42\ny = x")
             .unwrap();
 
         let params = RenameParams {
@@ -1340,7 +1313,7 @@ mod tests {
 
         backend
             .documents
-            .open_document(uri, 1, "def hello():\n    pass".to_string())
+            .open_document(uri, 1, "def hello():\n    pass")
             .unwrap();
 
         let params = WorkspaceSymbolParams {
@@ -1384,7 +1357,7 @@ mod tests {
 
         backend
             .documents
-            .open_document(uri.clone(), 1, "x = undefined_var".to_string())
+            .open_document(uri.clone(), 1, "x = undefined_var")
             .unwrap();
 
         let _ = backend.publish_diagnostics(uri).await;
@@ -1396,10 +1369,7 @@ mod tests {
         let backend = service.inner();
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        backend
-            .documents
-            .open_document(uri.clone(), 1, "x = 42".to_string())
-            .unwrap();
+        backend.documents.open_document(uri.clone(), 1, "x = 42").unwrap();
 
         let params = DidChangeTextDocumentParams {
             text_document: VersionedTextDocumentIdentifier { uri: uri.clone(), version: 2 },
@@ -1426,14 +1396,8 @@ mod tests {
         let uri1 = Url::from_str("file:///test1.py").unwrap();
         let uri2 = Url::from_str("file:///test2.py").unwrap();
 
-        backend
-            .documents
-            .open_document(uri1.clone(), 1, "x = 1".to_string())
-            .unwrap();
-        backend
-            .documents
-            .open_document(uri2.clone(), 1, "y = 2".to_string())
-            .unwrap();
+        backend.documents.open_document(uri1.clone(), 1, "x = 1").unwrap();
+        backend.documents.open_document(uri2.clone(), 1, "y = 2").unwrap();
 
         assert!(backend.documents.has_document(&uri1));
         assert!(backend.documents.has_document(&uri2));

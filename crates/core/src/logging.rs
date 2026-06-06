@@ -136,7 +136,7 @@ pub fn init(config: &LogConfig) -> Result<(), Box<dyn std::error::Error>> {
         tracing_appender::rolling::daily(&config.log_dir, &config.log_filename)
     };
 
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
     let file_layer = match config.format {
         LogFormat::Text => fmt::layer()
@@ -177,7 +177,7 @@ pub fn init(config: &LogConfig) -> Result<(), Box<dyn std::error::Error>> {
         subscriber.try_init()?;
     }
 
-    std::mem::forget(_guard);
+    std::mem::forget(guard);
     Ok(())
 }
 

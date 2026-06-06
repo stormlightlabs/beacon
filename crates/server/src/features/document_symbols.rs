@@ -261,7 +261,7 @@ def calculate(x, y):
     return x + y
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let symbols = provider.extract_symbols(&uri);
         assert!(symbols.is_some());
@@ -297,7 +297,7 @@ class Calculator:
         return x - y
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let symbols = provider.extract_symbols(&uri);
         assert!(symbols.is_some());
@@ -334,7 +334,7 @@ message = "Hello"
 result = calculate(10, 20)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let symbols = provider.extract_symbols(&uri);
         assert!(symbols.is_some());
@@ -374,7 +374,7 @@ class Application:
 DEBUG = True
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let symbols = provider.extract_symbols(&uri);
         assert!(symbols.is_some());
@@ -409,7 +409,7 @@ def test():
     pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let symbols = provider.extract_symbols(&uri);
         assert!(symbols.is_some());
@@ -437,7 +437,7 @@ class Outer:
         pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let symbols = provider.extract_symbols(&uri);
         assert!(symbols.is_some());

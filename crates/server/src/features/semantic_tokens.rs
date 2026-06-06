@@ -689,7 +689,7 @@ mod tests {
         let provider = SemanticTokensProvider::new(documents.clone());
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        documents.open_document(uri.clone(), 1, "x = 42".to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, "x = 42").unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
         assert!(!tokens.is_empty(), "Expected tokens for variable and literal");
@@ -703,7 +703,7 @@ mod tests {
         let source = r#"def hello():
     pass"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
 
@@ -731,7 +731,7 @@ mod tests {
         let source = r#"class MyClass:
     pass"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
 
@@ -756,7 +756,7 @@ mod tests {
 
 greet()"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
 
@@ -791,7 +791,7 @@ def func():
     local_var = 2
     x = global_var"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
 
@@ -805,7 +805,7 @@ def func():
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"message = "hello world""#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
 
@@ -827,7 +827,7 @@ def func():
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "x = 42\ny = 3.14";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
         let number_type_idx = SUPPORTED_TYPES
@@ -845,7 +845,7 @@ def func():
         let provider = SemanticTokensProvider::new(documents.clone());
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        documents.open_document(uri.clone(), 1, "".to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, "").unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
         assert_eq!(tokens.len(), 0, "Empty file should have no tokens");
@@ -913,7 +913,7 @@ def func():
 
 result = add(1, 2)"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = SemanticTokensParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -948,7 +948,7 @@ result = add(1, 2)"#;
 calc = Calculator()
 answer = calc.add(5, 3)"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
 
@@ -978,7 +978,7 @@ answer = calc.add(5, 3)"#;
 import sys as system
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
         let import_type_idx = SUPPORTED_TYPES
@@ -1002,7 +1002,7 @@ import sys as system
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "from math import sqrt, pi";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
         let import_type_idx = SUPPORTED_TYPES
@@ -1024,7 +1024,7 @@ import sys as system
 x = os.path
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
         let property_type_idx = SUPPORTED_TYPES
@@ -1046,7 +1046,7 @@ x = os.path
 result = os.path.join("a", "b")
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
 
@@ -1075,7 +1075,7 @@ x = os
 y = sqrt(16)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
 
@@ -1097,7 +1097,7 @@ pi_value = pi
 sys_info = system.version
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
 
@@ -1128,7 +1128,7 @@ sys_info = system.version
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "def greet():\n    pass";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
 
@@ -1170,7 +1170,7 @@ sys_info = system.version
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "class Calculator:\n    pass";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
 
@@ -1212,7 +1212,7 @@ sys_info = system.version
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "import os\nfrom math import sqrt";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
 
@@ -1250,7 +1250,7 @@ sys_info = system.version
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "import os\n";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
         let decoded = decode_tokens(&tokens);
@@ -1279,7 +1279,7 @@ sys_info = system.version
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "if x in range(10):\n    pass";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let tokens = provider.generate_tokens(&uri).unwrap();
 

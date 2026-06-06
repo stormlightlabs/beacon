@@ -59,12 +59,11 @@ impl DiagnosticProvider {
             if column <= 1 {
                 return 0;
             }
-            let mut chars_seen = 1;
-            for (idx, _) in line_text.char_indices() {
+
+            for (chars_seen, (idx, _)) in (1..).zip(line_text.char_indices()) {
                 if chars_seen == column {
                     return idx;
                 }
-                chars_seen += 1;
             }
             line_text.len()
         }
@@ -2153,9 +2152,8 @@ impl DiagnosticProvider {
     fn format_missing_module_message(&self, module: &str, from_module: &str, workspace: &Workspace) -> String {
         if module.starts_with('.') {
             let leading_dots = module.chars().take_while(|&c| c == '.').count();
-            let from_parts: Vec<&str> = from_module.split('.').collect();
 
-            if leading_dots > from_parts.len() {
+            if leading_dots > from_module.split('.').count() {
                 return format!(
                     "Relative import '{module}' goes beyond top-level package (current module: {from_module})"
                 );
@@ -3363,7 +3361,7 @@ mod tests {
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "def broken(";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -3389,7 +3387,7 @@ def test():
     x = undefined_variable
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
         assert!(diagnostics.iter().any(|d| d.message.contains("undefined_variable")));
@@ -3451,7 +3449,7 @@ def test():
         let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
 
         let uri = Url::from_str("file:///empty.py").unwrap();
-        documents.open_document(uri.clone(), 1, "".to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, "").unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
         assert!(diagnostics.is_empty());
@@ -3481,7 +3479,7 @@ if __name__ == "__main__":
     print("Running as main")
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -3509,7 +3507,7 @@ def __init__(self):
     self.x = 1
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -3539,7 +3537,7 @@ class MyClass:
         self.x = 1
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
         let magic_warnings: Vec<_> = diagnostics
@@ -3618,7 +3616,7 @@ def test():
     return x
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
         let type_errors: Vec<_> = diagnostics
@@ -3648,8 +3646,8 @@ def test():
         let uri_b = Url::parse("file:///workspace/b.py").unwrap();
         let source_b = "import a\n\ndef func_b():\n    pass";
 
-        documents.open_document(uri_a.clone(), 0, source_a.to_string()).unwrap();
-        documents.open_document(uri_b.clone(), 0, source_b.to_string()).unwrap();
+        documents.open_document(uri_a.clone(), 0, source_a).unwrap();
+        documents.open_document(uri_b.clone(), 0, source_b).unwrap();
 
         workspace.add_test_module(uri_a.clone(), "a".to_string(), std::path::PathBuf::from("/workspace"));
         workspace.add_test_module(uri_b.clone(), "b".to_string(), std::path::PathBuf::from("/workspace"));
@@ -3690,7 +3688,7 @@ def test():
         let uri = Url::from_str("file:///workspace/main.py").unwrap();
         let source = "import nonexistent_module\n\ndef main():\n    pass";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         {
             let mut ws = workspace.write().await;
@@ -3734,7 +3732,7 @@ def test():
         let uri = Url::from_str("file:///workspace/pkg/module.py").unwrap();
         let source = "from ..nonexistent import something\n\ndef func():\n    pass";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         {
             let mut ws = workspace.write().await;
@@ -3863,7 +3861,7 @@ def add(x, y):
     return x + y
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -3908,7 +3906,7 @@ def get_data(x: int):
     return x * 2
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -3946,7 +3944,7 @@ def add(x: int, y: int) -> int:
     return x + y
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -3983,7 +3981,7 @@ def add(x, y):
     return x + y
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4026,7 +4024,7 @@ def add(x, y):
     return x + y
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4073,7 +4071,7 @@ def sum_list(items):
     return total
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4116,7 +4114,7 @@ def mixed_params(a: int, b, c) -> int:
     return a + b + c
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4162,7 +4160,7 @@ class Calculator:
         return x - y
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4207,7 +4205,7 @@ def outer(x: int) -> int:
     return inner(10)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4250,7 +4248,7 @@ def with_default(value=42) -> int:
     return value + 1
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4288,7 +4286,7 @@ class MyClass:
     name: str = "default"
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4333,7 +4331,7 @@ class MyClass:
         self.instance_attr = 10  # Should NOT trigger ANN009 (instance attribute, not class)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4370,7 +4368,7 @@ class Config:
     debug_mode = True  # Missing annotation
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4404,7 +4402,7 @@ class MyClass:
     count = 0
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4438,7 +4436,7 @@ class MyClass:
     count = 0
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4475,7 +4473,7 @@ def foo():
         pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4521,7 +4519,7 @@ def foo():
         pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4555,7 +4553,7 @@ def foo():
         pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4592,7 +4590,7 @@ def foo():
         pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4626,7 +4624,7 @@ def process_unknown(data, options):
     return data
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4666,7 +4664,7 @@ def handle_dynamic(value):
     return value
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4712,7 +4710,7 @@ def add(x, y):
 result = add(1, 2)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4756,7 +4754,7 @@ def mixed_params(a: int, b, c: int) -> int:
     return a + b + c
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4801,7 +4799,7 @@ def multiply(x: int, y: int) -> int:
     return x * y
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -4852,7 +4850,7 @@ def bar():
         pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
@@ -5322,7 +5320,7 @@ def example(value: int | str) -> str:
             return "integer"
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 

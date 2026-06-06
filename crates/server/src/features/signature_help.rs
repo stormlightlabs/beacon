@@ -193,7 +193,7 @@ mod tests {
 x = "world"
 result = greet(x)"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = SignatureHelpParams {
             text_document_position_params: TextDocumentPositionParams {
@@ -221,7 +221,7 @@ a = 1
 b = 2
 result = add(a, b)"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = SignatureHelpParams {
             text_document_position_params: TextDocumentPositionParams {
@@ -244,7 +244,7 @@ result = add(a, b)"#;
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "x = 42";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = SignatureHelpParams {
             text_document_position_params: TextDocumentPositionParams {
@@ -271,7 +271,7 @@ result = add(a, b)"#;
 
 func("#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = SignatureHelpParams {
             text_document_position_params: TextDocumentPositionParams {
@@ -334,7 +334,7 @@ func("#;
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "x = 42\ny = 100";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
         documents.get_document(&uri, |doc| {
             let tree = doc.tree().unwrap();
             let text = doc.text();

@@ -75,9 +75,7 @@ impl HmTestHarness {
         ))
         .unwrap();
 
-        self.documents
-            .open_document(uri.clone(), 1, source.to_string())
-            .unwrap();
+        self.documents.open_document(uri.clone(), 1, source).unwrap();
 
         self.last_uri = Some(uri.clone());
 

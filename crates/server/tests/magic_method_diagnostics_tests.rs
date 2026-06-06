@@ -28,9 +28,7 @@ class MyClass:
         return self.x == other.x
 "#;
 
-    documents
-        .open_document(test_uri.clone(), 0, content.to_string())
-        .unwrap();
+    documents.open_document(test_uri.clone(), 0, content).unwrap();
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
     let mut analyzer = Analyzer::new(config, documents.clone());
@@ -71,9 +69,7 @@ class MyClass:
         return True
 "#;
 
-    documents
-        .open_document(test_uri.clone(), 0, content.to_string())
-        .unwrap();
+    documents.open_document(test_uri.clone(), 0, content).unwrap();
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
     let mut analyzer = Analyzer::new(config, documents.clone());
@@ -128,9 +124,7 @@ class MyClass:
         return object.__new__(self)
 "#;
 
-    documents
-        .open_document(test_uri.clone(), 0, content.to_string())
-        .unwrap();
+    documents.open_document(test_uri.clone(), 0, content).unwrap();
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
     let mut analyzer = Analyzer::new(config, documents.clone());
@@ -183,9 +177,7 @@ def __str__(self):
     return "test"
 "#;
 
-    documents
-        .open_document(test_uri.clone(), 0, content.to_string())
-        .unwrap();
+    documents.open_document(test_uri.clone(), 0, content).unwrap();
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
     let mut analyzer = Analyzer::new(config, documents.clone());
@@ -241,9 +233,7 @@ class MyClass:
         pass
 "#;
 
-    documents
-        .open_document(test_uri.clone(), 0, content.to_string())
-        .unwrap();
+    documents.open_document(test_uri.clone(), 0, content).unwrap();
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
     let mut analyzer = Analyzer::new(config, documents.clone());

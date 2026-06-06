@@ -23,9 +23,7 @@ fn diagnostic_code(diagnostic: &Diagnostic) -> Option<&str> {
 fn diagnostic_severity_for_source(config: Config, source: &str, code: &str) -> Option<DiagnosticSeverity> {
     let documents = DocumentManager::new().expect("document manager");
     let uri = Url::parse("file:///workspace/config.py").expect("test URI");
-    documents
-        .open_document(uri.clone(), 1, source.to_string())
-        .expect("open document");
+    documents.open_document(uri.clone(), 1, source).expect("open document");
 
     let mut workspace = Workspace::new(None, config.clone(), documents.clone());
     workspace.update_dependencies(&uri);

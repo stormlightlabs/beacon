@@ -59,7 +59,7 @@ pub async fn run_workspace_diagnostics(
                     }
                 };
 
-                let _ = documents.open_document(uri.clone(), 1, source.clone());
+                let _ = documents.open_document(uri.clone(), 1, &source);
 
                 {
                     let mut ws = workspace.write().await;
@@ -96,7 +96,7 @@ pub async fn run_stdin_diagnostics(source: String) -> Result<Vec<CliDiagnostic>>
     let file_path = PathBuf::from("stdin.py");
     let uri = Url::parse("file:///stdin.py")?;
 
-    documents.open_document(uri.clone(), 1, source.clone())?;
+    documents.open_document(uri.clone(), 1, &source)?;
 
     let mut workspace = Workspace::new(None, config, documents.clone());
     workspace.initialize()?;

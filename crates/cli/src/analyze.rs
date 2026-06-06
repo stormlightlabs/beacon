@@ -105,7 +105,7 @@ fn analyze_function(
     let mut all_diagnostics = Vec::new();
 
     if !dataflow_only {
-        let mut linter = Linter::new(&symbol_table, filename.clone(), source.as_str());
+        let mut linter = Linter::new(&symbol_table, filename, source.as_str());
         let lint_diagnostics = linter.analyze(function_node);
         all_diagnostics.extend(lint_diagnostics);
     }
@@ -146,7 +146,7 @@ fn analyze_class(
     let mut all_diagnostics = Vec::new();
 
     if !dataflow_only {
-        let mut linter = Linter::new(&symbol_table, filename.clone(), source.as_str());
+        let mut linter = Linter::new(&symbol_table, filename, source.as_str());
         let lint_diagnostics = linter.analyze(class_node);
         all_diagnostics.extend(lint_diagnostics);
     }
@@ -172,7 +172,7 @@ fn analyze_class(
 async fn analyze_package(
     path: &Path, format: OutputFormat, show_cfg: bool, show_types: bool, lint_only: bool, dataflow_only: bool,
 ) -> Result<()> {
-    let path = path.canonicalize().unwrap_or(path.to_path_buf());
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let paths = vec![path.clone()];
     let extras = cfg::AnalysisExtras::for_paths(&paths, !lint_only && !dataflow_only && show_cfg, show_types)?;
     let (diagnostics, failed_files) = run_workspace_diagnostics(paths, Some(path)).await?;
@@ -189,7 +189,7 @@ async fn analyze_package(
 async fn analyze_project(
     path: &Path, format: OutputFormat, show_cfg: bool, show_types: bool, lint_only: bool, dataflow_only: bool,
 ) -> Result<()> {
-    let path = path.canonicalize().unwrap_or(path.to_path_buf());
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let paths = vec![path.clone()];
     let extras = cfg::AnalysisExtras::for_paths(&paths, !lint_only && !dataflow_only && show_cfg, show_types)?;
     let (diagnostics, failed_files) = run_workspace_diagnostics(paths, Some(path)).await?;

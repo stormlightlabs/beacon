@@ -18,7 +18,7 @@ def func_a():
     pass
 "#;
     documents
-        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .open_document(module_a_uri.clone(), 0, module_a_content)
         .unwrap();
     workspace.update_dependencies(&module_a_uri);
 
@@ -30,7 +30,7 @@ def func_b():
     func_a()
 "#;
     documents
-        .open_document(module_b_uri.clone(), 0, module_b_content.to_string())
+        .open_document(module_b_uri.clone(), 0, module_b_content)
         .unwrap();
     workspace.update_dependencies(&module_b_uri);
 
@@ -78,7 +78,7 @@ def func_a():
     func_b()
 "#;
     documents
-        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .open_document(module_a_uri.clone(), 0, module_a_content)
         .unwrap();
     workspace.update_dependencies(&module_a_uri);
 
@@ -90,7 +90,7 @@ def func_b():
     func_a()
 "#;
     documents
-        .open_document(module_b_uri.clone(), 0, module_b_content.to_string())
+        .open_document(module_b_uri.clone(), 0, module_b_content)
         .unwrap();
     workspace.update_dependencies(&module_b_uri);
 
@@ -124,7 +124,7 @@ def get_user_data():
     return data
 "#;
     documents
-        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .open_document(module_a_uri.clone(), 0, module_a_content)
         .unwrap();
     workspace.update_dependencies(&module_a_uri);
 
@@ -137,7 +137,7 @@ def process_data():
     eval(data)
 "#;
     documents
-        .open_document(module_b_uri.clone(), 0, module_b_content.to_string())
+        .open_document(module_b_uri.clone(), 0, module_b_content)
         .unwrap();
     workspace.update_dependencies(&module_b_uri);
 

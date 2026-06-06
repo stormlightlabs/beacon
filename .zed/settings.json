@@ -4,4 +4,13 @@
       "language_servers": ["beacon-lsp"],
     },
   },
+  "lsp": {
+    "rust-analyzer": {
+      "settings": {
+        "files": {
+          "excludeDirs": ["target", "node_modules", "typeshed", "logs"],
+        },
+      },
+    },
+  },
 }

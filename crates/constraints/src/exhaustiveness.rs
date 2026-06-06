@@ -84,7 +84,7 @@ pub fn check_exhaustiveness(
 
         let covered = compute_coverage(pattern, subject_type, class_registry);
         tracing::trace!("Pattern {}: {:?} covers {} types", idx, pattern, covered.len());
-        uncovered = subtract_coverage(uncovered, covered);
+        uncovered = subtract_coverage(uncovered, &covered);
 
         if uncovered.is_empty() {
             tracing::debug!("Match is exhaustive after pattern {}", idx);
@@ -106,7 +106,7 @@ pub fn check_exhaustiveness(
 /// Remove covered types from the uncovered set
 ///
 /// This implements type subtraction: uncovered - covered
-fn subtract_coverage(uncovered: Vec<Type>, covered: Vec<Type>) -> Vec<Type> {
+fn subtract_coverage(uncovered: Vec<Type>, covered: &[Type]) -> Vec<Type> {
     let mut result = Vec::new();
 
     for uncov_ty in uncovered {
@@ -559,7 +559,7 @@ mod tests {
     fn test_subtract_coverage_complete() {
         let uncovered = vec![Type::bool()];
         let covered = vec![Type::bool()];
-        let result = subtract_coverage(uncovered, covered);
+        let result = subtract_coverage(uncovered, &covered);
         assert!(result.is_empty());
     }
 
@@ -567,7 +567,7 @@ mod tests {
     fn test_subtract_coverage_partial_union() {
         let uncovered = vec![Type::union(vec![Type::int(), Type::string(), Type::bool()])];
         let covered = vec![Type::int()];
-        let result = subtract_coverage(uncovered, covered);
+        let result = subtract_coverage(uncovered, &covered);
         assert_eq!(result.len(), 1);
 
         match &result[0] {

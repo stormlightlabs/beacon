@@ -326,7 +326,7 @@ mod tests {
 y = x + 1
 print(x)"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = RenameParams {
             text_document_position: lsp_types::TextDocumentPositionParams {
@@ -363,7 +363,7 @@ print(x)"#;
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "x = 42";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = RenameParams {
             text_document_position: lsp_types::TextDocumentPositionParams {
@@ -387,7 +387,7 @@ print(x)"#;
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "x = 42";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = RenameParams {
             text_document_position: lsp_types::TextDocumentPositionParams {
@@ -414,7 +414,7 @@ print(x)"#;
     result = x * 2
     return result"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = RenameParams {
             text_document_position: lsp_types::TextDocumentPositionParams {
@@ -459,18 +459,14 @@ print(x)"#;
         let module_source = r#"def helper_function():
     return 42"#;
 
-        documents
-            .open_document(module_uri.clone(), 1, module_source.to_string())
-            .unwrap();
+        documents.open_document(module_uri.clone(), 1, module_source).unwrap();
 
         let main_uri = Url::from_str("file:///main.py").unwrap();
         let main_source = r#"from module import helper_function
 
 result = helper_function()"#;
 
-        documents
-            .open_document(main_uri.clone(), 1, main_source.to_string())
-            .unwrap();
+        documents.open_document(main_uri.clone(), 1, main_source).unwrap();
 
         let params = RenameParams {
             text_document_position: lsp_types::TextDocumentPositionParams {

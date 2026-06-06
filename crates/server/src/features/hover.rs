@@ -255,7 +255,7 @@ impl HoverProvider {
         if let Some((module, symbol)) = Self::find_import_info(ast, line, name) {
             if let Some(ref python) = self.interpreter_path {
                 let module_doc = if let Some(cached) = self.introspection_cache.get(&module, "__module__") {
-                    Some(cached.docstring.clone())
+                    Some(cached.docstring)
                 } else {
                     match introspection::introspect_module_sync(python, &module) {
                         Ok(result) => {
@@ -491,14 +491,14 @@ impl HoverProvider {
     fn get_type_docstring(&self, ty: &beacon_core::Type) -> Option<String> {
         match ty {
             Type::Con(TypeCtor::Class(class_name)) => {
-                let class_doc = self.find_symbol_docstring(class_name, beacon_parser::SymbolKind::Class);
+                let class_doc = self.find_symbol_docstring(class_name, &beacon_parser::SymbolKind::Class);
                 if class_doc.is_some() {
                     return class_doc;
                 }
 
                 if let Some(ref python) = self.interpreter_path {
                     if let Some(cached) = self.introspection_cache.get("builtins", class_name) {
-                        return Some(cached.docstring.clone());
+                        return Some(cached.docstring);
                     }
 
                     if let Ok(result) = introspection::introspect_sync(python, "builtins", class_name) {
@@ -515,13 +515,13 @@ impl HoverProvider {
     }
 
     /// Find a symbol's docstring by searching through document symbol tables
-    fn find_symbol_docstring(&self, symbol_name: &str, kind: beacon_parser::SymbolKind) -> Option<String> {
+    fn find_symbol_docstring(&self, symbol_name: &str, kind: &beacon_parser::SymbolKind) -> Option<String> {
         for uri in self.documents.all_documents() {
             if let Some(doc) = self.documents.get_document(&uri, |doc| {
                 let symbol_table = doc.symbol_table()?;
                 let symbol = symbol_table.lookup_symbol(symbol_name, symbol_table.root_scope)?;
 
-                if symbol.kind == kind { symbol.docstring.clone() } else { None }
+                if symbol.kind == *kind { symbol.docstring.clone() } else { None }
             }) && doc.is_some()
             {
                 return doc;
@@ -775,7 +775,7 @@ mod tests {
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "from math import sqrt\nresult = sqrt(16)";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = HoverParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
@@ -859,7 +859,7 @@ mod tests {
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "x = 42";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = HoverParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
@@ -885,7 +885,7 @@ mod tests {
     return f"Hello {name}"
 
 greet("world")"#;
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = HoverParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
@@ -923,7 +923,7 @@ greet("world")"#;
         self.name = name
 
 p = Person("Alice")"#;
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = HoverParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
@@ -987,9 +987,9 @@ p = Person("Alice")"#;
     return x * 2
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
-        let result = provider.find_symbol_docstring("calculate", beacon_parser::SymbolKind::Function);
+        let result = provider.find_symbol_docstring("calculate", &beacon_parser::SymbolKind::Function);
 
         assert!(result.is_some());
         let docstring = result.unwrap();
@@ -1007,9 +1007,9 @@ p = Person("Alice")"#;
     pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
-        let result = provider.find_symbol_docstring("Calculator", beacon_parser::SymbolKind::Class);
+        let result = provider.find_symbol_docstring("Calculator", &beacon_parser::SymbolKind::Class);
 
         assert!(result.is_some());
         let docstring = result.unwrap();
@@ -1026,9 +1026,9 @@ p = Person("Alice")"#;
     pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
-        let result = provider.find_symbol_docstring("nonexistent", beacon_parser::SymbolKind::Function);
+        let result = provider.find_symbol_docstring("nonexistent", &beacon_parser::SymbolKind::Function);
         assert!(result.is_none());
     }
 
@@ -1043,9 +1043,9 @@ p = Person("Alice")"#;
     pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
-        let result = provider.find_symbol_docstring("my_func", beacon_parser::SymbolKind::Class);
+        let result = provider.find_symbol_docstring("my_func", &beacon_parser::SymbolKind::Class);
         assert!(result.is_none());
     }
 
@@ -1059,9 +1059,9 @@ p = Person("Alice")"#;
     pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
-        let result = provider.find_symbol_docstring("no_doc_func", beacon_parser::SymbolKind::Function);
+        let result = provider.find_symbol_docstring("no_doc_func", &beacon_parser::SymbolKind::Function);
         assert!(result.is_none());
     }
 
@@ -1082,10 +1082,10 @@ p = Person("Alice")"#;
     pass
 "#;
 
-        documents.open_document(uri1.clone(), 1, source1.to_string()).unwrap();
-        documents.open_document(uri2.clone(), 1, source2.to_string()).unwrap();
+        documents.open_document(uri1.clone(), 1, source1).unwrap();
+        documents.open_document(uri2.clone(), 1, source2).unwrap();
 
-        let result = provider.find_symbol_docstring("target_func", beacon_parser::SymbolKind::Function);
+        let result = provider.find_symbol_docstring("target_func", &beacon_parser::SymbolKind::Function);
 
         assert!(result.is_some());
         let docstring = result.unwrap();
@@ -1100,9 +1100,9 @@ p = Person("Alice")"#;
         let uri = Url::from_str("file:///test_var.py").unwrap();
         let source = "x = 42\n";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
-        let result = provider.find_symbol_docstring("x", beacon_parser::SymbolKind::Variable);
+        let result = provider.find_symbol_docstring("x", &beacon_parser::SymbolKind::Variable);
         assert!(result.is_none());
     }
 

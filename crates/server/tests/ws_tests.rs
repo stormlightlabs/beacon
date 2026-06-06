@@ -32,7 +32,7 @@ async fn workspace_fixture_lsp_diagnostics_smoke() {
             std::fs::read_to_string(file).unwrap_or_else(|err| panic!("failed to read {}: {err}", file.display()));
         let uri = Url::from_file_path(file).expect("fixture file should become file URI");
         documents
-            .open_document(uri.clone(), 1, source)
+            .open_document(uri.clone(), 1, &source)
             .unwrap_or_else(|err| panic!("failed to open {}: {err}", file.display()));
         workspace.update_dependencies(&uri);
     }
@@ -76,7 +76,7 @@ async fn workspace_fixture_protocol_mismatch_lsp_diagnostics() {
     let uri = Url::from_file_path(&protocol_file).expect("fixture file URI");
 
     documents
-        .open_document(uri.clone(), 1, source)
+        .open_document(uri.clone(), 1, &source)
         .expect("protocol mismatch fixture should open");
     workspace.update_dependencies(&uri);
 
@@ -107,7 +107,7 @@ async fn workspace_fixture_call_parameter_metadata_lsp_diagnostics() {
     let uri = Url::from_file_path(&call_file).expect("fixture file URI");
 
     documents
-        .open_document(uri.clone(), 1, source)
+        .open_document(uri.clone(), 1, &source)
         .expect("call diagnostics fixture should open");
     workspace.update_dependencies(&uri);
 
@@ -148,7 +148,7 @@ async fn workspace_fixture_dynamic_fallback_lsp_diagnostics() {
     let uri = Url::from_file_path(&dynamic_file).expect("fixture file URI");
 
     documents
-        .open_document(uri.clone(), 1, source)
+        .open_document(uri.clone(), 1, &source)
         .expect("dynamic fallback fixture should open");
     workspace.update_dependencies(&uri);
 
@@ -196,7 +196,7 @@ async fn workspace_fixture_dynamic_supported_has_no_dynamic_diagnostics() {
     let uri = Url::from_file_path(&dynamic_file).expect("fixture file URI");
 
     documents
-        .open_document(uri.clone(), 1, source)
+        .open_document(uri.clone(), 1, &source)
         .expect("dynamic supported fixture should open");
     workspace.update_dependencies(&uri);
 
@@ -231,7 +231,7 @@ async fn workspace_fixture_dynamic_modes_adjust_diagnostic_severity() {
         let uri = Url::from_file_path(&dynamic_file).expect("fixture file URI");
 
         documents
-            .open_document(uri.clone(), 1, source)
+            .open_document(uri.clone(), 1, &source)
             .expect("dynamic fallback fixture should open");
         workspace.update_dependencies(&uri);
 
@@ -272,7 +272,7 @@ async fn workspace_fixture_dynamic_fallback_preserves_precise_neighbor_types() {
         std::fs::read_to_string(file("cases/dynamic_supported.py")).expect("dynamic supported fixture should read");
     let supported_uri = Url::from_file_path(file("cases/dynamic_supported.py")).expect("fixture file URI");
     documents
-        .open_document(supported_uri.clone(), 1, supported_source)
+        .open_document(supported_uri.clone(), 1, &supported_source)
         .expect("dynamic supported fixture should open");
 
     let precise_ty = analyzer
@@ -285,7 +285,7 @@ async fn workspace_fixture_dynamic_fallback_preserves_precise_neighbor_types() {
         std::fs::read_to_string(file("cases/dynamic_fallback.py")).expect("dynamic fallback fixture should read");
     let fallback_uri = Url::from_file_path(file("cases/dynamic_fallback.py")).expect("fixture file URI");
     documents
-        .open_document(fallback_uri.clone(), 1, fallback_source)
+        .open_document(fallback_uri.clone(), 1, &fallback_source)
         .expect("dynamic fallback fixture should open");
 
     let fallback_ty = analyzer
@@ -304,7 +304,7 @@ async fn workspace_fixture_typing_breadth_lsp_type_positions() {
     let uri = Url::from_file_path(file("cases/typing_breadth.py")).expect("fixture file URI");
 
     documents
-        .open_document(uri.clone(), 1, source)
+        .open_document(uri.clone(), 1, &source)
         .expect("typing breadth fixture should open");
 
     let identity_ty = analyzer

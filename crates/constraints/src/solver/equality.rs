@@ -7,9 +7,9 @@ use crate::Span;
 
 use beacon_core::{BeaconError, Type, TypeError, Unifier};
 
-pub(super) fn solve_equal_constraint(t1: Type, t2: Type, span: Span, state: &mut SolveState<'_>) {
-    let applied_t1 = state.subst.apply(&t1);
-    let applied_t2 = state.subst.apply(&t2);
+pub(super) fn solve_equal_constraint(t1: &Type, t2: &Type, span: Span, state: &mut SolveState<'_>) {
+    let applied_t1 = state.subst.apply(t1);
+    let applied_t2 = state.subst.apply(t2);
 
     let needs_variance_check =
         if let (Some((name1, args1)), Some((name2, args2))) = (class_info(&applied_t1), class_info(&applied_t2)) {

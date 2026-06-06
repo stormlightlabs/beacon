@@ -93,7 +93,7 @@ impl Analyzer {
     }
 
     /// Create a new analyzer with workspace support for stub resolution
-    pub fn with_workspace(config: Config, documents: DocumentManager, workspace: Arc<RwLock<Workspace>>) -> Self {
+    pub fn with_workspace(config: Config, documents: DocumentManager, workspace: &Arc<RwLock<Workspace>>) -> Self {
         let stub_cache = workspace.try_read().ok().map(|ws| ws.stub_cache());
 
         Self {
@@ -1070,7 +1070,7 @@ def hello():
     return undefined_var
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let unbound = analyzer.find_unbound_variables(&uri);
 
@@ -1089,7 +1089,7 @@ x = len([1, 2, 3])
 print(x)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let unbound = analyzer.find_unbound_variables(&uri);
 
@@ -1123,7 +1123,7 @@ def describe(value: object) -> str:
             return "other"
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let unbound = analyzer.find_unbound_variables(&uri);
         assert!(
@@ -1143,7 +1143,7 @@ def describe(value: object) -> str:
     result = test_data
     return result"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let unbound = analyzer.find_unbound_variables(&uri);
         for (name, line, col) in &unbound {
@@ -1173,7 +1173,7 @@ def describe(value: object) -> str:
         return y
     return inner()"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let unbound = analyzer.find_unbound_variables(&uri);
         for (name, line, col) in &unbound {
@@ -1203,7 +1203,7 @@ def walrus(threshold: int) -> list[int]:
     return filtered
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let unbound = analyzer.find_unbound_variables(&uri);
         let non_builtins: Vec<_> = unbound
@@ -1233,7 +1233,7 @@ SERVICE_REGISTRY: dict[str, object] = {}
 provider = SERVICE_REGISTRY.get("test")
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Analysis should succeed for dict.get() method call");
@@ -1266,7 +1266,7 @@ def process(x):
         return x
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Analysis should succeed with isinstance narrowing");
@@ -1288,7 +1288,7 @@ def process(x):
         return x
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Analysis should succeed with None check narrowing");
@@ -1309,7 +1309,7 @@ def process(x: int | None):
         return 0
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Analysis should succeed with 'is not None' narrowing");
@@ -1338,7 +1338,7 @@ if provider is None:
 result = provider.load()
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
         let analysis = analyzer.analyze(&uri).expect("analysis result");
         let attr_errors: Vec<_> = analysis
             .type_errors
@@ -1379,7 +1379,7 @@ if provider is None:
 items = list(provider.load())
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
         let analysis = analyzer.analyze(&uri).expect("analysis result");
         let attr_errors: Vec<_> = analysis
             .type_errors
@@ -1407,7 +1407,7 @@ def process(x: str | None):
         return ""
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Analysis should succeed with '!= None' narrowing");
@@ -1429,7 +1429,7 @@ def process(x: int | None):
         return x + 1
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Analysis should succeed with '== None' narrowing");
@@ -1451,7 +1451,7 @@ def process(x: str | None):
         return ""
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Analysis should succeed with truthiness narrowing");
@@ -1468,7 +1468,7 @@ x = 42
 y = "hello"
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let pos = Position { line: 1, character: 4 };
         let result = analyzer.type_at_position(&uri, pos);
@@ -1487,7 +1487,7 @@ x = 42
 print(x)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let pos = Position { line: 1, character: 0 };
         let result = analyzer.type_at_position(&uri, pos);
@@ -1507,7 +1507,7 @@ y = 3.14
 z = "hello"
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
 
@@ -1536,7 +1536,7 @@ z = "hello"
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "x = 42";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let _ = analyzer.analyze(&uri);
         assert!(
@@ -1562,7 +1562,7 @@ for item in [1, 2, 3]:
     print(item)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "For loop analysis should succeed");
@@ -1580,7 +1580,7 @@ while x < 10:
     x = x + 1
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "While loop analysis should succeed");
@@ -1601,7 +1601,7 @@ finally:
     print("done")
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Try/except analysis should succeed");
@@ -1618,7 +1618,7 @@ with open("file.txt") as f:
     content = f.read()
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "With statement analysis should succeed");
@@ -1635,7 +1635,7 @@ f = lambda x: x + 1
 result = f(42)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Lambda analysis should succeed");
@@ -1652,7 +1652,7 @@ numbers = [1, 2, 3, 4, 5]
 squares = [x * x for x in numbers]
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "List comprehension analysis should succeed");
@@ -1669,7 +1669,7 @@ numbers = [1, 2, 3]
 mapping = {x: x * 2 for x in numbers}
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Dict comprehension analysis should succeed");
@@ -1686,7 +1686,7 @@ numbers = [1, 2, 2, 3, 3, 3]
 unique = {x for x in numbers}
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Set comprehension analysis should succeed");
@@ -1703,7 +1703,7 @@ numbers = [1, 2, 3]
 gen = (x * 2 for x in numbers)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Generator expression analysis should succeed");
@@ -1720,7 +1720,7 @@ x = 5
 result = x > 3 and x < 10
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Compare expression analysis should succeed");
@@ -1737,7 +1737,7 @@ items = [1, 2, 3]
 first = items[0]
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Subscript analysis should succeed");
@@ -1754,7 +1754,7 @@ if (n := len([1, 2, 3])) > 2:
     print(n)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Walrus operator analysis should succeed");
@@ -1771,7 +1771,7 @@ def fail():
     raise ValueError("error")
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Raise statement analysis should succeed");
@@ -1792,7 +1792,7 @@ def greet(name):
     return "Hello " + name
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Decorator analysis should succeed");
@@ -1813,7 +1813,7 @@ def describe(x):
             return "other"
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Match statement analysis should succeed");
@@ -1835,7 +1835,7 @@ for i in range(10):
         pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Pass/break/continue analysis should succeed");
@@ -1880,7 +1880,7 @@ x = p.name
 y = p.age
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
 
@@ -1908,7 +1908,7 @@ p = Person("Alice")
 x = p.nonexistent
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
 
@@ -1939,7 +1939,7 @@ val = s.x
 name = s.y
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
         let result = analyzer.analyze(&uri).unwrap();
 
         assert_eq!(
@@ -1968,7 +1968,7 @@ class WithMethod:
 w = WithMethod(5)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
         let result = analyzer.analyze(&uri).unwrap();
 
         assert_eq!(
@@ -1993,7 +1993,7 @@ c = Container(5)
 v = c.value
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
 
@@ -2020,7 +2020,7 @@ e = Empty()
 x = e.get_name
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
 
@@ -2048,7 +2048,7 @@ y = pi
 nums: List[int] = [1, 2, 3]
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
         let result = analyzer.analyze(&uri).unwrap();
 
         assert!(
@@ -2075,7 +2075,7 @@ class Car:
         return self.brand
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Analysis should succeed");
@@ -2099,7 +2099,7 @@ cfg = Config(True)
 x = cfg.flag
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
 
@@ -2126,7 +2126,7 @@ x = cfg.flag
         workspace.initialize().ok();
 
         let workspace_arc = Arc::new(RwLock::new(workspace));
-        let mut analyzer = Analyzer::with_workspace(config, documents.clone(), workspace_arc);
+        let mut analyzer = Analyzer::with_workspace(config, documents.clone(), &workspace_arc);
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"
 s = "hello"
@@ -2135,7 +2135,7 @@ lower = s.lower()
 stripped = s.strip()
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
 
@@ -2162,14 +2162,14 @@ stripped = s.strip()
         workspace.initialize().ok();
 
         let workspace_arc = Arc::new(RwLock::new(workspace));
-        let mut analyzer = Analyzer::with_workspace(config, documents.clone(), workspace_arc);
+        let mut analyzer = Analyzer::with_workspace(config, documents.clone(), &workspace_arc);
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"
 s = "hello"
 result = s.nonexistent_method()
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
 
@@ -2206,14 +2206,14 @@ result = s.nonexistent_method()
         workspace.initialize().ok();
 
         let workspace_arc = Arc::new(RwLock::new(workspace));
-        let mut analyzer = Analyzer::with_workspace(config, documents.clone(), workspace_arc);
+        let mut analyzer = Analyzer::with_workspace(config, documents.clone(), &workspace_arc);
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"
 s = "  hello world  "
 result = s.strip().upper()
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
 
@@ -2240,7 +2240,7 @@ result = s.strip().upper()
         workspace.initialize().ok();
 
         let workspace_arc = Arc::new(RwLock::new(workspace));
-        let mut analyzer = Analyzer::with_workspace(config, documents.clone(), workspace_arc);
+        let mut analyzer = Analyzer::with_workspace(config, documents.clone(), &workspace_arc);
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"
 class Person:
@@ -2255,7 +2255,7 @@ f = p.greet
 result = f()
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
 
@@ -2293,7 +2293,7 @@ async def main():
     return result
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Await coroutine analysis should succeed");
@@ -2317,7 +2317,7 @@ async def main():
     return gen
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri);
         assert!(result.is_ok(), "Async generator analysis should succeed");
@@ -2335,7 +2335,7 @@ async def main():
     return result
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
 
@@ -2361,7 +2361,7 @@ async def main():
         workspace.initialize().ok();
 
         let workspace_arc = Arc::new(RwLock::new(workspace));
-        let mut analyzer = Analyzer::with_workspace(config, documents.clone(), workspace_arc);
+        let mut analyzer = Analyzer::with_workspace(config, documents.clone(), &workspace_arc);
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"
 s = "hello"
@@ -2369,7 +2369,7 @@ upper_method = s.upper
 result = upper_method()
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
 
@@ -2407,14 +2407,14 @@ result = upper_method()
         workspace.initialize().ok();
 
         let workspace_arc = Arc::new(RwLock::new(workspace));
-        let mut analyzer = Analyzer::with_workspace(config, documents.clone(), workspace_arc);
+        let mut analyzer = Analyzer::with_workspace(config, documents.clone(), &workspace_arc);
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"
 s = "hello"
 method = s.upper
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
         let bound_method_type = result
@@ -2555,7 +2555,7 @@ x = 42
 y = "hello"
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result1 = analyzer.analyze(&uri).unwrap();
         assert_eq!(result1.version, 1);
@@ -2580,7 +2580,7 @@ y = "hello"
         let uri = Url::from_str("file:///test.py").unwrap();
         let source1 = "x = 42";
 
-        documents.open_document(uri.clone(), 1, source1.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source1).unwrap();
 
         let result1 = analyzer.analyze(&uri).unwrap();
         assert_eq!(result1.version, 1);
@@ -2592,7 +2592,7 @@ y = "hello"
         let params = VersionedTextDocumentIdentifier { uri: uri.clone(), version: 2 };
         let changes =
             vec![TextDocumentContentChangeEvent { range: None, range_length: None, text: source2.to_string() }];
-        documents.update_document(params, changes).unwrap();
+        documents.update_document(&params, changes).unwrap();
 
         let result2 = analyzer.analyze(&uri).unwrap();
         assert_eq!(result2.version, 2);
@@ -2613,7 +2613,7 @@ class Foo:
         return self.nonexistent_attr
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result1 = analyzer.analyze(&uri).unwrap();
         let errors1 = result1.type_errors.len();
@@ -2632,7 +2632,7 @@ class Foo:
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "x = 42";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         analyzer.analyze(&uri).unwrap();
 
@@ -2655,9 +2655,9 @@ class Foo:
         let uri2 = Url::from_str("file:///test2.py").unwrap();
         let uri3 = Url::from_str("file:///test3.py").unwrap();
 
-        documents.open_document(uri1.clone(), 1, "x = 1".to_string()).unwrap();
-        documents.open_document(uri2.clone(), 1, "y = 2".to_string()).unwrap();
-        documents.open_document(uri3.clone(), 1, "z = 3".to_string()).unwrap();
+        documents.open_document(uri1.clone(), 1, "x = 1").unwrap();
+        documents.open_document(uri2.clone(), 1, "y = 2").unwrap();
+        documents.open_document(uri3.clone(), 1, "z = 3").unwrap();
 
         analyzer.analyze(&uri1).unwrap();
         analyzer.analyze(&uri2).unwrap();
@@ -2686,7 +2686,7 @@ def test():
     return x
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result1 = analyzer.analyze(&uri).unwrap();
         let has_static_analysis_1 = result1.static_analysis.is_some();
@@ -2715,7 +2715,7 @@ def describe(x: int):
             return "other"
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
         assert_eq!(result.type_errors.len(), 0, "Exhaustive match should have no errors");
@@ -2734,7 +2734,7 @@ def describe(x: int | str):
             return "zero"
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
         let has_exhaustiveness_error = result
@@ -2763,7 +2763,7 @@ def describe(x: int):
             return "unreachable"
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
         let has_unreachable_error = result
@@ -2791,7 +2791,7 @@ def describe(x: int):
             return "other"
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
         let has_unreachable_error = result
@@ -2819,7 +2819,7 @@ def describe(x: int | str):
             return "other"
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let result = analyzer.analyze(&uri).unwrap();
         assert_eq!(
@@ -2844,7 +2844,7 @@ def bar():
     return 2
 "#;
 
-        documents.open_document(uri.clone(), 1, source1.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source1).unwrap();
         analyzer.analyze(&uri).unwrap();
 
         let source2 = r#"
@@ -2856,7 +2856,7 @@ def bar():
 "#;
         documents
             .update_document(
-                VersionedTextDocumentIdentifier { uri: uri.clone(), version: 2 },
+                &VersionedTextDocumentIdentifier { uri: uri.clone(), version: 2 },
                 vec![TextDocumentContentChangeEvent { range: None, range_length: None, text: source2.to_string() }],
             )
             .unwrap();
@@ -2874,8 +2874,8 @@ def bar():
         let module_uri = Url::from_str("file:///module.py").unwrap();
         let user_uri = Url::from_str("file:///user.py").unwrap();
 
-        documents.open_document(module_uri.clone(), 1, "".to_string()).unwrap();
-        documents.open_document(user_uri.clone(), 1, "".to_string()).unwrap();
+        documents.open_document(module_uri.clone(), 1, "").unwrap();
+        documents.open_document(user_uri.clone(), 1, "").unwrap();
 
         analyzer.record_imports(&user_uri, &[(module_uri.clone(), "MyClass".to_string())]);
 
@@ -2904,7 +2904,7 @@ class Bar:
 x = 42
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let symbol_table = documents
             .get_document(&uri, |doc| doc.symbol_table().cloned())
@@ -2938,7 +2938,7 @@ class Bar:
         pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let symbol_table = documents
             .get_document(&uri, |doc| doc.symbol_table().cloned())
@@ -2968,7 +2968,7 @@ class Bar:
         let analyzer = Analyzer::new(config, documents.clone());
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        documents.open_document(uri.clone(), 1, "pass\n".to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, "pass\n").unwrap();
 
         let affected = analyzer.get_affected_exports(&uri, &[]);
 
@@ -2996,7 +2996,7 @@ class Baz:
         pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let symbol_table = documents
             .get_document(&uri, |doc| doc.symbol_table().cloned())

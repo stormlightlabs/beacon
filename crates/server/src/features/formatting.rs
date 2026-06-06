@@ -97,11 +97,11 @@ impl FormattingProvider {
         match formatter.format_range(&range_content, 0, (end_line - start_line).max(1)) {
             Ok(formatted) => {
                 let formatted_trimmed = if range_content.ends_with('\n') && !formatted.ends_with('\n') {
-                    formatted.clone()
+                    formatted
                 } else if !range_content.ends_with('\n') && formatted.ends_with('\n') {
                     formatted.trim_end_matches('\n').to_string()
                 } else {
-                    formatted.clone()
+                    formatted
                 };
 
                 if formatted_trimmed == range_content || formatted_trimmed == range_content.trim_end_matches('\n') {
@@ -281,10 +281,7 @@ mod tests {
         let uri = lsp_types::Url::parse("file:///test.py").unwrap();
         let content = "def foo():\n    pass\n";
 
-        provider
-            .documents
-            .open_document(uri.clone(), 1, content.to_string())
-            .ok();
+        provider.documents.open_document(uri.clone(), 1, content).ok();
 
         let params = DocumentFormattingParams {
             text_document: TextDocumentIdentifier { uri },
@@ -303,10 +300,7 @@ mod tests {
         let uri = lsp_types::Url::parse("file:///test.py").unwrap();
         let content = "x=1\ny=2\nz=3\n";
 
-        provider
-            .documents
-            .open_document(uri.clone(), 1, content.to_string())
-            .ok();
+        provider.documents.open_document(uri.clone(), 1, content).ok();
 
         let params = DocumentRangeFormattingParams {
             text_document: TextDocumentIdentifier { uri },
@@ -333,10 +327,7 @@ mod tests {
         let uri = lsp_types::Url::parse("file:///test.py").unwrap();
         let content = "x = 1\ny = 2\nz = 3\n";
 
-        provider
-            .documents
-            .open_document(uri.clone(), 1, content.to_string())
-            .ok();
+        provider.documents.open_document(uri.clone(), 1, content).ok();
 
         let params = DocumentRangeFormattingParams {
             text_document: TextDocumentIdentifier { uri },
@@ -356,10 +347,7 @@ mod tests {
         let uri = lsp_types::Url::parse("file:///test.py").unwrap();
         let content = "a = 1\nx=2\ny=3\nz = 4\n";
 
-        provider
-            .documents
-            .open_document(uri.clone(), 1, content.to_string())
-            .ok();
+        provider.documents.open_document(uri.clone(), 1, content).ok();
 
         let params = DocumentRangeFormattingParams {
             text_document: TextDocumentIdentifier { uri },
@@ -383,10 +371,7 @@ mod tests {
         let uri = lsp_types::Url::parse("file:///test.py").unwrap();
         let content = "# Header\nx=1\n# Footer\n";
 
-        provider
-            .documents
-            .open_document(uri.clone(), 1, content.to_string())
-            .ok();
+        provider.documents.open_document(uri.clone(), 1, content).ok();
 
         let params = DocumentRangeFormattingParams {
             text_document: TextDocumentIdentifier { uri },

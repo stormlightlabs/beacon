@@ -87,12 +87,11 @@ impl<'a> ConstraintGenContext<'a> {
         if column <= 1 {
             return 0;
         }
-        let mut chars_seen = 1;
-        for (byte_idx, _) in line_text.char_indices() {
+
+        for (chars_seen, (byte_idx, _)) in (1..).zip(line_text.char_indices()) {
             if chars_seen == column {
                 return byte_idx;
             }
-            chars_seen += 1;
         }
         line_text.len()
     }

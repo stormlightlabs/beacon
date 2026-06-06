@@ -5,9 +5,9 @@ use crate::{Span, TypeErrorInfo};
 use beacon_core::{BeaconError, Type, TypeCtor, TypeError, TypeVar, Unifier};
 
 pub(super) fn solve_attribute_constraint(
-    obj_ty: Type, attr_name: String, attr_ty: Type, span: Span, state: &mut SolveState<'_>,
+    obj_ty: &Type, attr_name: String, attr_ty: &Type, span: Span, state: &mut SolveState<'_>,
 ) {
-    let applied_obj = state.subst.apply(&obj_ty);
+    let applied_obj = state.subst.apply(obj_ty);
     if let Type::Union(variants) = &applied_obj {
         let mut all_have_attr = true;
         let mut attr_types = Vec::new();
@@ -26,7 +26,7 @@ pub(super) fn solve_attribute_constraint(
 
         if !all_have_attr {
             state.type_errors.push(TypeErrorInfo::new(
-                beacon_core::TypeError::AttributeNotFound(applied_obj.display_for_diagnostics(), attr_name.clone()),
+                beacon_core::TypeError::AttributeNotFound(applied_obj.display_for_diagnostics(), attr_name),
                 span,
             ));
         } else if !attr_types.is_empty() {
@@ -34,7 +34,7 @@ pub(super) fn solve_attribute_constraint(
                 if attr_types.len() == 1 { attr_types.into_iter().next().unwrap() } else { Type::union(attr_types) };
 
             match Unifier::unify_with_class_registry(
-                &state.subst.apply(&attr_ty),
+                &state.subst.apply(attr_ty),
                 &attr_union,
                 state.typevar_registry,
                 state.class_registry,
@@ -64,7 +64,7 @@ pub(super) fn solve_attribute_constraint(
             let getitem_ty = Type::Fun(vec![("item".to_string(), type_param)], Box::new(result_ty));
 
             match Unifier::unify_with_class_registry(
-                &state.subst.apply(&attr_ty),
+                &state.subst.apply(attr_ty),
                 &getitem_ty,
                 state.typevar_registry,
                 state.class_registry,
@@ -87,14 +87,14 @@ pub(super) fn solve_attribute_constraint(
                     Type::BoundMethod(
                         Box::new(applied_obj.clone()),
                         attr_name.clone(),
-                        Box::new(resolved_attr_ty.clone()),
+                        Box::new(resolved_attr_ty),
                     )
                 } else {
-                    resolved_attr_ty.clone()
+                    resolved_attr_ty
                 };
 
                 match Unifier::unify_with_class_registry(
-                    &state.subst.apply(&attr_ty),
+                    &state.subst.apply(attr_ty),
                     &final_type,
                     state.typevar_registry,
                     state.class_registry,
@@ -109,7 +109,7 @@ pub(super) fn solve_attribute_constraint(
                 }
             } else {
                 state.type_errors.push(TypeErrorInfo::new(
-                    beacon_core::TypeError::AttributeNotFound(applied_obj.to_string(), attr_name.clone()),
+                    beacon_core::TypeError::AttributeNotFound(applied_obj.to_string(), attr_name),
                     span,
                 ));
             }
@@ -126,7 +126,7 @@ pub(super) fn solve_attribute_constraint(
                 TypeCtor::Tuple => Some("tuple"),
                 TypeCtor::Any => {
                     if let Ok(s) = Unifier::unify_with_class_registry(
-                        &state.subst.apply(&attr_ty),
+                        &state.subst.apply(attr_ty),
                         &Type::any(),
                         state.typevar_registry,
                         state.class_registry,
@@ -147,14 +147,14 @@ pub(super) fn solve_attribute_constraint(
                         Type::BoundMethod(
                             Box::new(applied_obj.clone()),
                             attr_name.clone(),
-                            Box::new(resolved_attr_ty.clone()),
+                            Box::new(resolved_attr_ty),
                         )
                     } else {
-                        resolved_attr_ty.clone()
+                        resolved_attr_ty
                     };
 
                     match Unifier::unify_with_class_registry(
-                        &state.subst.apply(&attr_ty),
+                        &state.subst.apply(attr_ty),
                         &final_type,
                         state.typevar_registry,
                         state.class_registry,
@@ -169,7 +169,7 @@ pub(super) fn solve_attribute_constraint(
                     }
                 } else {
                     state.type_errors.push(TypeErrorInfo::new(
-                        TypeError::AttributeNotFound(applied_obj.to_string(), attr_name.clone()),
+                        TypeError::AttributeNotFound(applied_obj.to_string(), attr_name),
                         span,
                     ));
                 }
@@ -188,10 +188,10 @@ pub(super) fn solve_attribute_constraint(
                                     let subst_map = protocol_metadata.create_type_substitution(&type_args);
                                     beacon_core::ClassMetadata::substitute_type_params(&attr_type, &subst_map)
                                 } else {
-                                    attr_type.clone()
+                                    attr_type
                                 }
                             } else {
-                                attr_type.clone()
+                                attr_type
                             };
                         let is_method = state.class_registry.is_method(protocol_name, &attr_name);
                         (Some(substituted_ty), is_method, Some(protocol_name.to_string()))
@@ -208,10 +208,10 @@ pub(super) fn solve_attribute_constraint(
                                 let subst_map = class_metadata.create_type_substitution(&type_args);
                                 beacon_core::ClassMetadata::substitute_type_params(&attr_type, &subst_map)
                             } else {
-                                attr_type.clone()
+                                attr_type
                             }
                         } else {
-                            attr_type.clone()
+                            attr_type
                         };
                         let is_method = state.class_registry.is_method(class_name, &attr_name);
                         (Some(substituted_ty), is_method, Some(class_name.to_string()))
@@ -230,17 +230,13 @@ pub(super) fn solve_attribute_constraint(
 
             if let Some(resolved_ty) = resolved_attr_ty {
                 let final_type = if is_method {
-                    Type::BoundMethod(
-                        Box::new(applied_obj.clone()),
-                        attr_name.clone(),
-                        Box::new(resolved_ty.clone()),
-                    )
+                    Type::BoundMethod(Box::new(applied_obj.clone()), attr_name, Box::new(resolved_ty))
                 } else {
-                    resolved_ty.clone()
+                    resolved_ty
                 };
 
                 match Unifier::unify_with_class_registry(
-                    &state.subst.apply(&attr_ty),
+                    &state.subst.apply(attr_ty),
                     &final_type,
                     state.typevar_registry,
                     state.class_registry,
@@ -255,7 +251,7 @@ pub(super) fn solve_attribute_constraint(
                 }
             } else {
                 state.type_errors.push(TypeErrorInfo::new(
-                    beacon_core::TypeError::AttributeNotFound(applied_obj.to_string(), attr_name.clone()),
+                    beacon_core::TypeError::AttributeNotFound(applied_obj.to_string(), attr_name),
                     span,
                 ));
             }
@@ -263,7 +259,7 @@ pub(super) fn solve_attribute_constraint(
         Type::Var(_) => {}
         _ => {
             state.type_errors.push(TypeErrorInfo::new(
-                beacon_core::TypeError::AttributeNotFound(applied_obj.display_for_diagnostics(), attr_name.clone()),
+                beacon_core::TypeError::AttributeNotFound(applied_obj.display_for_diagnostics(), attr_name),
                 span,
             ));
         }

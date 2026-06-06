@@ -31,7 +31,7 @@ class ValidClass:
 VALID_CONSTANT = 42
 "#;
     documents
-        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .open_document(module_a_uri.clone(), 0, module_a_content)
         .unwrap();
     workspace.update_dependencies(&module_a_uri);
 
@@ -43,7 +43,7 @@ from module_a import ValidClass  # OK
 from module_a import NonexistentClass  # ERROR: symbol doesn't exist
 "#;
     documents
-        .open_document(module_b_uri.clone(), 0, module_b_content.to_string())
+        .open_document(module_b_uri.clone(), 0, module_b_content)
         .unwrap();
     workspace.update_dependencies(&module_b_uri);
 
@@ -108,7 +108,7 @@ class _PrivateClass:
 _PRIVATE_CONSTANT = 42
 "#;
     documents
-        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .open_document(module_a_uri.clone(), 0, module_a_content)
         .unwrap();
     workspace.update_dependencies(&module_a_uri);
 
@@ -121,7 +121,7 @@ from module_a import _PrivateClass  # WARNING: private symbol
 from module_a import _PRIVATE_CONSTANT  # WARNING: private symbol
 "#;
     documents
-        .open_document(module_b_uri.clone(), 0, module_b_content.to_string())
+        .open_document(module_b_uri.clone(), 0, module_b_content)
         .unwrap();
     workspace.update_dependencies(&module_b_uri);
 
@@ -177,7 +177,7 @@ class ExistingClass:
     pass
 "#;
     documents
-        .open_document(source_uri.clone(), 0, source_module_content.to_string())
+        .open_document(source_uri.clone(), 0, source_module_content)
         .unwrap();
     workspace.update_dependencies(&source_uri);
 
@@ -192,7 +192,7 @@ __all__ = [
 ]
 "#;
     documents
-        .open_document(reexport_uri.clone(), 0, reexport_module_content.to_string())
+        .open_document(reexport_uri.clone(), 0, reexport_module_content)
         .unwrap();
     workspace.update_dependencies(&reexport_uri);
 
@@ -247,7 +247,7 @@ CONSTANT = 42
 __all__ = ["function_one", "ClassA"]
 "#;
     documents
-        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .open_document(module_a_uri.clone(), 0, module_a_content)
         .unwrap();
     workspace.update_dependencies(&module_a_uri);
 
@@ -259,7 +259,7 @@ from module_a import ClassA
 from module_a import CONSTANT
 "#;
     documents
-        .open_document(module_b_uri.clone(), 0, module_b_content.to_string())
+        .open_document(module_b_uri.clone(), 0, module_b_content)
         .unwrap();
     workspace.update_dependencies(&module_b_uri);
 
@@ -300,7 +300,7 @@ def function():
     pass
 "#;
     documents
-        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .open_document(module_a_uri.clone(), 0, module_a_content)
         .unwrap();
     workspace.update_dependencies(&module_a_uri);
 
@@ -309,7 +309,7 @@ def function():
 from module_a import *
 "#;
     documents
-        .open_document(module_b_uri.clone(), 0, module_b_content.to_string())
+        .open_document(module_b_uri.clone(), 0, module_b_content)
         .unwrap();
     workspace.update_dependencies(&module_b_uri);
 
@@ -347,7 +347,7 @@ def unused_function():
     pass
 "#;
     documents
-        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .open_document(module_a_uri.clone(), 0, module_a_content)
         .unwrap();
     workspace.update_dependencies(&module_a_uri);
 
@@ -359,7 +359,7 @@ def main():
     used_function()
 "#;
     documents
-        .open_document(module_b_uri.clone(), 0, module_b_content.to_string())
+        .open_document(module_b_uri.clone(), 0, module_b_content)
         .unwrap();
     workspace.update_dependencies(&module_b_uri);
 
@@ -420,7 +420,7 @@ def not_exported_function():
     pass
 "#;
     documents
-        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .open_document(module_a_uri.clone(), 0, module_a_content)
         .unwrap();
     workspace.update_dependencies(&module_a_uri);
 
@@ -465,7 +465,7 @@ def public_function():
     pass
 "#;
     documents
-        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .open_document(module_a_uri.clone(), 0, module_a_content)
         .unwrap();
     workspace.update_dependencies(&module_a_uri);
 

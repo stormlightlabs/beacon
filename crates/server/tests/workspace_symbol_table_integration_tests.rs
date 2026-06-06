@@ -31,7 +31,7 @@ def my_function():
 my_variable = 42
 "#;
 
-    documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+    documents.open_document(uri.clone(), 1, source).unwrap();
 
     let _result = analyzer.analyze(&uri);
 
@@ -75,8 +75,8 @@ class ClassB:
     pass
 "#;
 
-    documents.open_document(uri1.clone(), 1, source1.to_string()).unwrap();
-    documents.open_document(uri2.clone(), 1, source2.to_string()).unwrap();
+    documents.open_document(uri1.clone(), 1, source1).unwrap();
+    documents.open_document(uri2.clone(), 1, source2).unwrap();
 
     let _ = analyzer.analyze(&uri1);
     let _ = analyzer.analyze(&uri2);
@@ -106,7 +106,7 @@ def my_function():
     pass
 "#;
 
-    documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+    documents.open_document(uri.clone(), 1, source).unwrap();
 
     let _result = analyzer.analyze(&uri);
 
@@ -137,7 +137,7 @@ def old_function():
     pass
 "#;
 
-    documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+    documents.open_document(uri.clone(), 1, source).unwrap();
 
     let _ = analyzer.analyze(&uri);
 
@@ -168,7 +168,7 @@ class MyClass:
         pass
 "#;
 
-    documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+    documents.open_document(uri.clone(), 1, source).unwrap();
 
     let _ = analyzer.analyze(&uri);
 

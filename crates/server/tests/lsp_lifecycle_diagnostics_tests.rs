@@ -46,7 +46,7 @@ fn fixture_workspace_with_documents() -> (DocumentManager, Arc<RwLock<Workspace>
 }
 
 fn analyzer_for(documents: &DocumentManager, workspace: Arc<RwLock<Workspace>>, config: Config) -> Analyzer {
-    Analyzer::with_workspace(config, documents.clone(), workspace)
+    Analyzer::with_workspace(config, documents.clone(), &workspace)
 }
 
 fn copy_dir_all(from: &Path, to: &Path) {
@@ -70,7 +70,7 @@ async fn lsp_fixture_covers_document_lifecycle_rename_and_delete() {
     let source = fixture_source("cases/lsp_playground.py");
 
     documents
-        .open_document(uri.clone(), 7, source.clone())
+        .open_document(uri.clone(), 7, &source)
         .expect("didOpen should parse fixture source");
     assert!(documents.has_document(&uri));
     assert_eq!(documents.get_document(&uri, |doc| doc.version), Some(7));
@@ -78,7 +78,7 @@ async fn lsp_fixture_covers_document_lifecycle_rename_and_delete() {
     let edited = source.replace("return \"not an int\"", "return 1");
     documents
         .update_document(
-            VersionedTextDocumentIdentifier { uri: uri.clone(), version: 8 },
+            &VersionedTextDocumentIdentifier { uri: uri.clone(), version: 8 },
             vec![TextDocumentContentChangeEvent { range: None, range_length: None, text: edited.clone() }],
         )
         .expect("didChange should update and reparse fixture source");
@@ -144,7 +144,7 @@ async fn diagnostics_publishing_inputs_are_version_safe_and_clearable() {
     let uri = Url::from_file_path(file("cases/lsp_playground.py")).expect("fixture URI");
     let source = fixture_source("cases/lsp_playground.py");
     documents
-        .open_document(uri.clone(), 41, source.clone())
+        .open_document(uri.clone(), 41, &source)
         .expect("fixture should open");
 
     let diagnostics = DiagnosticProvider::new(documents.clone(), workspace.clone())
@@ -159,7 +159,7 @@ async fn diagnostics_publishing_inputs_are_version_safe_and_clearable() {
 
     documents
         .update_document(
-            VersionedTextDocumentIdentifier { uri: uri.clone(), version: 42 },
+            &VersionedTextDocumentIdentifier { uri: uri.clone(), version: 42 },
             vec![TextDocumentContentChangeEvent {
                 range: None,
                 range_length: None,
@@ -185,7 +185,7 @@ async fn lsp_fixture_exercises_core_product_features() {
     let mut source = fixture_source("cases/lsp_playground.py");
     source.push_str("\nren");
     documents
-        .open_document(uri.clone(), 1, source.clone())
+        .open_document(uri.clone(), 1, &source)
         .expect("fixture should open");
 
     let hover = HoverProvider::new(documents.clone())
@@ -275,7 +275,7 @@ async fn lsp_fixture_exercises_core_product_features() {
     }
 
     let workspace_symbols = WorkspaceSymbolsProvider::new(documents.clone(), workspace.clone())
-        .workspace_symbol(WorkspaceSymbolParams {
+        .workspace_symbol(&WorkspaceSymbolParams {
             query: "rename_target".to_string(),
             work_done_progress_params: WorkDoneProgressParams::default(),
             partial_result_params: PartialResultParams::default(),

@@ -24,7 +24,7 @@ fn setup() -> (DocumentManager, FormattingProvider) {
 /// Open a document in the document manager
 fn open_document(documents: &DocumentManager, uri: &Url, content: &str) {
     documents
-        .open_document(uri.clone(), 1, content.to_string())
+        .open_document(uri.clone(), 1, content)
         .expect("Failed to open document");
 }
 

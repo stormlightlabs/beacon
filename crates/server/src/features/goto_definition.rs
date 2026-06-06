@@ -650,7 +650,7 @@ mod tests {
     }
 
     fn open_test_document(documents: &DocumentManager, uri: &Url, source: &str) {
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
     }
 
     #[test]
@@ -978,7 +978,7 @@ x = os"#;
     return 42
 "#;
         documents
-            .open_document(module_a_uri.clone(), 1, module_a_source.to_string())
+            .open_document(module_a_uri.clone(), 1, module_a_source)
             .unwrap();
 
         let module_b_uri = Url::from_str("file:///module_b.py").unwrap();
@@ -987,7 +987,7 @@ x = os"#;
 result = helper_function()
 "#;
         documents
-            .open_document(module_b_uri.clone(), 1, module_b_source.to_string())
+            .open_document(module_b_uri.clone(), 1, module_b_source)
             .unwrap();
 
         {
@@ -1037,18 +1037,14 @@ result = helper_function()
     def __init__(self, name):
         self.name = name
 "#;
-        documents
-            .open_document(models_uri.clone(), 1, models_source.to_string())
-            .unwrap();
+        documents.open_document(models_uri.clone(), 1, models_source).unwrap();
 
         let main_uri = Url::from_str("file:///main.py").unwrap();
         let main_source = r#"from models import User
 
 user = User("Alice")
 "#;
-        documents
-            .open_document(main_uri.clone(), 1, main_source.to_string())
-            .unwrap();
+        documents.open_document(main_uri.clone(), 1, main_source).unwrap();
 
         {
             let mut ws = workspace.write().await;
@@ -1089,7 +1085,7 @@ user = User("Alice")
 DEFAULT_TIMEOUT = 30
 "#;
         documents
-            .open_document(constants_uri.clone(), 1, constants_source.to_string())
+            .open_document(constants_uri.clone(), 1, constants_source)
             .unwrap();
 
         let app_uri = Url::from_str("file:///app.py").unwrap();
@@ -1097,9 +1093,7 @@ DEFAULT_TIMEOUT = 30
 
 buffer = [0] * MAX_SIZE
 "#;
-        documents
-            .open_document(app_uri.clone(), 1, app_source.to_string())
-            .unwrap();
+        documents.open_document(app_uri.clone(), 1, app_source).unwrap();
 
         {
             let mut ws = workspace.write().await;
@@ -1146,18 +1140,14 @@ buffer = [0] * MAX_SIZE
 def parse_int(s):
     return int(s)
 "#;
-        documents
-            .open_document(utils_uri.clone(), 1, utils_source.to_string())
-            .unwrap();
+        documents.open_document(utils_uri.clone(), 1, utils_source).unwrap();
 
         let main_uri = Url::from_str("file:///main.py").unwrap();
         let main_source = r#"from utils import *
 
 result = format_string("hello")
 "#;
-        documents
-            .open_document(main_uri.clone(), 1, main_source.to_string())
-            .unwrap();
+        documents.open_document(main_uri.clone(), 1, main_source).unwrap();
 
         {
             let mut ws = workspace.write().await;
@@ -1192,7 +1182,7 @@ result = format_string("hello")
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
         let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
-        let mut analyzer = analysis::Analyzer::with_workspace(config, documents.clone(), workspace.clone());
+        let mut analyzer = analysis::Analyzer::with_workspace(config, documents.clone(), &workspace);
         let provider = GotoDefinitionProvider::new(documents.clone(), workspace.clone());
 
         let uri = Url::from_str("file:///test.py").unwrap();
@@ -1203,7 +1193,7 @@ result = format_string("hello")
 obj = MyClass()
 result = obj
 "#;
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         {
             let mut ws = workspace.write().await;
@@ -1228,7 +1218,7 @@ result = obj
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
         let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
-        let mut analyzer = analysis::Analyzer::with_workspace(config, documents.clone(), workspace.clone());
+        let mut analyzer = analysis::Analyzer::with_workspace(config, documents.clone(), &workspace);
         let provider = GotoDefinitionProvider::new(documents.clone(), workspace.clone());
 
         let models_uri = Url::from_str("file:///models.py").unwrap();
@@ -1236,18 +1226,14 @@ result = obj
     def __init__(self, name):
         self.name = name
 "#;
-        documents
-            .open_document(models_uri.clone(), 1, models_source.to_string())
-            .unwrap();
+        documents.open_document(models_uri.clone(), 1, models_source).unwrap();
 
         let main_uri = Url::from_str("file:///main.py").unwrap();
         let main_source = r#"from models import User
 
 user = User("Alice")
 "#;
-        documents
-            .open_document(main_uri.clone(), 1, main_source.to_string())
-            .unwrap();
+        documents.open_document(main_uri.clone(), 1, main_source).unwrap();
 
         {
             let mut ws = workspace.write().await;
@@ -1276,7 +1262,7 @@ user = User("Alice")
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
         let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
-        let mut analyzer = analysis::Analyzer::with_workspace(config, documents.clone(), workspace.clone());
+        let mut analyzer = analysis::Analyzer::with_workspace(config, documents.clone(), &workspace);
         let provider = GotoDefinitionProvider::new(documents.clone(), workspace.clone());
 
         let uri = Url::from_str("file:///test.py").unwrap();
@@ -1294,7 +1280,7 @@ class Cat(Animal):
 
 animal = Animal()
 "#;
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         {
             let mut ws = workspace.write().await;
@@ -1316,7 +1302,7 @@ animal = Animal()
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
         let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
-        let mut analyzer = analysis::Analyzer::with_workspace(config, documents.clone(), workspace.clone());
+        let mut analyzer = analysis::Analyzer::with_workspace(config, documents.clone(), &workspace);
         let provider = GotoDefinitionProvider::new(documents.clone(), workspace.clone());
 
         let base_uri = Url::from_str("file:///base.py").unwrap();
@@ -1324,9 +1310,7 @@ animal = Animal()
     def area(self):
         pass
 "#;
-        documents
-            .open_document(base_uri.clone(), 1, base_source.to_string())
-            .unwrap();
+        documents.open_document(base_uri.clone(), 1, base_source).unwrap();
 
         let impl1_uri = Url::from_str("file:///circle.py").unwrap();
         let impl1_source = r#"from base import Shape
@@ -1335,9 +1319,7 @@ class Circle(Shape):
     def area(self):
         return 3.14 * self.radius ** 2
 "#;
-        documents
-            .open_document(impl1_uri.clone(), 1, impl1_source.to_string())
-            .unwrap();
+        documents.open_document(impl1_uri.clone(), 1, impl1_source).unwrap();
 
         let impl2_uri = Url::from_str("file:///square.py").unwrap();
         let impl2_source = r#"from base import Shape
@@ -1346,9 +1328,7 @@ class Square(Shape):
     def area(self):
         return self.side ** 2
 "#;
-        documents
-            .open_document(impl2_uri.clone(), 1, impl2_source.to_string())
-            .unwrap();
+        documents.open_document(impl2_uri.clone(), 1, impl2_source).unwrap();
 
         {
             let mut ws = workspace.write().await;

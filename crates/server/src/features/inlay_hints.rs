@@ -500,7 +500,7 @@ z = "hello"
 w: str = "world"
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -524,7 +524,7 @@ w: str = "world"
 y: str = "hello"
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -559,7 +559,7 @@ def no_return():
     pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -585,7 +585,7 @@ z = "hello"
 w = True
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -623,7 +623,7 @@ if True:
     w = False
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -687,7 +687,7 @@ mixed = [1, "two", 3.0]
 empty = []
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -712,7 +712,7 @@ scores = {1: 100, 2: 95}
 empty_dict = {}
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -737,7 +737,7 @@ names = {"alice", "bob"}
 empty_set = set()
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -762,7 +762,7 @@ person = ("alice", 30, True)
 singleton = (42,)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -794,7 +794,7 @@ lookup = {"key": [1, 2, 3]}
 complex = [{"a": 1}, {"b": 2}]
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -817,7 +817,7 @@ complex = [{"a": 1}, {"b": 2}]
         let source = r#"x = unknown_function()
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -851,7 +851,7 @@ complex = [{"a": 1}, {"b": 2}]
         let source = r#"x = []
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -886,7 +886,7 @@ even = {x for x in range(10) if x % 2 == 0}
 mapping = {x: x * 2 for x in range(5)}
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -923,7 +923,7 @@ def get_mapping():
     return {"a": 1, "b": 2}
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -949,7 +949,7 @@ def get_mapping():
 greet("Alice", 30)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -997,7 +997,7 @@ greet("Alice", 30)
 outer()
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -1032,7 +1032,7 @@ outer()
 len([1, 2, 3])
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -1065,7 +1065,7 @@ def multiply(x, y, z):
     return x * y * z
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
         documents.get_document(&uri, |doc| {
             let ast = doc.ast().unwrap();
 
@@ -1092,7 +1092,7 @@ def multiply(x, y, z):
     pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
         documents.get_document(&uri, |doc| {
             let ast = doc.ast().unwrap();
 
@@ -1125,7 +1125,7 @@ calc = Calculator()
 calc.add(5, 3)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -1150,7 +1150,7 @@ def add(a, b):
     return a + b
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -1181,7 +1181,7 @@ def add(a, b):
 y = "hello"
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
@@ -1219,7 +1219,7 @@ x = 42
 greet("Alice", 30)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
             text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },

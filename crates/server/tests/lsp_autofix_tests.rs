@@ -31,7 +31,7 @@ fn diagnostic(code: &str, message: &str, line: u32, start: u32, end: u32) -> Dia
 async fn actions_for(source: &str, uri: Url, diagnostic: Diagnostic) -> Vec<lsp_types::CodeAction> {
     let documents = DocumentManager::new().expect("document manager should initialize");
     documents
-        .open_document(uri.clone(), 1, source.to_string())
+        .open_document(uri.clone(), 1, source)
         .expect("document should open");
     let analyzer = Arc::new(RwLock::new(Analyzer::new(Config::default(), documents.clone())));
     let provider = CodeActionsProvider::new(documents, analyzer);

@@ -1,11 +1,13 @@
 [workspace]
 resolver = "2"
-members = [ "crates/analyzer",
+members = [
+    "crates/analyzer",
     "crates/cli",
     "crates/constraints",
     "crates/core",
     "crates/parser",
-    "crates/server", "pkg/zed",
+    "crates/server",
+    "pkg/zed",
 ]
 
 [workspace.dependencies]
@@ -39,7 +41,7 @@ cmp_null = "deny"
 manual_map = "deny"
 
 too_many_arguments = "warn"
-cognitive_complexity = "warn"
+cognitive_complexity = "allow"
 large_enum_variant = "warn"
 needless_borrow = "warn"
 needless_pass_by_value = "warn"

@@ -147,7 +147,7 @@ impl PythonHighlighter {
             }
         }
 
-        filtered_highlights.sort_by(|a, b| b.start.cmp(&a.start));
+        filtered_highlights.sort_by_key(|b| std::cmp::Reverse(b.start));
 
         let mut result = source.to_string();
         for highlight in filtered_highlights {

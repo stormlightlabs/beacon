@@ -246,10 +246,10 @@ impl CliCfgGraph {
             builder.build_module(body);
         }
 
-        Self::from_cfg(file, scope_name, builder.build())
+        Self::from_cfg(file, scope_name, &builder.build())
     }
 
-    fn from_cfg(file: &Path, scope_name: &str, cfg: ControlFlowGraph) -> Self {
+    fn from_cfg(file: &Path, scope_name: &str, cfg: &ControlFlowGraph) -> Self {
         let mut reachable = cfg.reachable_blocks();
         reachable.sort_by_key(|block| block.0);
         let reachable_set: std::collections::HashSet<_> = reachable.iter().map(|block| block.0).collect();
@@ -321,7 +321,7 @@ fn analyze_source_for_cli(file: &Path, source: &str) -> Result<AnalysisResult> {
     let uri = Url::from_file_path(&file_path)
         .map_err(|_| anyhow::anyhow!("Failed to create URL for {}", file_path.display()))?;
 
-    documents.open_document(uri.clone(), 1, source.to_string())?;
+    documents.open_document(uri.clone(), 1, source)?;
 
     let config = Config::default();
     let mut analyzer = Analyzer::new(config, documents);
@@ -441,7 +441,7 @@ pub(crate) async fn debug_cfg_command(path: PathBuf, json: bool) -> Result<()> {
         let uri = Url::from_file_path(file_path)
             .map_err(|_| anyhow::anyhow!("Failed to create URL for {}", file_path.display()))?;
 
-        documents.open_document(uri.clone(), 1, source)?;
+        documents.open_document(uri.clone(), 1, &source)?;
         workspace.update_dependencies(&uri);
         workspace.build_module_cfg(&uri);
     }

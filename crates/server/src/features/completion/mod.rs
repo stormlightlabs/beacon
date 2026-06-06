@@ -897,7 +897,7 @@ impl CompletionProvider {
                         }
                     }
 
-                    let module_display = module_name.clone().unwrap_or_else(|| module_part.to_string());
+                    let module_display = module_name.unwrap_or_else(|| module_part.to_string());
 
                     let mut module_symbols = Vec::new();
                     if let Some(ref module_uri) = module_uri {
@@ -1065,7 +1065,7 @@ mod tests {
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "__";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1096,7 +1096,7 @@ mod tests {
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "class MyClass:\n    def __";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1180,7 +1180,7 @@ x = 42
 y = "hello"
 
 "#;
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1225,7 +1225,7 @@ def another_func():
 
 my
 "#;
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1261,7 +1261,7 @@ my_func = lambda: None
 other_var = 2
 my
 "#;
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1293,7 +1293,7 @@ my
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "pri";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1330,7 +1330,7 @@ def my_function():
     pass
 
 "#;
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1367,7 +1367,7 @@ def my_function():
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "class MyClass:\n    pass\n\nclass AnotherClass:\n    pass\n\nMy";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1401,7 +1401,7 @@ def my_function():
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "\n";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1441,7 +1441,7 @@ def my_function():
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "x = (";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1486,7 +1486,7 @@ def my_function():
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "de";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1534,9 +1534,7 @@ EXTRA_VALUE = 1
 
 OTHER_THING = 2
 "#;
-        documents
-            .open_document(module_uri.clone(), 1, module_source.to_string())
-            .unwrap();
+        documents.open_document(module_uri.clone(), 1, module_source).unwrap();
 
         let doc_symbols = documents
             .get_document(&module_uri, |doc| {
@@ -1555,9 +1553,7 @@ OTHER_THING = 2
 
         let current_uri = Url::from_str("file:///module_a.py").unwrap();
         let source = "from module_b import ";
-        documents
-            .open_document(current_uri.clone(), 1, source.to_string())
-            .unwrap();
+        documents.open_document(current_uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1601,15 +1597,11 @@ EXTRA_VALUE = 1
 
 OTHER_THING = 2
 "#;
-        documents
-            .open_document(module_uri.clone(), 1, module_source.to_string())
-            .unwrap();
+        documents.open_document(module_uri.clone(), 1, module_source).unwrap();
 
         let current_uri = Url::from_str("file:///module_a.py").unwrap();
         let source = "from module_b import ex";
-        documents
-            .open_document(current_uri.clone(), 1, source.to_string())
-            .unwrap();
+        documents.open_document(current_uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1646,18 +1638,14 @@ OTHER_THING = 2
 
         let alpha_uri = Url::from_str("file:///alpha.py").unwrap();
         documents
-            .open_document(alpha_uri.clone(), 1, "alpha_var = 1\n".to_string())
+            .open_document(alpha_uri.clone(), 1, "alpha_var = 1\n")
             .unwrap();
         let beta_uri = Url::from_str("file:///beta.py").unwrap();
-        documents
-            .open_document(beta_uri.clone(), 1, "beta_var = 2\n".to_string())
-            .unwrap();
+        documents.open_document(beta_uri.clone(), 1, "beta_var = 2\n").unwrap();
 
         let current_uri = Url::from_str("file:///consumer.py").unwrap();
         let source = "import alp";
-        documents
-            .open_document(current_uri.clone(), 1, source.to_string())
-            .unwrap();
+        documents.open_document(current_uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1693,7 +1681,7 @@ OTHER_THING = 2
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "x = ";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1725,7 +1713,7 @@ OTHER_THING = 2
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "obj.";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1762,7 +1750,7 @@ OTHER_THING = 2
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "if x ";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = CompletionParams {
             text_document_position: TextDocumentPositionParams {
@@ -1819,7 +1807,7 @@ class HelperClass:
 HELPER_CONSTANT = 42
 "#;
         documents
-            .open_document(module_a_uri.clone(), 1, module_a_source.to_string())
+            .open_document(module_a_uri.clone(), 1, module_a_source)
             .unwrap();
 
         workspace.add_test_module(
@@ -1831,7 +1819,7 @@ HELPER_CONSTANT = 42
         let module_b_uri = Url::from_str("file:///workspace/module_b.py").unwrap();
         let module_b_source = "help";
         documents
-            .open_document(module_b_uri.clone(), 1, module_b_source.to_string())
+            .open_document(module_b_uri.clone(), 1, module_b_source)
             .unwrap();
 
         workspace.add_test_module(
@@ -1900,7 +1888,7 @@ _PRIVATE_VAR = 1
 PUBLIC_VAR = 2
 "#;
         documents
-            .open_document(module_a_uri.clone(), 1, module_a_source.to_string())
+            .open_document(module_a_uri.clone(), 1, module_a_source)
             .unwrap();
 
         workspace.add_test_module(
@@ -1912,7 +1900,7 @@ PUBLIC_VAR = 2
         let module_b_uri = Url::from_str("file:///workspace/module_b.py").unwrap();
         let module_b_source = "pub";
         documents
-            .open_document(module_b_uri.clone(), 1, module_b_source.to_string())
+            .open_document(module_b_uri.clone(), 1, module_b_source)
             .unwrap();
 
         workspace.add_test_module(
@@ -1977,7 +1965,7 @@ another_local = 1
 ano
 "#;
         documents
-            .open_document(module_a_uri.clone(), 1, module_a_source.to_string())
+            .open_document(module_a_uri.clone(), 1, module_a_source)
             .unwrap();
 
         workspace.add_test_module(
@@ -1994,7 +1982,7 @@ def another_function():
 another_var = 2
 "#;
         documents
-            .open_document(module_b_uri.clone(), 1, module_b_source.to_string())
+            .open_document(module_b_uri.clone(), 1, module_b_source)
             .unwrap();
 
         workspace.add_test_module(
@@ -2063,7 +2051,7 @@ def shared_name():
     pass
 "#;
         documents
-            .open_document(module_a_uri.clone(), 1, module_a_source.to_string())
+            .open_document(module_a_uri.clone(), 1, module_a_source)
             .unwrap();
 
         workspace.add_test_module(
@@ -2080,7 +2068,7 @@ def shared_name():
 sha
 "#;
         documents
-            .open_document(module_b_uri.clone(), 1, module_b_source.to_string())
+            .open_document(module_b_uri.clone(), 1, module_b_source)
             .unwrap();
 
         workspace.add_test_module(

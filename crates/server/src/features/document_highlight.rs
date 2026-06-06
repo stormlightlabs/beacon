@@ -180,7 +180,7 @@ mod tests {
 y = x + 1
 print(x)"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = DocumentHighlightParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
@@ -208,7 +208,7 @@ print(x)"#;
 
 result = hello()"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = DocumentHighlightParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
@@ -252,7 +252,7 @@ result = hello()"#;
     print(name)
     return name"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = DocumentHighlightParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
@@ -287,7 +287,7 @@ result = hello()"#;
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "x = 42";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = DocumentHighlightParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {

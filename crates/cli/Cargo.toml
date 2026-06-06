@@ -39,3 +39,6 @@ criterion = { version = "0.5", features = ["async_tokio", "html_reports"] }
 [[bench]]
 name = "workspace_analysis"
 harness = false
+
+[lints]
+workspace = true

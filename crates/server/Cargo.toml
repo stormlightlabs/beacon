@@ -55,3 +55,6 @@ harness = false
 [[bench]]
 name = "stub_resolution_benchmark"
 harness = false
+
+[lints]
+workspace = true

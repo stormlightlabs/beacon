@@ -25,9 +25,7 @@ async fn test_user_defined_function_wrong_argument_count() {
 def greet(name: str) -> str:
     return f"Hello, {name}!"
 "#;
-    documents
-        .open_document(utils_uri.clone(), 0, utils_content.to_string())
-        .unwrap();
+    documents.open_document(utils_uri.clone(), 0, utils_content).unwrap();
     workspace.update_dependencies(&utils_uri);
 
     let main_uri = file_uri(workspace_root.as_str(), "main.py");
@@ -37,9 +35,7 @@ from utils import greet
 # This should trigger an argument count mismatch diagnostic
 result = greet("Alice", "Bob")  # ERROR: expects 1 argument, got 2
 "#;
-    documents
-        .open_document(main_uri.clone(), 0, main_content.to_string())
-        .unwrap();
+    documents.open_document(main_uri.clone(), 0, main_content).unwrap();
     workspace.update_dependencies(&main_uri);
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
@@ -91,7 +87,7 @@ def count(items: list) -> int:
     return len(items)
 "#;
     documents
-        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .open_document(module_a_uri.clone(), 0, module_a_content)
         .unwrap();
     workspace.update_dependencies(&module_a_uri);
 
@@ -103,7 +99,7 @@ message = greet("Alice")  # OK: str argument
 total = count([1, 2, 3])  # OK: list argument
 "#;
     documents
-        .open_document(module_b_uri.clone(), 0, module_b_content.to_string())
+        .open_document(module_b_uri.clone(), 0, module_b_content)
         .unwrap();
     workspace.update_dependencies(&module_b_uri);
 
@@ -143,7 +139,7 @@ def add(a: int, b: int) -> int:
     return a + b
 "#;
     documents
-        .open_document(math_ops_uri.clone(), 0, math_ops_content.to_string())
+        .open_document(math_ops_uri.clone(), 0, math_ops_content)
         .unwrap();
     workspace.update_dependencies(&math_ops_uri);
 
@@ -154,9 +150,7 @@ from math_ops import add
 # This should trigger type mismatch diagnostics
 result = add("hello", 42)  # ERROR: first arg should be int, got str
 "#;
-    documents
-        .open_document(main_uri.clone(), 0, main_content.to_string())
-        .unwrap();
+    documents.open_document(main_uri.clone(), 0, main_content).unwrap();
     workspace.update_dependencies(&main_uri);
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
@@ -207,7 +201,7 @@ def process(data: Any) -> str:
     return str(data)
 "#;
     documents
-        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .open_document(module_a_uri.clone(), 0, module_a_content)
         .unwrap();
     workspace.update_dependencies(&module_a_uri);
 
@@ -220,7 +214,7 @@ result2 = process("hello")  # OK: Any accepts str
 result3 = process([1, 2, 3])  # OK: Any accepts list
 "#;
     documents
-        .open_document(module_b_uri.clone(), 0, module_b_content.to_string())
+        .open_document(module_b_uri.clone(), 0, module_b_content)
         .unwrap();
     workspace.update_dependencies(&module_b_uri);
 
@@ -260,7 +254,7 @@ def do_something(x, y):
     return x + y
 "#;
     documents
-        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .open_document(module_a_uri.clone(), 0, module_a_content)
         .unwrap();
     workspace.update_dependencies(&module_a_uri);
 
@@ -271,7 +265,7 @@ from untyped import do_something
 result = do_something("a", "b")  # Should not error: no type info available
 "#;
     documents
-        .open_document(module_b_uri.clone(), 0, module_b_content.to_string())
+        .open_document(module_b_uri.clone(), 0, module_b_content)
         .unwrap();
     workspace.update_dependencies(&module_b_uri);
 
@@ -316,7 +310,7 @@ def merge_dicts(d1: Dict[str, int], d2: Dict[str, int]) -> Dict[str, int]:
     return {**d1, **d2}
 "#;
     documents
-        .open_document(module_a_uri.clone(), 0, module_a_content.to_string())
+        .open_document(module_a_uri.clone(), 0, module_a_content)
         .unwrap();
     workspace.update_dependencies(&module_a_uri);
 
@@ -329,7 +323,7 @@ total = process_items([1, 2, 3])  # OK
 # result = process_items(["a", "b"])  # Potential ERROR: List[str] instead of List[int]
 "#;
     documents
-        .open_document(module_b_uri.clone(), 0, module_b_content.to_string())
+        .open_document(module_b_uri.clone(), 0, module_b_content)
         .unwrap();
     workspace.update_dependencies(&module_b_uri);
 

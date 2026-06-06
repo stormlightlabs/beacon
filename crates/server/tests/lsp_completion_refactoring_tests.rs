@@ -64,7 +64,7 @@ fn fixture_workspace_with_documents() -> (DocumentManager, Arc<RwLock<Workspace>
 }
 
 fn analyzer_for(documents: &DocumentManager, workspace: Arc<RwLock<Workspace>>, config: Config) -> Analyzer {
-    Analyzer::with_workspace(config, documents.clone(), workspace)
+    Analyzer::with_workspace(config, documents.clone(), &workspace)
 }
 
 fn completion_items(response: CompletionResponse) -> Vec<lsp_types::CompletionItem> {
@@ -81,7 +81,7 @@ async fn snippet_completions_use_scope_imports_and_inferred_types() {
     let mut source = fixture_source("cases/lsp_playground.py");
     source.push_str("\nren");
     documents
-        .open_document(uri.clone(), 1, source.clone())
+        .open_document(uri.clone(), 1, &source)
         .expect("fixture should open");
 
     let provider = CompletionProvider::new(
@@ -114,7 +114,7 @@ async fn snippet_completions_use_scope_imports_and_inferred_types() {
     let mut imported_source = fixture_source("cases/lsp_playground.py");
     imported_source.push_str("\nPa");
     documents
-        .open_document(uri.clone(), 2, imported_source.clone())
+        .open_document(uri.clone(), 2, &imported_source)
         .expect("fixture should reopen with imported-symbol completion marker");
     let imported_items = completion_items(
         provider
@@ -138,13 +138,13 @@ async fn auto_import_completions_use_workspace_symbols_stubs_and_reexports() {
     let (documents, workspace, config) = fixture_workspace_with_documents();
     let api_uri = Url::from_file_path(file("imports/api.py")).expect("api fixture URI");
     documents
-        .open_document(api_uri, 1, fixture_source("imports/api.py"))
+        .open_document(api_uri, 1, &fixture_source("imports/api.py"))
         .expect("api fixture should open so workspace symbols are available");
 
     let uri = Url::from_file_path(file("cases/auto_import_completion.py")).expect("auto import URI");
     let source = "make_\n";
     documents
-        .open_document(uri.clone(), 1, source.to_string())
+        .open_document(uri.clone(), 1, source)
         .expect("auto import document should open");
 
     let provider = CompletionProvider::new(
@@ -205,10 +205,10 @@ signature_result = signature_target("beacon")
 "#,
     );
     documents
-        .open_document(uri.clone(), 1, source.clone())
+        .open_document(uri.clone(), 1, &source)
         .expect("fixture should open");
     documents
-        .open_document(target_uri.clone(), 1, "\n".to_string())
+        .open_document(target_uri.clone(), 1, "\n")
         .expect("target refactor document should open");
 
     let context = RefactoringContext::new(documents.clone(), workspace.clone());

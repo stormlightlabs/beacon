@@ -28,7 +28,7 @@ impl WorkspaceSymbolsProvider {
     /// Search for symbols across the workspace
     ///
     /// Returns symbols matching the query from all workspace files using fuzzy matching.
-    pub fn workspace_symbol(&self, params: WorkspaceSymbolParams) -> Option<Vec<SymbolInformation>> {
+    pub fn workspace_symbol(&self, params: &WorkspaceSymbolParams) -> Option<Vec<SymbolInformation>> {
         let query = params.query.to_lowercase();
         let mut results = Vec::new();
 
@@ -418,7 +418,7 @@ mod tests {
             partial_result_params: Default::default(),
         };
 
-        let result = provider.workspace_symbol(params);
+        let result = provider.workspace_symbol(&params);
         assert!(result.is_none());
     }
 
@@ -436,7 +436,7 @@ mod tests {
 def world():
     pass"#;
 
-        documents.open_document(uri, 1, source.to_string()).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let params = WorkspaceSymbolParams {
             query: "hello".to_string(),
@@ -444,7 +444,7 @@ def world():
             partial_result_params: Default::default(),
         };
 
-        let result = provider.workspace_symbol(params);
+        let result = provider.workspace_symbol(&params);
         assert!(result.is_some());
 
         let symbols = result.unwrap();
@@ -466,7 +466,7 @@ def world():
         let source = r#"class MyClass:
     pass"#;
 
-        documents.open_document(uri, 1, source.to_string()).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let params = WorkspaceSymbolParams {
             query: "MyClass".to_string(),
@@ -474,7 +474,7 @@ def world():
             partial_result_params: Default::default(),
         };
 
-        let result = provider.workspace_symbol(params);
+        let result = provider.workspace_symbol(&params);
         assert!(result.is_some());
 
         let symbols = result.unwrap();
@@ -493,7 +493,7 @@ def world():
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "my_variable = 42";
 
-        documents.open_document(uri, 1, source.to_string()).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let params = WorkspaceSymbolParams {
             query: "my_variable".to_string(),
@@ -501,7 +501,7 @@ def world():
             partial_result_params: Default::default(),
         };
 
-        let result = provider.workspace_symbol(params);
+        let result = provider.workspace_symbol(&params);
         assert!(result.is_some());
 
         let symbols = result.unwrap();
@@ -520,7 +520,7 @@ def world():
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "def HelloWorld():\n    pass";
 
-        documents.open_document(uri, 1, source.to_string()).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let params = WorkspaceSymbolParams {
             query: "helloworld".to_string(),
@@ -528,7 +528,7 @@ def world():
             partial_result_params: Default::default(),
         };
 
-        let result = provider.workspace_symbol(params);
+        let result = provider.workspace_symbol(&params);
         assert!(result.is_some());
 
         let symbols = result.unwrap();
@@ -546,7 +546,7 @@ def world():
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "def calculate_sum():\n    pass";
 
-        documents.open_document(uri, 1, source.to_string()).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let params = WorkspaceSymbolParams {
             query: "calc".to_string(),
@@ -554,7 +554,7 @@ def world():
             partial_result_params: Default::default(),
         };
 
-        let result = provider.workspace_symbol(params);
+        let result = provider.workspace_symbol(&params);
         assert!(result.is_some());
 
         let symbols = result.unwrap();
@@ -576,7 +576,7 @@ def world():
 def func2():
     pass"#;
 
-        documents.open_document(uri, 1, source.to_string()).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let params = WorkspaceSymbolParams {
             query: "".to_string(),
@@ -584,7 +584,7 @@ def func2():
             partial_result_params: Default::default(),
         };
 
-        let result = provider.workspace_symbol(params);
+        let result = provider.workspace_symbol(&params);
         assert!(result.is_some());
 
         let symbols = result.unwrap();
@@ -601,12 +601,8 @@ def func2():
         let uri1 = Url::from_str("file:///file1.py").unwrap();
         let uri2 = Url::from_str("file:///file2.py").unwrap();
 
-        documents
-            .open_document(uri1, 1, "def func1():\n    pass".to_string())
-            .unwrap();
-        documents
-            .open_document(uri2, 1, "def func2():\n    pass".to_string())
-            .unwrap();
+        documents.open_document(uri1, 1, "def func1():\n    pass").unwrap();
+        documents.open_document(uri2, 1, "def func2():\n    pass").unwrap();
 
         let params = WorkspaceSymbolParams {
             query: "func".to_string(),
@@ -614,7 +610,7 @@ def func2():
             partial_result_params: Default::default(),
         };
 
-        let result = provider.workspace_symbol(params);
+        let result = provider.workspace_symbol(&params);
         assert!(result.is_some());
 
         let symbols = result.unwrap();
@@ -636,7 +632,7 @@ def func2():
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "def hello():\n    pass";
 
-        documents.open_document(uri, 1, source.to_string()).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let params = WorkspaceSymbolParams {
             query: "nonexistent".to_string(),
@@ -644,7 +640,7 @@ def func2():
             partial_result_params: Default::default(),
         };
 
-        let result = provider.workspace_symbol(params);
+        let result = provider.workspace_symbol(&params);
         assert!(result.is_none());
     }
 
@@ -660,7 +656,7 @@ def func2():
     def my_method(self):
         pass"#;
 
-        documents.open_document(uri, 1, source.to_string()).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let params = WorkspaceSymbolParams {
             query: "my_method".to_string(),
@@ -668,7 +664,7 @@ def func2():
             partial_result_params: Default::default(),
         };
 
-        let result = provider.workspace_symbol(params);
+        let result = provider.workspace_symbol(&params);
         assert!(result.is_some());
 
         let symbols = result.unwrap();
@@ -709,7 +705,7 @@ def func2():
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "def test_function():\n    pass";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let symbol = WorkspaceSymbol {
             name: "test_function".to_string(),
@@ -780,7 +776,7 @@ def func2():
 
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "def other_function():\n    pass";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let symbol = WorkspaceSymbol {
             name: "nonexistent".to_string(),
@@ -812,7 +808,7 @@ def func2():
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "def hello():\n    pass";
 
-        documents.open_document(uri, 1, source.to_string()).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let params = WorkspaceSymbolParams {
             query: "hello".to_string(),
@@ -820,7 +816,7 @@ def func2():
             partial_result_params: Default::default(),
         };
 
-        let result = provider.workspace_symbol(params);
+        let result = provider.workspace_symbol(&params);
         assert!(result.is_some());
 
         let symbols = result.unwrap();
@@ -845,7 +841,7 @@ y = 2
 def func():
     pass"#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = WorkspaceSymbolParams {
             query: "".to_string(),
@@ -853,7 +849,7 @@ def func():
             partial_result_params: Default::default(),
         };
 
-        let result = provider.workspace_symbol(params);
+        let result = provider.workspace_symbol(&params);
         assert!(result.is_some());
 
         let symbols = result.unwrap();

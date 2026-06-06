@@ -213,7 +213,10 @@ impl CodeActionsProvider {
 
         let colon_pos = line.find(':')?;
         let type_start = colon_pos + 1;
-        let type_end = type_start + line[type_start..].find(['=', '\n']).unwrap_or(line[type_start..].len());
+        let type_end = type_start
+            + line[type_start..]
+                .find(['=', '\n'])
+                .unwrap_or_else(|| line[type_start..].len());
 
         let start = Position { line: line_num as u32, character: type_start as u32 };
         let end = Position { line: line_num as u32, character: type_end as u32 };
@@ -876,7 +879,7 @@ mod tests {
 
         let source = "def foo(x):\n    match x:\n        case int():\n            return 1\n        case _:\n            return 0\n";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostic = lsp_types::Diagnostic {
             range: Range { start: Position { line: 4, character: 13 }, end: Position { line: 4, character: 14 } },
@@ -902,7 +905,7 @@ mod tests {
 
         let source = "def foo(x):\n    match x:\n        case int():\n            return 1\n        case _:\n            return 0\n";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostic = lsp_types::Diagnostic {
             range: Range { start: Position { line: 4, character: 13 }, end: Position { line: 4, character: 14 } },
@@ -930,7 +933,7 @@ mod tests {
 
         let source = "def foo(x):\n    match x:\n        case int():\n            return 1\n        case _:\n            return 0\n";
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostic = lsp_types::Diagnostic {
             range: Range { start: Position { line: 4, character: 13 }, end: Position { line: 4, character: 14 } },
@@ -970,7 +973,7 @@ mod tests {
         let documents = provider.documents.clone();
 
         let source = "x = 42\ny = 10\nz = 5\n";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostic = lsp_types::Diagnostic {
             range: Range { start: Position { line: 1, character: 0 }, end: Position { line: 1, character: 1 } },
@@ -1007,7 +1010,7 @@ mod tests {
         let documents = provider.documents.clone();
 
         let source = "def foo() -> str:\n    return None\n";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostic = lsp_types::Diagnostic {
             range: Range { start: Position { line: 0, character: 13 }, end: Position { line: 0, character: 16 } },
@@ -1040,7 +1043,7 @@ mod tests {
         let documents = provider.documents.clone();
 
         let source = "x: str = \"hello\"\nx = None\n";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostic = lsp_types::Diagnostic {
             range: Range { start: Position { line: 0, character: 3 }, end: Position { line: 0, character: 6 } },
@@ -1069,7 +1072,7 @@ mod tests {
         let documents = provider.documents.clone();
 
         let source = "from typing import Optional\nx: str = \"hello\"\n";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostic = lsp_types::Diagnostic {
             range: Range { start: Position { line: 1, character: 3 }, end: Position { line: 1, character: 6 } },
@@ -1198,7 +1201,7 @@ mod tests {
         let documents = provider.documents.clone();
 
         let source = "def foo(x):\n    match x:\n        case int():\n            return 1\n";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostic = lsp_types::Diagnostic {
             range: Range { start: Position { line: 1, character: 4 }, end: Position { line: 1, character: 9 } },
@@ -1233,7 +1236,7 @@ mod tests {
         let documents = provider.documents.clone();
 
         let source = "def foo(x):\n    match x:\n        case int():\n            return 1\n";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostic = lsp_types::Diagnostic {
             range: Range { start: Position { line: 1, character: 4 }, end: Position { line: 1, character: 9 } },
@@ -1282,7 +1285,7 @@ mod tests {
         let documents = provider.documents.clone();
 
         let source = "class MyClass:\n    pass\n\ndef other():\n    pass\n";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostic = lsp_types::Diagnostic {
             range: Range { start: Position { line: 0, character: 6 }, end: Position { line: 0, character: 13 } },
@@ -1317,7 +1320,7 @@ mod tests {
         let documents = provider.documents.clone();
 
         let source = "class MyIterator:\n    def __init__(self):\n        pass\n";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostic = lsp_types::Diagnostic {
             range: Range { start: Position { line: 0, character: 6 }, end: Position { line: 0, character: 16 } },
@@ -1347,7 +1350,7 @@ mod tests {
         let documents = provider.documents.clone();
 
         let source = "class MyContainer:\n    pass\n";
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostic = lsp_types::Diagnostic {
             range: Range { start: Position { line: 0, character: 6 }, end: Position { line: 0, character: 17 } },

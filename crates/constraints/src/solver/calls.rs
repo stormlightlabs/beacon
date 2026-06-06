@@ -159,7 +159,7 @@ pub(super) fn instantiate_class_type(metadata: &ClassMetadata, class_name: &str,
 /// Simplify all types in a substitution by applying normalization rules
 ///
 /// This performs post-processing after constraint solving to simplify union types that may have been created during unification.
-pub(super) fn simplify_substitution(subst: Subst) -> Subst {
+pub(super) fn simplify_substitution(subst: &Subst) -> Subst {
     let simplified_pairs: Vec<(TypeVar, Type)> = subst
         .iter()
         .map(|(tv, ty)| (tv.clone(), ty.clone().simplify()))
@@ -317,13 +317,13 @@ fn resolve_protocol_call_type<'a>(callable: &Type, reg: &'a ClassRegistry) -> Op
 }
 
 pub(super) fn resolve_bound_method_type<'a>(
-    rec: Box<Type>, name: &str, method: &'a Type, pos_args: &[(Type, Span)], subst: &Subst, reg: &'a ClassRegistry,
+    rec: &Type, name: &str, method: &'a Type, pos_args: &[(Type, Span)], subst: &Subst, reg: &'a ClassRegistry,
 ) -> &'a Type {
     if rec.unapply_protocol().is_some() || rec.unapply_class().is_some() {
         return method;
     }
 
-    if let Type::Con(TypeCtor::Class(class_name)) = rec.as_ref()
+    if let Type::Con(TypeCtor::Class(class_name)) = rec
         && let Some(metadata) = reg.get_class(class_name)
         && let Some(method_type) = metadata.lookup_method_type(name)
     {
@@ -334,10 +334,10 @@ pub(super) fn resolve_bound_method_type<'a>(
 }
 
 pub(super) fn solve_call_constraint(
-    func_ty: Type, pos_args: Vec<(Type, Span)>, kw_args: Vec<(String, Type, Span)>, ret_ty: Type, span: Span,
+    func_ty: &Type, pos_args: &[(Type, Span)], kw_args: &[(String, Type, Span)], ret_ty: &Type, span: Span,
     state: &mut SolveState<'_>,
 ) {
-    let applied_func = state.subst.apply(&func_ty);
+    let applied_func = state.subst.apply(func_ty);
 
     if let Type::Con(TypeCtor::Class(class_name)) = &applied_func {
         if let Some(metadata) = state.class_registry.get_class(class_name) {
@@ -350,9 +350,9 @@ pub(super) fn solve_call_constraint(
                     span,
                 };
                 match init_type {
-                    Type::Fun(params, _) => handle_call_args(&mut ctx, &pos_args, &kw_args, params, true),
+                    Type::Fun(params, _) => handle_call_args(&mut ctx, pos_args, kw_args, params, true),
                     Type::FunWithParams(params, _) => {
-                        handle_call_param_metadata(&mut ctx, &pos_args, &kw_args, params, true)
+                        handle_call_param_metadata(&mut ctx, pos_args, kw_args, params, true)
                     }
                     _ => {}
                 }
@@ -366,14 +366,14 @@ pub(super) fn solve_call_constraint(
                 typevar_registry: state.typevar_registry,
                 span,
             };
-            unify_return_type(&mut ctx, &ret_ty, &class_result_ty);
+            unify_return_type(&mut ctx, ret_ty, &class_result_ty);
         }
     } else if let Type::BoundMethod(receiver, method_name, method) = &applied_func {
         let resolved_method = resolve_bound_method_type(
-            receiver.clone(),
+            receiver,
             method_name,
             method,
-            &pos_args,
+            pos_args,
             state.subst,
             state.class_registry,
         );
@@ -387,8 +387,8 @@ pub(super) fn solve_call_constraint(
                 span,
             };
 
-            handle_call_args(&mut ctx, &pos_args, &kw_args, params, true);
-            unify_return_type(&mut ctx, &ret_ty, method_ret);
+            handle_call_args(&mut ctx, pos_args, kw_args, params, true);
+            unify_return_type(&mut ctx, ret_ty, method_ret);
         } else if let Type::FunWithParams(params, method_ret) = resolved_method {
             let mut ctx = CallContext {
                 subst: &mut *state.subst,
@@ -398,8 +398,8 @@ pub(super) fn solve_call_constraint(
                 span,
             };
 
-            handle_call_param_metadata(&mut ctx, &pos_args, &kw_args, params, true);
-            unify_return_type(&mut ctx, &ret_ty, method_ret);
+            handle_call_param_metadata(&mut ctx, pos_args, kw_args, params, true);
+            unify_return_type(&mut ctx, ret_ty, method_ret);
         } else {
             let mut ctx = CallContext {
                 subst: &mut *state.subst,
@@ -408,10 +408,10 @@ pub(super) fn solve_call_constraint(
                 typevar_registry: state.typevar_registry,
                 span,
             };
-            unify_with_adhoc_fun(&mut ctx, resolved_method, &pos_args, &kw_args, &ret_ty);
+            unify_with_adhoc_fun(&mut ctx, resolved_method, pos_args, kw_args, ret_ty);
         }
     } else {
-        let applied_func = state.subst.apply(&func_ty);
+        let applied_func = state.subst.apply(func_ty);
         if let Type::Fun(params, fn_ret) = &applied_func {
             let mut ctx = CallContext {
                 subst: &mut *state.subst,
@@ -420,8 +420,8 @@ pub(super) fn solve_call_constraint(
                 typevar_registry: state.typevar_registry,
                 span,
             };
-            handle_call_args(&mut ctx, &pos_args, &kw_args, params, false);
-            unify_return_type(&mut ctx, &ret_ty, fn_ret);
+            handle_call_args(&mut ctx, pos_args, kw_args, params, false);
+            unify_return_type(&mut ctx, ret_ty, fn_ret);
         } else if let Type::FunWithParams(params, fn_ret) = &applied_func {
             let mut ctx = CallContext {
                 subst: &mut *state.subst,
@@ -430,8 +430,8 @@ pub(super) fn solve_call_constraint(
                 typevar_registry: state.typevar_registry,
                 span,
             };
-            handle_call_param_metadata(&mut ctx, &pos_args, &kw_args, params, false);
-            unify_return_type(&mut ctx, &ret_ty, fn_ret);
+            handle_call_param_metadata(&mut ctx, pos_args, kw_args, params, false);
+            unify_return_type(&mut ctx, ret_ty, fn_ret);
         } else if let Some(call_ty) = resolve_protocol_call_type(&applied_func, state.class_registry) {
             let mut ctx = CallContext {
                 subst: &mut *state.subst,
@@ -442,14 +442,14 @@ pub(super) fn solve_call_constraint(
             };
             match call_ty {
                 Type::Fun(params, fn_ret) => {
-                    handle_call_args(&mut ctx, &pos_args, &kw_args, params, true);
-                    unify_return_type(&mut ctx, &ret_ty, fn_ret);
+                    handle_call_args(&mut ctx, pos_args, kw_args, params, true);
+                    unify_return_type(&mut ctx, ret_ty, fn_ret);
                 }
                 Type::FunWithParams(params, fn_ret) => {
-                    handle_call_param_metadata(&mut ctx, &pos_args, &kw_args, params, true);
-                    unify_return_type(&mut ctx, &ret_ty, fn_ret);
+                    handle_call_param_metadata(&mut ctx, pos_args, kw_args, params, true);
+                    unify_return_type(&mut ctx, ret_ty, fn_ret);
                 }
-                other => unify_with_adhoc_fun(&mut ctx, other, &pos_args, &kw_args, &ret_ty),
+                other => unify_with_adhoc_fun(&mut ctx, other, pos_args, kw_args, ret_ty),
             }
         } else {
             let mut ctx = CallContext {
@@ -459,7 +459,7 @@ pub(super) fn solve_call_constraint(
                 typevar_registry: state.typevar_registry,
                 span,
             };
-            unify_with_adhoc_fun(&mut ctx, &applied_func, &pos_args, &kw_args, &ret_ty);
+            unify_with_adhoc_fun(&mut ctx, &applied_func, pos_args, kw_args, ret_ty);
         }
     }
 }

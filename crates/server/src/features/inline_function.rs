@@ -429,7 +429,7 @@ impl InlineFunctionProvider {
 
         if has_any_side_effects {
             let call_scope_vars = Self::collect_identifiers(call_text);
-            let mut used_temp_names = call_scope_vars.clone();
+            let mut used_temp_names = call_scope_vars;
 
             for (i, (param, arg)) in func_info.parameters.iter().zip(arguments.iter()).enumerate() {
                 if args_with_side_effects[i] {
@@ -941,9 +941,9 @@ impl InlineFunctionProvider {
 
     /// Expand range to include leading/trailing whitespace for clean removal
     fn expand_range_for_removal(text: &str, range: Range) -> Range {
-        let lines: Vec<&str> = text.lines().collect();
         let start = Position { line: range.start.line, character: 0 };
-        let end_line = if range.end.line + 1 < lines.len() as u32 { range.end.line + 1 } else { range.end.line };
+        let end_line =
+            if range.end.line + 1 < text.lines().count() as u32 { range.end.line + 1 } else { range.end.line };
         let end = Position { line: end_line, character: 0 };
         Range { start, end }
     }

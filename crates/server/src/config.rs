@@ -556,7 +556,7 @@ fn toml_to_json(value: toml::Value) -> serde_json::Value {
         toml::Value::String(s) => serde_json::Value::String(s),
         toml::Value::Integer(i) => serde_json::Value::Number(i.into()),
         toml::Value::Float(f) => {
-            serde_json::Value::Number(serde_json::Number::from_f64(f).unwrap_or(serde_json::Number::from(0)))
+            serde_json::Value::Number(serde_json::Number::from_f64(f).unwrap_or_else(|| serde_json::Number::from(0)))
         }
         toml::Value::Boolean(b) => serde_json::Value::Bool(b),
         toml::Value::Array(arr) => serde_json::Value::Array(arr.into_iter().map(toml_to_json).collect()),

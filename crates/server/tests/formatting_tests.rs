@@ -444,7 +444,7 @@ fn test_format_on_save() {
     pass
 "#;
 
-    documents.open_document(uri.clone(), 1, content.to_string()).ok();
+    documents.open_document(uri.clone(), 1, content).ok();
 
     let params =
         WillSaveTextDocumentParams { text_document: TextDocumentIdentifier { uri }, reason: TextSaveReason::MANUAL };
@@ -462,7 +462,7 @@ fn test_on_type_formatting() {
     let uri = Url::parse("file:///test.py").unwrap();
     let content = "def foo():";
 
-    documents.open_document(uri.clone(), 1, content.to_string()).ok();
+    documents.open_document(uri.clone(), 1, content).ok();
 
     let params = DocumentOnTypeFormattingParams {
         text_document_position: TextDocumentPositionParams {

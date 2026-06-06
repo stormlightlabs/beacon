@@ -271,10 +271,7 @@ mod tests {
     }
 
     fn open_test_document(provider: &ReferencesProvider, uri: &Url, source: &str) {
-        provider
-            .documents
-            .open_document(uri.clone(), 1, source.to_string())
-            .unwrap();
+        provider.documents.open_document(uri.clone(), 1, source).unwrap();
     }
 
     #[test]

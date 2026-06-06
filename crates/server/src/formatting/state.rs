@@ -174,11 +174,11 @@ impl StateMachine {
             "}" => {
                 self.pop_state();
             }
-            ":"
-                if (self.current_state == FormatterState::Definition || self.current_state == FormatterState::WithContext)
-                => {
-                    self.transition(FormatterState::Statement);
-                }
+            ":" if (self.current_state == FormatterState::Definition
+                || self.current_state == FormatterState::WithContext) =>
+            {
+                self.transition(FormatterState::Statement);
+            }
             _ => {}
         }
         self.current_state

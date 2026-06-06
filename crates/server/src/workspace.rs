@@ -1701,7 +1701,7 @@ impl Workspace {
                     return Some(parsed.exports);
                 }
             } else {
-                return Some(stub.exports.clone());
+                return Some(stub.exports);
             }
         }
 
@@ -1951,11 +1951,7 @@ impl Workspace {
         }
 
         if stubs_for_module.len() > 1 {
-            for symbol_name in stubs_for_module
-                .iter()
-                .flat_map(|(stub, _)| stub.exports.keys())
-                .collect::<FxHashSet<_>>()
-            {
+            for symbol_name in stubs_for_module.iter().flat_map(|(stub, _)| stub.exports.keys()) {
                 let mut types_for_symbol: Vec<(Type, PathBuf)> = Vec::new();
 
                 for (stub, path) in &stubs_for_module {
@@ -2787,7 +2783,7 @@ def test_function(x: str) -> bool: ...
             .open_document(
                 test_uri.clone(),
                 1,
-                "from typing import List\nfrom dataclasses import dataclass\n".to_string(),
+                "from typing import List\nfrom dataclasses import dataclass\n",
             )
             .unwrap();
 
@@ -3040,9 +3036,7 @@ __all__ = ["foo", "bar", "baz"]
         let uri = Url::from_file_path(&test_file).unwrap();
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
-        documents
-            .open_document(uri.clone(), 1, source_code.to_string())
-            .unwrap();
+        documents.open_document(uri.clone(), 1, source_code).unwrap();
         let workspace = Workspace::new(Some(uri.clone()), config, documents);
 
         let all_exports = workspace.extract_all_exports(&uri);
@@ -3069,9 +3063,7 @@ def foo():
         let uri = Url::from_file_path(&test_file).unwrap();
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
-        documents
-            .open_document(uri.clone(), 1, source_code.to_string())
-            .unwrap();
+        documents.open_document(uri.clone(), 1, source_code).unwrap();
         let workspace = Workspace::new(Some(uri.clone()), config, documents);
 
         let all_exports = workspace.extract_all_exports(&uri);
@@ -3100,9 +3092,7 @@ my_var = 42
         let uri = Url::from_file_path(&test_file).unwrap();
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
-        documents
-            .open_document(uri.clone(), 1, source_code.to_string())
-            .unwrap();
+        documents.open_document(uri.clone(), 1, source_code).unwrap();
         let workspace = Workspace::new(Some(uri.clone()), config, documents);
 
         let symbols = workspace.get_module_symbols(&uri);
@@ -3133,9 +3123,7 @@ __all__ = ["foo", "baz"]
         let root_uri = Url::from_directory_path(temp_dir.path()).unwrap();
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
-        documents
-            .open_document(file_uri.clone(), 1, source_code.to_string())
-            .unwrap();
+        documents.open_document(file_uri.clone(), 1, source_code).unwrap();
         let mut workspace = Workspace::new(Some(root_uri), config, documents);
 
         workspace.initialize().unwrap();
@@ -3215,9 +3203,7 @@ def greet(name: str) -> str:
     return f"Hello, {name}!"
 "#;
 
-        documents
-            .open_document(utils_uri.clone(), 0, utils_content.to_string())
-            .unwrap();
+        documents.open_document(utils_uri.clone(), 0, utils_content).unwrap();
 
         workspace.add_test_module(
             utils_uri.clone(),
@@ -3258,9 +3244,7 @@ def add(a: int, b: int) -> int:
     return a + b
 "#;
 
-        documents
-            .open_document(math_uri.clone(), 0, math_content.to_string())
-            .unwrap();
+        documents.open_document(math_uri.clone(), 0, math_content).unwrap();
 
         workspace.add_test_module(
             math_uri.clone(),
@@ -3308,7 +3292,7 @@ def do_something(x, y):
 "#;
 
         documents
-            .open_document(untyped_uri.clone(), 0, untyped_content.to_string())
+            .open_document(untyped_uri.clone(), 0, untyped_content)
             .unwrap();
 
         workspace.add_test_module(
@@ -3346,9 +3330,7 @@ def greet(name: str) -> str:
     return f"Hello, {name}!"
 "#;
 
-        documents
-            .open_document(utils_uri.clone(), 0, utils_content.to_string())
-            .unwrap();
+        documents.open_document(utils_uri.clone(), 0, utils_content).unwrap();
 
         workspace.add_test_module(
             utils_uri.clone(),

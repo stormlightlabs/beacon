@@ -207,7 +207,7 @@ def star_func() -> int:
 "#;
     workspace
         .documents()
-        .open_document(star_uri.clone(), 2, new_star_source.to_string())
+        .open_document(star_uri.clone(), 2, new_star_source)
         .unwrap();
     workspace.update_dependencies(&star_uri);
     assert_eq!(
@@ -222,7 +222,7 @@ def star_func() -> int:
     workspace
         .documents()
         .update_document(
-            VersionedTextDocumentIdentifier { uri: star_uri.clone(), version: 3 },
+            &VersionedTextDocumentIdentifier { uri: star_uri.clone(), version: 3 },
             vec![TextDocumentContentChangeEvent {
                 range: None,
                 range_length: None,
@@ -250,7 +250,7 @@ async fn workspace_references_include_imports_and_reexports() {
     let (documents, workspace) = fixture_workspace_with_documents();
     let local_uri = Url::from_file_path(file("imports/local_source.py")).expect("local source URI");
     let local_source = fs::read_to_string(file("imports/local_source.py")).expect("local source fixture");
-    documents.open_document(local_uri.clone(), 1, local_source).unwrap();
+    documents.open_document(local_uri.clone(), 1, &local_source).unwrap();
 
     let provider = ReferencesProvider::new(documents, workspace);
     let locations = provider
@@ -277,7 +277,7 @@ async fn workspace_rename_edits_imports_and_reexports() {
     let (documents, workspace) = fixture_workspace_with_documents();
     let local_uri = Url::from_file_path(file("imports/local_source.py")).expect("local source URI");
     let local_source = fs::read_to_string(file("imports/local_source.py")).expect("local source fixture");
-    documents.open_document(local_uri.clone(), 1, local_source).unwrap();
+    documents.open_document(local_uri.clone(), 1, &local_source).unwrap();
 
     let provider = RenameProvider::new(documents, workspace);
     let edit = provider

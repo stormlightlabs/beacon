@@ -37,8 +37,8 @@ pub struct Document {
 
 impl Document {
     /// Create a new document from initial text
-    pub fn new(uri: Url, version: i32, text: String) -> Self {
-        let rope = Arc::new(Rope::from_str(&text));
+    pub fn new(uri: Url, version: i32, text: &str) -> Self {
+        let rope = Arc::new(Rope::from_str(text));
 
         Self { uri, version, rope, parse_result: None, mode_override: None }
     }
@@ -142,7 +142,7 @@ impl DocumentManager {
     /// Open a new document
     ///
     /// Called when the client sends textDocument/didOpen.
-    pub fn open_document(&self, uri: Url, version: i32, text: String) -> Result<()> {
+    pub fn open_document(&self, uri: Url, version: i32, text: &str) -> Result<()> {
         let mut document = Document::new(uri.clone(), version, text);
         let mut parser = self.parser.write().unwrap();
         document.reparse(&mut parser, &[])?;
@@ -166,7 +166,7 @@ impl DocumentManager {
     /// Called when the client sends textDocument/didChange.
     /// Uses incremental parsing to efficiently update the parse tree.
     pub fn update_document(
-        &self, params: VersionedTextDocumentIdentifier, changes: Vec<TextDocumentContentChangeEvent>,
+        &self, params: &VersionedTextDocumentIdentifier, changes: Vec<TextDocumentContentChangeEvent>,
     ) -> Result<()> {
         let mut documents = self.documents.write().unwrap();
 
@@ -261,7 +261,7 @@ mod tests {
     #[test]
     fn test_document_creation() {
         let uri = Url::from_str("file:///test.py").unwrap();
-        let doc = Document::new(uri.clone(), 1, "x = 42".to_string());
+        let doc = Document::new(uri.clone(), 1, "x = 42");
 
         assert_eq!(doc.uri, uri);
         assert_eq!(doc.version, 1);
@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn test_document_apply_changes_full() {
         let uri = Url::from_str("file:///test.py").unwrap();
-        let mut doc = Document::new(uri, 1, "old text".to_string());
+        let mut doc = Document::new(uri, 1, "old text");
 
         let change = TextDocumentContentChangeEvent { range: None, range_length: None, text: "new text".to_string() };
 
@@ -284,7 +284,7 @@ mod tests {
         let manager = DocumentManager::new().unwrap();
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        manager.open_document(uri.clone(), 1, "x = 42".to_string()).unwrap();
+        manager.open_document(uri.clone(), 1, "x = 42").unwrap();
 
         assert!(manager.has_document(&uri));
 
@@ -297,7 +297,7 @@ mod tests {
         let manager = DocumentManager::new().unwrap();
         let uri = Url::from_str("file:///test.py").unwrap();
 
-        manager.open_document(uri.clone(), 1, "x = 42".to_string()).unwrap();
+        manager.open_document(uri.clone(), 1, "x = 42").unwrap();
 
         let text = manager.get_document(&uri, |doc| doc.text());
         assert_eq!(text, Some("x = 42".to_string()));
@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn test_document_reparse() {
         let uri = Url::from_str("file:///test.py").unwrap();
-        let mut doc = Document::new(uri, 1, "def hello():\n    pass".to_string());
+        let mut doc = Document::new(uri, 1, "def hello():\n    pass");
 
         let mut parser = LspParser::new().unwrap();
         doc.reparse(&mut parser, &[]).unwrap();
@@ -323,7 +323,7 @@ mod tests {
 def foo():
     pass
 "#;
-        let mut doc = Document::new(uri, 1, source.to_string());
+        let mut doc = Document::new(uri, 1, source);
 
         let mut parser = LspParser::new().unwrap();
         doc.reparse(&mut parser, &[]).unwrap();
@@ -337,7 +337,7 @@ def foo():
         let source = r#"def foo():
     pass
 "#;
-        let mut doc = Document::new(uri, 1, source.to_string());
+        let mut doc = Document::new(uri, 1, source);
 
         let mut parser = LspParser::new().unwrap();
         doc.reparse(&mut parser, &[]).unwrap();
@@ -352,7 +352,7 @@ def foo():
 def foo():
     pass
 "#;
-        let mut doc = Document::new(uri, 1, source.to_string());
+        let mut doc = Document::new(uri, 1, source);
 
         let mut parser = LspParser::new().unwrap();
         doc.reparse(&mut parser, &[]).unwrap();
@@ -370,7 +370,7 @@ def foo():
         let source = r#"def foo():
     pass
 "#;
-        let mut doc = Document::new(uri, 1, source.to_string());
+        let mut doc = Document::new(uri, 1, source);
 
         let mut parser = LspParser::new().unwrap();
         doc.reparse(&mut parser, &[]).unwrap();
@@ -389,7 +389,7 @@ def foo():
 def foo():
     pass
 "#;
-        let mut doc = Document::new(uri, 1, source.to_string());
+        let mut doc = Document::new(uri, 1, source);
 
         let mut parser = LspParser::new().unwrap();
         doc.reparse(&mut parser, &[]).unwrap();
@@ -405,7 +405,7 @@ def foo():
 def foo():
     pass
 "#;
-        let mut doc = Document::new(uri, 1, source.to_string());
+        let mut doc = Document::new(uri, 1, source);
 
         let mut parser = LspParser::new().unwrap();
         doc.reparse(&mut parser, &[]).unwrap();

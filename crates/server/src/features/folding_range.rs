@@ -419,11 +419,11 @@ impl FoldingRangeProvider {
                         .last()
                         .map(|n| self.get_node_end_line(n))
                         .or_else(|| body.last().map(|n| self.get_node_end_line(n)))
-                        .unwrap_or(self.get_node_line(node))
+                        .unwrap_or_else(|| self.get_node_line(node))
                 } else {
                     body.last()
                         .map(|n| self.get_node_end_line(n))
-                        .unwrap_or(self.get_node_line(node))
+                        .unwrap_or_else(|| self.get_node_line(node))
                 }
             }
             AstNode::For { body, else_body, .. } | AstNode::While { body, else_body, .. } => {
@@ -432,11 +432,11 @@ impl FoldingRangeProvider {
                         .last()
                         .map(|n| self.get_node_end_line(n))
                         .or_else(|| body.last().map(|n| self.get_node_end_line(n)))
-                        .unwrap_or(self.get_node_line(node))
+                        .unwrap_or_else(|| self.get_node_line(node))
                 } else {
                     body.last()
                         .map(|n| self.get_node_end_line(n))
-                        .unwrap_or(self.get_node_line(node))
+                        .unwrap_or_else(|| self.get_node_line(node))
                 }
             }
             AstNode::Try { body, finally_body, .. } => {
@@ -445,22 +445,22 @@ impl FoldingRangeProvider {
                         .last()
                         .map(|n| self.get_node_end_line(n))
                         .or_else(|| body.last().map(|n| self.get_node_end_line(n)))
-                        .unwrap_or(self.get_node_line(node))
+                        .unwrap_or_else(|| self.get_node_line(node))
                 } else {
                     body.last()
                         .map(|n| self.get_node_end_line(n))
-                        .unwrap_or(self.get_node_line(node))
+                        .unwrap_or_else(|| self.get_node_line(node))
                 }
             }
             AstNode::With { body, .. } => body
                 .last()
                 .map(|n| self.get_node_end_line(n))
-                .unwrap_or(self.get_node_line(node)),
+                .unwrap_or_else(|| self.get_node_line(node)),
             AstNode::Match { cases, .. } => cases
                 .last()
                 .and_then(|case| case.body.last())
                 .map(|n| self.get_node_end_line(n))
-                .unwrap_or(self.get_node_line(node)),
+                .unwrap_or_else(|| self.get_node_line(node)),
             _ => self.get_node_line(node),
         }
     }
@@ -492,7 +492,7 @@ def calculate(x, y):
     return result
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let ranges = provider.extract_folding_ranges(&uri);
         assert!(ranges.is_some());
@@ -521,7 +521,7 @@ class Calculator:
         return x - y
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let ranges = provider.extract_folding_ranges(&uri);
         assert!(ranges.is_some());
@@ -545,7 +545,7 @@ def check(x):
         return False
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let ranges = provider.extract_folding_ranges(&uri);
         assert!(ranges.is_some());
@@ -566,7 +566,7 @@ def process_items(items):
         process(item)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let ranges = provider.extract_folding_ranges(&uri);
         assert!(ranges.is_some());
@@ -592,7 +592,7 @@ def safe_divide(a, b):
         print("Done")
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let ranges = provider.extract_folding_ranges(&uri);
         assert!(ranges.is_some());
@@ -620,7 +620,7 @@ def main():
     pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let ranges = provider.extract_folding_ranges(&uri);
         assert!(ranges.is_some());
@@ -646,7 +646,7 @@ items = [
 ]
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let ranges = provider.extract_folding_ranges(&uri);
         assert!(ranges.is_some());
@@ -671,7 +671,7 @@ config = {
 }
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let ranges = provider.extract_folding_ranges(&uri);
         assert!(ranges.is_some());
@@ -696,7 +696,7 @@ class Processor:
                 print(item)
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let ranges = provider.extract_folding_ranges(&uri);
         assert!(ranges.is_some());
@@ -721,7 +721,7 @@ def handle_command(cmd):
             return False
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let ranges = provider.extract_folding_ranges(&uri);
         assert!(ranges.is_some());
@@ -740,7 +740,7 @@ def empty():
     pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let ranges = provider.extract_folding_ranges(&uri);
         assert!(ranges.is_some());
@@ -763,7 +763,7 @@ def read_file(path):
         return content
 "#;
 
-        documents.open_document(uri.clone(), 1, source.to_string()).unwrap();
+        documents.open_document(uri.clone(), 1, source).unwrap();
 
         let ranges = provider.extract_folding_ranges(&uri);
         assert!(ranges.is_some());

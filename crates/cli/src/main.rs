@@ -270,13 +270,13 @@ enum DebugCommands {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse().command {
-        Commands::Parse { file, pretty, tree, json } => parse_command(&read_input(file)?, pretty, tree, json),
-        Commands::Highlight { file, no_color } => highlight_command(&read_input(file)?, !no_color),
-        Commands::Check { file } => check_command(&read_input(file)?),
-        Commands::Resolve { file, verbose } => resolve_command(&read_input(file)?, verbose),
+        Commands::Parse { file, pretty, tree, json } => parse_command(&read_input(file.as_ref())?, pretty, tree, json),
+        Commands::Highlight { file, no_color } => highlight_command(&read_input(file.as_ref())?, !no_color),
+        Commands::Check { file } => check_command(&read_input(file.as_ref())?),
+        Commands::Resolve { file, verbose } => resolve_command(&read_input(file.as_ref())?, verbose),
         Commands::Typecheck { paths, format } => typecheck_command(paths, format).await,
         Commands::Lsp { stdio, tcp, host, port, log_file } => lsp_command(stdio, tcp, host, port, log_file).await,
-        Commands::Format { paths, write, check, output } => format_command(paths, write, check, output),
+        Commands::Format { paths, write, check, output } => format_command(&paths, write, check, output),
         Commands::Analyze { target, format, show_cfg, show_types, lint_only, dataflow_only } => {
             analyze::analyze_command(target, format, show_cfg, show_types, lint_only, dataflow_only).await
         }
@@ -288,9 +288,9 @@ async fn main() -> Result<()> {
     }
 }
 
-fn read_input(file: Option<PathBuf>) -> Result<String> {
+fn read_input(file: Option<&PathBuf>) -> Result<String> {
     match file {
-        Some(path) => fs::read_to_string(&path).with_context(|| format!("Failed to read file: {}", path.display())),
+        Some(path) => fs::read_to_string(path).with_context(|| format!("Failed to read file: {}", path.display())),
         None => {
             let mut buffer = String::new();
             io::stdin()
@@ -301,7 +301,7 @@ fn read_input(file: Option<PathBuf>) -> Result<String> {
     }
 }
 
-fn format_command(paths: Vec<PathBuf>, write: bool, check: bool, output: Option<PathBuf>) -> Result<()> {
+fn format_command(paths: &[PathBuf], write: bool, check: bool, output: Option<PathBuf>) -> Result<()> {
     if paths.is_empty() {
         let source = read_input(None)?;
         let mut formatter = Formatter::new(FormatterConfig::default(), PythonParser::default());
@@ -330,7 +330,7 @@ fn format_command(paths: Vec<PathBuf>, write: bool, check: bool, output: Option<
         anyhow::bail!("--output can only be used with a single file");
     }
 
-    let files = helpers::discover_python_files(&paths)?;
+    let files = helpers::discover_python_files(paths)?;
     let mut changed_files = Vec::new();
     let mut formatter = Formatter::new(FormatterConfig::default(), PythonParser::default());
 
@@ -553,10 +553,10 @@ async fn lsp_command(_stdio: bool, tcp: bool, host: String, port: u16, log_file:
 #[cfg(debug_assertions)]
 async fn debug_command(command: DebugCommands) -> Result<()> {
     match command {
-        DebugCommands::Tree { file, json } => debug_tree_command(file, json),
-        DebugCommands::Ast { file, format } => debug_ast_command(file, format),
-        DebugCommands::Constraints { file } => debug_constraints_command(file),
-        DebugCommands::Unify { file } => debug_unify_command(file),
+        DebugCommands::Tree { file, json } => debug_tree_command(file.as_ref(), json),
+        DebugCommands::Ast { file, format } => debug_ast_command(file.as_ref(), &format),
+        DebugCommands::Constraints { file } => debug_constraints_command(file.as_ref()),
+        DebugCommands::Unify { file } => debug_unify_command(file.as_ref()),
         DebugCommands::Diagnostics { paths, format } => debug_diagnostics_command(paths, format).await,
         DebugCommands::Logs { follow, path, filter } => debug_logs_command(follow, path, filter),
         DebugCommands::Cfg { path, json } => cfg::debug_cfg_command(path, json).await,
@@ -564,7 +564,7 @@ async fn debug_command(command: DebugCommands) -> Result<()> {
 }
 
 #[cfg(debug_assertions)]
-fn debug_tree_command(file: Option<PathBuf>, json: bool) -> Result<()> {
+fn debug_tree_command(file: Option<&PathBuf>, json: bool) -> Result<()> {
     let source = read_input(file)?;
     let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
     let parsed = parser.parse(&source).with_context(|| "Failed to parse Python source")?;
@@ -601,18 +601,18 @@ fn debug_tree_command(file: Option<PathBuf>, json: bool) -> Result<()> {
 }
 
 #[cfg(debug_assertions)]
-fn debug_ast_command(file: Option<PathBuf>, format: String) -> Result<()> {
-    let source = read_input(file.clone())?;
+fn debug_ast_command(file: Option<&PathBuf>, format: &str) -> Result<()> {
+    let source = read_input(file)?;
     let documents = DocumentManager::new()?;
     let file_path = file
         .as_ref()
-        .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()))
+        .map(|p| p.canonicalize().unwrap_or_else(|_| p.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("stdin.py"));
 
     let uri = Url::from_file_path(&file_path)
         .unwrap_or_else(|_| Url::parse(&format!("file://{}", file_path.display())).expect("Failed to create URL"));
 
-    documents.open_document(uri.clone(), 1, source)?;
+    documents.open_document(uri.clone(), 1, &source)?;
 
     let config = Config::default();
     let mut analyzer = Analyzer::new(config, documents);
@@ -674,7 +674,7 @@ fn debug_ast_command(file: Option<PathBuf>, format: String) -> Result<()> {
 }
 
 #[cfg(debug_assertions)]
-fn debug_constraints_command(file: Option<PathBuf>) -> Result<()> {
+fn debug_constraints_command(file: Option<&PathBuf>) -> Result<()> {
     let source = read_input(file)?;
     let mut parser = PythonParser::new().with_context(|| "Failed to create Python parser")?;
     let parsed = parser.parse(&source).with_context(|| "Failed to parse Python source")?;
@@ -731,12 +731,12 @@ fn debug_constraints_command(file: Option<PathBuf>) -> Result<()> {
 }
 
 #[cfg(debug_assertions)]
-fn debug_unify_command(file: Option<PathBuf>) -> Result<()> {
+fn debug_unify_command(file: Option<&PathBuf>) -> Result<()> {
     println!("{}", "Unification trace:".cyan().bold());
 
     let file_path = file
         .as_ref()
-        .map(|path| path.canonicalize().unwrap_or_else(|_| path.clone()))
+        .map(|path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
         .unwrap_or_else(|| PathBuf::from("stdin.py"));
     let source = read_input(file)?;
     let documents = DocumentManager::new()?;
@@ -749,7 +749,7 @@ fn debug_unify_command(file: Option<PathBuf>) -> Result<()> {
         format!("loaded source from {}", file_path.display()).bright_white()
     );
 
-    documents.open_document(uri.clone(), 1, source)?;
+    documents.open_document(uri.clone(), 1, &source)?;
     println!(
         "  {} {}",
         "2.".dimmed(),
@@ -1069,7 +1069,7 @@ mod tests {
         )
         .unwrap();
 
-        let content = read_input(Some(temp_file.path().to_path_buf())).unwrap();
+        let content = read_input(Some(&temp_file.path().to_path_buf())).unwrap();
         assert!(content.contains("factorial"));
         assert!(content.contains("return"));
         assert!(content.trim().lines().count() >= 1);
@@ -1078,7 +1078,7 @@ mod tests {
     #[test]
     fn test_read_input_from_stdin() {
         let non_existent = PathBuf::from("/non/existent/file.py");
-        let result = read_input(Some(non_existent));
+        let result = read_input(Some(&non_existent));
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Failed to read file"));
     }
@@ -1086,7 +1086,7 @@ mod tests {
     #[test]
     fn test_read_input_empty_file() {
         let temp_file = NamedTempFile::new().unwrap();
-        let content = read_input(Some(temp_file.path().to_path_buf())).unwrap();
+        let content = read_input(Some(&temp_file.path().to_path_buf())).unwrap();
         assert_eq!(content, "");
     }
 
@@ -1444,7 +1444,7 @@ result = obj.method(10)
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "x = 42\ny = 'hello'").unwrap();
 
-        let result = debug_tree_command(Some(temp_file.path().to_path_buf()), false);
+        let result = debug_tree_command(Some(&temp_file.path().to_path_buf()), false);
         assert!(result.is_ok());
     }
 
@@ -1458,7 +1458,7 @@ result = obj.method(10)
         )
         .unwrap();
 
-        let result = debug_tree_command(Some(temp_file.path().to_path_buf()), true);
+        let result = debug_tree_command(Some(&temp_file.path().to_path_buf()), true);
         assert!(result.is_ok());
     }
 
@@ -1468,7 +1468,7 @@ result = obj.method(10)
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "x = [1, 2, 3]\ny = sum(x)").unwrap();
 
-        let result = debug_ast_command(Some(temp_file.path().to_path_buf()), "tree".to_string());
+        let result = debug_ast_command(Some(&temp_file.path().to_path_buf()), "tree");
         assert!(result.is_ok());
     }
 
@@ -1478,7 +1478,7 @@ result = obj.method(10)
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "def add(a, b):\n    return a + b\n\nresult = add(1, 2)").unwrap();
 
-        let result = debug_constraints_command(Some(temp_file.path().to_path_buf()));
+        let result = debug_constraints_command(Some(&temp_file.path().to_path_buf()));
         assert!(result.is_ok());
     }
 
@@ -1488,7 +1488,7 @@ result = obj.method(10)
         let mut temp_file = NamedTempFile::new().unwrap();
         writeln!(temp_file, "x = 42\ny = x + 10").unwrap();
 
-        let result = debug_unify_command(Some(temp_file.path().to_path_buf()));
+        let result = debug_unify_command(Some(&temp_file.path().to_path_buf()));
         assert!(result.is_ok());
     }
 

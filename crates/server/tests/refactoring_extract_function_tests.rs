@@ -33,9 +33,7 @@ def main():
     y: MyInt = MyInt()
     z = x
 "#;
-    documents
-        .open_document(module_uri.clone(), 0, module_content.to_string())
-        .unwrap();
+    documents.open_document(module_uri.clone(), 0, module_content).unwrap();
     workspace.update_dependencies(&module_uri);
 
     let mut analyzer = Analyzer::new(config.clone(), documents.clone());
