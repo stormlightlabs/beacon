@@ -20,7 +20,7 @@ See [Feature Providers](./feature_providers.md) for detailed implementation.
 
 Use the sidebar to jump into any topic, or start with the sections below:
 
-- [Goals And Scope](./goals.md) - what the server delivers today and what is intentionally out of scope.
+- [Goals And Scope](../goals.md) - what Beacon delivers today and what is intentionally out of scope.
 - [Architecture Overview](./architecture.md) - how shared state, concurrency, and feature wiring are structured.
 - [Document Pipeline](./document_pipeline.md) - how file contents become parse trees, ASTs, and symbol tables.
 - [Caching](./caching.md) - multi-layer cache architecture and invalidation strategies for fast incremental updates.

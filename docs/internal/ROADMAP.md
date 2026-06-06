@@ -3,10 +3,11 @@
 Beacon's v1 goal is a maintainable Hindley-Milner type checker, language
 server, and static checker for Python.
 
-The v1 contract lives in [specs/v1.md](./specs/v1.md). Detailed behavior
-specs cover [typing breadth](./specs/typing-breadth.md),
-[narrowing](./specs/narrowing.md), [imports and stubs](./specs/imports.md),
-and [dynamic Python](./specs/dynamic.md).
+The v1 contract lives in [specs/v1.md](./specs/v1.md). Public docs describe
+[typing breadth](../src/lsp/typing_surface.md),
+[narrowing](../src/lsp/type_narrowing.md),
+[imports and stubs](../src/lsp/imports_and_stubs.md), and
+[dynamic Python](../src/lsp/diagnostics/dynamic.md).
 
 Near-term execution lives in [TODO.md](./TODO.md). QA workflows and e2e
 validation live in [QA.md](./QA.md).
@@ -114,9 +115,10 @@ The shared workspace fixture should cover these v1 behaviors.
 ### Type Semantics
 
 - Local inference, calls, overloads, generics, protocols, data models, async,
-  and generator behavior. See [typing breadth](./specs/typing-breadth.md).
+  and generator behavior. See
+  [typing breadth](../src/lsp/typing_surface.md).
 - Union/optional simplification, guard behavior, joins, reachability, and
-  pattern matching. See [narrowing](./specs/narrowing.md).
+  pattern matching. See [narrowing](../src/lsp/type_narrowing.md).
 
 ### Diagnostics
 
@@ -134,7 +136,7 @@ The shared workspace fixture should cover these v1 behaviors.
 ### Workspace And Stubs
 
 - Package roots, source roots, imports, exports, stubs, and invalidation.
-  See [imports and stubs](./specs/imports.md).
+  See [imports and stubs](../src/lsp/imports_and_stubs.md).
 
 ### CLI
 
@@ -158,7 +160,7 @@ The shared workspace fixture should cover these v1 behaviors.
 
 Dynamic Python should be tested explicitly. Each case should infer a concrete
 type, emit a stable diagnostic, or cross an explicit `Any`/unknown boundary.
-See [dynamic Python](./specs/dynamic.md).
+See [dynamic Python](../src/lsp/diagnostics/dynamic.md).
 
 ## Milestones
 

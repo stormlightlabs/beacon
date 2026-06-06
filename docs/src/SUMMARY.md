@@ -22,6 +22,9 @@
       - [Name Resolution Diagnostics](./lsp/diagnostics/name_resolution.md)
       - [Data-Flow Diagnostics](./lsp/diagnostics/data_flow.md)
     - [Type Checker](./lsp/type_checking.md)
+      - [Typing Surface](./lsp/typing_surface.md)
+      - [Type Narrowing](./lsp/type_narrowing.md)
+      - [Imports and Stubs](./lsp/imports_and_stubs.md)
       - [Type Checking Modes](./type-checking-modes.md)
 
 - [Editor Extensions](./extensions/overview.md)
@@ -49,6 +52,8 @@
   - [PEP484 & 585](./learn/pep-484-585.md)
   - [PEP561](./learn/pep-561-stubs.md)
   - [PEP634 to 636](./learn/pep-634-636.md)
+  - [Rocchio Scoring](./learn/rocchio-scoring.md)
+  - [Tarjan's Algorithm](./learn/tarjans-algorithm.md)
 - [Development](./development/overview.md)
   - [Typeshed Integration](./development/typeshed-integration.md)
   - [Benchmarking](./development/benchmarking.md)

@@ -1,7 +1,16 @@
 # Dynamic Python Diagnostics
 
 Beacon reports dynamic Python boundaries when runtime behavior can change names,
-types, imports, or class layout in ways static analysis cannot model precisely.
+types, imports, or class layout in ways static analysis cannot model.
+
+For each dynamic case, Beacon does one of three things:
+
+- infers a concrete type when the target and result are provable;
+- reports a diagnostic when the code may hide an error;
+- treats the value as `Any` or unknown at that boundary.
+
+Fallbacks should not erase unrelated precise types.
+Strict mode reports unsafe propagation across dynamic boundaries more aggressively.
 
 ## DYN001 – `DynamicBoundary` {#dyn001}
 
@@ -40,9 +49,9 @@ sys.meta_path.append(object())  # DYN001
 ```
 
 Supported patterns such as literal `getattr(obj, "name")`, `hasattr`, and an
-annotated `__getattr__` method act as explicit fallback boundaries and do not
+annotated `__getattr__` method are explicit fallback boundaries. They do not
 produce this diagnostic by themselves.
 
-Fix by replacing dynamic behavior with ordinary imports, declared attributes,
-stubs, protocols, or typed wrapper functions where possible. If the dynamic
-boundary is intentional, isolate it and annotate the result as `Any`.
+Fix dynamic code with ordinary imports, declared attributes, stubs, protocols, or
+typed wrapper functions when you can. If the dynamic boundary is intentional,
+isolate it and annotate the result as `Any`.

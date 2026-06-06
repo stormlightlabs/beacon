@@ -40,7 +40,7 @@
 
 ## Milestone 3: Typing Breadth
 
-- [x] Implement the coverage in [typing-breadth.md](./specs/typing-breadth.md).
+- [x] Implement the coverage in [Typing Surface](../src/lsp/typing_surface.md).
 - [x] Audit value restriction/generalization behavior and add regression
       fixtures.
 - [x] Add focused call-constraint tests for positional, keyword, defaulted,
@@ -58,7 +58,7 @@
 
 ## Milestone 4: Narrowing And Data Flow
 
-- [x] Implement the coverage in [narrowing.md](./specs/narrowing.md).
+- [x] Implement the coverage in [Type Narrowing](../src/lsp/type_narrowing.md).
 - [x] Expand TypeGuard/TypeIs narrowing beyond simple first-argument cases.
 - [x] Add guard fixtures for `isinstance`, `issubclass`, `type`, `None`,
       truthiness, membership, `hasattr`, `callable`, and assertions.
@@ -72,7 +72,8 @@
 
 ## Milestone 5: Imports, Stubs, And Workspace Reliability
 
-- [x] Implement the coverage in [imports.md](./specs/imports.md).
+- [x] Implement the coverage in
+      [Imports and Stubs](../src/lsp/imports_and_stubs.md).
 - [x] Add setup validation for absent or partially initialized `typeshed`.
 - [x] Report embedded stub version/hash/count in a debug or version command.
 - [x] Test precedence between workspace `.py`, workspace `.pyi`, custom
@@ -88,7 +89,8 @@
 
 ## Milestone 6: Dynamic Python
 
-- [x] Implement the coverage in [dynamic.md](./specs/dynamic.md).
+- [x] Implement the coverage in
+      [Dynamic Python Diagnostics](../src/lsp/diagnostics/dynamic.md).
 - [x] Define supported fallback behavior for monkey-patching, metaclasses,
       `__getattr__`, dynamic imports, custom import hooks, and reflection.
 - [x] Add tests that assert when dynamic behavior resolves to a concrete type,

@@ -84,19 +84,19 @@ target/debug/beacon debug unify example.py
 
 Note: Debug commands are only available in debug builds (compiled with `cargo build`), not in release builds.
 
-Full documentation: [CLI Tools](./cli/overview.md)
+Full documentation: [CLI Tools](../cli/overview.md)
 
 ## Editor Extensions
 
 Beacon supports VS Code, Zed, and Neovim through the Language Server Protocol.
 
-See [Editor Extensions Documentation](./extensions/overview.md) for setup instructions.
+See [Editor Extensions Documentation](../extensions/overview.md) for setup instructions.
 
 **Quick Links**:
 
-- [VS Code](./extensions/vscode.md)
-- [Zed](./extensions/zed.md)
-- [Neovim](./extensions/overview.md#neovim-integration)
+- [VS Code](../extensions/vscode.md)
+- [Zed](../extensions/zed.md)
+- [Neovim](../extensions/overview.md#neovim-integration)
 
 ## Project Structure
 
