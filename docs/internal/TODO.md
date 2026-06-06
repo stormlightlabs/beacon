@@ -99,10 +99,10 @@
 
 ## Milestone 7: LSP And Editor Product Surface
 
-- [ ] Add LSP fixture coverage for open, edit, save, close, rename, and
+- [x] Add LSP fixture coverage for open, edit, save, close, rename, and
       delete.
-- [ ] Add version-safe diagnostics publishing and clearing tests.
-- [ ] Verify hover, completion, goto definition, references, rename, symbols,
+- [x] Add version-safe diagnostics publishing and clearing tests.
+- [x] Verify hover, completion, goto definition, references, rename, symbols,
       semantic tokens, and inlay hints against the v1 fixture.
 - [ ] Add snippet completion tests using scope, imports, and inferred types.
 - [ ] Add auto-import tests using workspace symbols, stubs, and re-exports.
