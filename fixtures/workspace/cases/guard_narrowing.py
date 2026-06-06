@@ -1,4 +1,4 @@
-"""Guard narrowing coverage for Milestone 4."""
+"""Guard narrowing."""
 
 from __future__ import annotations
 

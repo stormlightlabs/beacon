@@ -1,19 +1,20 @@
 # Zed Extension
 
-The Beacon Zed extension (`pkg/zed/`) integrates the Beacon language server with Zed editor.
-It activates automatically for Python files and provides Hindley-Milner type checking alongside standard LSP features.
+The Beacon Zed extension (`pkg/zed/`) connects Zed's built-in Python language
+support to the `beacon-lsp` language server. It provides Beacon diagnostics and
+LSP features while relying on Zed's existing Python grammar and language metadata.
 
 ## Feature Highlights
 
-- On-type diagnostics for syntax and type errors
+- On-type diagnostics for syntax, semantic, and type errors
 - Hover tooltips with type information
-- Go to definition & find references
+- Go to definition and find references
 - Document and workspace symbols
-- Semantic tokens for enhanced highlighting
-- Identifier completions and inlay hints
-- Code actions for quick fixes and refactoring
+- Semantic tokens and inlay hints when enabled in Zed
+- Identifier completions and code actions
 
-These capabilities mirror the features exposed by the Rust server in `crates/server`.
+These capabilities mirror the features exposed by the Rust server in
+`crates/server`.
 
 ## Repository Layout
 
@@ -23,174 +24,105 @@ pkg/zed/
 │   └── lib.rs       # Extension implementation
 ├── Cargo.toml       # Rust project manifest
 ├── extension.toml   # Zed extension metadata
+├── LICENSE          # Extension publishing license
 └── README.md        # Installation instructions
 ```
 
-The extension is compiled to WebAssembly (wasm32-wasip1) and communicates with the beacon-lsp binary via the Language Server Protocol.
+The extension compiles to WebAssembly (`wasm32-wasip1`) and launches the
+`beacon-lsp` binary through the Language Server Protocol.
+
+## Manifest Notes
+
+`extension.toml` follows the current Zed language-server manifest shape:
+
+```toml
+[language_servers.beacon-lsp]
+name = "Beacon LSP"
+languages = ["Python"]
+```
+
+Beacon does not ship a Python Tree-sitter grammar. Zed already provides Python
+language metadata, so the extension only registers the `beacon-lsp` language
+server for the `Python` language name.
 
 ## Prerequisites
 
-- **Rust toolchain** (stable) with `cargo` available in `PATH`
-- **wasm32-wasip1 target** for Rust (install with `rustup target add wasm32-wasip1`)
-- **beacon-lsp binary** installed and available in `PATH`
-- **Zed editor** installed
+- Rust installed via `rustup`
+- `wasm32-wasip1` target (`rustup target add wasm32-wasip1`)
+- `beacon-lsp` installed and available in `PATH`
+- Zed editor
 
-## Installing beacon-lsp
+Install the language server from the repository root:
 
-The extension requires `beacon-lsp` to be available in your system PATH:
-
-```bash
-# From the repository root
+```sh
 cargo install --path crates/server
 ```
 
-This installs the `beacon-lsp` binary to `~/.cargo/bin`. Ensure `~/.cargo/bin` is in your PATH.
+Verify that Zed will be able to find it:
 
-Verify installation:
-
-```bash
+```sh
 which beacon-lsp
-# Should output: /Users/<username>/.cargo/bin/beacon-lsp
 ```
 
-## Building The Extension
+## Building the Extension
 
-The extension must be compiled to WebAssembly:
-
-```bash
+```sh
 cd pkg/zed
 cargo build --target wasm32-wasip1 --release
 ```
 
-The compiled extension will be at:
+The compiled extension is written to:
 
 ```text
 target/wasm32-wasip1/release/beacon_zed.wasm
 ```
 
-## Installing The Extension
+## Installing a Dev Extension
 
-### Development Installation
+Zed no longer requires manually symlinking local extensions. For local testing:
 
-For local development and testing:
+1. Build the extension.
+2. Open Zed's Extensions page.
+3. Choose **Install Dev Extension** or run `zed: install dev extension` from the
+   command palette.
+4. Select the `pkg/zed` directory.
+5. Open a Python file to activate Beacon.
 
-1. Build the extension (see above)
-2. Create a symlink to the extension directory in Zed's extensions folder:
+If a published Beacon extension is installed later, Zed will show that it is
+"Overridden by dev extension" until the dev extension is removed.
 
-    ```sh
-    # macOS
-    mkdir -p ~/.config/zed/extensions
-    ln -s /path/to/beacon/pkg/zed ~/.config/zed/extensions/beacon
-    ```
+## Debugging
 
-3. Restart Zed or reload the window
-4. Open a Python file to activate the extension
+Use `zed: open log` to inspect `Zed.log`. For extension `println!` or `dbg!`
+output and more verbose startup logs, launch Zed from a terminal:
 
-### Distribution Installation
-
-To distribute the extension, package it following [Zed's extension installation guide](https://zed.dev/docs/extensions/installing-extensions).
-
-The extension expects `beacon-lsp` to be available in the user's PATH. Users should install it via:
-
-```bash
-cargo install beacon-lsp
+```sh
+zed --foreground
 ```
 
-## Extension Implementation
+The extension starts `beacon-lsp` with `RUST_LOG=info`. To increase server-side
+logging while testing, update `get_env_for_language_server` in
+`pkg/zed/src/lib.rs` and rebuild the extension.
 
-The extension implements the `zed::Extension` trait with the following key components:
+## Publishing Checklist
 
-### Language Server Command
+Zed publishes extensions through PRs to
+[`zed-industries/extensions`](https://github.com/zed-industries/extensions).
+Before publishing or updating Beacon:
 
-Returns the command to launch beacon-lsp:
-
-```rust
-fn language_server_command(
-    &mut self, _: &zed::LanguageServerId, worktree: &zed::Worktree) -> zed::Result<zed::Command> {
-    let command = worktree
-        .which("beacon-lsp")
-        .ok_or_else(|| "beacon-lsp not found in PATH")?;
-
-    Ok(zed::Command {
-        command,
-        args: vec![],
-        env: vec![("RUST_LOG".to_string(), "info".to_string())],
-    })
-}
-```
-
-### Environment Variables
-
-The extension sets `RUST_LOG=info` to configure logging. Logs are written to stderr and can be viewed in Zed's log panel.
-
-### Arguments
-
-beacon-lsp doesn't require command-line arguments as it communicates via stdin/stdout.
-
-## Configuration
-
-See [Configuration](../configuration.md)for details.
-
-## Development Workflow
-
-### Making Changes
-
-1. Edit the extension source in `pkg/zed/src/lib.rs`
-2. Rebuild the extension:
-
-    ```bash
-    cargo build --target wasm32-wasip1 --release
-    ```
-
-3. Restart Zed to load the updated extension
-
-### Debugging
-
-Enable detailed logging:
-
-```bash
-RUST_LOG=beacon_lsp=debug zed
-```
-
-Or set the environment variable in your shell before launching Zed. Logs appear in:
-
-- **macOS**: `~/Library/Logs/Zed/Zed.log`
-- **Linux**: `~/.local/share/zed/logs/Zed.log`
-
-### Testing Changes
-
-1. Build the language server with your changes:
-
-    ```bash
-    cargo build -p beacon-lsp
-    cargo install --path crates/server
-    ```
-
-2. Rebuild the extension if needed
-3. Open a Python project in Zed
-4. Test LSP features:
-    - Hover over variables to see type information
-    - Use Cmd+Click (macOS) or Ctrl+Click (Linux) for go-to-definition
-    - Check the Problems panel for diagnostics
-    - Trigger completions with Ctrl+Space
-
-## Comparison with VS Code Extension
-
-| Feature         | Zed                 | VS Code               |
-| --------------- | ------------------- | --------------------- |
-| Installation    | Manual build + PATH | Marketplace (planned) |
-| Configuration   | TOML files          | VS Code settings UI   |
-| Debugging       | Log files           | Output panel          |
-| Language Server | Shared (beacon-lsp) | Shared (beacon-lsp)   |
-| Features        | Full LSP support    | Full LSP support      |
-| Platform        | macOS, Linux        | macOS, Linux, Windows |
-
-Both extensions use the same beacon-lsp server, so feature parity is guaranteed.
+- Keep `extension.toml`'s `version` in sync with the extension registry entry.
+- Use the extension ID `beacon`; Zed's publishing rules disallow `zed` or
+  `extension` in extension IDs and names.
+- Keep a valid accepted license at `pkg/zed/LICENSE` because this extension lives
+  in a subdirectory of the repository.
+- Do not bundle `beacon-lsp` into the extension. Zed requires language-server
+  extensions to find or download external servers instead.
+- Test the extension locally with **Install Dev Extension** before opening the
+  publishing PR.
 
 ## Resources
 
 - [Zed Extension Development](https://zed.dev/docs/extensions/developing-extensions)
 - [Zed Language Extensions](https://zed.dev/docs/extensions/languages)
 - [Zed Extension API](https://docs.rs/zed_extension_api/latest/zed_extension_api/)
-- [Language Server Protocol](https://microsoft.github.io/language-server-protocol/)
 - [Beacon Configuration](../configuration.md)

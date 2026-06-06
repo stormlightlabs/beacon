@@ -1,4 +1,4 @@
-"""Any narrowing contract for Milestone 4."""
+"""Any narrowing."""
 
 from __future__ import annotations
 

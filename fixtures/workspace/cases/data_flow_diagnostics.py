@@ -1,4 +1,4 @@
-"""Data-flow diagnostics for Milestone 4."""
+"""Data-flow diagnostics."""
 
 from __future__ import annotations
 

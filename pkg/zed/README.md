@@ -1,47 +1,71 @@
 # Beacon Zed Extension
 
-Python language server extension for Zed that provides Hindley-Milner type inference.
+Python language-server extension for Zed that runs `beacon-lsp`.
 
 ## Features
 
 - Hindley-Milner type inference with automatic generalization
 - Real-time diagnostics for syntax, semantic, and type errors
-- Code intelligence: hover, completions, go-to-definition, find references
-- Code actions: quick fixes, refactorings, protocol implementations
-- Symbol navigation and workspace search
-- Semantic highlighting and inlay hints
+- Hover, completions, go-to-definition, and find references
+- Code actions, symbol navigation, semantic tokens, and inlay hints
 
 [Full feature documentation](https://stormlightlabs.github.io/beacon/)
 
-## Installation
+## Install `beacon-lsp`
 
-### Install beacon-lsp
-
-The extension requires `beacon-lsp` to be available in your PATH:
+The extension expects `beacon-lsp` to be available in Zed's `PATH`:
 
 ```sh
-# From the project root
+# From the repository root
 cargo install --path crates/server
 ```
 
-This installs `beacon-lsp` to `~/.cargo/bin`.
-
-### Build and Install Extension
+Verify the binary is discoverable:
 
 ```sh
-# Build the extension
-cargo build --target wasm32-wasip1 --release
-
-# The extension wasm is at:
-# target/wasm32-wasip1/release/beacon_zed.wasm
+which beacon-lsp
 ```
 
-Install the extension following [Zed's extension installation guide](https://zed.dev/docs/extensions/installing-extensions).
+## Build the Extension
 
-## Development
+Rust must be installed through `rustup` for Zed dev extensions.
 
-See Zed's docs on [developing extensions](https://zed.dev/docs/extensions/developing-extensions):
+```sh
+rustup target add wasm32-wasip1
+cd pkg/zed
+cargo build --target wasm32-wasip1 --release
+```
 
-- [Language Extension](https://zed.dev/docs/extensions/languages)
-- [Capabilities](https://zed.dev/docs/extensions/capabilities)
-- [API](https://docs.rs/zed_extension_api/latest/zed_extension_api/)
+The extension wasm is written to:
+
+```text
+target/wasm32-wasip1/release/beacon_zed.wasm
+```
+
+## Install as a Dev Extension
+
+1. Open Zed's Extensions page.
+2. Click **Install Dev Extension** or run `zed: install dev extension`.
+3. Select this `pkg/zed` directory.
+4. Open a Python file.
+
+For troubleshooting, run `zed: open log`. To see extension stdout/stderr, launch
+Zed from a terminal with `zed --foreground`.
+
+## Manifest
+
+Beacon registers only a language server for Zed's built-in Python language:
+
+```toml
+[language_servers.beacon-lsp]
+name = "Beacon LSP"
+languages = ["Python"]
+```
+
+It does not ship a Python grammar or bundle the `beacon-lsp` binary.
+
+## References
+
+- [Developing Extensions](https://zed.dev/docs/extensions/developing-extensions)
+- [Language Extensions](https://zed.dev/docs/extensions/languages)
+- [Extension API](https://docs.rs/zed_extension_api/latest/zed_extension_api/)

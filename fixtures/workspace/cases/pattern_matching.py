@@ -1,4 +1,4 @@
-"""Pattern matching narrowing coverage for Milestone 4."""
+"""Pattern matching narrowing."""
 
 from __future__ import annotations
 

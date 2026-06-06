@@ -1,4 +1,4 @@
-"""Flow join narrowing coverage for Milestone 4."""
+"""Flow join narrowing."""
 
 from __future__ import annotations
 
