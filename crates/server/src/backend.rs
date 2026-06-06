@@ -364,11 +364,21 @@ impl LanguageServer for Backend {
                     .await;
             }
 
-            workspace.config = config.clone();
+            let invalidated = match workspace.apply_config_change(config.clone()) {
+                Ok(invalidated) => invalidated,
+                Err(e) => {
+                    tracing::warn!(?e, "Workspace reinitialization after configuration change failed");
+                    Vec::new()
+                }
+            };
             drop(workspace);
 
             let mut analyzer = self.analyzer.write().await;
             analyzer.update_config(config);
+
+            for uri in invalidated {
+                analyzer.invalidate(&uri);
+            }
             drop(analyzer);
 
             tracing::info!("Configuration updated successfully");

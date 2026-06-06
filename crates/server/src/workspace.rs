@@ -381,6 +381,29 @@ impl Workspace {
         Ok(())
     }
 
+    /// Apply a configuration change and return modules that should be re-analyzed.
+    ///
+    /// Source roots, stub paths, and excludes can change module/stub resolution, so the
+    /// workspace index and dependency graph are rebuilt from scratch.
+    pub fn apply_config_change(&mut self, config: Config) -> Result<Vec<Url>, WorkspaceError> {
+        let mut invalidated: FxHashSet<Url> = self.all_indexed_files().into_iter().collect();
+
+        self.config = config;
+        self.index = WorkspaceIndex::new();
+        self.dependency_graph = DependencyGraph::new();
+        self.analyzed_modules.clear();
+        if let Ok(mut stubs) = self.stubs.write() {
+            *stubs = StubCache::new();
+        }
+
+        self.initialize()?;
+        invalidated.extend(self.all_indexed_files());
+
+        let mut invalidated: Vec<_> = invalidated.into_iter().collect();
+        invalidated.sort_by_cached_key(|uri| uri.to_string());
+        Ok(invalidated)
+    }
+
     /// Build the dependency graph by extracting imports from all indexed modules
     ///
     /// Uses [rayon] for parallel processing of files.
@@ -923,6 +946,18 @@ impl Workspace {
         self.resolve_import(&absolute_module)
     }
 
+    /// Resolve an import as it appears from a specific importing module URI.
+    pub fn resolve_import_from_uri(&self, from_uri: &Url, import_name: &str) -> Option<Url> {
+        if import_name.starts_with('.') {
+            let from_module = self.uri_to_module_name(from_uri).unwrap_or_default();
+            let leading_dots = import_name.chars().take_while(|&c| c == '.').count();
+            let rest = &import_name[leading_dots..];
+            self.resolve_relative_import(&from_module, rest, leading_dots)
+        } else {
+            self.resolve_import(import_name)
+        }
+    }
+
     /// Resolve import by searching the filesystem across all source roots
     fn resolve_import_from_filesystem(&self, module_name: &str) -> Option<Url> {
         let module_path = module_name.replace('.', "/");
@@ -1078,6 +1113,33 @@ impl Workspace {
         invalidated
     }
 
+    /// Invalidate cached stub data and all modules importing that stub module.
+    pub fn invalidate_stub_module(&mut self, module_name: &str) -> Vec<Url> {
+        if let Ok(mut stubs) = self.stubs.write() {
+            stubs.remove(module_name);
+        }
+
+        if let Some(uri) = self.resolve_import(module_name) {
+            return self.invalidate_dependents(&uri);
+        }
+
+        let mut invalidated = FxHashSet::default();
+        for (uri, info) in &self.index.modules {
+            if info.dependencies.contains(module_name)
+                || info
+                    .symbol_imports
+                    .iter()
+                    .any(|import| import.from_module == module_name)
+            {
+                invalidated.insert(uri.clone());
+            }
+        }
+
+        let mut invalidated: Vec<_> = invalidated.into_iter().collect();
+        invalidated.sort_by_cached_key(|u| u.to_string());
+        invalidated
+    }
+
     /// Get a list of modules that need re-analysis in dependency order
     ///
     /// Returns URIs sorted so that dependencies are analyzed before dependents.
@@ -1152,6 +1214,7 @@ impl Workspace {
     /// 2. Stub packages (*-stubs)
     /// 3. Inline stubs (py.typed packages)
     /// 4. Typeshed (embedded)
+    /// 5. Site-packages stubs for non-stdlib third-party modules
     pub fn load_stub(&self, module_name: &str) -> Option<StubFile> {
         if let Some(stub) = self.find_manual_stub(module_name) {
             return Some(stub);
@@ -1165,7 +1228,11 @@ impl Workspace {
             return Some(stub);
         }
 
-        beacon_analyzer::get_embedded_stub(module_name)
+        if let Some(stub) = beacon_analyzer::get_embedded_stub(module_name) {
+            return Some(stub);
+        }
+
+        self.find_site_package_stub(module_name)
     }
 
     /// Find stub in manual stub paths (config.stub_paths)
@@ -1212,6 +1279,37 @@ impl Workspace {
         }
 
         None
+    }
+
+    /// Find a stub in common site-packages locations under the workspace root.
+    fn find_site_package_stub(&self, module_name: &str) -> Option<StubFile> {
+        let root_path = self.root_uri.as_ref()?.to_file_path().ok()?;
+        for site_packages in self.site_packages_paths(&root_path) {
+            if let Some(stub) = self.find_stub_in_directory(&site_packages, module_name) {
+                return Some(stub);
+            }
+        }
+        None
+    }
+
+    fn site_packages_paths(&self, root_path: &Path) -> Vec<PathBuf> {
+        let mut paths = Vec::new();
+        paths.push(root_path.join("site-packages"));
+
+        for env_dir in [".venv", "venv", "env"] {
+            let lib_dir = root_path.join(env_dir).join("lib");
+            if let Ok(entries) = std::fs::read_dir(&lib_dir) {
+                for entry in entries.filter_map(|entry| entry.ok()) {
+                    if entry.file_type().is_ok_and(|file_type| file_type.is_dir())
+                        && entry.file_name().to_string_lossy().starts_with("python")
+                    {
+                        paths.push(entry.path().join("site-packages"));
+                    }
+                }
+            }
+        }
+
+        paths
     }
 
     /// Find stub file in a directory for a given module name
@@ -1734,7 +1832,7 @@ impl Workspace {
 
     /// Get all module-level symbol definitions (functions, classes, variables)
     pub fn get_module_symbols(&self, uri: &Url) -> FxHashSet<String> {
-        let text = match self.documents.get_document(uri, |doc| doc.text()) {
+        let text = match self.document_text_or_file(uri) {
             Some(text) => text,
             None => return FxHashSet::default(),
         };
@@ -1926,9 +2024,11 @@ impl DependencyGraph {
         self.reverse_edges.entry(to.clone()).or_default().insert(from.clone());
     }
 
-    /// Remove all edges from a module
+    /// Remove outgoing edges from a module.
     ///
-    /// Called when a module is deleted or being re-analyzed and also cleans up reverse edges.
+    /// Called when a module is re-analyzed before its imports are re-extracted.
+    /// Incoming edges are preserved so changes to imported files still invalidate
+    /// their importers.
     fn rm_edges(&mut self, from: &Url) {
         if let Some(targets) = self.edges.remove(from) {
             for target in targets {
@@ -1936,17 +2036,6 @@ impl DependencyGraph {
                     reverse.remove(from);
                     if reverse.is_empty() {
                         self.reverse_edges.remove(&target);
-                    }
-                }
-            }
-        }
-
-        if let Some(sources) = self.reverse_edges.remove(from) {
-            for source in sources {
-                if let Some(edges) = self.edges.get_mut(&source) {
-                    edges.remove(from);
-                    if edges.is_empty() {
-                        self.edges.remove(&source);
                     }
                 }
             }

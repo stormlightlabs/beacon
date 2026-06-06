@@ -1,5 +1,5 @@
 use owo_colors::{OwoColorize, Style};
-use tree_sitter::Node;
+use tree_sitter as ts;
 
 /// Syntax highlighter for Python code using tree-sitter
 pub struct PythonHighlighter {
@@ -65,7 +65,7 @@ impl PythonHighlighter {
     }
 
     fn collect_highlights(
-        &self, node: Node, source: &str, color_scheme: &ColorScheme, highlights: &mut Vec<Highlight>,
+        &self, node: ts::Node, source: &str, color_scheme: &ColorScheme, highlights: &mut Vec<Highlight>,
     ) {
         let start_byte = node.start_byte();
         let end_byte = node.end_byte();
@@ -86,7 +86,7 @@ impl PythonHighlighter {
         }
     }
 
-    fn get_node_style(&self, node: Node, source: &str, color_scheme: &ColorScheme) -> Option<Style> {
+    fn get_node_style(&self, node: ts::Node, source: &str, color_scheme: &ColorScheme) -> Option<Style> {
         match node.kind() {
             "def" | "class" | "if" | "elif" | "else" | "for" | "while" | "try" | "except" | "finally" | "with"
             | "as" | "import" | "from" | "return" | "yield" | "break" | "continue" | "pass" | "del" | "global"

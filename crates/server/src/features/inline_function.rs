@@ -8,6 +8,7 @@ use crate::utils;
 
 use lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
 use std::collections::{HashMap, HashSet};
+use tree_sitter as ts;
 
 /// Parameters for inline function refactoring
 pub struct InlineFunctionParams {
@@ -140,7 +141,7 @@ impl InlineFunctionProvider {
     }
 
     /// Recursively find function definition containing the byte offset
-    fn find_function_at_offset(node: tree_sitter::Node, byte_offset: usize) -> Option<tree_sitter::Node> {
+    fn find_function_at_offset(node: ts::Node, byte_offset: usize) -> Option<ts::Node> {
         if node.kind() == "function_definition" {
             if let Some(name_node) = node.child_by_field_name("name")
                 && name_node.start_byte() <= byte_offset
@@ -180,7 +181,7 @@ impl InlineFunctionProvider {
     }
 
     /// Recursively find call expression at byte offset
-    fn find_call_at_offset(node: tree_sitter::Node, byte_offset: usize) -> Option<tree_sitter::Node> {
+    fn find_call_at_offset(node: ts::Node, byte_offset: usize) -> Option<tree_sitter::Node> {
         if node.kind() == "call" && node.start_byte() <= byte_offset && byte_offset <= node.end_byte() {
             return Some(node);
         }
@@ -196,7 +197,7 @@ impl InlineFunctionProvider {
     }
 
     /// Extract function name, parameters, and body
-    fn extract_function_info(node: tree_sitter::Node, text: &str) -> Option<FunctionInfo> {
+    fn extract_function_info(node: ts::Node, text: &str) -> Option<FunctionInfo> {
         if node.kind() != "function_definition" {
             return None;
         }
@@ -216,7 +217,7 @@ impl InlineFunctionProvider {
     }
 
     /// Extract parameter names from function parameters
-    fn extract_parameter_names(params_node: tree_sitter::Node, text: &str) -> Option<Vec<String>> {
+    fn extract_parameter_names(params_node: ts::Node, text: &str) -> Option<Vec<String>> {
         let mut parameters = Vec::new();
         let mut cursor = params_node.walk();
 
@@ -242,14 +243,14 @@ impl InlineFunctionProvider {
     }
 
     /// Extract function body text (without the def line and indentation)
-    fn extract_function_body(body_node: tree_sitter::Node, text: &str) -> Option<String> {
+    fn extract_function_body(body_node: ts::Node, text: &str) -> Option<String> {
         let body_text = body_node.utf8_text(text.as_bytes()).ok()?.to_string();
         let dedented = Self::dedent_code(&body_text);
         Some(dedented)
     }
 
     /// Analyze what the function returns
-    fn analyze_return_type(body_node: tree_sitter::Node, text: &str) -> ReturnType {
+    fn analyze_return_type(body_node: ts::Node, text: &str) -> ReturnType {
         let mut has_return = false;
         let mut return_values = HashSet::new();
 
@@ -266,7 +267,7 @@ impl InlineFunctionProvider {
 
     /// Collect return statements from function body
     fn collect_return_statements(
-        node: tree_sitter::Node, text: &str, has_return: &mut bool, return_values: &mut HashSet<String>,
+        node: ts::Node, text: &str, has_return: &mut bool, return_values: &mut HashSet<String>,
     ) {
         if node.kind() == "return_statement" {
             *has_return = true;
@@ -292,9 +293,7 @@ impl InlineFunctionProvider {
     }
 
     /// Find all call sites for a function
-    fn find_call_sites(
-        node: tree_sitter::Node, text: &str, function_name: &str, uri: &Url, call_sites: &mut Vec<CallSite>,
-    ) {
+    fn find_call_sites(node: ts::Node, text: &str, function_name: &str, uri: &Url, call_sites: &mut Vec<CallSite>) {
         if node.kind() == "call"
             && let Some(func_node) = node.child_by_field_name("function")
             && func_node.kind() == "identifier"
@@ -312,7 +311,7 @@ impl InlineFunctionProvider {
     }
 
     /// Get the function name from a call expression
-    fn get_call_name(call_node: tree_sitter::Node, text: &str) -> Option<String> {
+    fn get_call_name(call_node: ts::Node, text: &str) -> Option<String> {
         let func_node = call_node.child_by_field_name("function")?;
         if func_node.kind() == "identifier" {
             Some(func_node.utf8_text(text.as_bytes()).ok()?.to_string())
@@ -322,7 +321,7 @@ impl InlineFunctionProvider {
     }
 
     /// Extract arguments from a call expression
-    fn extract_call_arguments(call_node: tree_sitter::Node, text: &str) -> Option<Vec<String>> {
+    fn extract_call_arguments(call_node: ts::Node, text: &str) -> Option<Vec<String>> {
         let args_node = call_node.child_by_field_name("arguments")?;
         let mut arguments = Vec::new();
         let mut cursor = args_node.walk();
@@ -347,7 +346,7 @@ impl InlineFunctionProvider {
     /// - An assignment (right side)
     /// - A return statement
     /// - Another expression (binary op, function argument, list element, etc.)
-    fn is_expression_context(call_node: tree_sitter::Node) -> bool {
+    fn is_expression_context(call_node: ts::Node) -> bool {
         let Some(parent) = call_node.parent() else {
             return false;
         };
@@ -397,7 +396,7 @@ impl InlineFunctionProvider {
     }
 
     /// Check if a tree-sitter node contains side-effecting operations
-    fn node_has_side_effects(node: tree_sitter::Node) -> bool {
+    fn node_has_side_effects(node: ts::Node) -> bool {
         match node.kind() {
             "call" | "attribute" | "subscript" => true,
             "identifier" | "integer" | "float" | "string" | "true" | "false" | "none" => false,
@@ -417,8 +416,8 @@ impl InlineFunctionProvider {
     ///
     /// Handles both expression and statement contexts, with proper side effect management.
     fn inline_function_body(
-        func_info: &FunctionInfo, arguments: &[String], call_text: &str, call_node: tree_sitter::Node,
-        is_expr_context: bool, indent_pos: Position,
+        func_info: &FunctionInfo, arguments: &[String], call_text: &str, call_node: ts::Node, is_expr_context: bool,
+        indent_pos: Position,
     ) -> Option<InlineResult> {
         let args_with_side_effects: Vec<bool> = arguments.iter().map(|arg| Self::has_side_effects(arg)).collect();
         let has_any_side_effects = args_with_side_effects.iter().any(|&x| x);
@@ -553,7 +552,7 @@ impl InlineFunctionProvider {
     }
 
     /// Check if a node contains control flow structures
-    fn has_control_flow(node: tree_sitter::Node) -> bool {
+    fn has_control_flow(node: ts::Node) -> bool {
         match node.kind() {
             "if_statement" | "while_statement" | "for_statement" | "try_statement" | "with_statement" => true,
             _ => {
@@ -569,7 +568,7 @@ impl InlineFunctionProvider {
     }
 
     /// Count the number of statements in a node
-    fn count_statements(node: tree_sitter::Node) -> usize {
+    fn count_statements(node: ts::Node) -> usize {
         match node.kind() {
             "module" | "block" => {
                 let mut count = 0;
@@ -596,7 +595,7 @@ impl InlineFunctionProvider {
     }
 
     /// Find the insertion point for prelude code before the call
-    fn find_statement_insertion_point(call_node: tree_sitter::Node, text: &str) -> Range {
+    fn find_statement_insertion_point(call_node: ts::Node, text: &str) -> Range {
         let mut node = call_node;
 
         while let Some(parent) = node.parent() {
@@ -612,7 +611,7 @@ impl InlineFunctionProvider {
     }
 
     /// Check if a node represents a statement
-    fn is_statement_node(node: tree_sitter::Node) -> bool {
+    fn is_statement_node(node: ts::Node) -> bool {
         matches!(
             node.kind(),
             "expression_statement"
@@ -655,7 +654,7 @@ impl InlineFunctionProvider {
     }
 
     /// Recursively collect identifiers from AST nodes
-    fn collect_identifiers_from_node(node: tree_sitter::Node, text: &str, identifiers: &mut HashSet<String>) {
+    fn collect_identifiers_from_node(node: ts::Node, text: &str, identifiers: &mut HashSet<String>) {
         if node.kind() == "identifier"
             && let Ok(name) = node.utf8_text(text.as_bytes())
         {
@@ -721,7 +720,7 @@ impl InlineFunctionProvider {
 
     /// Collect identifier nodes that should be replaced
     fn collect_identifier_replacements(
-        node: tree_sitter::Node, text: &str, param: &str, replacements: &mut Vec<(usize, usize, String)>,
+        node: ts::Node, text: &str, param: &str, replacements: &mut Vec<(usize, usize, String)>,
     ) {
         if matches!(node.kind(), "string" | "comment") {
             return;
@@ -805,7 +804,7 @@ impl InlineFunctionProvider {
     }
 
     /// Count return statements in AST
-    fn count_return_statements(node: tree_sitter::Node, _text: &str) -> usize {
+    fn count_return_statements(node: ts::Node, _text: &str) -> usize {
         let mut count = 0;
 
         if node.kind() == "return_statement" {
@@ -879,9 +878,7 @@ impl InlineFunctionProvider {
     }
 
     /// Collect return statement replacements (start_byte, end_byte, return_value)
-    fn collect_return_replacements(
-        node: tree_sitter::Node, text: &str, replacements: &mut Vec<(usize, usize, String)>,
-    ) {
+    fn collect_return_replacements(node: ts::Node, text: &str, replacements: &mut Vec<(usize, usize, String)>) {
         if node.kind() == "return_statement" {
             let mut return_value = String::new();
             let mut cursor = node.walk();
@@ -1333,7 +1330,7 @@ mod tests {
         assert!(found_assignment);
     }
 
-    fn find_call_in_tree(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+    fn find_call_in_tree(node: ts::Node) -> Option<tree_sitter::Node> {
         if node.kind() == "call" {
             return Some(node);
         }
@@ -1348,7 +1345,7 @@ mod tests {
         None
     }
 
-    fn walk_tree<F>(node: tree_sitter::Node, callback: &mut F)
+    fn walk_tree<F>(node: ts::Node, callback: &mut F)
     where
         F: FnMut(tree_sitter::Node),
     {

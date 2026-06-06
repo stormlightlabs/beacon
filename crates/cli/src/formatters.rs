@@ -8,8 +8,9 @@ use lsp_types::{DiagnosticSeverity, DiagnosticTag, NumberOrString, Position};
 use owo_colors::OwoColorize;
 use serde_json::json;
 use std::path::{Path, PathBuf};
+use tree_sitter as ts;
 
-pub fn print_parse_errors(node: tree_sitter::Node, source: &str, depth: usize) {
+pub fn print_parse_errors(node: ts::Node, source: &str, depth: usize) {
     if node.is_error() {
         let start_pos = node.start_position();
         let end_pos = node.end_position();

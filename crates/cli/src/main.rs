@@ -22,6 +22,7 @@ use serde_json::json;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use tree_sitter as ts;
 use url::Url;
 
 #[cfg(debug_assertions)]
@@ -567,7 +568,7 @@ fn debug_tree_command(file: Option<PathBuf>, json: bool) -> Result<()> {
     let parsed = parser.parse(&source).with_context(|| "Failed to parse Python source")?;
 
     if json {
-        fn node_to_json(node: tree_sitter::Node, source: &str) -> serde_json::Value {
+        fn node_to_json(node: ts::Node, source: &str) -> serde_json::Value {
             let mut children = vec![];
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {

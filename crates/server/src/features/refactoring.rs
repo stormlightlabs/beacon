@@ -8,6 +8,7 @@ use lsp_types::{Position, TextEdit, Url, WorkspaceEdit};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tree_sitter as ts;
 
 /// Context for refactoring operations providing access to workspace resources
 #[derive(Clone)]
@@ -170,9 +171,9 @@ impl NodeTraverser {
     /// The predicate receives the node, text, and symbol table, and should return
     /// Some(T) for nodes to collect, None otherwise.
     pub fn collect_nodes<T, F>(
-        node: tree_sitter::Node, text: &str, symbol_table: &SymbolTable, predicate: &F, results: &mut Vec<T>,
+        node: ts::Node, text: &str, symbol_table: &SymbolTable, predicate: &F, results: &mut Vec<T>,
     ) where
-        F: Fn(tree_sitter::Node, &str, &SymbolTable) -> Option<T>,
+        F: Fn(ts::Node, &str, &SymbolTable) -> Option<T>,
     {
         if let Some(result) = predicate(node, text, symbol_table) {
             results.push(result);
@@ -186,7 +187,7 @@ impl NodeTraverser {
 
     /// Find all identifier nodes matching a name with scope-aware verification
     pub fn find_matching_identifiers(
-        node: tree_sitter::Node, symbol_name: &str, target_symbol: &Symbol, symbol_table: &SymbolTable, text: &str,
+        node: ts::Node, symbol_name: &str, target_symbol: &Symbol, symbol_table: &SymbolTable, text: &str,
         new_text: &str,
     ) -> Vec<TextEdit> {
         let mut edits = Vec::new();
@@ -204,7 +205,7 @@ impl NodeTraverser {
 
     /// Recursive helper for collecting matching identifiers
     fn collect_matching_identifiers(
-        node: tree_sitter::Node, symbol_name: &str, target_symbol: &Symbol, symbol_table: &SymbolTable, text: &str,
+        node: ts::Node, symbol_name: &str, target_symbol: &Symbol, symbol_table: &SymbolTable, text: &str,
         new_text: &str, edits: &mut Vec<TextEdit>,
     ) {
         if node.kind() == "identifier"

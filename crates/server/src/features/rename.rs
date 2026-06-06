@@ -10,6 +10,7 @@ use lsp_types::{Position, RenameParams, TextEdit, Url, WorkspaceEdit};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tree_sitter as ts;
 
 /// Rename provider
 ///
@@ -93,6 +94,32 @@ impl RenameProvider {
         let workspace = self.workspace.read().await;
         let dependents = workspace.get_dependents(uri);
         for dependent_uri in dependents {
+            if workspace.get_symbol_imports(&dependent_uri).iter().any(|import| {
+                import.symbol == symbol_name
+                    && workspace
+                        .resolve_import_from_uri(&dependent_uri, &import.from_module)
+                        .as_ref()
+                        == Some(uri)
+            }) {
+                let edits = if self.documents.has_document(&dependent_uri) {
+                    self.find_imported_symbol_renames_in_document(&dependent_uri, symbol_name, new_name)
+                } else {
+                    self.find_imported_symbol_renames_in_workspace_file(
+                        &dependent_uri,
+                        symbol_name,
+                        new_name,
+                        &workspace,
+                    )
+                };
+
+                if let Some(edits) = edits
+                    && !edits.is_empty()
+                {
+                    changes.insert(dependent_uri, edits);
+                }
+                continue;
+            }
+
             if !self.documents.has_document(&dependent_uri)
                 && let Some(edits) = self.find_renames_in_workspace_file(
                     &dependent_uri,
@@ -108,6 +135,34 @@ impl RenameProvider {
         }
 
         Some(changes)
+    }
+
+    fn find_imported_symbol_renames_in_document(
+        &self, uri: &Url, symbol_name: &str, new_name: &str,
+    ) -> Option<Vec<TextEdit>> {
+        self.documents.get_document(uri, |doc| {
+            let tree = doc.tree()?;
+            let text = doc.text();
+            let mut edits = Vec::new();
+            Self::collect_textual_identifier_renames(tree.root_node(), symbol_name, new_name, &text, &mut edits);
+            Some(edits)
+        })?
+    }
+
+    fn find_imported_symbol_renames_in_workspace_file(
+        &self, uri: &Url, symbol_name: &str, new_name: &str, workspace: &Workspace,
+    ) -> Option<Vec<TextEdit>> {
+        let parse_result = workspace.load_workspace_file(uri)?;
+        let text = parse_result.rope.to_string();
+        let mut edits = Vec::new();
+        Self::collect_textual_identifier_renames(
+            parse_result.tree.root_node(),
+            symbol_name,
+            new_name,
+            &text,
+            &mut edits,
+        );
+        Some(edits)
     }
 
     /// Find renames in an open document using scope-aware matching
@@ -166,7 +221,7 @@ impl RenameProvider {
     /// Traverses all nodes to find identifier nodes matching the symbol name.
     /// For each match, verifies it resolves to the target symbol using scope-aware lookup.
     fn collect_renames_from_tree(
-        node: tree_sitter::Node, symbol_name: &str, new_name: &str, target_symbol: &Symbol, symbol_table: &SymbolTable,
+        node: ts::Node, symbol_name: &str, new_name: &str, target_symbol: &Symbol, symbol_table: &SymbolTable,
         text: &str, edits: &mut Vec<TextEdit>,
     ) {
         if node.kind() == "identifier"
@@ -189,6 +244,23 @@ impl RenameProvider {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             Self::collect_renames_from_tree(child, symbol_name, new_name, target_symbol, symbol_table, text, edits);
+        }
+    }
+
+    fn collect_textual_identifier_renames(
+        node: ts::Node, symbol_name: &str, new_name: &str, text: &str, edits: &mut Vec<TextEdit>,
+    ) {
+        if node.kind() == "identifier"
+            && let Ok(node_text) = node.utf8_text(text.as_bytes())
+            && node_text == symbol_name
+        {
+            let range = utils::tree_sitter_range_to_lsp_range(text, node.range());
+            edits.push(TextEdit { range, new_text: new_name.to_string() });
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            Self::collect_textual_identifier_renames(child, symbol_name, new_name, text, edits);
         }
     }
 

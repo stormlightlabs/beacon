@@ -3,10 +3,10 @@
 //! Moves a symbol (function, class, variable) from one file to another, updating all imports across the workspace.
 
 use super::refactoring::{EditCollector, RefactoringContext};
-
 use beacon_parser::{Symbol, SymbolTable};
 use lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
 use std::path::Path;
+use tree_sitter as ts;
 
 /// Parameters for move symbol refactoring
 pub struct MoveSymbolParams {
@@ -35,7 +35,7 @@ struct SymbolUsageChecker<'a> {
 
 impl<'a> SymbolUsageChecker<'a> {
     /// Recursively check for symbol usage
-    fn check_recursive(&self, node: tree_sitter::Node, found: &mut bool) {
+    fn check_recursive(&self, node: ts::Node, found: &mut bool) {
         if *found {
             return;
         }
@@ -148,7 +148,7 @@ impl MoveSymbolProvider {
 
     /// Find a node at a specific line and column (1-indexed)
     fn find_node_at_line_col<'a>(
-        node: tree_sitter::Node<'a>, _text: &str, line: usize, col: usize,
+        node: ts::Node<'a>, _text: &str, line: usize, col: usize,
     ) -> Option<tree_sitter::Node<'a>> {
         let target_line = line.saturating_sub(1);
         let target_col = col.saturating_sub(1);
@@ -173,7 +173,7 @@ impl MoveSymbolProvider {
     }
 
     /// Walk up the tree to find the definition node (function_definition, class_definition, etc.)
-    fn find_parent_definition(mut node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+    fn find_parent_definition(mut node: ts::Node) -> Option<tree_sitter::Node> {
         loop {
             match node.kind() {
                 "function_definition" | "class_definition" | "decorated_definition" => {
@@ -388,7 +388,7 @@ impl MoveSymbolProvider {
     }
 
     /// Check if an import statement imports a specific symbol
-    fn imports_symbol(import_node: tree_sitter::Node, text: &str, symbol_name: &str) -> bool {
+    fn imports_symbol(import_node: ts::Node, text: &str, symbol_name: &str) -> bool {
         let mut cursor = import_node.walk();
         for child in import_node.children(&mut cursor) {
             if (child.kind() == "dotted_name" || child.kind() == "identifier")

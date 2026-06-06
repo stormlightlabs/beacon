@@ -9,6 +9,7 @@ use crate::utils;
 use lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tree_sitter as ts;
 
 /// Parameter change description
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,7 +135,7 @@ impl ChangeSignatureProvider {
     }
 
     /// Recursively find function definition containing the byte offset
-    fn find_function_at_offset(node: tree_sitter::Node, byte_offset: usize) -> Option<tree_sitter::Node> {
+    fn find_function_at_offset(node: ts::Node, byte_offset: usize) -> Option<ts::Node> {
         if node.kind() == "function_definition" {
             if let Some(name_node) = node.child_by_field_name("name")
                 && name_node.start_byte() <= byte_offset
@@ -164,7 +165,7 @@ impl ChangeSignatureProvider {
     }
 
     /// Extract function signature information
-    fn extract_function_signature(node: tree_sitter::Node, text: &str) -> Option<FunctionSignature> {
+    fn extract_function_signature(node: ts::Node, text: &str) -> Option<FunctionSignature> {
         if node.kind() != "function_definition" {
             return None;
         }
@@ -184,7 +185,7 @@ impl ChangeSignatureProvider {
     }
 
     /// Extract parameters from function parameters node
-    fn extract_parameters(params_node: tree_sitter::Node, text: &str) -> Vec<Parameter> {
+    fn extract_parameters(params_node: ts::Node, text: &str) -> Vec<Parameter> {
         let mut parameters = Vec::new();
         let mut cursor = params_node.walk();
 
@@ -295,7 +296,7 @@ impl ChangeSignatureProvider {
 
     /// Generate edit for the function definition
     fn generate_definition_edit(
-        function_def: tree_sitter::Node, text: &str, new_signature: &FunctionSignature,
+        function_def: ts::Node, text: &str, new_signature: &FunctionSignature,
     ) -> Option<TextEdit> {
         let params_node = function_def.child_by_field_name("parameters")?;
         let range = utils::tree_sitter_range_to_lsp_range(text, params_node.range());
@@ -329,9 +330,7 @@ impl ChangeSignatureProvider {
     }
 
     /// Find all call sites for a function
-    fn find_call_sites(
-        node: tree_sitter::Node, text: &str, function_name: &str, uri: &Url, call_sites: &mut Vec<CallSite>,
-    ) {
+    fn find_call_sites(node: ts::Node, text: &str, function_name: &str, uri: &Url, call_sites: &mut Vec<CallSite>) {
         if node.kind() == "call"
             && let Some(func_node) = node.child_by_field_name("function")
             && func_node.kind() == "identifier"
@@ -349,7 +348,7 @@ impl ChangeSignatureProvider {
     }
 
     /// Recursively find call expression at byte offset
-    fn find_call_at_offset(node: tree_sitter::Node, byte_offset: usize) -> Option<tree_sitter::Node> {
+    fn find_call_at_offset(node: ts::Node, byte_offset: usize) -> Option<tree_sitter::Node> {
         if node.kind() == "call" && node.start_byte() <= byte_offset && byte_offset <= node.end_byte() {
             return Some(node);
         }
@@ -366,7 +365,7 @@ impl ChangeSignatureProvider {
 
     /// Generate edit for a call site
     fn generate_call_site_edit(
-        call_node: tree_sitter::Node, text: &str, old_signature: &FunctionSignature, new_signature: &FunctionSignature,
+        call_node: ts::Node, text: &str, old_signature: &FunctionSignature, new_signature: &FunctionSignature,
         changes: &[ParameterChange],
     ) -> Option<TextEdit> {
         let args_node = call_node.child_by_field_name("arguments")?;
@@ -377,7 +376,7 @@ impl ChangeSignatureProvider {
     }
 
     /// Extract arguments from a call's argument list
-    fn extract_call_arguments(args_node: tree_sitter::Node, text: &str) -> Vec<String> {
+    fn extract_call_arguments(args_node: ts::Node, text: &str) -> Vec<String> {
         let mut arguments = Vec::new();
         let mut cursor = args_node.walk();
 

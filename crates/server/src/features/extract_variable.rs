@@ -5,6 +5,7 @@
 use super::refactoring::{EditCollector, RefactoringContext, RefactoringValidator};
 
 use lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
+use tree_sitter as ts;
 
 /// Parameters for extract variable refactoring
 pub struct ExtractVariableParams {
@@ -131,7 +132,7 @@ impl ExtractVariableProvider {
     }
 
     /// Find a node that matches the given byte range
-    fn find_node_at_range<'a>(node: tree_sitter::Node<'a>, start: usize, end: usize) -> Option<tree_sitter::Node<'a>> {
+    fn find_node_at_range<'a>(node: ts::Node<'a>, start: usize, end: usize) -> Option<ts::Node<'a>> {
         if node.start_byte() == start && node.end_byte() == end {
             return Some(node);
         }
@@ -156,7 +157,7 @@ impl ExtractVariableProvider {
 
     /// Find duplicate expressions in the tree that match the given expression
     fn find_duplicate_expressions<'a>(
-        tree: &'a tree_sitter::Tree, text: &str, expression_node: tree_sitter::Node<'a>, expression_text: &str,
+        tree: &'a tree_sitter::Tree, text: &str, expression_node: ts::Node<'a>, expression_text: &str,
     ) -> Vec<Range> {
         let mut duplicates = Vec::new();
         let original_start = expression_node.start_byte();
@@ -176,7 +177,7 @@ impl ExtractVariableProvider {
 
     /// Recursively collect expressions that match the given text
     fn collect_matching_expressions<'a>(
-        node: tree_sitter::Node<'a>, text: &str, target_text: &str, original_start: usize, original_end: usize,
+        node: ts::Node<'a>, text: &str, target_text: &str, original_start: usize, original_end: usize,
         duplicates: &mut Vec<Range>,
     ) {
         if node.start_byte() == original_start && node.end_byte() == original_end {

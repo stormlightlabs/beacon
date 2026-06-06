@@ -27,6 +27,11 @@ impl StubCache {
         self.cache.contains_key(module_name)
     }
 
+    /// Remove a stub from the cache
+    pub fn remove(&mut self, module_name: &str) -> Option<StubFile> {
+        self.cache.remove(module_name)
+    }
+
     /// Get the number of stubs in the cache
     pub fn len(&self) -> usize {
         self.cache.len()

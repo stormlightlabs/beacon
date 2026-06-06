@@ -75,15 +75,15 @@
 - [x] Implement the coverage in [imports.md](./specs/imports.md).
 - [x] Add setup validation for absent or partially initialized `typeshed`.
 - [x] Report embedded stub version/hash/count in a debug or version command.
-- [ ] Test precedence between workspace `.py`, workspace `.pyi`, custom
+- [x] Test precedence between workspace `.py`, workspace `.pyi`, custom
   `stubPaths`, bundled stdlib, and site-packages.
-- [ ] Test package roots, namespace packages, relative imports, star imports,
+- [x] Test package roots, namespace packages, relative imports, star imports,
   private imports, and re-export chains in one fixture style.
-- [ ] Verify dependency invalidation when an imported file, exported symbol,
+- [x] Verify dependency invalidation when an imported file, exported symbol,
   `__all__`, config, or stub changes.
-- [ ] Add workspace-wide reference/rename tests that include imports and
+- [x] Add workspace-wide reference/rename tests that include imports and
   re-exports.
-- [ ] Add multi-root workspace tests for config, diagnostics, symbols, and
+- [x] Add multi-root workspace tests for config, diagnostics, symbols, and
   imports after single-root behavior is stable.
 
 ## Milestone 6: Dynamic Python

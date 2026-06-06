@@ -13,20 +13,20 @@ use beacon_parser::{AstNode, ParsedFile, PythonParser, SymbolTable};
 use lsp_types::{Position, Range};
 use ropey::Rope;
 use std::sync::Arc;
-use tree_sitter::{InputEdit, Parser, Point, Tree};
+use tree_sitter as ts;
 
 /// LSP-specific parser that manages incremental updates
 ///
 /// Holds parse state for a single document and supports efficient reparsing when document content changes.
 pub struct LspParser {
     parser: PythonParser,
-    ts_parser: Parser,
+    ts_parser: ts::Parser,
 }
 
 /// Result of parsing a document including all derived artifacts
 pub struct ParseResult {
     /// The tree-sitter concrete syntax tree
-    pub tree: Tree,
+    pub tree: ts::Tree,
     /// Our typed AST representation
     pub ast: AstNode,
     /// Symbol table from name resolution
@@ -56,7 +56,7 @@ impl LspParser {
     pub fn new() -> Result<Self> {
         let parser = PythonParser::new()?;
         let language = tree_sitter_python::LANGUAGE;
-        let mut ts_parser = Parser::new();
+        let mut ts_parser = ts::Parser::new();
         ts_parser
             .set_language(&language.into())
             .map_err(|e| errors::ParseError::TreeSitterError(e.to_string()))?;
@@ -80,7 +80,7 @@ impl LspParser {
     /// Uses tree-sitter's incremental parsing to efficiently update the parse tree.
     /// TODO: Implement using [`InputEdit`] for efficiency
     pub fn reparse(
-        &mut self, old_tree: &Tree, old_text: &str, new_text: &str, edits: &[TextEdit],
+        &mut self, old_tree: &ts::Tree, old_text: &str, new_text: &str, edits: &[TextEdit],
     ) -> Result<ParseResult> {
         let input_edits = self.convert_edits(old_text, new_text, edits);
 
@@ -103,7 +103,7 @@ impl LspParser {
     }
 
     /// Convert LSP text edits to tree-sitter InputEdits
-    fn convert_edits(&self, old_text: &str, _new_text: &str, edits: &[TextEdit]) -> Vec<InputEdit> {
+    fn convert_edits(&self, old_text: &str, _new_text: &str, edits: &[TextEdit]) -> Vec<ts::InputEdit> {
         let mut input_edits = Vec::new();
 
         for edit in edits {
@@ -112,12 +112,13 @@ impl LspParser {
             let new_end_byte = start_byte + edit.new_text.len();
 
             let start_point =
-                Point { row: edit.range.start.line as usize, column: edit.range.start.character as usize };
+                ts::Point { row: edit.range.start.line as usize, column: edit.range.start.character as usize };
 
-            let old_end_point = Point { row: edit.range.end.line as usize, column: edit.range.end.character as usize };
+            let old_end_point =
+                ts::Point { row: edit.range.end.line as usize, column: edit.range.end.character as usize };
             let new_end_point = self.calculate_new_end_point(start_point, &edit.new_text);
 
-            input_edits.push(InputEdit {
+            input_edits.push(ts::InputEdit {
                 start_byte,
                 old_end_byte,
                 new_end_byte,
@@ -131,21 +132,21 @@ impl LspParser {
     }
 
     /// Calculate the end position after inserting text
-    fn calculate_new_end_point(&self, start: Point, inserted_text: &str) -> Point {
+    fn calculate_new_end_point(&self, start: ts::Point, inserted_text: &str) -> ts::Point {
         let newline_count = inserted_text.matches('\n').count();
 
         if newline_count == 0 {
-            Point { row: start.row, column: start.column + inserted_text.len() }
+            ts::Point { row: start.row, column: start.column + inserted_text.len() }
         } else {
             let last_line = inserted_text.split('\n').next_back().unwrap_or("");
-            Point { row: start.row + newline_count, column: last_line.len() }
+            ts::Point { row: start.row + newline_count, column: last_line.len() }
         }
     }
 
     /// Collect syntax errors from the parse tree
     ///
     /// Tree-sitter marks nodes with errors; we extract these into diagnostics.
-    fn collect_errors(&self, tree: &Tree, text: &str) -> Vec<ParseError> {
+    fn collect_errors(&self, tree: &ts::Tree, text: &str) -> Vec<ParseError> {
         let mut errors = Vec::new();
         let root = tree.root_node();
 
@@ -155,7 +156,7 @@ impl LspParser {
     }
 
     /// Recursively traverse the tree to find error nodes
-    fn collect_errors_recursive(node: tree_sitter::Node, text: &str, errors: &mut Vec<ParseError>) {
+    fn collect_errors_recursive(node: ts::Node, text: &str, errors: &mut Vec<ParseError>) {
         if node.is_error() || node.is_missing() {
             let range = Range {
                 start: utils::tree_sitter_point_to_position(text, node.start_position()),
@@ -180,15 +181,13 @@ impl LspParser {
     }
 
     /// Find the most specific (deepest) AST node at a given position
-    pub fn node_at_position<'a>(
-        &self, tree: &'a Tree, text: &str, position: Position,
-    ) -> Option<tree_sitter::Node<'a>> {
+    pub fn node_at_position<'a>(&self, tree: &'a ts::Tree, text: &str, position: Position) -> Option<ts::Node<'a>> {
         let byte_offset = utils::position_to_byte_offset(text, position);
         tree.root_node().descendant_for_byte_range(byte_offset, byte_offset)
     }
 
     /// Get the range of a tree-sitter node as an LSP range
-    pub fn node_range(&self, node: tree_sitter::Node, text: &str) -> Range {
+    pub fn node_range(&self, node: ts::Node, text: &str) -> Range {
         utils::tree_sitter_range_to_lsp_range(text, node.range())
     }
 }
@@ -264,7 +263,7 @@ result = greet("World")
     #[test]
     fn test_calculate_new_end_point() {
         let parser = LspParser::new().unwrap();
-        let start = Point { row: 0, column: 5 };
+        let start = ts::Point { row: 0, column: 5 };
         let end = parser.calculate_new_end_point(start, "hello");
         assert_eq!(end.row, 0);
         assert_eq!(end.column, 10);

@@ -9,6 +9,7 @@ use beacon_parser::{Symbol, SymbolTable};
 use lsp_types::{Location, Position, Range, ReferenceParams};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tree_sitter as ts;
 use url::Url;
 
 pub struct ReferencesProvider {
@@ -45,6 +46,23 @@ impl ReferencesProvider {
 
         let dependents = workspace.get_dependents(&uri);
         for dependent_uri in dependents {
+            if workspace.get_symbol_imports(&dependent_uri).iter().any(|import| {
+                import.symbol == symbol_name
+                    && workspace
+                        .resolve_import_from_uri(&dependent_uri, &import.from_module)
+                        .as_ref()
+                        == Some(&uri)
+            }) {
+                if self.documents.has_document(&dependent_uri) {
+                    locations.extend(self.find_imported_symbol_references_in_document(&dependent_uri, &symbol_name));
+                } else if let Some(refs) =
+                    self.find_imported_symbol_references_in_workspace_file(&dependent_uri, &symbol_name, &workspace)
+                {
+                    locations.extend(refs);
+                }
+                continue;
+            }
+
             if !self.documents.has_document(&dependent_uri)
                 && let Some(refs) =
                     self.find_references_in_workspace_file(&dependent_uri, &symbol_name, &target_symbol, &workspace)
@@ -54,6 +72,41 @@ impl ReferencesProvider {
         }
 
         locations
+    }
+
+    fn find_imported_symbol_references_in_document(&self, uri: &Url, symbol_name: &str) -> Vec<Location> {
+        self.documents
+            .get_document(uri, |doc| {
+                let mut locations = Vec::new();
+                if let Some(tree) = doc.tree() {
+                    let text = doc.text();
+                    Self::collect_textual_identifier_references(
+                        tree.root_node(),
+                        symbol_name,
+                        &text,
+                        uri,
+                        &mut locations,
+                    );
+                }
+                locations
+            })
+            .unwrap_or_default()
+    }
+
+    fn find_imported_symbol_references_in_workspace_file(
+        &self, uri: &Url, symbol_name: &str, workspace: &Workspace,
+    ) -> Option<Vec<Location>> {
+        let parse_result = workspace.load_workspace_file(uri)?;
+        let text = parse_result.rope.to_string();
+        let mut locations = Vec::new();
+        Self::collect_textual_identifier_references(
+            parse_result.tree.root_node(),
+            symbol_name,
+            &text,
+            uri,
+            &mut locations,
+        );
+        Some(locations)
     }
 
     /// Find references in a workspace file that is not currently open
@@ -143,8 +196,8 @@ impl ReferencesProvider {
     /// For each match, verifies it resolves to the target symbol using scope-aware lookup.
     /// Excludes the definition itself (only references/uses are collected).
     fn collect_references_from_tree(
-        node: tree_sitter::Node, symbol_name: &str, target_symbol: &Symbol, symbol_table: &SymbolTable, text: &str,
-        uri: &Url, locations: &mut Vec<Location>,
+        node: ts::Node, symbol_name: &str, target_symbol: &Symbol, symbol_table: &SymbolTable, text: &str, uri: &Url,
+        locations: &mut Vec<Location>,
     ) {
         if node.kind() == "identifier"
             && let Ok(node_text) = node.utf8_text(text.as_bytes())
@@ -171,6 +224,23 @@ impl ReferencesProvider {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             Self::collect_references_from_tree(child, symbol_name, target_symbol, symbol_table, text, uri, locations);
+        }
+    }
+
+    fn collect_textual_identifier_references(
+        node: ts::Node, symbol_name: &str, text: &str, uri: &Url, locs: &mut Vec<Location>,
+    ) {
+        if node.kind() == "identifier"
+            && let Ok(node_text) = node.utf8_text(text.as_bytes())
+            && node_text == symbol_name
+        {
+            let range = utils::tree_sitter_range_to_lsp_range(text, node.range());
+            locs.push(Location { uri: uri.clone(), range });
+        }
+
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            Self::collect_textual_identifier_references(child, symbol_name, text, uri, locs);
         }
     }
 

@@ -6,6 +6,7 @@ use super::refactoring::{EditCollector, RefactoringContext, RefactoringValidator
 
 use lsp_types::{Position, Range, TextEdit, Url, WorkspaceEdit};
 use std::collections::{HashMap, HashSet};
+use tree_sitter as ts;
 
 /// Parameters for extract function refactoring
 pub struct ExtractFunctionParams {
@@ -211,7 +212,7 @@ impl ExtractFunctionProvider {
 
     /// Collect all identifiers in a range
     fn collect_all_identifiers(
-        node: tree_sitter::Node, text: &str, start: usize, end: usize, vars: &mut std::collections::HashSet<String>,
+        node: ts::Node, text: &str, start: usize, end: usize, vars: &mut std::collections::HashSet<String>,
     ) {
         let node_start = node.start_byte();
         let node_end = node.end_byte();
@@ -234,7 +235,7 @@ impl ExtractFunctionProvider {
 
     /// Find variables defined and used in a range
     fn find_variables_in_range(
-        node: tree_sitter::Node, text: &str, start: usize, end: usize, defined: &mut std::collections::HashSet<String>,
+        node: ts::Node, text: &str, start: usize, end: usize, defined: &mut std::collections::HashSet<String>,
         used: &mut std::collections::HashSet<String>,
     ) {
         let node_start = node.start_byte();
@@ -269,7 +270,7 @@ impl ExtractFunctionProvider {
     }
 
     /// Collect variables being assigned
-    fn collect_assigned_vars(node: tree_sitter::Node, text: &str, vars: &mut std::collections::HashSet<String>) {
+    fn collect_assigned_vars(node: ts::Node, text: &str, vars: &mut std::collections::HashSet<String>) {
         if node.kind() == "identifier"
             && let Ok(name) = node.utf8_text(text.as_bytes())
         {
@@ -283,7 +284,7 @@ impl ExtractFunctionProvider {
     }
 
     /// Collect variables being used
-    fn collect_used_vars(node: tree_sitter::Node, text: &str, vars: &mut std::collections::HashSet<String>) {
+    fn collect_used_vars(node: ts::Node, text: &str, vars: &mut std::collections::HashSet<String>) {
         if node.kind() == "identifier"
             && let Ok(name) = node.utf8_text(text.as_bytes())
         {
@@ -352,7 +353,7 @@ impl ExtractFunctionProvider {
     }
 
     /// Find the containing function or class definition
-    fn find_containing_definition(node: tree_sitter::Node, byte_offset: usize) -> Option<tree_sitter::Node> {
+    fn find_containing_definition(node: ts::Node, byte_offset: usize) -> Option<tree_sitter::Node> {
         if matches!(node.kind(), "function_definition" | "class_definition")
             && node.start_byte() < byte_offset
             && byte_offset < node.end_byte()
@@ -378,7 +379,7 @@ impl ExtractFunctionProvider {
     }
 
     /// Find insertion point at module level (after imports and docstrings)
-    fn find_module_level_insertion(root: tree_sitter::Node, _text: &str) -> Option<Position> {
+    fn find_module_level_insertion(root: ts::Node, _text: &str) -> Option<Position> {
         let mut last_import_line = 0;
         let mut has_docstring = false;
 

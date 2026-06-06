@@ -1,9 +1,9 @@
 //! Shared tree-sitter node helpers.
 
 use beacon_core::{ParseError, Result};
-use tree_sitter::Node;
+use tree_sitter as ts;
 
-pub(crate) fn node_span(node: &Node) -> (usize, usize, usize, usize) {
+pub(crate) fn node_span(node: &ts::Node) -> (usize, usize, usize, usize) {
     let start_position = node.start_position();
     let end_position = node.end_position();
     (
@@ -14,14 +14,14 @@ pub(crate) fn node_span(node: &Node) -> (usize, usize, usize, usize) {
     )
 }
 
-pub(crate) fn node_text(node: &Node, source: &str) -> Result<String> {
+pub(crate) fn node_text(node: &ts::Node, source: &str) -> Result<String> {
     Ok(node
         .utf8_text(source.as_bytes())
         .map_err(|_| ParseError::InvalidUtf8)?
         .to_string())
 }
 
-pub(crate) fn field_text(node: &Node, source: &str, field: &str) -> Result<String> {
+pub(crate) fn field_text(node: &ts::Node, source: &str, field: &str) -> Result<String> {
     let child = node
         .child_by_field_name(field)
         .ok_or_else(|| ParseError::TreeSitterError(format!("Missing {field} field")))?;
@@ -33,7 +33,7 @@ pub(crate) fn is_list_delimiter(kind: &str) -> bool {
 }
 
 impl crate::PythonParser {
-    pub(crate) fn debug_node(node: tree_sitter::Node, source: &str, depth: usize) -> String {
+    pub(crate) fn debug_node(node: ts::Node, source: &str, depth: usize) -> String {
         let indent = "  ".repeat(depth);
         let text = node.utf8_text(source.as_bytes()).unwrap_or("<invalid>");
         let mut result = format!(

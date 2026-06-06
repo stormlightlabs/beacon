@@ -13,6 +13,7 @@ use lsp_types::{
     Position, Range, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens, SemanticTokensParams,
     SemanticTokensRangeParams, SemanticTokensRangeResult, SemanticTokensResult,
 };
+use tree_sitter as ts;
 use url::Url;
 
 /// Raw token data before delta encoding
@@ -415,7 +416,7 @@ impl SemanticTokensProvider {
     }
 
     /// Walk tree-sitter CST and collect keyword tokens
-    fn collect_keyword_tokens(&self, node: tree_sitter::Node, _text: &str, raw_tokens: &mut Vec<RawToken>) {
+    fn collect_keyword_tokens(&self, node: ts::Node, _text: &str, raw_tokens: &mut Vec<RawToken>) {
         if self.is_keyword_node(node.kind()) {
             let start_position = node.start_position();
             let line = start_position.row as u32;
