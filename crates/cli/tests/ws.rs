@@ -619,3 +619,35 @@ fn workspace_fixture_cli_analyze_reports_unsuppressed_categories() {
         );
     }
 }
+
+#[test]
+fn workspace_fixture_cli_dynamic_fallback_reports_dynamic_boundaries() {
+    let assert = cargo_bin_cmd!("beacon")
+        .arg("analyze")
+        .arg("--format")
+        .arg("json")
+        .arg("file")
+        .arg(file("cases/dynamic_fallback.py"))
+        .assert()
+        .failure();
+
+    let codes = diagnostic_codes(&assert.get_output().stdout);
+    assert!(codes.contains(&"DYN001".to_string()), "expected DYN001 in {codes:?}");
+
+    let output: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("CLI output should be JSON");
+    let messages: Vec<_> = output["diagnostics"]
+        .as_array()
+        .expect("diagnostics array")
+        .iter()
+        .filter(|diagnostic| diagnostic["code"] == "DYN001")
+        .map(|diagnostic| diagnostic["message"].as_str().unwrap_or_default().to_string())
+        .collect();
+
+    for fragment in ["reflective attribute lookup", "dynamic import", "generated code"] {
+        assert!(
+            messages.iter().any(|message| message.contains(fragment)),
+            "expected {fragment:?} in {messages:?}"
+        );
+    }
+}

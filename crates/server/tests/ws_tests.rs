@@ -2,7 +2,10 @@ use beacon_core::fixtures::{
     ExpectedDiagnostic, assert_type_display_contains, file, python_files, range, workspace as workspace_fixture,
 };
 use beacon_lsp::{
-    analysis::Analyzer, config::Config, document::DocumentManager, features::diagnostics::DiagnosticProvider,
+    analysis::Analyzer,
+    config::{Config, TypeCheckingConfig, TypeCheckingMode},
+    document::DocumentManager,
+    features::diagnostics::DiagnosticProvider,
     workspace::Workspace,
 };
 use lsp_types::{DiagnosticSeverity, Position};
@@ -132,6 +135,164 @@ async fn workspace_fixture_call_parameter_metadata_lsp_diagnostics() {
         tags: Some(&[]),
     }
     .assert_present_for_file(&call_file, &diagnostics);
+}
+
+#[tokio::test]
+async fn workspace_fixture_dynamic_fallback_lsp_diagnostics() {
+    let documents = DocumentManager::new().expect("document manager should initialize");
+    let config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");
+    let root_uri = Url::from_directory_path(workspace_fixture()).expect("workspace path should become file URI");
+    let mut workspace = Workspace::new(Some(root_uri), config.clone(), documents.clone());
+    let dynamic_file = file("cases/dynamic_fallback.py");
+    let source = std::fs::read_to_string(&dynamic_file).expect("dynamic fallback fixture should read");
+    let uri = Url::from_file_path(&dynamic_file).expect("fixture file URI");
+
+    documents
+        .open_document(uri.clone(), 1, source)
+        .expect("dynamic fallback fixture should open");
+    workspace.update_dependencies(&uri);
+
+    let workspace = Arc::new(RwLock::new(workspace));
+    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace);
+    let mut analyzer = Analyzer::new(config, documents);
+    let diagnostics = diagnostic_provider.generate_diagnostics(&uri, &mut analyzer);
+
+    for fragment in [
+        "custom metaclass",
+        "decorator may replace",
+        "reflective attribute lookup",
+        "runtime attribute mutation",
+        "generated code",
+        "dynamic import",
+        "custom import hooks",
+        "sys.path mutation",
+        "dynamic class creation",
+        "__bases__ mutation",
+        "__class__ mutation",
+        "__all__ mutation",
+    ] {
+        assert!(
+            diagnostics.iter().any(|diagnostic| {
+                diagnostic.severity == Some(DiagnosticSeverity::WARNING)
+                    && diagnostic.message.contains(fragment)
+                    && diagnostic
+                        .code
+                        .as_ref()
+                        .is_some_and(|code| code == &lsp_types::NumberOrString::String("DYN001".to_string()))
+            }),
+            "expected dynamic diagnostic containing {fragment:?}; actual diagnostics: {diagnostics:#?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn workspace_fixture_dynamic_supported_has_no_dynamic_diagnostics() {
+    let documents = DocumentManager::new().expect("document manager should initialize");
+    let config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");
+    let root_uri = Url::from_directory_path(workspace_fixture()).expect("workspace path should become file URI");
+    let mut workspace = Workspace::new(Some(root_uri), config.clone(), documents.clone());
+    let dynamic_file = file("cases/dynamic_supported.py");
+    let source = std::fs::read_to_string(&dynamic_file).expect("dynamic supported fixture should read");
+    let uri = Url::from_file_path(&dynamic_file).expect("fixture file URI");
+
+    documents
+        .open_document(uri.clone(), 1, source)
+        .expect("dynamic supported fixture should open");
+    workspace.update_dependencies(&uri);
+
+    let workspace = Arc::new(RwLock::new(workspace));
+    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace);
+    let mut analyzer = Analyzer::new(config, documents);
+    let diagnostics = diagnostic_provider.generate_diagnostics(&uri, &mut analyzer);
+
+    assert!(
+        diagnostics
+            .iter()
+            .filter_map(|diagnostic| diagnostic.code.as_ref())
+            .all(|code| code != &lsp_types::NumberOrString::String("DYN001".to_string())),
+        "supported fixture should not emit DYN001 diagnostics: {diagnostics:?}"
+    );
+}
+
+#[tokio::test]
+async fn workspace_fixture_dynamic_modes_adjust_diagnostic_severity() {
+    for (mode, severity) in [
+        (TypeCheckingMode::Strict, DiagnosticSeverity::ERROR),
+        (TypeCheckingMode::Balanced, DiagnosticSeverity::WARNING),
+        (TypeCheckingMode::Relaxed, DiagnosticSeverity::HINT),
+    ] {
+        let documents = DocumentManager::new().expect("document manager should initialize");
+        let mut config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");
+        config.type_checking = TypeCheckingConfig { mode };
+        let root_uri = Url::from_directory_path(workspace_fixture()).expect("workspace path should become file URI");
+        let mut workspace = Workspace::new(Some(root_uri), config.clone(), documents.clone());
+        let dynamic_file = file("cases/dynamic_fallback.py");
+        let source = std::fs::read_to_string(&dynamic_file).expect("dynamic fallback fixture should read");
+        let uri = Url::from_file_path(&dynamic_file).expect("fixture file URI");
+
+        documents
+            .open_document(uri.clone(), 1, source)
+            .expect("dynamic fallback fixture should open");
+        workspace.update_dependencies(&uri);
+
+        let workspace = Arc::new(RwLock::new(workspace));
+        let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace);
+        let mut analyzer = Analyzer::new(config, documents);
+        let diagnostics = diagnostic_provider.generate_diagnostics(&uri, &mut analyzer);
+        let dynamic_diagnostics: Vec<_> = diagnostics
+            .iter()
+            .filter(|diagnostic| {
+                diagnostic
+                    .code
+                    .as_ref()
+                    .is_some_and(|code| code == &lsp_types::NumberOrString::String("DYN001".to_string()))
+            })
+            .collect();
+
+        assert!(
+            !dynamic_diagnostics.is_empty(),
+            "{mode:?} should emit dynamic diagnostics"
+        );
+        assert!(
+            dynamic_diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.severity == Some(severity)),
+            "{mode:?} diagnostics should all have severity {severity:?}: {dynamic_diagnostics:#?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn workspace_fixture_dynamic_fallback_preserves_precise_neighbor_types() {
+    let documents = DocumentManager::new().expect("document manager should initialize");
+    let config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");
+    let mut analyzer = Analyzer::new(config, documents.clone());
+
+    let supported_source =
+        std::fs::read_to_string(file("cases/dynamic_supported.py")).expect("dynamic supported fixture should read");
+    let supported_uri = Url::from_file_path(file("cases/dynamic_supported.py")).expect("fixture file URI");
+    documents
+        .open_document(supported_uri.clone(), 1, supported_source)
+        .expect("dynamic supported fixture should open");
+
+    let precise_ty = analyzer
+        .type_at_position(&supported_uri, Position::new(20, 4))
+        .expect("type lookup should succeed")
+        .expect("precise_neighbor function type should be recorded");
+    assert_type_display_contains(precise_ty, "(value: int) -> int");
+
+    let fallback_source =
+        std::fs::read_to_string(file("cases/dynamic_fallback.py")).expect("dynamic fallback fixture should read");
+    let fallback_uri = Url::from_file_path(file("cases/dynamic_fallback.py")).expect("fixture file URI");
+    documents
+        .open_document(fallback_uri.clone(), 1, fallback_source)
+        .expect("dynamic fallback fixture should open");
+
+    let fallback_ty = analyzer
+        .type_at_position(&fallback_uri, Position::new(30, 4))
+        .expect("type lookup should succeed")
+        .expect("dynamic_lookup function type should be recorded");
+    assert_type_display_contains(fallback_ty, "Any");
 }
 
 #[tokio::test]

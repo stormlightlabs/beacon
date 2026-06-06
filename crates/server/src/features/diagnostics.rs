@@ -191,6 +191,14 @@ impl DiagnosticProvider {
         tracing::trace!("Dunder diagnostics: {} ({:?})", diagnostics.len(), start.elapsed());
 
         let start = std::time::Instant::now();
+        self.add_dynamic_python_diagnostics(uri, effective_mode, &mut diagnostics);
+        tracing::trace!(
+            "Dynamic Python diagnostics: {} ({:?})",
+            diagnostics.len(),
+            start.elapsed()
+        );
+
+        let start = std::time::Instant::now();
         self.add_static_analysis_diagnostics(uri, analyzer, &mut diagnostics);
         tracing::trace!(
             "Static analysis diagnostics: {} ({:?})",
@@ -1440,6 +1448,251 @@ impl DiagnosticProvider {
                 });
             }
         }
+    }
+
+    fn add_dynamic_python_diagnostics(
+        &self, uri: &Url, mode: config::TypeCheckingMode, diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        let severity = match mode {
+            config::TypeCheckingMode::Strict => DiagnosticSeverity::ERROR,
+            config::TypeCheckingMode::Balanced => DiagnosticSeverity::WARNING,
+            config::TypeCheckingMode::Relaxed => DiagnosticSeverity::HINT,
+        };
+
+        self.documents.get_document(uri, |doc| {
+            if let Some(ast) = doc.ast() {
+                Self::check_dynamic_python_patterns(ast, severity, diagnostics);
+            }
+        });
+    }
+
+    fn check_dynamic_python_patterns(node: &AstNode, severity: DiagnosticSeverity, diagnostics: &mut Vec<Diagnostic>) {
+        match node {
+            AstNode::Module { body, .. } => {
+                for stmt in body {
+                    Self::check_dynamic_python_patterns(stmt, severity, diagnostics);
+                }
+            }
+            AstNode::FunctionDef { decorators, body, line, col, name, .. } => {
+                for decorator in decorators {
+                    if Self::is_dynamic_decorator(decorator) {
+                        Self::push_dynamic_diagnostic(
+                            diagnostics,
+                            severity,
+                            *line,
+                            *col,
+                            name.len().max(1),
+                            "decorator may replace the function object at runtime",
+                        );
+                    }
+                }
+                for stmt in body {
+                    Self::check_dynamic_python_patterns(stmt, severity, diagnostics);
+                }
+            }
+            AstNode::ClassDef { decorators, metaclass, body, line, col, name, .. } => {
+                if let Some(meta) = metaclass
+                    && meta != "type"
+                {
+                    Self::push_dynamic_diagnostic(
+                        diagnostics,
+                        severity,
+                        *line,
+                        *col,
+                        name.len().max(1),
+                        "custom metaclass can change class creation semantics",
+                    );
+                }
+                for decorator in decorators {
+                    if Self::is_dynamic_decorator(decorator) {
+                        Self::push_dynamic_diagnostic(
+                            diagnostics,
+                            severity,
+                            *line,
+                            *col,
+                            name.len().max(1),
+                            "decorator may replace the class object at runtime",
+                        );
+                    }
+                }
+                for stmt in body {
+                    Self::check_dynamic_python_patterns(stmt, severity, diagnostics);
+                }
+            }
+            AstNode::Assignment { target, value, line, col, .. } => {
+                if let Some(message) = Self::dynamic_assignment_message(target) {
+                    Self::push_dynamic_diagnostic(diagnostics, severity, *line, *col, 1, message);
+                }
+                Self::check_dynamic_python_patterns(value, severity, diagnostics);
+            }
+            AstNode::AnnotatedAssignment { target, value, line, col, .. } => {
+                if let Some(message) = Self::dynamic_assignment_message(target) {
+                    Self::push_dynamic_diagnostic(diagnostics, severity, *line, *col, 1, message);
+                }
+                if let Some(value) = value {
+                    Self::check_dynamic_python_patterns(value, severity, diagnostics);
+                }
+            }
+            AstNode::Call { function, args, keywords, line, col, .. } => {
+                if let Some((name, len)) = Self::dynamic_call_name(function)
+                    && let Some(message) = Self::dynamic_call_message(&name, args)
+                {
+                    Self::push_dynamic_diagnostic(diagnostics, severity, *line, *col, len.max(1), message);
+                }
+
+                Self::check_dynamic_python_patterns(function, severity, diagnostics);
+                for arg in args {
+                    Self::check_dynamic_python_patterns(arg, severity, diagnostics);
+                }
+                for (_name, value) in keywords {
+                    Self::check_dynamic_python_patterns(value, severity, diagnostics);
+                }
+            }
+            AstNode::If { test, body, elif_parts, else_body, .. } => {
+                Self::check_dynamic_python_patterns(test, severity, diagnostics);
+                for stmt in body {
+                    Self::check_dynamic_python_patterns(stmt, severity, diagnostics);
+                }
+                for (test, body) in elif_parts {
+                    Self::check_dynamic_python_patterns(test, severity, diagnostics);
+                    for stmt in body {
+                        Self::check_dynamic_python_patterns(stmt, severity, diagnostics);
+                    }
+                }
+                if let Some(else_body) = else_body {
+                    for stmt in else_body {
+                        Self::check_dynamic_python_patterns(stmt, severity, diagnostics);
+                    }
+                }
+            }
+            AstNode::For { target, iter, body, else_body, .. } => {
+                Self::check_dynamic_python_patterns(target, severity, diagnostics);
+                Self::check_dynamic_python_patterns(iter, severity, diagnostics);
+                for stmt in body {
+                    Self::check_dynamic_python_patterns(stmt, severity, diagnostics);
+                }
+                if let Some(else_body) = else_body {
+                    for stmt in else_body {
+                        Self::check_dynamic_python_patterns(stmt, severity, diagnostics);
+                    }
+                }
+            }
+            AstNode::While { test, body, else_body, .. } => {
+                Self::check_dynamic_python_patterns(test, severity, diagnostics);
+                for stmt in body {
+                    Self::check_dynamic_python_patterns(stmt, severity, diagnostics);
+                }
+                if let Some(else_body) = else_body {
+                    for stmt in else_body {
+                        Self::check_dynamic_python_patterns(stmt, severity, diagnostics);
+                    }
+                }
+            }
+            AstNode::Return { value: Some(value), .. } => {
+                Self::check_dynamic_python_patterns(value, severity, diagnostics);
+            }
+            AstNode::Attribute { object, .. } => {
+                Self::check_dynamic_python_patterns(object, severity, diagnostics);
+            }
+            _ => {}
+        }
+    }
+
+    fn dynamic_call_name(function: &AstNode) -> Option<(String, usize)> {
+        Self::attribute_path(function).map(|name| {
+            let len = name.len();
+            (name, len)
+        })
+    }
+
+    fn attribute_path(node: &AstNode) -> Option<String> {
+        match node {
+            AstNode::Identifier { name, .. } => Some(name.clone()),
+            AstNode::Attribute { object, attribute, .. } => {
+                Some(format!("{}.{}", Self::attribute_path(object)?, attribute))
+            }
+            _ => None,
+        }
+    }
+
+    fn dynamic_call_message(name: &str, args: &[AstNode]) -> Option<&'static str> {
+        match name {
+            "eval" | "exec" | "compile" => Some("generated code crosses a dynamic execution boundary"),
+            "__import__" | "importlib.import_module" => Some("dynamic import cannot be resolved statically"),
+            "setattr" | "delattr" => Some("runtime attribute mutation cannot be modeled precisely"),
+            "__all__.append" | "__all__.extend" => Some("runtime __all__ mutation changes exported names dynamically"),
+            "sys.meta_path.append" | "sys.meta_path.insert" | "sys.path_hooks.append" | "sys.path_hooks.insert" => {
+                Some("custom import hooks can change module resolution dynamically")
+            }
+            "sys.path.append" | "sys.path.insert" => {
+                Some("runtime sys.path mutation can change import resolution dynamically")
+            }
+            "getattr" => {
+                if args.get(1).is_some_and(|arg| {
+                    !matches!(
+                        arg,
+                        AstNode::Literal { value: beacon_parser::LiteralValue::String { .. }, .. }
+                    )
+                }) {
+                    Some("reflective attribute lookup falls back to Any/unknown")
+                } else {
+                    None
+                }
+            }
+            "type" => {
+                if args.len() >= 3 {
+                    Some("dynamic class creation cannot be modeled precisely")
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn dynamic_assignment_message(target: &AstNode) -> Option<&'static str> {
+        match target {
+            AstNode::Attribute { attribute, .. } if attribute == "__class__" => {
+                Some("runtime __class__ mutation can invalidate inferred instance types")
+            }
+            AstNode::Attribute { attribute, .. } if attribute == "__bases__" => {
+                Some("runtime __bases__ mutation can invalidate inferred class hierarchy")
+            }
+            AstNode::Identifier { name, .. } if name == "__all__" => None,
+            AstNode::Attribute { object, attribute, .. } if attribute == "append" || attribute == "extend" => {
+                if matches!(object.as_ref(), AstNode::Identifier { name, .. } if name == "__all__") {
+                    Some("runtime __all__ mutation changes exported names dynamically")
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn is_dynamic_decorator(decorator: &str) -> bool {
+        !matches!(
+            decorator,
+            "property" | "staticmethod" | "classmethod" | "dataclass" | "typing.override" | "override"
+        )
+    }
+
+    fn push_dynamic_diagnostic(
+        diagnostics: &mut Vec<Diagnostic>, severity: DiagnosticSeverity, line: usize, col: usize, width: usize,
+        message: &str,
+    ) {
+        let start = Position { line: line.saturating_sub(1) as u32, character: col.saturating_sub(1) as u32 };
+        diagnostics.push(Diagnostic {
+            range: Range { start, end: Position { line: start.line, character: start.character + width as u32 } },
+            severity: Some(severity),
+            code: Some(lsp_types::NumberOrString::String("DYN001".to_string())),
+            source: Some("beacon".to_string()),
+            message: format!("Dynamic Python boundary: {message}"),
+            related_information: None,
+            tags: None,
+            data: None,
+            code_description: None,
+        });
     }
 
     /// Add static analysis diagnostics (use-before-def, unreachable code, unused variables, shadowing)

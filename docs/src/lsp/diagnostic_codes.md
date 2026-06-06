@@ -35,6 +35,7 @@ Note that per-mode rows show the icon used in strict / balanced / relaxed order
 | [ANN012](./diagnostics/annotations.md#ann012)                             | `ReturnImplicitAny`               | &#9888;                            | Annotations     | Balanced mode warns when return type resolves to implicit `Any`.     |
 | [DUNDER_INFO](./diagnostics/dunder_patterns.md#dunder_info)               | `EntryPointGuard`                 | &#9432;                            | Dunder Patterns | Highlights `if __name__ == "__main__":` guard blocks.                |
 | [DUNDER001](./diagnostics/dunder_patterns.md#dunder001)                   | `MagicMethodOutOfScope`           | &#9888;                            | Dunder Patterns | Magic methods defined outside a class.                               |
+| [DYN001](./diagnostics/dynamic.md#dyn001)                                 | `DynamicBoundary`                 | &#10005;&nbsp;&#9888;&nbsp;&#9432; | Dynamic Python  | Runtime behavior crosses an `Any`/unknown boundary.                  |
 | [HM001](./diagnostics/type_system.md#hm001)                               | `TypeMismatch`                    | &#10005;                           | Type System     | Hindley–Milner could not unify two types.                            |
 | [HM002](./diagnostics/type_system.md#hm002)                               | `OccursCheckFailed`               | &#10005;                           | Type System     | Recursive type variable detected (infinite type).                    |
 | [HM003](./diagnostics/type_system.md#hm003)                               | `UndefinedTypeVar`                | &#10005;                           | Type System     | Referenced type variable was never declared.                         |
@@ -66,6 +67,7 @@ Note that per-mode rows show the icon used in strict / balanced / relaxed order
 - [Type Safety Diagnostics](./diagnostics/type_safety.md)
 - [Annotation Diagnostics](./diagnostics/annotations.md)
 - [Dunder Pattern Diagnostics](./diagnostics/dunder_patterns.md)
+- [Dynamic Python Diagnostics](./diagnostics/dynamic.md)
 - [Type System Diagnostics](./diagnostics/type_system.md)
 - [Attribute Diagnostics](./diagnostics/attributes.md)
 - [Pattern Typing Diagnostics](./diagnostics/pattern_typing.md)

@@ -88,14 +88,14 @@
 
 ## Milestone 6: Dynamic Python
 
-- [ ] Implement the coverage in [dynamic.md](./specs/dynamic.md).
-- [ ] Define supported fallback behavior for monkey-patching, metaclasses,
+- [x] Implement the coverage in [dynamic.md](./specs/dynamic.md).
+- [x] Define supported fallback behavior for monkey-patching, metaclasses,
   `__getattr__`, dynamic imports, custom import hooks, and reflection.
-- [ ] Add tests that assert when dynamic behavior resolves to a concrete type,
+- [x] Add tests that assert when dynamic behavior resolves to a concrete type,
   emits a diagnostic, or falls back to `Any`/unknown.
-- [ ] Verify strict/balanced/relaxed mode behavior for unsafe dynamic
+- [x] Verify strict/balanced/relaxed mode behavior for unsafe dynamic
   boundaries.
-- [ ] Confirm fallback types do not erase unrelated precise types.
+- [x] Confirm fallback types do not erase unrelated precise types.
 
 ## Milestone 7: LSP And Editor Product Surface
 

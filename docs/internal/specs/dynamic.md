@@ -39,6 +39,28 @@ severity, message fragment, and span.
 must not erase unrelated precise types, and strict mode may raise severity for
 unsafe propagation.
 
+## V1 Fallback Contract
+
+- Monkey-patching via `setattr`/`delattr`, module/class hierarchy mutation, or
+  direct `__class__`/`__bases__` mutation emits `DYN001` and the mutated
+  value is treated as crossing an `Any`/unknown boundary.
+- Custom metaclasses and dynamic class creation with `type(name, bases, dict)`
+  emit `DYN001`; the class object itself is not treated as a precise
+  static class beyond locally declared members.
+- Annotated `__getattr__` is accepted as an explicit fallback boundary. Literal
+  `getattr(obj, "name")` and `hasattr(obj, "name")` are supported patterns;
+  non-literal reflective lookup emits `DYN001` and falls back to
+  `Any`/unknown.
+- Dynamic imports via `__import__` or `importlib.import_module`, custom import
+  hooks, and runtime `sys.path` mutation emit `DYN001`; imported module
+  values are `Any`/unknown unless a normal import path resolves separately.
+- `eval`, `exec`, and `compile` emit `DYN001`; generated code does not
+  add declarations to the static environment.
+- Decorators outside the supported transparent set may replace functions or
+  classes and emit `DYN001`.
+- Runtime `__all__` mutation emits `DYN001`; only static `__all__`
+  literals participate in export resolution.
+
 ## Mode Behavior
 
 - Strict mode should make unsafe dynamic boundaries visible.

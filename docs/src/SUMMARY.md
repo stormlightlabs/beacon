@@ -10,6 +10,7 @@
       - [Type Safety Diagnostics](./lsp/diagnostics/type_safety.md)
       - [Annotation Diagnostics](./lsp/diagnostics/annotations.md)
       - [Dunder Pattern Diagnostics](./lsp/diagnostics/dunder_patterns.md)
+      - [Dynamic Python Diagnostics](./lsp/diagnostics/dynamic.md)
       - [Type System Diagnostics](./lsp/diagnostics/type_system.md)
       - [Attribute Diagnostics](./lsp/diagnostics/attributes.md)
       - [Pattern Typing Diagnostics](./lsp/diagnostics/pattern_typing.md)
