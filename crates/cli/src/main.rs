@@ -511,7 +511,7 @@ async fn typecheck_command(paths: Vec<PathBuf>, format: OutputFormat) -> Result<
 }
 
 async fn lsp_command(_stdio: bool, tcp: bool, host: String, port: u16, log_file: Option<PathBuf>) -> Result<()> {
-    if let Some(path) = log_file {
+    let _log_guard = if let Some(path) = log_file {
         let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
         let filename = path
             .file_name()
@@ -528,7 +528,7 @@ async fn lsp_command(_stdio: bool, tcp: bool, host: String, port: u16, log_file:
             .with_writer(non_blocking)
             .init();
 
-        std::mem::forget(guard);
+        Some(guard)
     } else {
         tracing_subscriber::fmt()
             .with_env_filter(
@@ -537,7 +537,9 @@ async fn lsp_command(_stdio: bool, tcp: bool, host: String, port: u16, log_file:
             .with_ansi(false)
             .with_writer(std::io::stderr)
             .init();
-    }
+
+        None
+    };
 
     if tcp {
         tracing::info!("Starting Beacon LSP server on TCP {}:{}", host, port);

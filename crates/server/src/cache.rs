@@ -1237,7 +1237,7 @@ mod tests {
 
         let key1 = ScopeCacheKey::new(uri.clone(), scope_id, source1);
         let key2 = ScopeCacheKey::new(uri.clone(), scope_id, source2);
-        let key3 = ScopeCacheKey::new(uri.clone(), scope_id, source3);
+        let key3 = ScopeCacheKey::new(uri, scope_id, source3);
 
         assert_eq!(key1.content_hash, key2.content_hash);
         assert_eq!(key1, key2);
@@ -1287,7 +1287,7 @@ mod tests {
             dependencies: vec![],
         };
 
-        cache.insert(key1.clone(), result.clone());
+        cache.insert(key1.clone(), result);
 
         assert!(cache.get(&key1).is_some());
         assert!(cache.get(&key2).is_none());
@@ -1329,7 +1329,7 @@ mod tests {
 
         let source = "def foo(): pass";
         let key1 = ScopeCacheKey::new(uri1.clone(), scope_id, source);
-        let key2 = ScopeCacheKey::new(uri2.clone(), scope_id, source);
+        let key2 = ScopeCacheKey::new(uri2, scope_id, source);
 
         let result = CachedScopeResult {
             type_map: FxHashMap::default(),
@@ -1388,7 +1388,7 @@ mod tests {
         let source = "def foo(): pass";
         let key1 = ScopeCacheKey::new(uri.clone(), scope_id1, source);
         let key2 = ScopeCacheKey::new(uri.clone(), scope_id2, source);
-        let key3 = ScopeCacheKey::new(uri.clone(), scope_id3, source);
+        let key3 = ScopeCacheKey::new(uri, scope_id3, source);
 
         let result = CachedScopeResult {
             type_map: FxHashMap::default(),
@@ -1429,7 +1429,7 @@ mod tests {
             dependencies: vec![],
         };
 
-        manager.scope_cache.insert(key.clone(), result);
+        manager.scope_cache.insert(key, result);
         assert_eq!(manager.scope_stats().size, 1);
 
         manager.invalidate_document(&uri);
@@ -1527,8 +1527,8 @@ mod tests {
         let string_type = Type::Con(TypeCtor::String);
         let float_type = Type::Con(TypeCtor::Float);
 
-        cache.insert(uri.clone(), 1, 1, int_type.clone());
-        cache.insert(uri.clone(), 2, 1, string_type.clone());
+        cache.insert(uri.clone(), 1, 1, int_type);
+        cache.insert(uri.clone(), 2, 1, string_type);
 
         cache.get(&uri, 1, 1);
 
@@ -1794,7 +1794,7 @@ mod tests {
         let scope_id = beacon_parser::ScopeId::from_raw(0);
 
         tracker.add_symbol_definition(SymbolDefinition::new(
-            uri1.clone(),
+            uri1,
             "func1".to_string(),
             beacon_parser::SymbolKind::Function,
             1,
@@ -1803,7 +1803,7 @@ mod tests {
         ));
 
         tracker.add_symbol_definition(SymbolDefinition::new(
-            uri2.clone(),
+            uri2,
             "func2".to_string(),
             beacon_parser::SymbolKind::Function,
             1,
@@ -1830,7 +1830,7 @@ mod tests {
             scope_id,
         );
 
-        manager.add_symbol_definition(definition.clone());
+        manager.add_symbol_definition(definition);
 
         let retrieved = manager.get_symbol_definition(&uri, "test_func");
         assert!(retrieved.is_some());
@@ -1856,7 +1856,7 @@ mod tests {
     #[test]
     fn test_workspace_symbol_table_resolve_symbol() {
         let manager = Arc::new(CacheManager::new());
-        let table = WorkspaceSymbolTable::new(manager.clone());
+        let table = WorkspaceSymbolTable::new(manager);
 
         let uri = Url::parse("file:///src/mymodule.py").unwrap();
         let scope_id = beacon_parser::ScopeId::from_raw(0);
@@ -1864,7 +1864,7 @@ mod tests {
         table.register_module("mymodule".to_string(), uri.clone());
 
         let definition = SymbolDefinition::new(
-            uri.clone(),
+            uri,
             "MyClass".to_string(),
             beacon_parser::SymbolKind::Class,
             5,
@@ -1872,7 +1872,7 @@ mod tests {
             scope_id,
         );
 
-        table.add_symbol_definition(definition.clone());
+        table.add_symbol_definition(definition);
 
         let resolved = table.resolve_symbol("mymodule", "MyClass");
         assert!(resolved.is_some());
@@ -1882,7 +1882,7 @@ mod tests {
     #[test]
     fn test_workspace_symbol_table_search() {
         let manager = Arc::new(CacheManager::new());
-        let table = WorkspaceSymbolTable::new(manager.clone());
+        let table = WorkspaceSymbolTable::new(manager);
 
         let uri = Url::parse("file:///test.py").unwrap();
         let scope_id = beacon_parser::ScopeId::from_raw(0);
@@ -1906,7 +1906,7 @@ mod tests {
         ));
 
         table.add_symbol_definition(SymbolDefinition::new(
-            uri.clone(),
+            uri,
             "other_func".to_string(),
             beacon_parser::SymbolKind::Function,
             20,
@@ -1925,7 +1925,7 @@ mod tests {
     #[test]
     fn test_workspace_symbol_table_get_module_symbols() {
         let manager = Arc::new(CacheManager::new());
-        let table = WorkspaceSymbolTable::new(manager.clone());
+        let table = WorkspaceSymbolTable::new(manager);
 
         let uri = Url::parse("file:///src/mymodule.py").unwrap();
         let scope_id = beacon_parser::ScopeId::from_raw(0);
@@ -1942,7 +1942,7 @@ mod tests {
         ));
 
         table.add_symbol_definition(SymbolDefinition::new(
-            uri.clone(),
+            uri,
             "func2".to_string(),
             beacon_parser::SymbolKind::Function,
             10,
@@ -1962,8 +1962,8 @@ mod tests {
         let uri1 = Url::parse("file:///module1.py").unwrap();
         let uri2 = Url::parse("file:///module2.py").unwrap();
 
-        table.register_module("module1".to_string(), uri1.clone());
-        table.register_module("module2".to_string(), uri2.clone());
+        table.register_module("module1".to_string(), uri1);
+        table.register_module("module2".to_string(), uri2);
 
         let modules = table.all_modules();
         assert_eq!(modules.len(), 2);

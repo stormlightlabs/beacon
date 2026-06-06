@@ -835,8 +835,8 @@ def func():
             .position(|t| *t == SemanticTokenType::NUMBER)
             .unwrap() as u32;
 
-        let number_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == number_type_idx).collect();
-        assert!(number_tokens.len() >= 2, "Expected 2 number tokens");
+        let number_tokens = tokens.iter().filter(|t| t.token_type == number_type_idx);
+        assert!(number_tokens.count() >= 2, "Expected 2 number tokens");
     }
 
     #[test]
@@ -916,7 +916,7 @@ result = add(1, 2)"#;
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = SemanticTokensParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             work_done_progress_params: Default::default(),
             partial_result_params: Default::default(),
         };
@@ -1010,8 +1010,8 @@ import sys as system
             .position(|t| *t == SemanticTokenType::NAMESPACE)
             .unwrap() as u32;
 
-        let import_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == import_type_idx).collect();
-        assert!(import_tokens.len() >= 2, "Expected tokens for sqrt and pi");
+        let import_tokens = tokens.iter().filter(|t| t.token_type == import_type_idx);
+        assert!(import_tokens.count() >= 2, "Expected tokens for sqrt and pi");
     }
 
     #[test]
@@ -1032,8 +1032,11 @@ x = os.path
             .position(|t| *t == SemanticTokenType::PROPERTY)
             .unwrap() as u32;
 
-        let property_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == property_type_idx).collect();
-        assert!(!property_tokens.is_empty(), "Expected PROPERTY token for attribute");
+        let mut property_tokens = tokens.iter().filter(|t| t.token_type == property_type_idx);
+        assert!(
+            property_tokens.next().is_some(),
+            "Expected PROPERTY token for attribute"
+        );
     }
 
     #[test]
@@ -1055,9 +1058,9 @@ result = os.path.join("a", "b")
             .position(|t| *t == SemanticTokenType::PROPERTY)
             .unwrap() as u32;
 
-        let property_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == property_type_idx).collect();
+        let property_tokens = tokens.iter().filter(|t| t.token_type == property_type_idx);
         assert!(
-            property_tokens.len() >= 2,
+            property_tokens.count() >= 2,
             "Expected PROPERTY tokens for nested attributes"
         );
     }
@@ -1110,15 +1113,15 @@ sys_info = system.version
             .iter()
             .position(|t| *t == SemanticTokenType::NAMESPACE)
             .unwrap() as u32;
-        let import_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == import_type_idx).collect();
-        assert!(import_tokens.len() >= 4, "Expected tokens for os, system, sqrt, pi");
+        let import_tokens = tokens.iter().filter(|t| t.token_type == import_type_idx);
+        assert!(import_tokens.count() >= 4, "Expected tokens for os, system, sqrt, pi");
 
         let property_type_idx = SUPPORTED_TYPES
             .iter()
             .position(|t| *t == SemanticTokenType::PROPERTY)
             .unwrap() as u32;
-        let property_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == property_type_idx).collect();
-        assert!(property_tokens.len() >= 3, "Expected tokens for path, join, version");
+        let property_tokens = tokens.iter().filter(|t| t.token_type == property_type_idx);
+        assert!(property_tokens.count() >= 3, "Expected tokens for path, join, version");
     }
 
     #[test]
@@ -1225,15 +1228,15 @@ sys_info = system.version
             .position(|t| *t == SemanticTokenType::NAMESPACE)
             .unwrap() as u32;
 
-        let keyword_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == keyword_type_idx).collect();
+        let keyword_tokens = tokens.iter().filter(|t| t.token_type == keyword_type_idx);
         assert!(
-            keyword_tokens.len() >= 3,
+            keyword_tokens.count() >= 3,
             "Expected at least 3 keyword tokens (import, from, import)"
         );
 
-        let namespace_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == namespace_type_idx).collect();
+        let namespace_tokens = tokens.iter().filter(|t| t.token_type == namespace_type_idx);
         assert!(
-            namespace_tokens.len() >= 2,
+            namespace_tokens.count() >= 2,
             "Expected at least 2 namespace tokens (os, sqrt)"
         );
 
@@ -1288,9 +1291,9 @@ sys_info = system.version
             .position(|t| *t == SemanticTokenType::KEYWORD)
             .unwrap() as u32;
 
-        let keyword_tokens: Vec<_> = tokens.iter().filter(|t| t.token_type == keyword_type_idx).collect();
+        let keyword_tokens = tokens.iter().filter(|t| t.token_type == keyword_type_idx);
         assert!(
-            keyword_tokens.len() >= 3,
+            keyword_tokens.count() >= 3,
             "Expected at least 3 keyword tokens (if, in, pass)"
         );
     }

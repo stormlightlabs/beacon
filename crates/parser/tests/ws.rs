@@ -2,7 +2,7 @@ use beacon_core::fixtures::python_files;
 use beacon_parser::PythonParser;
 
 #[test]
-fn workspace_fixture_python_files_parse_to_ast() {
+fn python_files_parse_to_ast() {
     let files = python_files().expect("workspace fixture should exist");
     assert!(!files.is_empty(), "workspace fixture should contain Python files");
 

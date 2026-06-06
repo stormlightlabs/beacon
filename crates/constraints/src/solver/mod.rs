@@ -242,7 +242,7 @@ mod tests {
         let t2 = tvar(1);
         let constraints = ConstraintSet {
             constraints: vec![
-                Constraint::Equal(t1.clone(), Type::int(), test_span()),
+                Constraint::Equal(t1, Type::int(), test_span()),
                 Constraint::Equal(t2, Type::string(), test_span()),
             ],
         };
@@ -1219,7 +1219,7 @@ mod tests {
     #[test]
     fn test_function_contravariance_valid() {
         let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
-        let func_animal = Type::fun_unnamed(vec![animal.clone()], Type::none());
+        let func_animal = Type::fun_unnamed(vec![animal], Type::none());
 
         let arg_types = vec![(func_animal.clone(), test_span())];
         let ret_ty = tvar(0);
@@ -1252,8 +1252,8 @@ mod tests {
 
         let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
         let dog = Type::Con(TypeCtor::Class("Dog".to_string()));
-        let func_dog = Type::fun_unnamed(vec![dog.clone()], Type::none());
-        let func_animal = Type::fun_unnamed(vec![animal.clone()], Type::none());
+        let func_dog = Type::fun_unnamed(vec![dog], Type::none());
+        let func_animal = Type::fun_unnamed(vec![animal], Type::none());
 
         let arg_types = vec![(func_dog, test_span())];
         let ret_ty = tvar(0);
@@ -1312,8 +1312,8 @@ mod tests {
 
         let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
         let dog = Type::Con(TypeCtor::Class("Dog".to_string()));
-        let func_animal = Type::fun_unnamed(vec![animal.clone()], Type::none());
-        let func_dog = Type::fun_unnamed(vec![dog.clone()], Type::none());
+        let func_animal = Type::fun_unnamed(vec![animal], Type::none());
+        let func_dog = Type::fun_unnamed(vec![dog], Type::none());
 
         let arg_types = vec![(func_animal, test_span())];
         let ret_ty = tvar(0);
@@ -1348,8 +1348,8 @@ mod tests {
 
         let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
         let dog = Type::Con(TypeCtor::Class("Dog".to_string()));
-        let func_returns_dog = Type::fun_unnamed(vec![], dog.clone());
-        let func_returns_animal = Type::fun_unnamed(vec![], animal.clone());
+        let func_returns_dog = Type::fun_unnamed(vec![], dog);
+        let func_returns_animal = Type::fun_unnamed(vec![], animal);
 
         let arg_types = vec![(func_returns_dog, test_span())];
         let ret_ty = tvar(0);
@@ -1752,7 +1752,7 @@ mod tests {
         let constraints = ConstraintSet {
             constraints: vec![Constraint::Join(
                 var_name,
-                incoming_types.clone(),
+                incoming_types,
                 result_type.clone(),
                 test_span(),
             )],
@@ -1839,7 +1839,7 @@ mod tests {
     fn test_type_predicate_isinstance_union_target() {
         let union_type = Type::union(vec![Type::int(), Type::string(), Type::bool()]);
         let target = Type::union(vec![Type::int(), Type::string()]);
-        let pred = TypePredicate::IsInstance(target.clone());
+        let pred = TypePredicate::IsInstance(target);
         let narrowed = pred.apply(&union_type);
         match narrowed {
             Type::Union(types) => {
@@ -2091,7 +2091,7 @@ mod tests {
     #[test]
     fn test_type_predicate_double_negation() {
         let truthy = TypePredicate::IsTruthy;
-        let not_not_truthy = TypePredicate::Not(Box::new(TypePredicate::Not(Box::new(truthy.clone()))));
+        let not_not_truthy = TypePredicate::Not(Box::new(TypePredicate::Not(Box::new(truthy))));
         let result = not_not_truthy.negate();
         match result {
             TypePredicate::Not(inner) => match *inner {
@@ -2490,7 +2490,7 @@ mod tests {
     #[test]
     fn test_protocol_with_type_variables() {
         let elem_inner = tvar(0);
-        let list_ty = Type::list(elem_inner.clone());
+        let list_ty = Type::list(elem_inner);
         let elem_outer = tvar(1);
 
         let mut subst = beacon_core::Subst::empty();
@@ -2848,11 +2848,11 @@ mod tests {
         let animal_ty = Type::Con(TypeCtor::Class("Animal".to_string()));
         let producer_dog = Type::App(
             Box::new(Type::Con(TypeCtor::Class("Producer".to_string()))),
-            Box::new(dog_ty.clone()),
+            Box::new(dog_ty),
         );
         let producer_animal = Type::App(
             Box::new(Type::Con(TypeCtor::Class("Producer".to_string()))),
-            Box::new(animal_ty.clone()),
+            Box::new(animal_ty),
         );
 
         assert!(
@@ -2889,11 +2889,11 @@ mod tests {
         let animal_ty = Type::Con(TypeCtor::Class("Animal".to_string()));
         let consumer_dog = Type::App(
             Box::new(Type::Con(TypeCtor::Class("Consumer".to_string()))),
-            Box::new(dog_ty.clone()),
+            Box::new(dog_ty),
         );
         let consumer_animal = Type::App(
             Box::new(Type::Con(TypeCtor::Class("Consumer".to_string()))),
-            Box::new(animal_ty.clone()),
+            Box::new(animal_ty),
         );
 
         assert!(
@@ -2934,7 +2934,7 @@ mod tests {
         );
         let box_animal = Type::App(
             Box::new(Type::Con(TypeCtor::Class("Box".to_string()))),
-            Box::new(animal_ty.clone()),
+            Box::new(animal_ty),
         );
 
         assert!(
@@ -2948,7 +2948,7 @@ mod tests {
 
         let box_dog2 = Type::App(
             Box::new(Type::Con(TypeCtor::Class("Box".to_string()))),
-            Box::new(dog_ty.clone()),
+            Box::new(dog_ty),
         );
         assert!(
             types_compatible(&box_dog, &box_dog2, &registry, &tv_registry),

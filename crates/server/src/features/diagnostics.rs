@@ -3262,7 +3262,7 @@ mod tests {
     fn test_type_error_occurs_check_conversion() {
         let tv = TypeVar::new(0);
         let error_info = TypeErrorInfo {
-            error: TypeError::OccursCheckFailed(tv.clone(), "List['t0]".to_string()),
+            error: TypeError::OccursCheckFailed(tv, "List['t0]".to_string()),
             span: Span { line: 5, col: 10, end_line: None, end_col: None },
         };
 
@@ -3402,7 +3402,7 @@ def test():
     fn test_type_error_undefined_typevar_conversion() {
         let tv = TypeVar::new(5);
         let error_info = TypeErrorInfo {
-            error: TypeError::UndefinedTypeVar(tv.clone()),
+            error: TypeError::UndefinedTypeVar(tv),
             span: Span { line: 1, col: 1, end_line: None, end_col: None },
         };
 
@@ -3619,18 +3619,14 @@ def test():
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
-        let type_errors: Vec<_> = diagnostics
-            .iter()
-            .filter(|d| {
-                if let Some(lsp_types::NumberOrString::String(code)) = &d.code {
-                    code.starts_with("HM")
-                } else {
-                    false
-                }
-            })
-            .collect();
-
-        assert!(!type_errors.is_empty())
+        let hm_diagnostics = diagnostics.iter().find(|d| {
+            if let Some(lsp_types::NumberOrString::String(code)) = &d.code {
+                code.starts_with("HM")
+            } else {
+                false
+            }
+        });
+        assert!(hm_diagnostics.is_some())
     }
 
     #[tokio::test]
@@ -3638,7 +3634,7 @@ def test():
         let documents = DocumentManager::new().unwrap();
         let config = crate::config::Config::default();
         let workspace_root = Url::parse("file:///workspace").unwrap();
-        let mut workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
+        let mut workspace = Workspace::new(Some(workspace_root), config.clone(), documents.clone());
 
         let uri_a = Url::parse("file:///workspace/a.py").unwrap();
         let source_a = "import b\n\ndef func_a():\n    pass";
@@ -3657,22 +3653,19 @@ def test():
 
         let workspace_arc = Arc::new(RwLock::new(workspace));
         let mut analyzer = crate::analysis::Analyzer::new(config, documents.clone());
-        let provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+        let provider = DiagnosticProvider::new(documents, workspace_arc);
 
         let diagnostics = provider.generate_diagnostics(&uri_a, &mut analyzer);
 
-        let circular_diagnostics: Vec<_> = diagnostics
-            .iter()
-            .filter(|d| {
-                if let Some(lsp_types::NumberOrString::String(code)) = &d.code {
-                    code == "circular-import"
-                } else {
-                    false
-                }
-            })
-            .collect();
+        let circular_diagnostics = diagnostics.iter().find(|d| {
+            if let Some(lsp_types::NumberOrString::String(code)) = &d.code {
+                code == "circular-import"
+            } else {
+                false
+            }
+        });
 
-        if circular_diagnostics.is_empty() {
+        if circular_diagnostics.is_none() {
             eprintln!("Warning: Circular import not detected in test (requires full workspace initialization)");
         }
     }
@@ -3745,19 +3738,16 @@ def test():
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
-        let missing_diagnostics: Vec<_> = diagnostics
-            .iter()
-            .filter(|d| {
-                if let Some(lsp_types::NumberOrString::String(code)) = &d.code {
-                    code == "missing-module" || code == "unresolved-import"
-                } else {
-                    false
-                }
-            })
-            .collect();
+        let missing_diagnostics = diagnostics.iter().find(|d| {
+            if let Some(lsp_types::NumberOrString::String(code)) = &d.code {
+                code == "missing-module" || code == "unresolved-import"
+            } else {
+                false
+            }
+        });
 
         assert!(
-            !missing_diagnostics.is_empty(),
+            missing_diagnostics.is_some(),
             "Expected missing module diagnostic but found none"
         );
     }
@@ -3766,7 +3756,7 @@ def test():
     fn test_format_missing_module_message_relative_import_beyond_package() {
         let documents = DocumentManager::new().unwrap();
         let workspace = create_test_workspace(documents.clone());
-        let provider = DiagnosticProvider::new(documents.clone(), workspace.clone());
+        let provider = DiagnosticProvider::new(documents, workspace.clone());
 
         let ws = workspace.try_read().unwrap();
         let message = provider.format_missing_module_message("...", "pkg", &ws);
@@ -3786,7 +3776,6 @@ def test():
         let score_similar = provider.fuzzy_matcher.similarity("foo", "foobar");
         let score_typo = provider.fuzzy_matcher.similarity("clections", "collections");
         let score_different = provider.fuzzy_matcher.similarity("abc", "xyz");
-
         assert!(score_similar >= provider.fuzzy_matcher.threshold());
         assert!(score_typo >= provider.fuzzy_matcher.threshold());
         assert!(score_different < provider.fuzzy_matcher.threshold());
@@ -3836,7 +3825,6 @@ def test():
         };
 
         let diagnostic = type_error_to_diagnostic(&error_info);
-
         assert_eq!(diagnostic.range.start.line, 4);
         assert_eq!(diagnostic.range.start.character, 9);
         assert_eq!(diagnostic.range.end.character, 19);
@@ -3865,22 +3853,15 @@ def add(x, y):
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
-        let ann007_diagnostics: Vec<_> = diagnostics
+        let ann007_diagnostics = diagnostics
             .iter()
-            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string())))
-            .collect();
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string())));
 
-        assert!(
-            !ann007_diagnostics.is_empty(),
-            "Expected ANN007 diagnostics for implicit Any parameters"
-        );
-        assert_eq!(
-            ann007_diagnostics.len(),
-            2,
-            "Expected 2 ANN007 diagnostics (one for each parameter)"
-        );
+        let count = ann007_diagnostics.clone().count();
+        assert!(count > 0, "Expected ANN007 diagnostics for implicit Any parameters");
+        assert_eq!(count, 2, "Expected 2 ANN007 diagnostics (one for each parameter)");
 
-        for diag in &ann007_diagnostics {
+        for diag in ann007_diagnostics {
             assert_eq!(diag.severity, Some(DiagnosticSeverity::ERROR));
             assert!(diag.message.contains("implicit Any type"));
             assert!(diag.message.contains("strict mode"));
@@ -3948,16 +3929,13 @@ def add(x: int, y: int) -> int:
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
-        let implicit_any_diagnostics: Vec<_> = diagnostics
-            .iter()
-            .filter(|d| {
-                d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string()))
-                    || d.code == Some(lsp_types::NumberOrString::String("ANN008".to_string()))
-            })
-            .collect();
+        let implicit_any_diagnostics = diagnostics.iter().find(|d| {
+            d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string()))
+                || d.code == Some(lsp_types::NumberOrString::String("ANN008".to_string()))
+        });
 
         assert!(
-            implicit_any_diagnostics.is_empty(),
+            implicit_any_diagnostics.is_none(),
             "Expected no implicit Any diagnostics for properly annotated function, got: {implicit_any_diagnostics:?}"
         );
     }
@@ -3985,22 +3963,20 @@ def add(x, y):
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
-        let ann007_diagnostics: Vec<_> = diagnostics
+        let mut ann007_diagnostics = diagnostics
             .iter()
-            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string())))
-            .collect();
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string())));
 
-        let ann008_diagnostics: Vec<_> = diagnostics
+        let mut ann008_diagnostics = diagnostics
             .iter()
-            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN008".to_string())))
-            .collect();
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN008".to_string())));
 
         assert!(
-            ann007_diagnostics.is_empty(),
+            ann007_diagnostics.next().is_none(),
             "Balanced mode should not generate ANN007 for implicit Any"
         );
         assert!(
-            ann008_diagnostics.is_empty(),
+            ann008_diagnostics.next().is_none(),
             "Balanced mode should not generate ANN008 for implicit Any"
         );
     }
@@ -4028,22 +4004,20 @@ def add(x, y):
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
-        let ann007_diagnostics: Vec<_> = diagnostics
+        let mut ann007_diagnostics = diagnostics
             .iter()
-            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string())))
-            .collect();
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string())));
 
-        let ann008_diagnostics: Vec<_> = diagnostics
+        let mut ann008_diagnostics = diagnostics
             .iter()
-            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN008".to_string())))
-            .collect();
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN008".to_string())));
 
         assert!(
-            ann007_diagnostics.is_empty(),
+            ann007_diagnostics.next().is_none(),
             "Relaxed mode should not generate ANN007 for implicit Any"
         );
         assert!(
-            ann008_diagnostics.is_empty(),
+            ann008_diagnostics.next().is_none(),
             "Relaxed mode should not generate ANN008 for implicit Any"
         );
     }
@@ -4118,13 +4092,12 @@ def mixed_params(a: int, b, c) -> int:
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
-        let ann007_diagnostics: Vec<_> = diagnostics
+        let ann007_diagnostics = diagnostics
             .iter()
-            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string())))
-            .collect();
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string())));
 
         assert_eq!(
-            ann007_diagnostics.len(),
+            ann007_diagnostics.count(),
             2,
             "Expected ANN007 for parameters 'b' and 'c' (not 'a' which is annotated)"
         );
@@ -4164,22 +4137,20 @@ class Calculator:
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
-        let ann007_diagnostics: Vec<_> = diagnostics
+        let ann007_diagnostics = diagnostics
             .iter()
-            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string())))
-            .collect();
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string())));
 
-        let ann008_diagnostics: Vec<_> = diagnostics
+        let mut ann008_diagnostics = diagnostics
             .iter()
-            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN008".to_string())))
-            .collect();
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN008".to_string())));
 
         assert!(
-            ann007_diagnostics.len() >= 2,
+            ann007_diagnostics.count() >= 2,
             "Expected at least 2 ANN007 for 'x' and 'y' in 'add' method"
         );
         assert!(
-            !ann008_diagnostics.is_empty(),
+            ann008_diagnostics.next().is_some(),
             "Expected at least 1 ANN008 for 'add' method return type"
         );
     }
@@ -4209,22 +4180,20 @@ def outer(x: int) -> int:
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
-        let ann007_diagnostics: Vec<_> = diagnostics
+        let mut ann007_diagnostics = diagnostics
             .iter()
-            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string())))
-            .collect();
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN007".to_string())));
 
-        let ann008_diagnostics: Vec<_> = diagnostics
+        let mut ann008_diagnostics = diagnostics
             .iter()
-            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN008".to_string())))
-            .collect();
+            .filter(|d| d.code == Some(lsp_types::NumberOrString::String("ANN008".to_string())));
 
         assert!(
-            !ann007_diagnostics.is_empty(),
+            ann007_diagnostics.next().is_some(),
             "Expected at least 1 ANN007 for inner function parameter 'y'"
         );
         assert!(
-            !ann008_diagnostics.is_empty(),
+            ann008_diagnostics.next().is_some(),
             "Expected at least 1 ANN008 for inner function return type"
         );
     }
@@ -4803,19 +4772,16 @@ def multiply(x: int, y: int) -> int:
 
         let diagnostics = provider.generate_diagnostics(&uri, &mut analyzer);
 
-        let missing_annotation_diagnostics: Vec<_> = diagnostics
-            .iter()
-            .filter(|d| {
-                matches!(
-                    d.code.as_ref(),
-                    Some(lsp_types::NumberOrString::String(code))
-                    if code == "ANN004" || code == "ANN006" || code == "ANN011" || code == "ANN012"
-                )
-            })
-            .collect();
+        let mut missing_annotation_diagnostics = diagnostics.iter().filter(|d| {
+            matches!(
+                d.code.as_ref(),
+                Some(lsp_types::NumberOrString::String(code))
+                if code == "ANN004" || code == "ANN006" || code == "ANN011" || code == "ANN012"
+            )
+        });
 
         assert!(
-            missing_annotation_diagnostics.is_empty(),
+            missing_annotation_diagnostics.next().is_none(),
             "Fully annotated functions should not generate missing annotation warnings in balanced mode"
         );
     }
@@ -5066,7 +5032,7 @@ def bar():
     fn test_contains_type_var_function() {
         let tv = TypeVar::new(0);
         let fun_var = Type::Fun(
-            vec![("x".to_string(), Type::Var(tv.clone()))],
+            vec![("x".to_string(), Type::Var(tv))],
             Box::new(Type::Con(TypeCtor::Int)),
         );
         assert!(DiagnosticProvider::contains_type_var(&fun_var));

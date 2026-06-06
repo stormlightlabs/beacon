@@ -556,7 +556,7 @@ mod tests {
     fn test_value_restriction_keeps_expansive_binding_monomorphic() {
         let mut env = TypeEnvironment::new();
         let tv = env.fresh_var();
-        let ty = Type::fun(vec![(String::new(), Type::Var(tv.clone()))], Type::Var(tv.clone()));
+        let ty = Type::fun(vec![(String::new(), Type::Var(tv.clone()))], Type::Var(tv));
 
         let scheme = env.generalize_with_restriction(ty.clone(), false);
 

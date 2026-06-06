@@ -34,7 +34,7 @@ fn fixture_workspace_with_documents() -> (DocumentManager, Arc<RwLock<Workspace>
 }
 
 #[test]
-fn workspace_fixture_covers_import_module_roots_and_forms() {
+fn covers_import_module_roots_and_forms() {
     let workspace = fixture_workspace();
 
     for module in [
@@ -67,7 +67,7 @@ fn workspace_fixture_covers_import_module_roots_and_forms() {
 }
 
 #[test]
-fn workspace_fixture_covers_exports_star_imports_and_reexport_chains() {
+fn covers_exports_star_imports_and_reexport_chains() {
     let workspace = fixture_workspace();
 
     let package_uri = Url::from_file_path(file("imports/__init__.py")).expect("package URI");
@@ -86,7 +86,7 @@ fn workspace_fixture_covers_exports_star_imports_and_reexport_chains() {
 }
 
 #[test]
-fn workspace_fixture_covers_missing_and_circular_imports_gracefully() {
+fn covers_missing_and_circular_imports_gracefully() {
     let workspace = fixture_workspace();
 
     let broken_uri = Url::from_file_path(file("imports/broken_imports.py")).expect("broken fixture URI");
@@ -151,7 +151,7 @@ fn stub_precedence_covers_custom_inline_bundled_and_site_packages() {
 
     let mut with_custom = Workspace::new(
         Some(root_uri.clone()),
-        Config { stub_paths: vec![custom_stubs.clone()], ..Default::default() },
+        Config { stub_paths: vec![custom_stubs], ..Default::default() },
         documents.clone(),
     );
     with_custom.initialize().unwrap();

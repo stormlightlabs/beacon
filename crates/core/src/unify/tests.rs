@@ -54,7 +54,7 @@ fn test_occurs_check_basic() {
     let tv = TypeVar::new(0);
     let recursive_type = Type::list(Type::Var(tv.clone()));
     let result = Unifier::unify(
-        &Type::Var(tv.clone()),
+        &Type::Var(tv),
         &recursive_type,
         &TypeVarConstraintRegistry::new(),
     );
@@ -65,7 +65,7 @@ fn test_occurs_check_basic() {
 fn test_occurs_check_in_nested_app() {
     let tv = TypeVar::new(0);
     let nested = Type::list(Type::list(Type::Var(tv.clone())));
-    let result = Unifier::unify(&Type::Var(tv.clone()), &nested, &TypeVarConstraintRegistry::new());
+    let result = Unifier::unify(&Type::Var(tv), &nested, &TypeVarConstraintRegistry::new());
     assert!(result.is_err());
 }
 
@@ -73,7 +73,7 @@ fn test_occurs_check_in_nested_app() {
 fn test_occurs_check_in_function_args() {
     let tv = TypeVar::new(0);
     let fun_type = Type::fun_unnamed(vec![Type::Var(tv.clone())], Type::int());
-    let result = Unifier::unify(&Type::Var(tv.clone()), &fun_type, &TypeVarConstraintRegistry::new());
+    let result = Unifier::unify(&Type::Var(tv), &fun_type, &TypeVarConstraintRegistry::new());
     assert!(result.is_err());
 }
 
@@ -81,7 +81,7 @@ fn test_occurs_check_in_function_args() {
 fn test_occurs_check_in_function_return() {
     let tv = TypeVar::new(0);
     let fun_type = Type::fun_unnamed(vec![Type::int()], Type::Var(tv.clone()));
-    let result = Unifier::unify(&Type::Var(tv.clone()), &fun_type, &TypeVarConstraintRegistry::new());
+    let result = Unifier::unify(&Type::Var(tv), &fun_type, &TypeVarConstraintRegistry::new());
     assert!(result.is_err());
 }
 
@@ -89,7 +89,7 @@ fn test_occurs_check_in_function_return() {
 fn test_occurs_check_in_union() {
     let tv = TypeVar::new(0);
     let union = Type::union(vec![Type::int(), Type::Var(tv.clone())]);
-    let result = Unifier::unify(&Type::Var(tv.clone()), &union, &TypeVarConstraintRegistry::new());
+    let result = Unifier::unify(&Type::Var(tv), &union, &TypeVarConstraintRegistry::new());
     assert!(result.is_err());
 }
 
@@ -97,7 +97,7 @@ fn test_occurs_check_in_union() {
 fn test_occurs_check_in_record_fields() {
     let tv = TypeVar::new(0);
     let record = Type::Record(vec![("x".to_string(), Type::Var(tv.clone()))], None);
-    let result = Unifier::unify(&Type::Var(tv.clone()), &record, &TypeVarConstraintRegistry::new());
+    let result = Unifier::unify(&Type::Var(tv), &record, &TypeVarConstraintRegistry::new());
     assert!(result.is_err());
 }
 
@@ -105,7 +105,7 @@ fn test_occurs_check_in_record_fields() {
 fn test_occurs_check_in_record_row_var() {
     let tv = TypeVar::new(0);
     let record = Type::Record(vec![("x".to_string(), Type::int())], Some(tv.clone()));
-    let result = Unifier::unify(&Type::Var(tv.clone()), &record, &TypeVarConstraintRegistry::new());
+    let result = Unifier::unify(&Type::Var(tv), &record, &TypeVarConstraintRegistry::new());
     assert!(result.is_err());
 }
 
@@ -188,7 +188,7 @@ fn test_any_unifies_with_everything() {
     assert!(subst.is_empty());
 
     let tv = TypeVar::new(0);
-    let subst = Unifier::unify(&Type::any(), &Type::Var(tv.clone()), &TypeVarConstraintRegistry::new()).unwrap();
+    let subst = Unifier::unify(&Type::any(), &Type::Var(tv), &TypeVarConstraintRegistry::new()).unwrap();
     assert!(subst.is_empty());
 
     let subst = Unifier::unify(
@@ -334,7 +334,7 @@ fn test_complex_record_round_trip() {
         None,
     );
 
-    let subst1 = Subst::singleton(tv1.clone(), Type::int());
+    let subst1 = Subst::singleton(tv1, Type::int());
     let record_after_1 = subst1.apply(&record);
 
     let subst2 = Subst::singleton(tv2, Type::string());
@@ -512,7 +512,7 @@ fn test_heterogeneous_tuple_occurs_check() {
     let tv = TypeVar::new(0);
     let tuple_with_var = Type::tuple_heterogeneous(vec![Type::Var(tv.clone()), Type::int()]);
     let result = Unifier::unify(
-        &Type::Var(tv.clone()),
+        &Type::Var(tv),
         &tuple_with_var,
         &TypeVarConstraintRegistry::new(),
     );
@@ -524,7 +524,7 @@ fn test_heterogeneous_tuple_nested() {
     let tv1 = TypeVar::new(0);
     let tv2 = TypeVar::new(1);
     let inner_tuple = Type::tuple_heterogeneous(vec![Type::Var(tv1.clone()), Type::int()]);
-    let outer_tuple1 = Type::tuple_heterogeneous(vec![inner_tuple.clone(), Type::Var(tv2.clone())]);
+    let outer_tuple1 = Type::tuple_heterogeneous(vec![inner_tuple, Type::Var(tv2.clone())]);
     let inner_concrete = Type::tuple_heterogeneous(vec![Type::string(), Type::int()]);
     let outer_tuple2 = Type::tuple_heterogeneous(vec![inner_concrete, Type::bool()]);
     let subst = Unifier::unify(&outer_tuple1, &outer_tuple2, &TypeVarConstraintRegistry::new()).unwrap();
@@ -743,8 +743,8 @@ fn test_variance_multi_param_dict_both_invariant() {
     let dog = Type::Con(TypeCtor::Class("Dog".to_string()));
     let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
 
-    let dict_dog_dog = Type::dict(dog.clone(), dog.clone());
-    let dict_animal_animal = Type::dict(animal.clone(), animal.clone());
+    let dict_dog_dog = Type::dict(dog.clone(), dog);
+    let dict_animal_animal = Type::dict(animal.clone(), animal);
 
     let result = Unifier::unify(&dict_dog_dog, &dict_animal_animal, &TypeVarConstraintRegistry::new());
     assert!(result.is_err(), "Dict is invariant in both parameters");
@@ -794,7 +794,7 @@ fn test_variance_nested_generic_hierarchy() {
     let producer_ctor = Type::Con(TypeCtor::Class("Producer".to_string()));
     let consumer_ctor = Type::Con(TypeCtor::Class("Consumer".to_string()));
 
-    let consumer_dog = Type::App(Box::new(consumer_ctor.clone()), Box::new(dog.clone()));
+    let consumer_dog = Type::App(Box::new(consumer_ctor.clone()), Box::new(dog));
     let producer_consumer_dog = Type::App(Box::new(producer_ctor.clone()), Box::new(consumer_dog));
 
     let consumer_animal = Type::App(Box::new(consumer_ctor), Box::new(animal));
@@ -854,7 +854,7 @@ fn test_typevar_bound_validation_success() {
     let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
     registry.set_bound(tv.id, animal.clone());
 
-    let result = Unifier::unify(&Type::Var(tv.clone()), &animal, &registry);
+    let result = Unifier::unify(&Type::Var(tv), &animal, &registry);
     assert!(result.is_ok(), "Should unify TypeVar with its exact bound");
 }
 
@@ -865,7 +865,7 @@ fn test_typevar_bound_validation_failure() {
     let animal = Type::Con(TypeCtor::Class("Animal".to_string()));
     registry.set_bound(tv.id, animal);
 
-    let result = Unifier::unify(&Type::Var(tv.clone()), &Type::int(), &registry);
+    let result = Unifier::unify(&Type::Var(tv), &Type::int(), &registry);
     assert!(
         result.is_err(),
         "Should fail to unify TypeVar with type that violates bound"
@@ -881,7 +881,7 @@ fn test_typevar_constraints_validation_success() {
     let result_int = Unifier::unify(&Type::Var(tv.clone()), &Type::int(), &registry);
     assert!(result_int.is_ok(), "Should unify TypeVar with int constraint");
 
-    let result_str = Unifier::unify(&Type::Var(tv.clone()), &Type::string(), &registry);
+    let result_str = Unifier::unify(&Type::Var(tv), &Type::string(), &registry);
     assert!(result_str.is_ok(), "Should unify TypeVar with str constraint");
 }
 
@@ -891,7 +891,7 @@ fn test_typevar_constraints_validation_failure() {
     let mut registry = TypeVarConstraintRegistry::new();
     registry.set_constraints(tv.id, vec![Type::int(), Type::string()]);
 
-    let result = Unifier::unify(&Type::Var(tv.clone()), &Type::bool(), &registry);
+    let result = Unifier::unify(&Type::Var(tv), &Type::bool(), &registry);
     assert!(
         result.is_err(),
         "Should fail to unify TypeVar with type not in constraints"
@@ -952,7 +952,7 @@ fn test_typevar_bound_and_constraints_both_validated() {
         "Should fail when type satisfies bound but not constraints (Animal not in [int, str])"
     );
 
-    let result_int = Unifier::unify(&Type::Var(tv.clone()), &Type::int(), &registry);
+    let result_int = Unifier::unify(&Type::Var(tv), &Type::int(), &registry);
     assert!(
         result_int.is_err(),
         "Should fail when type satisfies constraints but not bound (int not subtype of Animal)"
@@ -974,10 +974,10 @@ fn test_multiple_typevars_with_different_bounds() {
     let result1 = Unifier::unify(&Type::Var(tv1.clone()), &animal, &registry);
     assert!(result1.is_ok());
 
-    let result2 = Unifier::unify(&Type::Var(tv2.clone()), &vehicle, &registry);
+    let result2 = Unifier::unify(&Type::Var(tv2), &vehicle, &registry);
     assert!(result2.is_ok());
 
-    let result_cross = Unifier::unify(&Type::Var(tv1.clone()), &vehicle, &registry);
+    let result_cross = Unifier::unify(&Type::Var(tv1), &vehicle, &registry);
     assert!(result_cross.is_err(), "Should fail to unify T1:Animal with Vehicle");
 }
 

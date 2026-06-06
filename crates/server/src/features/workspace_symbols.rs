@@ -426,7 +426,7 @@ mod tests {
     fn test_workspace_symbol_find_function() {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
-        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
         let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
@@ -459,7 +459,7 @@ def world():
     fn test_workspace_symbol_find_class() {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
-        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
         let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
@@ -487,7 +487,7 @@ def world():
     fn test_workspace_symbol_find_variable() {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
-        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
         let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
@@ -514,7 +514,7 @@ def world():
     fn test_workspace_symbol_case_insensitive() {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
-        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
         let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
@@ -540,7 +540,7 @@ def world():
     fn test_workspace_symbol_partial_match() {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
-        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
         let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
@@ -566,7 +566,7 @@ def world():
     fn test_workspace_symbol_empty_query() {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
-        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
         let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
@@ -595,7 +595,7 @@ def func2():
     fn test_workspace_symbol_multiple_documents() {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
-        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
         let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri1 = Url::from_str("file:///file1.py").unwrap();
@@ -626,7 +626,7 @@ def func2():
     fn test_workspace_symbol_no_match() {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
-        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
         let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
@@ -648,7 +648,7 @@ def func2():
     fn test_workspace_symbol_nested_function() {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
-        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
         let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
@@ -700,7 +700,7 @@ def func2():
     fn test_symbol_resolve() {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
-        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
         let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
@@ -771,7 +771,7 @@ def func2():
     fn test_symbol_resolve_not_found() {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
-        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
         let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
 
         let uri = Url::from_str("file:///test.py").unwrap();
@@ -803,7 +803,7 @@ def func2():
     fn test_workspace_symbol_location_range() {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
-        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
         let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = "def hello():\n    pass";
@@ -833,7 +833,7 @@ def func2():
     fn test_collect_matching_symbols_module() {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
-        let workspace = Arc::new(RwLock::new(Workspace::new(None, config.clone(), documents.clone())));
+        let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
         let provider = WorkspaceSymbolsProvider::new(documents.clone(), workspace);
         let uri = Url::from_str("file:///test.py").unwrap();
         let source = r#"x = 1
@@ -841,7 +841,7 @@ y = 2
 def func():
     pass"#;
 
-        documents.open_document(uri.clone(), 1, source).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let params = WorkspaceSymbolParams {
             query: "".to_string(),

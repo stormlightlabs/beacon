@@ -49,7 +49,7 @@ fn normalize_path_array(output: &mut serde_json::Value, key: &str) {
 }
 
 #[test]
-fn workspace_fixture_cli_parse_smoke() {
+fn cli_parse_smoke() {
     cargo_bin_cmd!("beacon")
         .arg("parse")
         .arg("--json")
@@ -59,7 +59,7 @@ fn workspace_fixture_cli_parse_smoke() {
 }
 
 #[test]
-fn workspace_fixture_cli_typecheck_json_smoke() {
+fn cli_typecheck_json_smoke() {
     cargo_bin_cmd!("beacon")
         .arg("typecheck")
         .arg("--format")
@@ -70,7 +70,7 @@ fn workspace_fixture_cli_typecheck_json_smoke() {
 }
 
 #[test]
-fn workspace_fixture_cli_typecheck_json_uses_lsp_diagnostics() {
+fn cli_typecheck_json_uses_lsp_diagnostics() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("typecheck")
         .arg("--format")
@@ -86,7 +86,7 @@ fn workspace_fixture_cli_typecheck_json_uses_lsp_diagnostics() {
 }
 
 #[test]
-fn workspace_fixture_cli_typecheck_json_matches_golden() {
+fn cli_typecheck_json_matches_golden() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("typecheck")
         .arg("--format")
@@ -105,7 +105,7 @@ fn workspace_fixture_cli_typecheck_json_matches_golden() {
 }
 
 #[test]
-fn workspace_fixture_cli_lint_json_uses_lsp_diagnostics() {
+fn cli_lint_json_uses_lsp_diagnostics() {
     let mut temp_file = Builder::new().suffix(".py").tempfile().unwrap();
     writeln!(temp_file, "import os\nvalue = 1").unwrap();
 
@@ -123,7 +123,7 @@ fn workspace_fixture_cli_lint_json_uses_lsp_diagnostics() {
 }
 
 #[test]
-fn workspace_fixture_cli_analyze_file_json_uses_lsp_diagnostics() {
+fn cli_analyze_file_json_uses_lsp_diagnostics() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("analyze")
         .arg("--format")
@@ -139,7 +139,7 @@ fn workspace_fixture_cli_analyze_file_json_uses_lsp_diagnostics() {
 }
 
 #[test]
-fn workspace_fixture_cli_analyze_show_types_json_is_structured() {
+fn cli_analyze_show_types_json_is_structured() {
     let temp_file = write_temp_python("value: int = 1\nname: str = \"beacon\"\n");
 
     let assert = cargo_bin_cmd!("beacon")
@@ -161,7 +161,7 @@ fn workspace_fixture_cli_analyze_show_types_json_is_structured() {
 }
 
 #[test]
-fn workspace_fixture_cli_generics_typecheck_smoke() {
+fn cli_generics_typecheck_smoke() {
     cargo_bin_cmd!("beacon")
         .arg("typecheck")
         .arg("--format")
@@ -172,7 +172,7 @@ fn workspace_fixture_cli_generics_typecheck_smoke() {
 }
 
 #[test]
-fn workspace_fixture_cli_protocols_typecheck_smoke() {
+fn cli_protocols_typecheck_smoke() {
     cargo_bin_cmd!("beacon")
         .arg("typecheck")
         .arg("--format")
@@ -183,7 +183,7 @@ fn workspace_fixture_cli_protocols_typecheck_smoke() {
 }
 
 #[test]
-fn workspace_fixture_cli_data_model_extra_typecheck_smoke() {
+fn cli_data_model_extra_typecheck_smoke() {
     cargo_bin_cmd!("beacon")
         .arg("typecheck")
         .arg("--format")
@@ -194,7 +194,7 @@ fn workspace_fixture_cli_data_model_extra_typecheck_smoke() {
 }
 
 #[test]
-fn workspace_fixture_cli_async_extra_typecheck_smoke() {
+fn cli_async_extra_typecheck_smoke() {
     cargo_bin_cmd!("beacon")
         .arg("typecheck")
         .arg("--format")
@@ -205,7 +205,7 @@ fn workspace_fixture_cli_async_extra_typecheck_smoke() {
 }
 
 #[test]
-fn workspace_fixture_cli_guard_narrowing_typecheck_smoke() {
+fn cli_guard_narrowing_typecheck_smoke() {
     cargo_bin_cmd!("beacon")
         .arg("typecheck")
         .arg("--format")
@@ -216,7 +216,7 @@ fn workspace_fixture_cli_guard_narrowing_typecheck_smoke() {
 }
 
 #[test]
-fn workspace_fixture_cli_pattern_matching_reports_exhaustiveness() {
+fn cli_pattern_matching_reports_exhaustiveness() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("typecheck")
         .arg("--format")
@@ -230,7 +230,7 @@ fn workspace_fixture_cli_pattern_matching_reports_exhaustiveness() {
 }
 
 #[test]
-fn workspace_fixture_cli_pattern_matching_parse_smoke() {
+fn cli_pattern_matching_parse_smoke() {
     cargo_bin_cmd!("beacon")
         .arg("parse")
         .arg("--json")
@@ -240,7 +240,7 @@ fn workspace_fixture_cli_pattern_matching_parse_smoke() {
 }
 
 #[test]
-fn workspace_fixture_cli_flow_joins_show_types_has_stable_fragments() {
+fn cli_flow_joins_show_types_has_stable_fragments() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("analyze")
         .arg("--format")
@@ -283,7 +283,7 @@ fn workspace_fixture_cli_flow_joins_show_types_has_stable_fragments() {
 }
 
 #[test]
-fn workspace_fixture_cli_data_flow_diagnostics_are_reported() {
+fn cli_data_flow_diagnostics_are_reported() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("analyze")
         .arg("--format")
@@ -314,7 +314,7 @@ fn workspace_fixture_cli_data_flow_diagnostics_are_reported() {
 }
 
 #[test]
-fn workspace_fixture_cli_any_narrowing_show_types_has_stable_fragments() {
+fn cli_any_narrowing_show_types_has_stable_fragments() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("analyze")
         .arg("--format")
@@ -366,7 +366,7 @@ fn workspace_fixture_cli_any_narrowing_show_types_has_stable_fragments() {
 }
 
 #[test]
-fn workspace_fixture_cli_protocol_mismatch_reports_hm009() {
+fn cli_protocol_mismatch_reports_hm009() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("typecheck")
         .arg("--format")
@@ -391,7 +391,7 @@ fn workspace_fixture_cli_protocol_mismatch_reports_hm009() {
 }
 
 #[test]
-fn workspace_fixture_cli_call_parameter_metadata_reports_hm011() {
+fn cli_call_parameter_metadata_reports_hm011() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("typecheck")
         .arg("--format")
@@ -420,7 +420,7 @@ fn workspace_fixture_cli_call_parameter_metadata_reports_hm011() {
 }
 
 #[test]
-fn workspace_fixture_cli_data_model_show_types_has_stable_fragments() {
+fn cli_data_model_show_types_has_stable_fragments() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("analyze")
         .arg("--format")
@@ -450,7 +450,7 @@ fn workspace_fixture_cli_data_model_show_types_has_stable_fragments() {
 }
 
 #[test]
-fn workspace_fixture_cli_async_show_types_has_stable_fragments() {
+fn cli_async_show_types_has_stable_fragments() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("analyze")
         .arg("--format")
@@ -481,7 +481,7 @@ fn workspace_fixture_cli_async_show_types_has_stable_fragments() {
 }
 
 #[test]
-fn workspace_fixture_cli_typing_breadth_show_types_has_stable_fragments() {
+fn cli_typing_breadth_show_types_has_stable_fragments() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("analyze")
         .arg("--format")
@@ -511,7 +511,7 @@ fn workspace_fixture_cli_typing_breadth_show_types_has_stable_fragments() {
 }
 
 #[test]
-fn workspace_fixture_cli_analyze_show_cfg_compact_uses_cfg_blocks() {
+fn cli_analyze_show_cfg_compact_uses_cfg_blocks() {
     let temp_file = write_temp_python(
         "# beacon: mode=relaxed\ndef choose(flag: bool) -> int:\n    if flag:\n        return 1\n    return 0\n",
     );
@@ -534,7 +534,7 @@ fn workspace_fixture_cli_analyze_show_cfg_compact_uses_cfg_blocks() {
 
 #[cfg(debug_assertions)]
 #[test]
-fn workspace_fixture_cli_debug_unify_prints_trace() {
+fn cli_debug_unify_prints_trace() {
     let temp_file = write_temp_python("value: int = 1\n");
 
     let assert = cargo_bin_cmd!("beacon")
@@ -552,7 +552,7 @@ fn workspace_fixture_cli_debug_unify_prints_trace() {
 }
 
 #[test]
-fn workspace_fixture_cli_analyze_suppressions_fixture_has_no_diagnostics() {
+fn cli_analyze_suppressions_fixture_has_no_diagnostics() {
     cargo_bin_cmd!("beacon")
         .arg("analyze")
         .arg("--format")
@@ -564,7 +564,7 @@ fn workspace_fixture_cli_analyze_suppressions_fixture_has_no_diagnostics() {
 }
 
 #[test]
-fn workspace_fixture_cli_analyze_respects_suppression_categories() {
+fn cli_analyze_respects_suppression_categories() {
     let cases = [
         "def type_error() -> int:\n    return \"bad\"  # type: ignore[HM001]\n",
         "return 42  # noqa: BEA003\n",
@@ -590,7 +590,7 @@ fn workspace_fixture_cli_analyze_respects_suppression_categories() {
 }
 
 #[test]
-fn workspace_fixture_cli_analyze_reports_unsuppressed_categories() {
+fn cli_analyze_reports_unsuppressed_categories() {
     let cases = [
         ("def type_error() -> int:\n    return \"bad\"\n", "HM001"),
         ("return 42\n", "BEA003"),
@@ -621,7 +621,7 @@ fn workspace_fixture_cli_analyze_reports_unsuppressed_categories() {
 }
 
 #[test]
-fn workspace_fixture_cli_dynamic_fallback_reports_dynamic_boundaries() {
+fn cli_dynamic_fallback_reports_dynamic_boundaries() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("analyze")
         .arg("--format")

@@ -8,7 +8,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 /// Helper to create LSP-formatted JSON-RPC messages
-fn create_lsp_message(method: &str, params: Value, id: i64) -> String {
+fn create_lsp_message(method: &str, params: &Value, id: i64) -> String {
     let message_json = json!({
         "jsonrpc": "2.0",
         "id": id,
@@ -86,7 +86,7 @@ async fn test_tcp_server_accepts_connection() {
             "capabilities": {}
         });
 
-        let message = create_lsp_message("initialize", initialize_params, 1);
+        let message = create_lsp_message("initialize", &initialize_params, 1);
         stream.write_all(message.as_bytes()).expect("Should write");
 
         let mut reader = BufReader::new(&stream);

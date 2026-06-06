@@ -500,11 +500,8 @@ def calculate(x, y):
         let ranges = ranges.unwrap();
         assert!(ranges.len() >= 2, "Expected at least 2 folding ranges for functions");
 
-        let function_ranges: Vec<_> = ranges
-            .iter()
-            .filter(|r| r.kind == Some(FoldingRangeKind::Region))
-            .collect();
-        assert!(function_ranges.len() >= 2);
+        let function_ranges = ranges.iter().filter(|r| r.kind == Some(FoldingRangeKind::Region));
+        assert!(function_ranges.count() >= 2);
     }
 
     #[test]
@@ -626,11 +623,8 @@ def main():
         assert!(ranges.is_some());
 
         let ranges = ranges.unwrap();
-        let import_ranges: Vec<_> = ranges
-            .iter()
-            .filter(|r| r.kind == Some(FoldingRangeKind::Imports))
-            .collect();
-        assert_eq!(import_ranges.len(), 1, "Expected 1 import group");
+        let import_ranges = ranges.iter().filter(|r| r.kind == Some(FoldingRangeKind::Imports));
+        assert_eq!(import_ranges.count(), 1, "Expected 1 import group");
     }
 
     #[test]

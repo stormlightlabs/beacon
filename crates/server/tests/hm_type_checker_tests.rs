@@ -27,7 +27,6 @@ fn is_function_type(ty: &Type) -> bool {
     matches!(ty, Type::Fun(_, _) | Type::FunWithParams(_, _))
 }
 
-// Embed fixtures directly in the test binary
 const FUNCTIONAL_PIPELINE: &str = include_str!("hm_fixtures/functional_pipeline.py");
 const TYPED_API: &str = include_str!("hm_fixtures/typed_api.py");
 const ASYNC_CTX: &str = include_str!("hm_fixtures/async_ctx.py");
@@ -120,7 +119,7 @@ fn test_functional_pipeline() {
         "Should have inferred types for functional pipeline"
     );
 
-    let has_function_types = harness.has_type(&result, |ty| is_function_type(ty));
+    let has_function_types = harness.has_type(&result, is_function_type);
     assert!(
         has_function_types,
         "Should infer function types for compose, map_list, and lambdas"
@@ -149,7 +148,7 @@ fn test_typed_api_protocol() {
     let has_classes = harness.has_type(&result, |ty| matches!(ty, Type::Con(TypeCtor::Class(_))));
     assert!(has_classes, "Should infer class types for Circle, Rectangle");
 
-    let has_functions = harness.has_type(&result, |ty| is_function_type(ty));
+    let has_functions = harness.has_type(&result, is_function_type);
     assert!(
         has_functions,
         "Should infer function types for render, create_user, etc."
@@ -296,7 +295,7 @@ fn test_covariant_return_types() {
 
     assert!(!result.type_map.is_empty(), "Should infer types for covariant fixture");
 
-    let has_functions = harness.has_type(&result, |ty| is_function_type(ty));
+    let has_functions = harness.has_type(&result, is_function_type);
     assert!(has_functions, "Should infer function types with covariant returns");
 
     let has_classes = harness.has_type(&result, |ty| matches!(ty, Type::Con(TypeCtor::Class(_))));
@@ -451,7 +450,7 @@ fn test_typevar_contravariant() {
         eprintln!("TypeVar contravariant-related errors: {errors:?}");
     }
 
-    let has_functions = harness.has_type(&result, |ty| is_function_type(ty));
+    let has_functions = harness.has_type(&result, is_function_type);
     assert!(has_functions, "Should infer function types for use_dog_consumer, etc.");
 }
 
@@ -881,7 +880,7 @@ fn test_generator_mixed_variance() {
         "Should infer types for Generator with mixed variance"
     );
 
-    let has_functions = harness.has_type(&result, |ty| is_function_type(ty));
+    let has_functions = harness.has_type(&result, is_function_type);
     assert!(has_functions, "Should infer function types for generator functions");
 
     let has_classes = harness.has_type(&result, |ty| matches!(ty, Type::Con(TypeCtor::Class(_))));

@@ -14,7 +14,7 @@ use tokio::sync::RwLock;
 use url::Url;
 
 #[tokio::test]
-async fn workspace_fixture_lsp_diagnostics_smoke() {
+async fn lsp_diagnostics_smoke() {
     let documents = DocumentManager::new().expect("document manager should initialize");
     let config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");
     let root_uri = Url::from_directory_path(workspace_fixture()).expect("workspace path should become file URI");
@@ -66,7 +66,7 @@ async fn workspace_fixture_lsp_diagnostics_smoke() {
 }
 
 #[tokio::test]
-async fn workspace_fixture_protocol_mismatch_lsp_diagnostics() {
+async fn protocol_mismatch_lsp_diagnostics() {
     let documents = DocumentManager::new().expect("document manager should initialize");
     let config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");
     let root_uri = Url::from_directory_path(workspace_fixture()).expect("workspace path should become file URI");
@@ -97,7 +97,7 @@ async fn workspace_fixture_protocol_mismatch_lsp_diagnostics() {
 }
 
 #[tokio::test]
-async fn workspace_fixture_call_parameter_metadata_lsp_diagnostics() {
+async fn call_parameter_metadata_lsp_diagnostics() {
     let documents = DocumentManager::new().expect("document manager should initialize");
     let config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");
     let root_uri = Url::from_directory_path(workspace_fixture()).expect("workspace path should become file URI");
@@ -138,7 +138,7 @@ async fn workspace_fixture_call_parameter_metadata_lsp_diagnostics() {
 }
 
 #[tokio::test]
-async fn workspace_fixture_dynamic_fallback_lsp_diagnostics() {
+async fn dynamic_fallback_lsp_diagnostics() {
     let documents = DocumentManager::new().expect("document manager should initialize");
     let config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");
     let root_uri = Url::from_directory_path(workspace_fixture()).expect("workspace path should become file URI");
@@ -186,7 +186,7 @@ async fn workspace_fixture_dynamic_fallback_lsp_diagnostics() {
 }
 
 #[tokio::test]
-async fn workspace_fixture_dynamic_supported_has_no_dynamic_diagnostics() {
+async fn dynamic_supported_has_no_dynamic_diagnostics() {
     let documents = DocumentManager::new().expect("document manager should initialize");
     let config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");
     let root_uri = Url::from_directory_path(workspace_fixture()).expect("workspace path should become file URI");
@@ -215,7 +215,7 @@ async fn workspace_fixture_dynamic_supported_has_no_dynamic_diagnostics() {
 }
 
 #[tokio::test]
-async fn workspace_fixture_dynamic_modes_adjust_diagnostic_severity() {
+async fn dynamic_modes_adjust_diagnostic_severity() {
     for (mode, severity) in [
         (TypeCheckingMode::Strict, DiagnosticSeverity::ERROR),
         (TypeCheckingMode::Balanced, DiagnosticSeverity::WARNING),
@@ -263,7 +263,7 @@ async fn workspace_fixture_dynamic_modes_adjust_diagnostic_severity() {
 }
 
 #[tokio::test]
-async fn workspace_fixture_dynamic_fallback_preserves_precise_neighbor_types() {
+async fn dynamic_fallback_preserves_precise_neighbor_types() {
     let documents = DocumentManager::new().expect("document manager should initialize");
     let config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");
     let mut analyzer = Analyzer::new(config, documents.clone());
@@ -296,7 +296,7 @@ async fn workspace_fixture_dynamic_fallback_preserves_precise_neighbor_types() {
 }
 
 #[tokio::test]
-async fn workspace_fixture_typing_breadth_lsp_type_positions() {
+async fn typing_breadth_lsp_type_positions() {
     let documents = DocumentManager::new().expect("document manager should initialize");
     let config = Config::discover_and_load(&workspace_fixture()).expect("fixture config should load");
     let mut analyzer = Analyzer::new(config, documents.clone());

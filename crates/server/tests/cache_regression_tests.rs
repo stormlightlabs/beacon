@@ -31,7 +31,7 @@ fn test_type_cache_version_invalidation() {
     assert_eq!(cache.get(&uri, 42, 2), None);
 
     cache.insert(uri.clone(), 42, 2, int_type.clone());
-    assert_eq!(cache.get(&uri, 42, 2), Some(int_type.clone()));
+    assert_eq!(cache.get(&uri, 42, 2), Some(int_type));
     assert_eq!(cache.get(&uri, 42, 1), None);
 
     cache.invalidate_document(&uri);
@@ -175,12 +175,12 @@ fn test_scope_cache_content_hash_sensitivity() {
 
     let key1 = ScopeCacheKey::new(uri.clone(), scope_id, source1);
     let key2 = ScopeCacheKey::new(uri.clone(), scope_id, source2);
-    let key3 = ScopeCacheKey::new(uri.clone(), scope_id, source3);
+    let key3 = ScopeCacheKey::new(uri, scope_id, source3);
 
     let result =
         CachedScopeResult { type_map: FxHashMap::default(), position_map: FxHashMap::default(), dependencies: vec![] };
 
-    cache.insert(key1.clone(), result.clone());
+    cache.insert(key1.clone(), result);
 
     assert!(cache.get(&key1).is_some());
     assert!(cache.get(&key2).is_none());
@@ -201,7 +201,7 @@ fn test_scope_cache_whitespace_sensitivity() {
 
     let key1 = ScopeCacheKey::new(uri.clone(), scope_id, source1);
     let key2 = ScopeCacheKey::new(uri.clone(), scope_id, source2);
-    let key3 = ScopeCacheKey::new(uri.clone(), scope_id, source3);
+    let key3 = ScopeCacheKey::new(uri, scope_id, source3);
 
     assert_ne!(key1.content_hash, key2.content_hash);
     assert_ne!(key1.content_hash, key3.content_hash);
@@ -226,7 +226,7 @@ fn test_scope_cache_multiple_scopes_per_document() {
 
     cache.insert(key1.clone(), result.clone());
     cache.insert(key2.clone(), result.clone());
-    cache.insert(key3.clone(), result.clone());
+    cache.insert(key3.clone(), result);
 
     assert_eq!(cache.stats().size, 3);
 
@@ -524,7 +524,7 @@ fn test_scope_cache_lru_with_same_document() {
 
     let key1 = ScopeCacheKey::new(uri.clone(), scope_id1, "def foo(): pass");
     let key2 = ScopeCacheKey::new(uri.clone(), scope_id2, "def bar(): pass");
-    let key3 = ScopeCacheKey::new(uri.clone(), scope_id3, "def baz(): pass");
+    let key3 = ScopeCacheKey::new(uri, scope_id3, "def baz(): pass");
 
     let result =
         CachedScopeResult { type_map: FxHashMap::default(), position_map: FxHashMap::default(), dependencies: vec![] };
@@ -567,7 +567,7 @@ fn test_scope_cache_different_content_same_scope() {
     let version2 = "def foo():\n    return 2";
 
     let key1 = ScopeCacheKey::new(uri.clone(), scope_id, version1);
-    let key2 = ScopeCacheKey::new(uri.clone(), scope_id, version2);
+    let key2 = ScopeCacheKey::new(uri, scope_id, version2);
 
     let mut type_map1 = FxHashMap::default();
     type_map1.insert(1, Type::Con(TypeCtor::Int));

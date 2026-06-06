@@ -28,6 +28,9 @@ impl FormattingProvider {
     pub fn format_document(
         &self, params: &DocumentFormattingParams, config: &FormatterConfig,
     ) -> Option<Vec<TextEdit>> {
+        if !config.enabled {
+            return None;
+        }
         let uri = &params.text_document.uri;
 
         tracing::debug!(?uri, "Formatting document");
@@ -73,6 +76,9 @@ impl FormattingProvider {
     pub fn format_range(
         &self, params: &DocumentRangeFormattingParams, config: &FormatterConfig,
     ) -> Option<Vec<TextEdit>> {
+        if !config.enabled {
+            return None;
+        }
         let uri = &params.text_document.uri;
         let range = params.range;
 
@@ -136,6 +142,9 @@ impl FormattingProvider {
     pub fn format_on_save(
         &self, params: &WillSaveTextDocumentParams, config: &FormatterConfig,
     ) -> Option<Vec<TextEdit>> {
+        if !config.enabled {
+            return None;
+        }
         let uri = &params.text_document.uri;
 
         if params.reason != TextSaveReason::MANUAL {
@@ -185,6 +194,9 @@ impl FormattingProvider {
     pub fn on_type_format(
         &self, params: &DocumentOnTypeFormattingParams, config: &FormatterConfig,
     ) -> Option<Vec<TextEdit>> {
+        if !config.enabled {
+            return None;
+        }
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
         let trigger_char = &params.ch;

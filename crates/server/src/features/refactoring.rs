@@ -329,7 +329,7 @@ mod tests {
             new_text: "new".to_string(),
         };
 
-        collector.add_edit(uri.clone(), edit);
+        collector.add_edit(uri, edit);
         assert!(!collector.is_empty());
 
         let workspace_edit = collector.into_workspace_edit();

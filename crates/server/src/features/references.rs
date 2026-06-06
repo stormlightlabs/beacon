@@ -265,7 +265,7 @@ mod tests {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
         let workspace = Arc::new(RwLock::new(Workspace::new(None, config, documents.clone())));
-        let provider = ReferencesProvider::new(documents.clone(), workspace);
+        let provider = ReferencesProvider::new(documents, workspace);
         let uri = Url::from_str("file:///test.py").unwrap();
         (provider, uri)
     }

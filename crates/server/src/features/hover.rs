@@ -779,7 +779,7 @@ mod tests {
 
         let params = HoverParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
-                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                text_document: lsp_types::TextDocumentIdentifier { uri },
                 position: Position { line: 0, character: 17 },
             },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
@@ -863,7 +863,7 @@ mod tests {
 
         let params = HoverParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
-                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                text_document: lsp_types::TextDocumentIdentifier { uri },
                 position: Position { line: 0, character: 0 },
             },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
@@ -889,7 +889,7 @@ greet("world")"#;
 
         let params = HoverParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
-                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                text_document: lsp_types::TextDocumentIdentifier { uri },
                 position: Position { line: 4, character: 0 },
             },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
@@ -927,7 +927,7 @@ p = Person("Alice")"#;
 
         let params = HoverParams {
             text_document_position_params: lsp_types::TextDocumentPositionParams {
-                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                text_document: lsp_types::TextDocumentIdentifier { uri },
                 position: Position { line: 5, character: 4 },
             },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
@@ -987,7 +987,7 @@ p = Person("Alice")"#;
     return x * 2
 "#;
 
-        documents.open_document(uri.clone(), 1, source).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let result = provider.find_symbol_docstring("calculate", &beacon_parser::SymbolKind::Function);
 
@@ -1007,7 +1007,7 @@ p = Person("Alice")"#;
     pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let result = provider.find_symbol_docstring("Calculator", &beacon_parser::SymbolKind::Class);
 
@@ -1026,7 +1026,7 @@ p = Person("Alice")"#;
     pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let result = provider.find_symbol_docstring("nonexistent", &beacon_parser::SymbolKind::Function);
         assert!(result.is_none());
@@ -1043,7 +1043,7 @@ p = Person("Alice")"#;
     pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let result = provider.find_symbol_docstring("my_func", &beacon_parser::SymbolKind::Class);
         assert!(result.is_none());
@@ -1059,7 +1059,7 @@ p = Person("Alice")"#;
     pass
 "#;
 
-        documents.open_document(uri.clone(), 1, source).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let result = provider.find_symbol_docstring("no_doc_func", &beacon_parser::SymbolKind::Function);
         assert!(result.is_none());
@@ -1082,8 +1082,8 @@ p = Person("Alice")"#;
     pass
 "#;
 
-        documents.open_document(uri1.clone(), 1, source1).unwrap();
-        documents.open_document(uri2.clone(), 1, source2).unwrap();
+        documents.open_document(uri1, 1, source1).unwrap();
+        documents.open_document(uri2, 1, source2).unwrap();
 
         let result = provider.find_symbol_docstring("target_func", &beacon_parser::SymbolKind::Function);
 
@@ -1100,7 +1100,7 @@ p = Person("Alice")"#;
         let uri = Url::from_str("file:///test_var.py").unwrap();
         let source = "x = 42\n";
 
-        documents.open_document(uri.clone(), 1, source).unwrap();
+        documents.open_document(uri, 1, source).unwrap();
 
         let result = provider.find_symbol_docstring("x", &beacon_parser::SymbolKind::Variable);
         assert!(result.is_none());

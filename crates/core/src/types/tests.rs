@@ -705,7 +705,7 @@ fn test_value_restriction_prevents_generalization() {
 fn test_value_restriction_with_free_vars() {
     let tv_a = TypeVar::new(40);
     let tv_b = TypeVar::new(41);
-    let ty = Type::fun_unnamed(vec![Type::Var(tv_a.clone())], Type::Var(tv_b.clone()));
+    let ty = Type::fun_unnamed(vec![Type::Var(tv_a)], Type::Var(tv_b));
 
     let env_vars = FxHashMap::default();
 
@@ -737,7 +737,7 @@ fn test_function_param_metadata_display() {
 #[test]
 fn test_default_generalize_assumes_non_expansive() {
     let tv = TypeVar::new(50);
-    let ty = Type::Var(tv.clone());
+    let ty = Type::Var(tv);
 
     let env_vars = FxHashMap::default();
     let scheme1 = TypeScheme::generalize(ty.clone(), &env_vars);
@@ -1121,7 +1121,7 @@ fn test_overload_resolution_exact_match() {
 fn test_overload_resolution_subtype_match() {
     let sig1 = Type::fun_unnamed(vec![Type::any()], Type::string());
     let sig2 = Type::fun_unnamed(vec![Type::int()], Type::bool());
-    let overload = OverloadSet::new(vec![sig1.clone(), sig2.clone()]);
+    let overload = OverloadSet::new(vec![sig1.clone(), sig2]);
 
     let resolved = overload.resolve(&[Type::int()]);
     assert_eq!(resolved, Some(&sig1));
@@ -1562,7 +1562,7 @@ fn test_protocol_variance_covariant() {
     registry.register_class("ReadOnly".to_string(), metadata);
 
     let readonly_proto = Type::Con(TypeCtor::Protocol(Some("ReadOnly".to_string()), vec![]));
-    let readonly_int = Type::App(Box::new(readonly_proto.clone()), Box::new(Type::int()));
+    let readonly_int = Type::App(Box::new(readonly_proto), Box::new(Type::int()));
 
     let enriched = readonly_int.enrich_protocol_variance(&registry);
 
@@ -1659,7 +1659,7 @@ fn test_protocol_variance_enrichment_in_union() {
 
     let proto = Type::Con(TypeCtor::Protocol(Some("MyProto".to_string()), vec![]));
     let proto_int = Type::App(Box::new(proto.clone()), Box::new(Type::int()));
-    let proto_str = Type::App(Box::new(proto.clone()), Box::new(Type::string()));
+    let proto_str = Type::App(Box::new(proto), Box::new(Type::string()));
     let union = Type::union(vec![proto_int, proto_str]);
 
     let enriched = union.enrich_protocol_variance(&registry);

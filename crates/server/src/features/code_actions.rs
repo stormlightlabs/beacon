@@ -720,7 +720,7 @@ mod tests {
         let documents = DocumentManager::new().unwrap();
         let config = Config::default();
         let analyzer = Arc::new(RwLock::new(Analyzer::new(config, documents.clone())));
-        let provider = CodeActionsProvider::new(documents.clone(), analyzer);
+        let provider = CodeActionsProvider::new(documents, analyzer);
 
         let uri = Url::from_str("file:///test.py").unwrap();
         (provider, uri)
@@ -1091,11 +1091,8 @@ mod tests {
         let changes = edit.changes.unwrap();
         let edits = &changes[&uri];
 
-        let import_edits: Vec<_> = edits
-            .iter()
-            .filter(|e| e.new_text.contains("from typing import"))
-            .collect();
-        assert_eq!(import_edits.len(), 0, "Should not add duplicate import");
+        let import_edits = edits.iter().filter(|e| e.new_text.contains("from typing import"));
+        assert_eq!(import_edits.count(), 0, "Should not add duplicate import");
     }
 
     #[tokio::test]

@@ -59,7 +59,7 @@ fn test_protocol_extends_another_protocol() {
     let writable_ty = Type::Con(TypeCtor::Protocol(Some("Writable".to_string()), vec![]));
 
     let constraints =
-        ConstraintSet { constraints: vec![Constraint::Equal(storage_ty.clone(), writable_ty, test_span())] };
+        ConstraintSet { constraints: vec![Constraint::Equal(storage_ty, writable_ty, test_span())] };
 
     let result = solve_constraints(constraints, &class_registry, &typevar_registry);
     assert!(result.is_ok(), "Solver should complete");
@@ -102,7 +102,7 @@ fn test_protocol_inheritance_missing_base_method() {
     let writable_ty = Type::Con(TypeCtor::Protocol(Some("Writable".to_string()), vec![]));
 
     let constraints =
-        ConstraintSet { constraints: vec![Constraint::Equal(incomplete_ty.clone(), writable_ty, test_span())] };
+        ConstraintSet { constraints: vec![Constraint::Equal(incomplete_ty, writable_ty, test_span())] };
 
     let result = solve_constraints(constraints, &class_registry, &typevar_registry);
     assert!(result.is_ok(), "Solver should complete");
@@ -146,7 +146,7 @@ fn test_protocol_inheritance_chain() {
     let impl_ty = Type::Con(TypeCtor::Class("FullImpl".to_string()));
     let proto_c_ty = Type::Con(TypeCtor::Protocol(Some("ProtoC".to_string()), vec![]));
 
-    let constraints = ConstraintSet { constraints: vec![Constraint::Equal(impl_ty.clone(), proto_c_ty, test_span())] };
+    let constraints = ConstraintSet { constraints: vec![Constraint::Equal(impl_ty, proto_c_ty, test_span())] };
 
     let result = solve_constraints(constraints, &class_registry, &typevar_registry);
     assert!(result.is_ok(), "Solver should complete");
@@ -189,7 +189,7 @@ fn test_protocol_inheritance_chain_missing_middle() {
     let impl_ty = Type::Con(TypeCtor::Class("PartialImpl".to_string()));
     let proto_c_ty = Type::Con(TypeCtor::Protocol(Some("ProtoC".to_string()), vec![]));
 
-    let constraints = ConstraintSet { constraints: vec![Constraint::Equal(impl_ty.clone(), proto_c_ty, test_span())] };
+    let constraints = ConstraintSet { constraints: vec![Constraint::Equal(impl_ty, proto_c_ty, test_span())] };
 
     let result = solve_constraints(constraints, &class_registry, &typevar_registry);
     assert!(result.is_ok(), "Solver should complete");
@@ -233,7 +233,7 @@ fn test_multiple_protocol_inheritance() {
     let file_ty = Type::Con(TypeCtor::Class("File".to_string()));
     let resource_ty = Type::Con(TypeCtor::Protocol(Some("Resource".to_string()), vec![]));
 
-    let constraints = ConstraintSet { constraints: vec![Constraint::Equal(file_ty.clone(), resource_ty, test_span())] };
+    let constraints = ConstraintSet { constraints: vec![Constraint::Equal(file_ty, resource_ty, test_span())] };
 
     let result = solve_constraints(constraints, &class_registry, &typevar_registry);
     assert!(result.is_ok(), "Solver should complete");
@@ -271,7 +271,7 @@ fn test_circular_protocol_inheritance_handled() {
     let impl_ty = Type::Con(TypeCtor::Class("Impl".to_string()));
     let proto_a_ty = Type::Con(TypeCtor::Protocol(Some("ProtoA".to_string()), vec![]));
 
-    let constraints = ConstraintSet { constraints: vec![Constraint::Equal(impl_ty.clone(), proto_a_ty, test_span())] };
+    let constraints = ConstraintSet { constraints: vec![Constraint::Equal(impl_ty, proto_a_ty, test_span())] };
     let _ = solve_constraints(constraints, &class_registry, &typevar_registry);
 }
 
@@ -301,7 +301,7 @@ fn test_intersection_with_protocol_inheritance() {
     let buffered_ty = Type::Con(TypeCtor::Protocol(Some("Buffered".to_string()), vec![]));
 
     let constraints =
-        ConstraintSet { constraints: vec![Constraint::Equal(stream_ty.clone(), buffered_ty, test_span())] };
+        ConstraintSet { constraints: vec![Constraint::Equal(stream_ty, buffered_ty, test_span())] };
 
     let result = solve_constraints(constraints, &class_registry, &typevar_registry);
     assert!(result.is_ok(), "Solver should complete");
@@ -337,7 +337,7 @@ fn test_empty_protocol_extends_nonempty() {
     let impl_ty = Type::Con(TypeCtor::Class("Impl".to_string()));
     let derived_ty = Type::Con(TypeCtor::Protocol(Some("Derived".to_string()), vec![]));
 
-    let constraints = ConstraintSet { constraints: vec![Constraint::Equal(impl_ty.clone(), derived_ty, test_span())] };
+    let constraints = ConstraintSet { constraints: vec![Constraint::Equal(impl_ty, derived_ty, test_span())] };
 
     let result = solve_constraints(constraints, &class_registry, &typevar_registry);
     assert!(result.is_ok(), "Solver should complete");

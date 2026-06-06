@@ -116,7 +116,7 @@ class PublicClass:
 fn test_resolve_star_import_nonexistent_module() {
     let documents = DocumentManager::new().unwrap();
     let config = Config::default();
-    let workspace = Workspace::new(None, config, documents.clone());
+    let workspace = Workspace::new(None, config, documents);
     let module_uri = file_uri("src/nonexistent.py");
     let symbols = workspace.resolve_star_import(&module_uri);
     assert_eq!(symbols.len(), 0);

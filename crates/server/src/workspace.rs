@@ -2417,7 +2417,7 @@ mod tests {
         workspace.index.insert(ModuleInfo::new(
             Url::parse("file:///workspace/pkg/sub/helper.py").unwrap(),
             "pkg.sub.helper".to_string(),
-            root.clone(),
+            root,
             false,
         ));
 
@@ -2798,7 +2798,7 @@ def test_function(x: str) -> bool: ...
     fn test_stdlib_loaded_without_root_uri() {
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
-        let mut workspace = Workspace::new(None, config, documents.clone());
+        let mut workspace = Workspace::new(None, config, documents);
 
         workspace.initialize().unwrap();
 
@@ -3206,7 +3206,7 @@ def greet(name: str) -> str:
         documents.open_document(utils_uri.clone(), 0, utils_content).unwrap();
 
         workspace.add_test_module(
-            utils_uri.clone(),
+            utils_uri,
             "utils".to_string(),
             std::path::PathBuf::from("/workspace"),
         );
@@ -3247,7 +3247,7 @@ def add(a: int, b: int) -> int:
         documents.open_document(math_uri.clone(), 0, math_content).unwrap();
 
         workspace.add_test_module(
-            math_uri.clone(),
+            math_uri,
             "math_ops".to_string(),
             std::path::PathBuf::from("/workspace"),
         );
@@ -3296,7 +3296,7 @@ def do_something(x, y):
             .unwrap();
 
         workspace.add_test_module(
-            untyped_uri.clone(),
+            untyped_uri,
             "untyped".to_string(),
             std::path::PathBuf::from("/workspace"),
         );
@@ -3312,7 +3312,7 @@ def do_something(x, y):
     fn test_get_source_function_type_nonexistent_module() {
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
-        let workspace = Workspace::new(None, config, documents.clone());
+        let workspace = Workspace::new(None, config, documents);
 
         let func_type = workspace.get_source_function_type("nonexistent", "some_func");
         assert!(func_type.is_none(), "Should return None for nonexistent module");
@@ -3333,7 +3333,7 @@ def greet(name: str) -> str:
         documents.open_document(utils_uri.clone(), 0, utils_content).unwrap();
 
         workspace.add_test_module(
-            utils_uri.clone(),
+            utils_uri,
             "utils".to_string(),
             std::path::PathBuf::from("/workspace"),
         );

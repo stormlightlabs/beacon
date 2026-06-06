@@ -46,7 +46,7 @@ class Bar:
     open_document(&documents, &uri, source);
 
     let params = DocumentFormattingParams {
-        text_document: TextDocumentIdentifier { uri: uri.clone() },
+        text_document: TextDocumentIdentifier { uri },
         options: FormattingOptions::default(),
         work_done_progress_params: Default::default(),
     };
@@ -105,7 +105,7 @@ fn test_lsp_formatting_respects_disabled_config_for_editor_requests() {
 
     open_document(&documents, &uri, source);
 
-    let text_document = TextDocumentIdentifier { uri: uri.clone() };
+    let text_document = TextDocumentIdentifier { uri };
     let format_params = DocumentFormattingParams {
         text_document: text_document.clone(),
         options: FormattingOptions { tab_size: 2, insert_spaces: true, ..FormattingOptions::default() },
@@ -474,7 +474,7 @@ fn test_lsp_format_document_idempotent() {
     open_document(&documents, &uri, source);
 
     let params = DocumentFormattingParams {
-        text_document: TextDocumentIdentifier { uri: uri.clone() },
+        text_document: TextDocumentIdentifier { uri },
         options: FormattingOptions::default(),
         work_done_progress_params: Default::default(),
     };

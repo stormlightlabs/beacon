@@ -49,7 +49,7 @@ from module_a import NonexistentClass  # ERROR: symbol doesn't exist
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let mut analyzer = Analyzer::new(config, documents.clone());
-    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostic_provider = DiagnosticProvider::new(documents, workspace_arc);
     let diagnostics = diagnostic_provider.generate_diagnostics(&module_b_uri, &mut analyzer);
 
     let invalid_import_diagnostics: Vec<_> = diagnostics
@@ -127,7 +127,7 @@ from module_a import _PRIVATE_CONSTANT  # WARNING: private symbol
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let mut analyzer = Analyzer::new(config, documents.clone());
-    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostic_provider = DiagnosticProvider::new(documents, workspace_arc);
     let diagnostics = diagnostic_provider.generate_diagnostics(&module_b_uri, &mut analyzer);
 
     let private_import_diagnostics: Vec<_> = diagnostics
@@ -198,7 +198,7 @@ __all__ = [
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let mut analyzer = Analyzer::new(config, documents.clone());
-    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostic_provider = DiagnosticProvider::new(documents, workspace_arc);
     let diagnostics = diagnostic_provider.generate_diagnostics(&reexport_uri, &mut analyzer);
 
     let reexport_diagnostics: Vec<_> = diagnostics
@@ -265,7 +265,7 @@ from module_a import CONSTANT
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let mut analyzer = Analyzer::new(config, documents.clone());
-    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostic_provider = DiagnosticProvider::new(documents, workspace_arc);
     let diagnostics = diagnostic_provider.generate_diagnostics(&module_b_uri, &mut analyzer);
 
     let invalid_diagnostics: Vec<_> = diagnostics
@@ -315,20 +315,17 @@ from module_a import *
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let mut analyzer = Analyzer::new(config, documents.clone());
-    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostic_provider = DiagnosticProvider::new(documents, workspace_arc);
     let diagnostics = diagnostic_provider.generate_diagnostics(&module_b_uri, &mut analyzer);
 
-    let invalid_diagnostics: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| {
-            d.code.as_ref().is_some_and(|c| match c {
-                lsp_types::NumberOrString::String(s) => s == "invalid-import",
-                _ => false,
-            })
+    let invalid_diagnostics = diagnostics.iter().filter(|d| {
+        d.code.as_ref().is_some_and(|c| match c {
+            lsp_types::NumberOrString::String(s) => s == "invalid-import",
+            _ => false,
         })
-        .collect();
+    });
 
-    assert_eq!(invalid_diagnostics.len(), 0);
+    assert_eq!(invalid_diagnostics.count(), 0);
 }
 
 #[tokio::test]
@@ -372,7 +369,7 @@ def main():
     workspace.mark_analyzed(&module_b_uri, 0);
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
-    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostic_provider = DiagnosticProvider::new(documents, workspace_arc);
     let diagnostics = diagnostic_provider.generate_diagnostics(&module_a_uri, &mut analyzer);
 
     let dead_code_diagnostics: Vec<_> = diagnostics
@@ -428,7 +425,7 @@ def not_exported_function():
     let mut analyzer = Analyzer::new(config, documents.clone());
     let _ = analyzer.analyze(&module_a_uri);
 
-    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostic_provider = DiagnosticProvider::new(documents, workspace_arc);
     let diagnostics = diagnostic_provider.generate_diagnostics(&module_a_uri, &mut analyzer);
 
     let dead_code_diagnostics: Vec<_> = diagnostics
@@ -473,7 +470,7 @@ def public_function():
     let mut analyzer = Analyzer::new(config, documents.clone());
     let _ = analyzer.analyze(&module_a_uri);
 
-    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostic_provider = DiagnosticProvider::new(documents, workspace_arc);
     let diagnostics = diagnostic_provider.generate_diagnostics(&module_a_uri, &mut analyzer);
 
     let dead_code_diagnostics: Vec<_> = diagnostics

@@ -3022,7 +3022,7 @@ class Baz:
     fn test_get_affected_exports_nonexistent_document() {
         let config = Config::default();
         let documents = DocumentManager::new().unwrap();
-        let analyzer = Analyzer::new(config, documents.clone());
+        let analyzer = Analyzer::new(config, documents);
         let uri = Url::from_str("file:///nonexistent.py").unwrap();
 
         let affected = analyzer.get_affected_exports(&uri, &[ScopeId::from_raw(0)]);

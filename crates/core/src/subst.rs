@@ -296,7 +296,7 @@ mod tests {
         let _tv2 = TypeVar::new(1);
 
         let subst = Subst::singleton(tv1.clone(), Type::int());
-        let forall_type = Type::ForAll(vec![tv1.clone()], Box::new(Type::Var(tv1.clone())));
+        let forall_type = Type::ForAll(vec![tv1.clone()], Box::new(Type::Var(tv1)));
 
         let result = subst.apply(&forall_type);
         assert_eq!(result, forall_type);

@@ -63,8 +63,8 @@ fn fixture_workspace_with_documents() -> (DocumentManager, Arc<RwLock<Workspace>
     (documents, Arc::new(RwLock::new(workspace)), config)
 }
 
-fn analyzer_for(documents: &DocumentManager, workspace: Arc<RwLock<Workspace>>, config: Config) -> Analyzer {
-    Analyzer::with_workspace(config, documents.clone(), &workspace)
+fn analyzer_for(documents: &DocumentManager, workspace: &Arc<RwLock<Workspace>>, config: Config) -> Analyzer {
+    Analyzer::with_workspace(config, documents.clone(), workspace)
 }
 
 fn completion_items(response: CompletionResponse) -> Vec<lsp_types::CompletionItem> {
@@ -87,7 +87,7 @@ async fn snippet_completions_use_scope_imports_and_inferred_types() {
     let provider = CompletionProvider::new(
         documents.clone(),
         workspace.clone(),
-        Arc::new(RwLock::new(analyzer_for(&documents, workspace.clone(), config.clone()))),
+        Arc::new(RwLock::new(analyzer_for(&documents, &workspace, config.clone()))),
     );
 
     let scoped_items = completion_items(
@@ -150,7 +150,7 @@ async fn auto_import_completions_use_workspace_symbols_stubs_and_reexports() {
     let provider = CompletionProvider::new(
         documents.clone(),
         workspace.clone(),
-        Arc::new(RwLock::new(analyzer_for(&documents, workspace, config))),
+        Arc::new(RwLock::new(analyzer_for(&documents, &workspace, config))),
     );
     let items = completion_items(
         provider
@@ -213,7 +213,7 @@ signature_result = signature_target("beacon")
 
     let context = RefactoringContext::new(documents.clone(), workspace.clone());
 
-    let mut analyzer = analyzer_for(&documents, workspace.clone(), config.clone());
+    let mut analyzer = analyzer_for(&documents, &workspace, config.clone());
     let extracted_variable = ExtractVariableProvider::new(context.clone())
         .execute(
             ExtractVariableParams {
@@ -233,7 +233,7 @@ signature_result = signature_target("beacon")
             .is_some_and(|edits| edits.iter().any(|edit| edit.new_text.contains("provider_name")))
     );
 
-    let mut analyzer = analyzer_for(&documents, workspace.clone(), config);
+    let mut analyzer = analyzer_for(&documents, &workspace, config);
     let extracted_function = ExtractFunctionProvider::new(context.clone())
         .execute(
             ExtractFunctionParams {

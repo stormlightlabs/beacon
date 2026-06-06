@@ -45,8 +45,8 @@ fn fixture_workspace_with_documents() -> (DocumentManager, Arc<RwLock<Workspace>
     (documents, Arc::new(RwLock::new(workspace)), config)
 }
 
-fn analyzer_for(documents: &DocumentManager, workspace: Arc<RwLock<Workspace>>, config: Config) -> Analyzer {
-    Analyzer::with_workspace(config, documents.clone(), &workspace)
+fn analyzer_for(documents: &DocumentManager, workspace: &Arc<RwLock<Workspace>>, config: Config) -> Analyzer {
+    Analyzer::with_workspace(config, documents.clone(), workspace)
 }
 
 fn copy_dir_all(from: &Path, to: &Path) {
@@ -89,7 +89,7 @@ async fn lsp_fixture_covers_document_lifecycle_rename_and_delete() {
         .force_reparse(&uri)
         .expect("didSave-style reparse should succeed");
     let diagnostics = DiagnosticProvider::new(documents.clone(), workspace.clone())
-        .generate_diagnostics(&uri, &mut analyzer_for(&documents, workspace.clone(), config.clone()));
+        .generate_diagnostics(&uri, &mut analyzer_for(&documents, &workspace, config.clone()));
     assert!(
         diagnostics
             .iter()
@@ -148,7 +148,7 @@ async fn diagnostics_publishing_inputs_are_version_safe_and_clearable() {
         .expect("fixture should open");
 
     let diagnostics = DiagnosticProvider::new(documents.clone(), workspace.clone())
-        .generate_diagnostics(&uri, &mut analyzer_for(&documents, workspace, config));
+        .generate_diagnostics(&uri, &mut analyzer_for(&documents, &workspace, config));
     assert_eq!(documents.get_document(&uri, |doc| doc.version), Some(41));
     assert!(
         diagnostics
@@ -197,7 +197,7 @@ async fn lsp_fixture_exercises_core_product_features() {
                 },
                 work_done_progress_params: WorkDoneProgressParams::default(),
             },
-            &mut analyzer_for(&documents, workspace.clone(), config.clone()),
+            &mut analyzer_for(&documents, &workspace, config.clone()),
         )
         .expect("hover should return fixture symbol details");
     match hover.contents {
@@ -208,7 +208,7 @@ async fn lsp_fixture_exercises_core_product_features() {
     let completion = CompletionProvider::new(
         documents.clone(),
         workspace.clone(),
-        Arc::new(RwLock::new(analyzer_for(&documents, workspace.clone(), config.clone()))),
+        Arc::new(RwLock::new(analyzer_for(&documents, &workspace, config.clone()))),
     )
     .completion(CompletionParams {
         text_document_position: TextDocumentPositionParams {
@@ -304,7 +304,7 @@ async fn lsp_fixture_exercises_core_product_features() {
             },
             work_done_progress_params: WorkDoneProgressParams::default(),
         },
-        &mut analyzer_for(&documents, workspace, config.clone()),
+        &mut analyzer_for(&documents, &workspace, config.clone()),
         &config.inlay_hints,
     );
     assert!(!hints.is_empty(), "inlay hints should be produced for fixture");

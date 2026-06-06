@@ -13,7 +13,7 @@ async fn test_magic_method_with_correct_signature() {
     let documents = DocumentManager::new().unwrap();
     let config = Config::default();
     let workspace_root = Url::parse("file:///workspace").unwrap();
-    let workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
+    let workspace = Workspace::new(Some(workspace_root), config.clone(), documents.clone());
 
     let test_uri = Url::parse("file:///workspace/test.py").unwrap();
     let content = r#"
@@ -31,22 +31,20 @@ class MyClass:
     documents.open_document(test_uri.clone(), 0, content).unwrap();
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
-    let mut analyzer = Analyzer::new(config, documents.clone());
+    let mut analyzer = Analyzer::new(config, documents);
 
     let diagnostics = provider.generate_diagnostics(&test_uri, &mut analyzer);
 
-    let magic_method_diagnostics: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| {
-            d.code.as_ref().is_some_and(|c| match c {
-                lsp_types::NumberOrString::String(s) => s == "DUNDER002",
-                _ => false,
-            })
-        })
-        .collect();
-
     assert_eq!(
-        magic_method_diagnostics.len(),
+        diagnostics
+            .iter()
+            .filter(|d| {
+                d.code.as_ref().is_some_and(|c| match c {
+                    lsp_types::NumberOrString::String(s) => s == "DUNDER002",
+                    _ => false,
+                })
+            })
+            .count(),
         0,
         "No magic method diagnostics should be generated for correct signatures"
     );
@@ -57,7 +55,7 @@ async fn test_magic_method_with_wrong_parameter_count() {
     let documents = DocumentManager::new().unwrap();
     let config = Config::default();
     let workspace_root = Url::parse("file:///workspace").unwrap();
-    let workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
+    let workspace = Workspace::new(Some(workspace_root), config.clone(), documents.clone());
 
     let test_uri = Url::parse("file:///workspace/test.py").unwrap();
     let content = r#"
@@ -72,35 +70,32 @@ class MyClass:
     documents.open_document(test_uri.clone(), 0, content).unwrap();
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
-    let mut analyzer = Analyzer::new(config, documents.clone());
+    let mut analyzer = Analyzer::new(config, documents);
 
     let diagnostics = provider.generate_diagnostics(&test_uri, &mut analyzer);
 
-    let magic_method_diagnostics: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| {
-            d.code.as_ref().is_some_and(|c| match c {
-                lsp_types::NumberOrString::String(s) => s == "DUNDER002",
-                _ => false,
-            })
+    let magic_method_diagnostics = diagnostics.iter().filter(|d| {
+        d.code.as_ref().is_some_and(|c| match c {
+            lsp_types::NumberOrString::String(s) => s == "DUNDER002",
+            _ => false,
         })
-        .collect();
+    });
 
     assert_eq!(
-        magic_method_diagnostics.len(),
+        magic_method_diagnostics.clone().count(),
         2,
         "Should find 2 magic method parameter count issues"
     );
 
     let str_diagnostic = magic_method_diagnostics
-        .iter()
+        .clone()
         .find(|d| d.message.contains("__str__"))
         .unwrap();
     assert!(str_diagnostic.message.contains("has 2 parameter"));
     assert!(str_diagnostic.message.contains("expected 1"));
 
     let eq_diagnostic = magic_method_diagnostics
-        .iter()
+        .clone()
         .find(|d| d.message.contains("__eq__"))
         .unwrap();
     assert!(eq_diagnostic.message.contains("has 1 parameter"));
@@ -112,7 +107,7 @@ async fn test_magic_method_with_wrong_first_parameter() {
     let documents = DocumentManager::new().unwrap();
     let config = Config::default();
     let workspace_root = Url::parse("file:///workspace").unwrap();
-    let workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
+    let workspace = Workspace::new(Some(workspace_root), config.clone(), documents.clone());
 
     let test_uri = Url::parse("file:///workspace/test.py").unwrap();
     let content = r#"
@@ -127,35 +122,32 @@ class MyClass:
     documents.open_document(test_uri.clone(), 0, content).unwrap();
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
-    let mut analyzer = Analyzer::new(config, documents.clone());
+    let mut analyzer = Analyzer::new(config, documents);
 
     let diagnostics = provider.generate_diagnostics(&test_uri, &mut analyzer);
 
-    let magic_method_diagnostics: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| {
-            d.code.as_ref().is_some_and(|c| match c {
-                lsp_types::NumberOrString::String(s) => s == "DUNDER002",
-                _ => false,
-            })
+    let magic_method_diagnostics = diagnostics.iter().filter(|d| {
+        d.code.as_ref().is_some_and(|c| match c {
+            lsp_types::NumberOrString::String(s) => s == "DUNDER002",
+            _ => false,
         })
-        .collect();
+    });
 
     assert_eq!(
-        magic_method_diagnostics.len(),
+        magic_method_diagnostics.clone().count(),
         2,
         "Should find 2 magic method first parameter issues"
     );
 
     let init_diagnostic = magic_method_diagnostics
-        .iter()
+        .clone()
         .find(|d| d.message.contains("__init__"))
         .unwrap();
     assert!(init_diagnostic.message.contains("should be 'self'"));
     assert!(init_diagnostic.message.contains("not 'this'"));
 
     let new_diagnostic = magic_method_diagnostics
-        .iter()
+        .clone()
         .find(|d| d.message.contains("__new__"))
         .unwrap();
     assert!(new_diagnostic.message.contains("should be 'cls'"));
@@ -166,7 +158,7 @@ async fn test_magic_method_outside_class() {
     let documents = DocumentManager::new().unwrap();
     let config = Config::default();
     let workspace_root = Url::parse("file:///workspace").unwrap();
-    let workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
+    let workspace = Workspace::new(Some(workspace_root), config.clone(), documents.clone());
 
     let test_uri = Url::parse("file:///workspace/test.py").unwrap();
     let content = r#"
@@ -180,27 +172,24 @@ def __str__(self):
     documents.open_document(test_uri.clone(), 0, content).unwrap();
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
-    let mut analyzer = Analyzer::new(config, documents.clone());
+    let mut analyzer = Analyzer::new(config, documents);
 
     let diagnostics = provider.generate_diagnostics(&test_uri, &mut analyzer);
 
-    let dunder_diagnostics: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| {
-            d.code.as_ref().is_some_and(|c| match c {
-                lsp_types::NumberOrString::String(s) => s == "DUNDER001",
-                _ => false,
-            })
+    let dunder_diagnostics = diagnostics.iter().filter(|d| {
+        d.code.as_ref().is_some_and(|c| match c {
+            lsp_types::NumberOrString::String(s) => s == "DUNDER001",
+            _ => false,
         })
-        .collect();
+    });
 
     assert_eq!(
-        dunder_diagnostics.len(),
+        dunder_diagnostics.clone().count(),
         2,
         "Should find 2 magic methods defined outside class"
     );
 
-    for diag in &dunder_diagnostics {
+    for diag in dunder_diagnostics {
         assert!(diag.message.contains("defined outside of a class"));
     }
 }
@@ -210,7 +199,7 @@ async fn test_variadic_magic_methods() {
     let documents = DocumentManager::new().unwrap();
     let config = Config::default();
     let workspace_root = Url::parse("file:///workspace").unwrap();
-    let workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
+    let workspace = Workspace::new(Some(workspace_root), config.clone(), documents.clone());
 
     let test_uri = Url::parse("file:///workspace/test.py").unwrap();
     let content = r#"
@@ -236,22 +225,19 @@ class MyClass:
     documents.open_document(test_uri.clone(), 0, content).unwrap();
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
-    let mut analyzer = Analyzer::new(config, documents.clone());
+    let mut analyzer = Analyzer::new(config, documents);
 
     let diagnostics = provider.generate_diagnostics(&test_uri, &mut analyzer);
 
-    let magic_method_diagnostics: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| {
-            d.code.as_ref().is_some_and(|c| match c {
-                lsp_types::NumberOrString::String(s) => s == "DUNDER002",
-                _ => false,
-            })
+    let magic_method_diagnostics = diagnostics.iter().filter(|d| {
+        d.code.as_ref().is_some_and(|c| match c {
+            lsp_types::NumberOrString::String(s) => s == "DUNDER002",
+            _ => false,
         })
-        .collect();
+    });
 
     assert_eq!(
-        magic_method_diagnostics.len(),
+        magic_method_diagnostics.count(),
         0,
         "Variadic magic methods (__init__, __call__) should accept any number of parameters >= minimum"
     );

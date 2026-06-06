@@ -3,7 +3,7 @@ use beacon_core::fixtures::python_files;
 use beacon_parser::PythonParser;
 
 #[test]
-fn workspace_fixture_runs_analyzer_lint_smoke() {
+fn runs_analyzer_lint_smoke() {
     let files = python_files().expect("workspace fixture should exist");
     assert!(!files.is_empty(), "workspace fixture should contain Python files");
 

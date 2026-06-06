@@ -10,7 +10,7 @@ async fn test_cross_file_call_detection() {
     let documents = DocumentManager::new().unwrap();
     let config = Config::default();
     let workspace_root = Url::parse("file:///workspace").unwrap();
-    let mut workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
+    let mut workspace = Workspace::new(Some(workspace_root.clone()), config, documents.clone());
 
     let module_a_uri = file_uri(workspace_root.as_str(), "module_a.py");
     let module_a_content = r#"
@@ -68,7 +68,7 @@ async fn test_circular_dependency_cfg() {
     let documents = DocumentManager::new().unwrap();
     let config = Config::default();
     let workspace_root = Url::parse("file:///workspace").unwrap();
-    let mut workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
+    let mut workspace = Workspace::new(Some(workspace_root.clone()), config, documents.clone());
 
     let module_a_uri = file_uri(workspace_root.as_str(), "module_a.py");
     let module_a_content = r#"
@@ -115,7 +115,7 @@ async fn test_cross_file_taint_propagation() {
     let documents = DocumentManager::new().unwrap();
     let config = Config::default();
     let workspace_root = Url::parse("file:///workspace").unwrap();
-    let mut workspace = Workspace::new(Some(workspace_root.clone()), config.clone(), documents.clone());
+    let mut workspace = Workspace::new(Some(workspace_root.clone()), config, documents.clone());
 
     let module_a_uri = file_uri(workspace_root.as_str(), "source_module.py");
     let module_a_content = r#"

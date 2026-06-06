@@ -194,7 +194,7 @@ fn test_workspace_symbol_table_standalone() {
     let scope_id = beacon_parser::ScopeId::from_raw(0);
 
     cache.add_symbol_definition(beacon_lsp::cache::SymbolDefinition::new(
-        uri1.clone(),
+        uri1,
         "func_a".to_string(),
         beacon_parser::SymbolKind::Function,
         10,
@@ -203,7 +203,7 @@ fn test_workspace_symbol_table_standalone() {
     ));
 
     cache.add_symbol_definition(beacon_lsp::cache::SymbolDefinition::new(
-        uri2.clone(),
+        uri2,
         "ClassB".to_string(),
         beacon_parser::SymbolKind::Class,
         5,

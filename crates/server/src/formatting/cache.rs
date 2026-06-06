@@ -510,7 +510,7 @@ mod tests {
             FormatterConfig { normalize_docstring_quotes: false, ..base.clone() },
             FormatterConfig { spaces_around_operators: false, ..base.clone() },
             FormatterConfig { blank_line_before_class: false, ..base.clone() },
-            FormatterConfig { blank_line_before_function: false, ..base.clone() },
+            FormatterConfig { blank_line_before_function: false, ..base },
         ];
 
         let base_hash = CacheKey::hash_config(&base);

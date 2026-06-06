@@ -503,7 +503,7 @@ w: str = "world"
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -527,7 +527,7 @@ y: str = "hello"
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -562,7 +562,7 @@ def no_return():
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -588,7 +588,7 @@ w = True
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 1, character: 0 }, end: Position { line: 2, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -626,7 +626,7 @@ if True:
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 20, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -690,7 +690,7 @@ empty = []
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -715,7 +715,7 @@ empty_dict = {}
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -740,7 +740,7 @@ empty_set = set()
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -765,20 +765,18 @@ singleton = (42,)
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
         let config = Config::default();
         let hints = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
-
-        let type_hints: Vec<_> = hints
-            .iter()
-            .filter(|h| matches!(h.kind, Some(InlayHintKind::TYPE)))
-            .collect();
-
-        assert!(!type_hints.is_empty(), "Should have type hints for tuple assignments");
+        let mut type_hints = hints.iter().filter(|h| matches!(h.kind, Some(InlayHintKind::TYPE)));
+        assert!(
+            type_hints.next().is_some(),
+            "Should have type hints for tuple assignments"
+        );
     }
 
     #[test]
@@ -797,7 +795,7 @@ complex = [{"a": 1}, {"b": 2}]
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -820,7 +818,7 @@ complex = [{"a": 1}, {"b": 2}]
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -828,16 +826,11 @@ complex = [{"a": 1}, {"b": 2}]
         let config = Config::default();
         let hints = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
 
-        let any_hints: Vec<_> = hints
-            .iter()
-            .filter(
-                |h| {
-                    if let InlayHintLabel::String(label) = &h.label { label.contains("Any") } else { false }
-                },
-            )
-            .collect();
+        let mut any_hints = hints.iter().filter(|h| {
+            if let InlayHintLabel::String(label) = &h.label { label.contains("Any") } else { false }
+        });
 
-        assert!(any_hints.is_empty(), "Should not show hints for 'Any' type");
+        assert!(any_hints.next().is_none(), "Should not show hints for 'Any' type");
     }
 
     #[test]
@@ -854,23 +847,24 @@ complex = [{"a": 1}, {"b": 2}]
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
         let config = Config::default();
         let hints = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
-        let type_var_hints: Vec<_> = hints
-            .iter()
-            .filter(
+        let mut type_var_hints =
+            hints.iter().filter(
                 |h| {
                     if let InlayHintLabel::String(label) = &h.label { label.contains("'") } else { false }
                 },
-            )
-            .collect();
+            );
 
-        assert!(type_var_hints.is_empty(), "Should not show hints with type variables");
+        assert!(
+            type_var_hints.next().is_none(),
+            "Should not show hints with type variables"
+        );
     }
 
     #[test]
@@ -889,21 +883,16 @@ mapping = {x: x * 2 for x in range(5)}
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
         let config = Config::default();
         let hints = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
-
-        let type_hints: Vec<_> = hints
-            .iter()
-            .filter(|h| matches!(h.kind, Some(InlayHintKind::TYPE)))
-            .collect();
-
+        let mut type_hints = hints.iter().filter(|h| matches!(h.kind, Some(InlayHintKind::TYPE)));
         assert!(
-            !type_hints.is_empty(),
+            type_hints.next().is_some(),
             "Should have type hints for comprehension results"
         );
     }
@@ -926,7 +915,7 @@ def get_mapping():
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -952,7 +941,7 @@ greet("Alice", 30)
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -1000,7 +989,7 @@ outer()
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -1013,12 +1002,11 @@ outer()
         };
         let hints = provider.inlay_hints(params, &mut analyzer, &hint_config);
 
-        let param_hints: Vec<_> = hints
+        let param_hints = hints
             .iter()
-            .filter(|h| matches!(h.kind, Some(InlayHintKind::PARAMETER)))
-            .collect();
+            .filter(|h| matches!(h.kind, Some(InlayHintKind::PARAMETER)));
 
-        assert_eq!(param_hints.len(), 2, "Should find hints for nested function");
+        assert_eq!(param_hints.count(), 2, "Should find hints for nested function");
     }
 
     #[test]
@@ -1035,20 +1023,19 @@ len([1, 2, 3])
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
 
         let config = Config::default();
         let hints = provider.inlay_hints(params, &mut analyzer, &config.inlay_hints);
-        let param_hints: Vec<_> = hints
+        let param_hints = hints
             .iter()
-            .filter(|h| matches!(h.kind, Some(InlayHintKind::PARAMETER)))
-            .collect();
+            .filter(|h| matches!(h.kind, Some(InlayHintKind::PARAMETER)));
 
         assert_eq!(
-            param_hints.len(),
+            param_hints.count(),
             0,
             "Should not show parameter hints for builtin functions"
         );
@@ -1128,7 +1115,7 @@ calc.add(5, 3)
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -1153,7 +1140,7 @@ def add(a, b):
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -1184,7 +1171,7 @@ y = "hello"
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };
@@ -1222,7 +1209,7 @@ greet("Alice", 30)
         documents.open_document(uri.clone(), 1, source).unwrap();
 
         let params = InlayHintParams {
-            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            text_document: lsp_types::TextDocumentIdentifier { uri },
             range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 10, character: 0 } },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
         };

@@ -233,7 +233,7 @@ mod tests {
     #[test]
     fn test_find_scope_at_position() {
         let source = "x = 1\ndef foo():\n    y = 2\n    z = 3\nw = 4".to_string();
-        let mut resolver = NameResolver::new(source.clone());
+        let mut resolver = NameResolver::new(source);
 
         let ast = AstNode::Module {
             body: vec![

@@ -41,9 +41,9 @@ fn test_function_call_with_typevar_bound_success() {
     let tv = TypeVar::new(0);
     let mut typevar_registry = TypeVarConstraintRegistry::new();
     let animal_ty = Type::Con(TypeCtor::Class("Animal".to_string()));
-    typevar_registry.set_bound(tv.id, animal_ty.clone());
+    typevar_registry.set_bound(tv.id, animal_ty);
 
-    let func_ty = Type::fun(vec![("animal".to_string(), Type::Var(tv.clone()))], Type::string());
+    let func_ty = Type::fun(vec![("animal".to_string(), Type::Var(tv))], Type::string());
 
     let dog_ty = Type::Con(TypeCtor::Class("Dog".to_string()));
 
@@ -78,7 +78,7 @@ fn test_function_call_with_typevar_bound_failure() {
     let animal_ty = Type::Con(TypeCtor::Class("Animal".to_string()));
     typevar_registry.set_bound(tv.id, animal_ty);
 
-    let func_ty = Type::fun(vec![("animal".to_string(), Type::Var(tv.clone()))], Type::string());
+    let func_ty = Type::fun(vec![("animal".to_string(), Type::Var(tv))], Type::string());
 
     let arg_ty = Type::int();
 
@@ -112,7 +112,7 @@ fn test_function_call_with_typevar_constraints_success_int() {
 
     let func_ty = Type::fun(
         vec![("value".to_string(), Type::Var(tv.clone()))],
-        Type::Var(tv.clone()),
+        Type::Var(tv),
     );
 
     let arg_ty = Type::int();
@@ -145,7 +145,7 @@ fn test_function_call_with_typevar_constraints_success_str() {
 
     let func_ty = Type::fun(
         vec![("value".to_string(), Type::Var(tv.clone()))],
-        Type::Var(tv.clone()),
+        Type::Var(tv),
     );
 
     let arg_ty = Type::string();
@@ -178,7 +178,7 @@ fn test_function_call_with_typevar_constraints_failure() {
 
     let func_ty = Type::fun(
         vec![("value".to_string(), Type::Var(tv.clone()))],
-        Type::Var(tv.clone()),
+        Type::Var(tv),
     );
 
     let arg_ty = Type::float();
@@ -216,14 +216,14 @@ fn test_function_call_with_multiple_typevars() {
 
     let func_ty = Type::fun(
         vec![
-            ("key".to_string(), Type::Var(tv_k.clone())),
-            ("value".to_string(), Type::Var(tv_v.clone())),
+            ("key".to_string(), Type::Var(tv_k)),
+            ("value".to_string(), Type::Var(tv_v)),
         ],
         Type::none(),
     );
 
     let key_arg = Type::string();
-    let value_arg = animal_ty.clone();
+    let value_arg = animal_ty;
 
     let class_registry = ClassRegistry::new();
 
@@ -260,8 +260,8 @@ fn test_function_call_with_multiple_typevars_first_arg_fails() {
 
     let func_ty = Type::fun(
         vec![
-            ("key".to_string(), Type::Var(tv_k.clone())),
-            ("value".to_string(), Type::Var(tv_v.clone())),
+            ("key".to_string(), Type::Var(tv_k)),
+            ("value".to_string(), Type::Var(tv_v)),
         ],
         Type::none(),
     );
@@ -299,8 +299,8 @@ fn test_function_call_with_multiple_typevars_second_arg_fails() {
 
     let func_ty = Type::fun(
         vec![
-            ("key".to_string(), Type::Var(tv_k.clone())),
-            ("value".to_string(), Type::Var(tv_v.clone())),
+            ("key".to_string(), Type::Var(tv_k)),
+            ("value".to_string(), Type::Var(tv_v)),
         ],
         Type::none(),
     );
@@ -340,7 +340,7 @@ fn test_generic_function_in_list_context() {
     let mut class_registry = ClassRegistry::new();
     class_registry.register_class("Animal".to_string(), ClassMetadata::new("Animal".to_string()));
 
-    let func_ty = Type::fun(vec![("animal".to_string(), Type::Var(tv.clone()))], Type::string());
+    let func_ty = Type::fun(vec![("animal".to_string(), Type::Var(tv))], Type::string());
     let ret_ty_1 = tvar(1);
     let ret_ty_2 = tvar(2);
 
@@ -355,7 +355,7 @@ fn test_generic_function_in_list_context() {
             ),
             Constraint::Call(
                 func_ty,
-                vec![(animal_ty.clone(), test_span())],
+                vec![(animal_ty, test_span())],
                 vec![],
                 ret_ty_2.clone(),
                 test_span(),

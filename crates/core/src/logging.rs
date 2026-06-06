@@ -12,8 +12,11 @@
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::Mutex,
 };
 use tracing_subscriber::{EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+
+static LOG_GUARD: Mutex<Option<tracing_appender::non_blocking::WorkerGuard>> = Mutex::new(None);
 
 /// Log output format
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -177,7 +180,7 @@ pub fn init(config: &LogConfig) -> Result<(), Box<dyn std::error::Error>> {
         subscriber.try_init()?;
     }
 
-    std::mem::forget(guard);
+    *LOG_GUARD.lock().map_err(|_| "logging guard mutex poisoned")? = Some(guard);
     Ok(())
 }
 

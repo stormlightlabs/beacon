@@ -149,7 +149,7 @@ mod tests {
     #[test]
     fn test_type_predicate_matches_pattern_negate() {
         let pattern = Pattern::MatchSequence(vec![]);
-        let predicate = TypePredicate::MatchesPattern(pattern.clone());
+        let predicate = TypePredicate::MatchesPattern(pattern);
         let negated = predicate.negate();
         assert!(matches!(negated, TypePredicate::Not(_)));
     }
@@ -263,7 +263,7 @@ mod tests {
 
         assert_eq!(tracker.remaining_types(), int_type);
 
-        tracker.eliminate_type(int_type.clone());
+        tracker.eliminate_type(int_type);
         assert_eq!(tracker.remaining_types(), Type::never());
     }
 
@@ -300,7 +300,7 @@ mod tests {
         let mut ctx = ControlFlowContext::new();
         let union_type = Type::union(vec![Type::int(), Type::string()]);
 
-        ctx.start_tracking("x".to_string(), union_type.clone());
+        ctx.start_tracking("x".to_string(), union_type);
         assert!(ctx.get_tracker("x").is_some());
 
         ctx.stop_tracking("x");

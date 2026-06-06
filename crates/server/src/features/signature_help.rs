@@ -197,7 +197,7 @@ result = greet(x)"#;
 
         let params = SignatureHelpParams {
             text_document_position_params: TextDocumentPositionParams {
-                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                text_document: lsp_types::TextDocumentIdentifier { uri },
                 position: Position { line: 4, character: 15 },
             },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
@@ -225,7 +225,7 @@ result = add(a, b)"#;
 
         let params = SignatureHelpParams {
             text_document_position_params: TextDocumentPositionParams {
-                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                text_document: lsp_types::TextDocumentIdentifier { uri },
                 position: Position { line: 5, character: 16 },
             },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
@@ -248,7 +248,7 @@ result = add(a, b)"#;
 
         let params = SignatureHelpParams {
             text_document_position_params: TextDocumentPositionParams {
-                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                text_document: lsp_types::TextDocumentIdentifier { uri },
                 position: Position { line: 0, character: 4 },
             },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),
@@ -275,7 +275,7 @@ func("#;
 
         let params = SignatureHelpParams {
             text_document_position_params: TextDocumentPositionParams {
-                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                text_document: lsp_types::TextDocumentIdentifier { uri },
                 position: Position { line: 3, character: 5 },
             },
             work_done_progress_params: lsp_types::WorkDoneProgressParams::default(),

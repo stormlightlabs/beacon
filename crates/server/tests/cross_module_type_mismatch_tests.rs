@@ -40,7 +40,7 @@ result = greet("Alice", "Bob")  # ERROR: expects 1 argument, got 2
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let mut analyzer = Analyzer::new(config, documents.clone());
-    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostic_provider = DiagnosticProvider::new(documents, workspace_arc);
     let diagnostics = diagnostic_provider.generate_diagnostics(&main_uri, &mut analyzer);
 
     let mismatch_diagnostics: Vec<_> = diagnostics
@@ -105,7 +105,7 @@ total = count([1, 2, 3])  # OK: list argument
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let mut analyzer = Analyzer::new(config, documents.clone());
-    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostic_provider = DiagnosticProvider::new(documents, workspace_arc);
     let diagnostics = diagnostic_provider.generate_diagnostics(&module_b_uri, &mut analyzer);
 
     let mismatch_diagnostics: Vec<_> = diagnostics
@@ -155,7 +155,7 @@ result = add("hello", 42)  # ERROR: first arg should be int, got str
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let mut analyzer = Analyzer::new(config, documents.clone());
-    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostic_provider = DiagnosticProvider::new(documents, workspace_arc);
     let diagnostics = diagnostic_provider.generate_diagnostics(&main_uri, &mut analyzer);
 
     let type_mismatch_diagnostics: Vec<_> = diagnostics
@@ -220,7 +220,7 @@ result3 = process([1, 2, 3])  # OK: Any accepts list
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let mut analyzer = Analyzer::new(config, documents.clone());
-    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostic_provider = DiagnosticProvider::new(documents, workspace_arc);
     let diagnostics = diagnostic_provider.generate_diagnostics(&module_b_uri, &mut analyzer);
 
     let mismatch_diagnostics: Vec<_> = diagnostics
@@ -271,7 +271,7 @@ result = do_something("a", "b")  # Should not error: no type info available
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let mut analyzer = Analyzer::new(config, documents.clone());
-    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostic_provider = DiagnosticProvider::new(documents, workspace_arc);
     let diagnostics = diagnostic_provider.generate_diagnostics(&module_b_uri, &mut analyzer);
 
     let mismatch_diagnostics: Vec<_> = diagnostics
@@ -329,6 +329,6 @@ total = process_items([1, 2, 3])  # OK
 
     let workspace_arc = Arc::new(RwLock::new(workspace));
     let mut analyzer = Analyzer::new(config, documents.clone());
-    let diagnostic_provider = DiagnosticProvider::new(documents.clone(), workspace_arc);
+    let diagnostic_provider = DiagnosticProvider::new(documents, workspace_arc);
     let _diagnostics = diagnostic_provider.generate_diagnostics(&module_b_uri, &mut analyzer);
 }

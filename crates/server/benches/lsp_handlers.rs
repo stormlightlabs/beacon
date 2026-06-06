@@ -51,7 +51,7 @@ fn bench_hover_handler(c: &mut Criterion) {
             let uri = create_test_uri();
             let params = HoverParams {
                 text_document_position_params: TextDocumentPositionParams {
-                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    text_document: TextDocumentIdentifier { uri },
                     position: create_position(26, 10),
                 },
                 work_done_progress_params: WorkDoneProgressParams::default(),
@@ -65,7 +65,7 @@ fn bench_hover_handler(c: &mut Criterion) {
             let uri = create_test_uri();
             let params = HoverParams {
                 text_document_position_params: TextDocumentPositionParams {
-                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    text_document: TextDocumentIdentifier { uri },
                     position: create_position(18, 5),
                 },
                 work_done_progress_params: WorkDoneProgressParams::default(),
@@ -82,7 +82,7 @@ fn bench_completion_handler(c: &mut Criterion) {
             let uri = create_test_uri();
             let params = CompletionParams {
                 text_document_position: TextDocumentPositionParams {
-                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    text_document: TextDocumentIdentifier { uri },
                     position: create_position(27, 14),
                 },
                 work_done_progress_params: WorkDoneProgressParams::default(),
@@ -98,7 +98,7 @@ fn bench_completion_handler(c: &mut Criterion) {
             let uri = create_test_uri();
             let params = CompletionParams {
                 text_document_position: TextDocumentPositionParams {
-                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    text_document: TextDocumentIdentifier { uri },
                     position: create_position(12, 8),
                 },
                 work_done_progress_params: WorkDoneProgressParams::default(),
@@ -117,7 +117,7 @@ fn bench_goto_definition_handler(c: &mut Criterion) {
             let uri = create_test_uri();
             let params = GotoDefinitionParams {
                 text_document_position_params: TextDocumentPositionParams {
-                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    text_document: TextDocumentIdentifier { uri },
                     position: create_position(27, 10),
                 },
                 work_done_progress_params: WorkDoneProgressParams::default(),
@@ -132,7 +132,7 @@ fn bench_goto_definition_handler(c: &mut Criterion) {
             let uri = create_test_uri();
             let params = GotoDefinitionParams {
                 text_document_position_params: TextDocumentPositionParams {
-                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    text_document: TextDocumentIdentifier { uri },
                     position: create_position(28, 10),
                 },
                 work_done_progress_params: WorkDoneProgressParams::default(),
@@ -147,7 +147,7 @@ fn bench_goto_definition_handler(c: &mut Criterion) {
             let uri = create_test_uri();
             let params = GotoDefinitionParams {
                 text_document_position_params: TextDocumentPositionParams {
-                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    text_document: TextDocumentIdentifier { uri },
                     position: create_position(26, 12),
                 },
                 work_done_progress_params: WorkDoneProgressParams::default(),
