@@ -11,8 +11,8 @@ use crate::workspace::Workspace;
 use algorithms::{FuzzyMatcher, PrefixMatcher, RocchioScorer, StringSimilarity};
 use beacon_parser::{BUILTIN_DUNDERS, MAGIC_METHODS, ScopeId, Symbol, SymbolKind, line_col_to_byte_offset_lossy};
 use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse, Documentation, MarkupContent, MarkupKind,
-    Position,
+    CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse, Documentation, InsertTextFormat,
+    MarkupContent, MarkupKind, Position, Range, TextEdit,
 };
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
@@ -390,7 +390,27 @@ impl CompletionProvider {
     fn completion_item(
         symbol: &Symbol, kind: CompletionItemKind, detail: Option<String>, documentation: Option<Documentation>,
     ) -> CompletionItem {
-        CompletionItem { label: symbol.name.clone(), kind: Some(kind), detail, documentation, ..Default::default() }
+        let mut item = CompletionItem {
+            label: symbol.name.clone(),
+            kind: Some(kind),
+            detail,
+            documentation,
+            ..Default::default()
+        };
+
+        if matches!(symbol.kind, SymbolKind::Function | SymbolKind::Class) {
+            item.insert_text = Some(format!("{}($0)", symbol.name));
+            item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        }
+
+        item
+    }
+
+    fn auto_import_edit(module_name: &str, symbol_name: &str) -> TextEdit {
+        TextEdit {
+            range: Range { start: Position { line: 0, character: 0 }, end: Position { line: 0, character: 0 } },
+            new_text: format!("from {module_name} import {symbol_name}\n"),
+        }
     }
 
     fn symbol_kind_to_completion_kind(kind: &SymbolKind) -> CompletionItemKind {
@@ -641,10 +661,10 @@ impl CompletionProvider {
                 Documentation::MarkupContent(MarkupContent { kind: MarkupKind::Markdown, value: doc.clone() })
             });
 
-            scored_items.push(ScoredCompletion {
-                item: Self::completion_item(&symbol, kind, Some(detail), documentation),
-                score,
-            });
+            let mut item = Self::completion_item(&symbol, kind, Some(detail), documentation);
+            item.additional_text_edits = Some(vec![Self::auto_import_edit(&module_name, &symbol.name)]);
+
+            scored_items.push(ScoredCompletion { item, score });
         }
 
         scored_items.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));

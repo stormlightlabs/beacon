@@ -104,9 +104,9 @@
 - [x] Add version-safe diagnostics publishing and clearing tests.
 - [x] Verify hover, completion, goto definition, references, rename, symbols,
       semantic tokens, and inlay hints against the v1 fixture.
-- [ ] Add snippet completion tests using scope, imports, and inferred types.
-- [ ] Add auto-import tests using workspace symbols, stubs, and re-exports.
-- [ ] Add refactoring edit tests for extract function, extract variable,
+- [x] Add snippet completion tests using scope, imports, and inferred types.
+- [x] Add auto-import tests using workspace symbols, stubs, and re-exports.
+- [x] Add refactoring edit tests for extract function, extract variable,
       inline function, move symbol, change signature, and rename.
 - [ ] Add autofix tests for mechanical lint/import edits.
 - [ ] Add telemetry event tests for timing, cache behavior, crashes, and
