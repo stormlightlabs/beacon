@@ -2038,6 +2038,27 @@ mod tests {
     }
 
     #[test]
+    fn test_type_predicate_unknown_true_branch_can_narrow() {
+        let pred = TypePredicate::IsInstance(Type::string());
+        assert_eq!(pred.apply(&Type::unknown()), Type::string());
+
+        let guard = TypePredicate::UserDefinedGuard(Type::int());
+        assert_eq!(guard.apply(&Type::unknown()), Type::int());
+    }
+
+    #[test]
+    fn test_type_predicate_unknown_negative_branch_stays_unknown() {
+        let pred = TypePredicate::Not(Box::new(TypePredicate::IsInstance(Type::string())));
+        assert_eq!(pred.apply(&Type::unknown()), Type::unknown());
+    }
+
+    #[test]
+    fn test_type_predicate_unknown_join_dominates() {
+        let joined = Type::union(vec![Type::unknown(), Type::string()]);
+        assert_eq!(joined, Type::unknown());
+    }
+
+    #[test]
     fn test_type_predicate_de_morgan_and() {
         let pred1 = TypePredicate::IsTruthy;
         let pred2 = TypePredicate::IsNotNone;

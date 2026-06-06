@@ -840,6 +840,7 @@ mod tests {
         let documents = DocumentManager::new().unwrap();
         let provider = HoverProvider::new(documents);
         assert_eq!(provider.format_type(&Type::Con(TypeCtor::Any)), "Any");
+        assert_eq!(provider.format_type(&Type::Con(TypeCtor::Unknown)), "Unknown");
     }
 
     #[test]

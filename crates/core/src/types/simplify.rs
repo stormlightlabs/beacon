@@ -9,6 +9,9 @@ impl Type {
                 if types.iter().any(|t| matches!(t, Type::Con(TypeCtor::Any))) {
                     return Type::any();
                 }
+                if types.iter().any(|t| matches!(t, Type::Con(TypeCtor::Unknown))) {
+                    return Type::unknown();
+                }
 
                 Type::union(types)
             }

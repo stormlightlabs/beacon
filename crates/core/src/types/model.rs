@@ -133,8 +133,10 @@ pub enum TypeCtor {
     Set,
     Tuple,
     Function,
-    /// Gradual typing "unknown" type - acts as both supertype and subtype
+    /// Gradual typing opt-out type - user explicitly asked for dynamic behavior.
     Any,
+    /// Internal unknown type - analyzer could not determine a precise type.
+    Unknown,
     /// Top of type lattice - supertype of all types
     Top,
     /// Bottom of type lattice - subtype of all types (uninhabited)
@@ -175,6 +177,7 @@ impl std::fmt::Display for TypeCtor {
             TypeCtor::Tuple => write!(f, "tuple"),
             TypeCtor::Function => write!(f, "function"),
             TypeCtor::Any => write!(f, "Any"),
+            TypeCtor::Unknown => write!(f, "Unknown"),
             TypeCtor::Top => write!(f, "Top"),
             TypeCtor::Never => write!(f, "Never"),
             TypeCtor::TypeVariable(name) => write!(f, "{name}"),
@@ -205,6 +208,7 @@ impl TypeCtor {
             | TypeCtor::Bool
             | TypeCtor::NoneType
             | TypeCtor::Any
+            | TypeCtor::Unknown
             | TypeCtor::Top
             | TypeCtor::Never
             | TypeCtor::TypeVariable(_)
@@ -291,6 +295,7 @@ impl TypeCtor {
                 | TypeCtor::Tuple
                 | TypeCtor::Function
                 | TypeCtor::Any
+                | TypeCtor::Unknown
                 | TypeCtor::Top
                 | TypeCtor::Never
                 | TypeCtor::TypeVariable(_)

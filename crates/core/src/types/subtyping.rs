@@ -7,10 +7,10 @@ impl Type {
     pub fn is_subtype_of(&self, other: &Type) -> bool {
         match (self, other) {
             (Type::Con(TypeCtor::Never), _) => return true,
-            (_, Type::Con(TypeCtor::Top)) | (_, Type::Con(TypeCtor::Any)) => return true,
+            (_, Type::Con(TypeCtor::Top | TypeCtor::Any | TypeCtor::Unknown)) => return true,
             (_, Type::Con(TypeCtor::Never)) => return false,
             (Type::Con(TypeCtor::Top), _) => return false,
-            (Type::Con(TypeCtor::Any), _) => return false,
+            (Type::Con(TypeCtor::Any | TypeCtor::Unknown), _) => return false,
             _ => {}
         }
 

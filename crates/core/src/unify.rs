@@ -29,7 +29,8 @@ impl Unifier {
         t1: &Type, t2: &Type, registry: &TypeVarConstraintRegistry, class_registry: Option<&ClassRegistry>,
     ) -> Result<Subst> {
         match (t1, t2) {
-            (Type::Con(TypeCtor::Any), _) | (_, Type::Con(TypeCtor::Any)) => Ok(Subst::empty()),
+            (Type::Con(TypeCtor::Any | TypeCtor::Unknown), _)
+            | (_, Type::Con(TypeCtor::Any | TypeCtor::Unknown)) => Ok(Subst::empty()),
             (Type::Var(tv1), Type::Var(tv2)) if tv1 == tv2 => Ok(Subst::empty()),
             (Type::Var(tv), t) | (t, Type::Var(tv)) => Self::unify_var(tv, t, registry, class_registry),
             (Type::Con(tc1), Type::Con(tc2)) if tc1 == tc2 => Ok(Subst::empty()),

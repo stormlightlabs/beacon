@@ -343,7 +343,7 @@ impl ProtocolChecker {
                 false
             }
             (Type::Con(TypeCtor::String), ProtocolName::Sized) => true,
-            (Type::Con(TypeCtor::Any), _) => true,
+            (Type::Con(TypeCtor::Any | TypeCtor::Unknown), _) => true,
             (Type::Con(TypeCtor::Protocol(Some(name), _)), ProtocolName::UserDefined(proto_name)) => name == proto_name,
             _ => false,
         }

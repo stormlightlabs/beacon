@@ -172,6 +172,7 @@ fn test_type_constructor_display() {
     assert_eq!(TypeCtor::Bool.to_string(), "bool");
     assert_eq!(TypeCtor::NoneType.to_string(), "None");
     assert_eq!(TypeCtor::Any.to_string(), "Any");
+    assert_eq!(TypeCtor::Unknown.to_string(), "Unknown");
     assert_eq!(TypeCtor::Never.to_string(), "Never");
     assert_eq!(TypeCtor::Class("MyClass".to_string()).to_string(), "MyClass");
     assert_eq!(TypeCtor::Module("os".to_string()).to_string(), "module<os>");
@@ -295,6 +296,15 @@ fn test_any_type_constructor() {
     assert_eq!(any.to_string(), "Any");
     assert_eq!(TypeCtor::Any.kind(), Kind::Star);
     assert!(TypeCtor::Any.is_builtin());
+}
+
+#[test]
+fn test_unknown_type_constructor() {
+    let unknown = Type::unknown();
+    assert_eq!(unknown, Type::Con(TypeCtor::Unknown));
+    assert_eq!(unknown.to_string(), "Unknown");
+    assert_eq!(TypeCtor::Unknown.kind(), Kind::Star);
+    assert!(TypeCtor::Unknown.is_builtin());
 }
 
 #[test]
@@ -815,6 +825,19 @@ fn test_subtype_any_as_supertype() {
 
     assert!(Type::any().is_subtype_of(&Type::any()));
     assert!(Type::any().is_subtype_of(&Type::top()));
+}
+
+#[test]
+fn test_subtype_unknown_as_internal_supertype() {
+    assert!(Type::int().is_subtype_of(&Type::unknown()));
+    assert!(Type::string().is_subtype_of(&Type::unknown()));
+    assert!(Type::never().is_subtype_of(&Type::unknown()));
+
+    assert!(!Type::unknown().is_subtype_of(&Type::int()));
+    assert!(!Type::unknown().is_subtype_of(&Type::string()));
+
+    assert!(Type::unknown().is_subtype_of(&Type::unknown()));
+    assert!(Type::unknown().is_subtype_of(&Type::top()));
 }
 
 #[test]

@@ -314,6 +314,46 @@ fn workspace_fixture_cli_data_flow_diagnostics_are_reported() {
 }
 
 #[test]
+fn workspace_fixture_cli_any_narrowing_show_types_has_stable_fragments() {
+    let assert = cargo_bin_cmd!("beacon")
+        .arg("analyze")
+        .arg("--format")
+        .arg("json")
+        .arg("--show-types")
+        .arg("file")
+        .arg(file("cases/any_narrowing.py"))
+        .assert()
+        .failure();
+
+    let output: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("CLI output should be JSON");
+    let inferred = output["inferred_types"]
+        .as_array()
+        .expect("inferred_types should be an array");
+    let has_type_at = |line: u64, col: u64, expected: &str| {
+        inferred.iter().any(|item| {
+            item["span"]["start"]["line"].as_u64() == Some(line)
+                && item["span"]["start"]["col"].as_u64() == Some(col)
+                && item["type"].as_str().is_some_and(|ty| ty.contains(expected))
+        })
+    };
+
+    assert!(has_type_at(17, 5, "Any"), "pre-guard Any should remain Any");
+    assert!(has_type_at(19, 9, "str"), "isinstance true branch should get local str precision");
+    assert!(has_type_at(22, 9, "Any"), "isinstance false branch should remain Any");
+    assert!(has_type_at(24, 5, "Any"), "isinstance join should remain Any");
+    assert!(has_type_at(30, 9, "None"), "None true branch should get local None precision");
+    assert!(has_type_at(33, 9, "Any"), "None false branch should remain Any");
+    assert!(has_type_at(35, 5, "Any"), "None join should remain Any");
+    assert!(has_type_at(41, 9, "str"), "TypeGuard true branch should get local str precision");
+    assert!(has_type_at(44, 9, "Any"), "TypeGuard false branch should remain Any");
+    assert!(has_type_at(46, 5, "Any"), "TypeGuard join should remain Any");
+    assert!(has_type_at(52, 9, "str"), "TypeIs true branch should get local str precision");
+    assert!(has_type_at(55, 9, "Any"), "TypeIs false branch should remain Any");
+    assert!(has_type_at(57, 5, "Any"), "TypeIs join should remain Any");
+}
+
+#[test]
 fn workspace_fixture_cli_protocol_mismatch_reports_hm009() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("typecheck")

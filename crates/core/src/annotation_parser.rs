@@ -10,7 +10,7 @@
 //! - Optional: Optional[T] → Union[T, None]
 //! - Callable: Callable[[args...], return]
 //! - Generator types: Generator[Y, S, R], AsyncGenerator[Y, S], Coroutine[Y, S, R]
-//! - Any, Never, Top
+//! - Any, Never, Top (internal Unknown is intentionally not accepted as a user annotation)
 //!
 //! ## Examples
 //!
@@ -286,6 +286,13 @@ impl Parser {
             "bool" => Type::bool(),
             "None" => Type::none(),
             "Any" => Type::any(),
+            "Unknown" => {
+                return Err(TypeError::UnificationError(
+                    "user-visible type annotation".to_string(),
+                    "internal Unknown type".to_string(),
+                )
+                .into());
+            }
             "Top" => Type::top(),
             "Never" => Type::never(),
             "list" => {
@@ -555,6 +562,7 @@ mod tests {
         assert_eq!(parser.parse("Any").unwrap(), Type::any());
         assert_eq!(parser.parse("Top").unwrap(), Type::top());
         assert_eq!(parser.parse("Never").unwrap(), Type::never());
+        assert!(parser.parse("Unknown").is_err(), "Unknown is internal-only, not a user annotation");
     }
 
     #[test]

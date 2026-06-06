@@ -68,7 +68,7 @@
   types before guards, inside branches, and after joins.
 - [x] Verify use-before-definition, unreachable code, unused symbol, and
   constant-branch diagnostics against the shared fixture.
-- [ ] Define how `Any` and unknown values interact with narrowing.
+- [x] Define how `Any` and unknown values interact with narrowing.
 
 ## Milestone 5: Imports, Stubs, And Workspace Reliability
 

@@ -47,6 +47,10 @@ impl Type {
         Type::Con(TypeCtor::Any)
     }
 
+    pub fn unknown() -> Self {
+        Type::Con(TypeCtor::Unknown)
+    }
+
     pub fn top() -> Self {
         Type::Con(TypeCtor::Top)
     }

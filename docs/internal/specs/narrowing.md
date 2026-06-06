@@ -53,9 +53,22 @@ branch, or a stable diagnostic when the expression is unsupported.
 
 ## Any And Unknown
 
-`Any` and unknown values should not produce fake precision. Tests must assert
-whether a guard narrows the value, leaves it unknown, or emits an unsafe-use
-diagnostic.
+`Any` and unknown values should not produce durable fake precision.
+
+Guards may provide temporary branch-local precision for usability. For example,
+`if isinstance(x, str)` may treat `x: Any` as `str` in the true branch, and
+`x is None` may treat it as `None` in that branch. The original value remains
+`Any` outside the branch.
+
+Negative branches for `Any` and unknown values stay `Any`/unknown. Beacon does
+not infer complement types such as `Any except str`.
+
+Joins involving `Any` should resolve to `Any` unless an explicit annotation or
+assignment imposes a narrower type. Unknown values follow the same shape but may
+also surface unresolved or unsafe-use diagnostics depending on mode.
+
+Tests must assert true-branch precision, false-branch `Any`/unknown behavior,
+and post-join `Any`/unknown behavior.
 
 ## Test Requirements
 

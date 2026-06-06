@@ -1006,15 +1006,15 @@ impl Analyzer {
         chars.all(|c| c.is_alphanumeric() || c == '_')
     }
 
-    /// Convert unresolved type variables to Any for balanced mode diagnostics
+    /// Convert unresolved type variables to Unknown for diagnostics.
     ///
-    /// After constraint solving, type variables that couldn't be unified with any concrete type should be treated as implicit Any for diagnostic purposes.
+    /// After constraint solving, type variables that couldn't be unified with any concrete type are analyzer unknowns, not explicit user `Any`.
     fn finalize_type(ty: &mut Type) {
         use beacon_core::{Type, TypeCtor};
 
         match ty {
             Type::Var(_) => {
-                *ty = Type::Con(TypeCtor::Any);
+                *ty = Type::Con(TypeCtor::Unknown);
             }
             Type::App(t1, t2) => {
                 Self::finalize_type(t1);

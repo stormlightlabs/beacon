@@ -307,6 +307,7 @@ impl CodeActionsProvider {
             Type::Con(TypeCtor::Protocol(None, _)) => "Protocol".to_string(),
             Type::Con(TypeCtor::TypeVariable(name)) => name.clone(),
             Type::Con(TypeCtor::Any) => "Any".to_string(),
+            Type::Con(TypeCtor::Unknown) => "Unknown".to_string(),
             Type::Var(tv) => format!("TypeVar('{tv}')"),
             Type::App(ctor, elem_ty) if matches!(**ctor, Type::Con(TypeCtor::List)) => {
                 format!("list[{}]", Self::format_type_for_annotation(elem_ty))

@@ -21,6 +21,7 @@ pub fn builtin_type_name(ctor: &TypeCtor) -> Option<&'static str> {
         TypeCtor::AsyncGenerator => Some("AsyncGenerator"),
         TypeCtor::Coroutine => Some("Coroutine"),
         TypeCtor::Any => Some("Any"),
+        TypeCtor::Unknown => Some("Unknown"),
         TypeCtor::Top => Some("Top"),
         TypeCtor::Never => Some("Never"),
         TypeCtor::Generic => Some("Generic"),
@@ -69,6 +70,11 @@ pub fn literal_to_base_type(ty: &Type) -> Option<Type> {
 /// True when the type is Beacon's gradual `Any`.
 pub fn is_any(ty: &Type) -> bool {
     matches!(ty, Type::Con(TypeCtor::Any))
+}
+
+/// True when the type is Beacon's internal unknown type.
+pub fn is_unknown(ty: &Type) -> bool {
+    matches!(ty, Type::Con(TypeCtor::Unknown))
 }
 
 /// True when the type contains at least one type variable.

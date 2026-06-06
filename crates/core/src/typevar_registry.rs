@@ -98,7 +98,7 @@ impl TypeVarConstraintRegistry {
                 return Ok(());
             }
 
-            if matches!(ty, Type::Con(TypeCtor::Any)) {
+            if matches!(ty, Type::Con(TypeCtor::Any | TypeCtor::Unknown)) {
                 return Ok(());
             }
 

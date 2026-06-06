@@ -446,7 +446,9 @@ impl DiagnosticProvider {
             if result.safe_any_nodes.contains(node_id) {
                 continue;
             }
-            if Self::contains_any_type(ty, 0) {
+            let contains_any = Self::contains_any_type(ty, 0);
+            let contains_unknown = Self::contains_unknown_type(ty, 0);
+            if contains_any || contains_unknown {
                 let range = if let Some(span) = result.node_spans.get(node_id) {
                     Self::span_to_range(span)
                 } else if let Some((line, col)) = result
@@ -466,7 +468,11 @@ impl DiagnosticProvider {
                     severity: Some(DiagnosticSeverity::WARNING),
                     code: Some(lsp_types::NumberOrString::String("ANY001".to_string())),
                     source: Some("beacon".to_string()),
-                    message: "Type 'Any' detected - this reduces type safety".to_string(),
+                    message: if contains_unknown && !contains_any {
+                        "Type 'Unknown' detected - Beacon could not infer a precise type".to_string()
+                    } else {
+                        "Type 'Any' detected - this reduces type safety".to_string()
+                    },
                     related_information: None,
                     tags: None,
                     data: None,
@@ -487,6 +493,33 @@ impl DiagnosticProvider {
             }
             Type::Union(types) => types.iter().any(|t| Self::contains_any_type(t, _depth + 1)),
             Type::Record(fields, _) => fields.iter().any(|(_, t)| Self::contains_any_type(t, _depth + 1)),
+            _ => false,
+        }
+    }
+
+    fn contains_unknown_type(ty: &beacon_core::Type, _depth: u32) -> bool {
+        match ty {
+            Type::Con(TypeCtor::Unknown) => true,
+            Type::App(t1, t2) => {
+                Self::contains_unknown_type(t1, _depth + 1) || Self::contains_unknown_type(t2, _depth + 1)
+            }
+            Type::Fun(args, ret) => {
+                args.iter().any(|(_, arg)| Self::contains_unknown_type(arg, _depth + 1))
+                    || Self::contains_unknown_type(ret, _depth + 1)
+            }
+            Type::FunWithParams(params, ret) => {
+                params.iter().any(|param| Self::contains_unknown_type(&param.ty, _depth + 1))
+                    || Self::contains_unknown_type(ret, _depth + 1)
+            }
+            Type::Union(types) | Type::Intersection(types) | Type::Tuple(types) => {
+                types.iter().any(|t| Self::contains_unknown_type(t, _depth + 1))
+            }
+            Type::Record(fields, _) => fields.iter().any(|(_, t)| Self::contains_unknown_type(t, _depth + 1)),
+            Type::ForAll(_, body) => Self::contains_unknown_type(body, _depth + 1),
+            Type::BoundMethod(receiver, _, method) => {
+                Self::contains_unknown_type(receiver, _depth + 1)
+                    || Self::contains_unknown_type(method, _depth + 1)
+            }
             _ => false,
         }
     }
@@ -675,7 +708,7 @@ impl DiagnosticProvider {
     fn check_missing_annotation(
         &self, target: &AstNode, inferred_type: &Type, line: usize, col: usize, ctx: &mut DiagnosticContext,
     ) {
-        if matches!(inferred_type, Type::Con(TypeCtor::Any)) || Self::contains_type_var(inferred_type) {
+        if matches!(inferred_type, Type::Con(TypeCtor::Any | TypeCtor::Unknown)) || Self::contains_type_var(inferred_type) {
             return;
         }
 
@@ -745,7 +778,7 @@ impl DiagnosticProvider {
 
         match (annotated, inferred) {
             (Con(a), Con(b)) if a == b => true,
-            (Con(TypeCtor::Any), _) | (_, Con(TypeCtor::Any)) => true,
+            (Con(TypeCtor::Any | TypeCtor::Unknown), _) | (_, Con(TypeCtor::Any | TypeCtor::Unknown)) => true,
             (App(a1, a2), App(b1, b2)) => Self::types_are_compatible(a1, b1) && Self::types_are_compatible(a2, b2),
             (Fun(a_args, a_ret), Fun(b_args, b_ret)) => {
                 a_args.len() == b_args.len()
@@ -874,7 +907,7 @@ impl DiagnosticProvider {
                         Self::get_type_for_position(ctx.type_map, ctx.position_map, param.line, param.col);
 
                     match inferred_type_opt {
-                        Some(Type::Con(TypeCtor::Any)) => {
+                        Some(Type::Con(TypeCtor::Any | TypeCtor::Unknown)) => {
                             let severity =
                                 Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::ImplicitAny);
 
@@ -1054,12 +1087,12 @@ impl DiagnosticProvider {
                     let inferred_type_opt = Self::get_type_for_position(ctx.type_map, ctx.position_map, line, col);
 
                     let return_type_opt = inferred_type_opt.map(|ty| match ty {
-                        Type::Fun(_, ret) => *ret,
+                        Type::Fun(_, ret) | Type::FunWithParams(_, ret) => *ret,
                         other => other,
                     });
 
                     match return_type_opt {
-                        Some(Type::Con(TypeCtor::Any)) => {
+                        Some(Type::Con(TypeCtor::Any | TypeCtor::Unknown)) => {
                             let severity =
                                 Self::mode_severity_for_diagnostic(ctx.mode, DiagnosticCategory::ImplicitAny);
 
@@ -2599,6 +2632,7 @@ impl DiagnosticProvider {
             Type::Con(TypeCtor::Bool) => "bool".to_string(),
             Type::Con(TypeCtor::NoneType) => "None".to_string(),
             Type::Con(TypeCtor::Any) => "Any".to_string(),
+            Type::Con(TypeCtor::Unknown) => "Unknown".to_string(),
             Type::Con(TypeCtor::List) => "list".to_string(),
             Type::Con(TypeCtor::Dict) => "dict".to_string(),
             Type::Con(TypeCtor::Set) => "set".to_string(),
@@ -3008,7 +3042,15 @@ mod tests {
     #[test]
     fn test_contains_any_type_simple() {
         assert!(DiagnosticProvider::contains_any_type(&Type::Con(TypeCtor::Any), 0));
+        assert!(!DiagnosticProvider::contains_any_type(&Type::Con(TypeCtor::Unknown), 0));
         assert!(!DiagnosticProvider::contains_any_type(&Type::Con(TypeCtor::Int), 0));
+    }
+
+    #[test]
+    fn test_contains_unknown_type_simple() {
+        assert!(DiagnosticProvider::contains_unknown_type(&Type::Con(TypeCtor::Unknown), 0));
+        assert!(!DiagnosticProvider::contains_unknown_type(&Type::Con(TypeCtor::Any), 0));
+        assert!(!DiagnosticProvider::contains_unknown_type(&Type::Con(TypeCtor::Int), 0));
     }
 
     #[test]
