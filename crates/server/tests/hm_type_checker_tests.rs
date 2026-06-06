@@ -23,6 +23,10 @@ use beacon_lsp::document::DocumentManager;
 use std::str::FromStr;
 use url::Url;
 
+fn is_function_type(ty: &Type) -> bool {
+    matches!(ty, Type::Fun(_, _) | Type::FunWithParams(_, _))
+}
+
 // Embed fixtures directly in the test binary
 const FUNCTIONAL_PIPELINE: &str = include_str!("hm_fixtures/functional_pipeline.py");
 const TYPED_API: &str = include_str!("hm_fixtures/typed_api.py");
@@ -118,7 +122,7 @@ fn test_functional_pipeline() {
         "Should have inferred types for functional pipeline"
     );
 
-    let has_function_types = harness.has_type(&result, |ty| matches!(ty, Type::Fun(_, _)));
+    let has_function_types = harness.has_type(&result, |ty| is_function_type(ty));
     assert!(
         has_function_types,
         "Should infer function types for compose, map_list, and lambdas"
@@ -147,7 +151,7 @@ fn test_typed_api_protocol() {
     let has_classes = harness.has_type(&result, |ty| matches!(ty, Type::Con(TypeCtor::Class(_))));
     assert!(has_classes, "Should infer class types for Circle, Rectangle");
 
-    let has_functions = harness.has_type(&result, |ty| matches!(ty, Type::Fun(_, _)));
+    let has_functions = harness.has_type(&result, |ty| is_function_type(ty));
     assert!(
         has_functions,
         "Should infer function types for render, create_user, etc."
@@ -181,7 +185,7 @@ fn test_async_ctx_manager() {
     );
 
     let has_async_types = harness.has_type(&result, |ty| {
-        matches!(ty, Type::App(_, _)) || matches!(ty, Type::Fun(_, _))
+        matches!(ty, Type::App(_, _)) || is_function_type(ty)
     });
     assert!(has_async_types, "Should infer types for async functions and coroutines");
 }
@@ -296,7 +300,7 @@ fn test_covariant_return_types() {
 
     assert!(!result.type_map.is_empty(), "Should infer types for covariant fixture");
 
-    let has_functions = harness.has_type(&result, |ty| matches!(ty, Type::Fun(_, _)));
+    let has_functions = harness.has_type(&result, |ty| is_function_type(ty));
     assert!(has_functions, "Should infer function types with covariant returns");
 
     let has_classes = harness.has_type(&result, |ty| matches!(ty, Type::Con(TypeCtor::Class(_))));
@@ -451,7 +455,7 @@ fn test_typevar_contravariant() {
         eprintln!("TypeVar contravariant-related errors: {errors:?}");
     }
 
-    let has_functions = harness.has_type(&result, |ty| matches!(ty, Type::Fun(_, _)));
+    let has_functions = harness.has_type(&result, |ty| is_function_type(ty));
     assert!(has_functions, "Should infer function types for use_dog_consumer, etc.");
 }
 
@@ -516,7 +520,7 @@ result = identity(42)
     );
     if let Some(ty) = identity_type {
         assert!(
-            matches!(ty, Type::Fun(_, _)),
+            is_function_type(&ty),
             "identity should be a function type, got: {ty}"
         );
     }
@@ -543,8 +547,15 @@ fn test_union_simplification() {
     );
 
     let test_union_with_never_type = harness.get_symbol_type(&result, "test_union_with_never");
-    if let Some(Type::Fun(params, _)) = test_union_with_never_type {
-        assert!(params.len() == 1, "Function should have 1 parameter");
+    if let Some(ty) = test_union_with_never_type {
+        let param_len = match ty {
+            Type::Fun(params, _) => Some(params.len()),
+            Type::FunWithParams(params, _) => Some(params.len()),
+            _ => None,
+        };
+        if let Some(param_len) = param_len {
+            assert!(param_len == 1, "Function should have 1 parameter");
+        }
     }
 
     assert!(harness.get_symbol_type(&result, "test_union_with_any").is_some());
@@ -877,7 +888,7 @@ fn test_generator_mixed_variance() {
         "Should infer types for Generator with mixed variance"
     );
 
-    let has_functions = harness.has_type(&result, |ty| matches!(ty, Type::Fun(_, _)));
+    let has_functions = harness.has_type(&result, |ty| is_function_type(ty));
     assert!(has_functions, "Should infer function types for generator functions");
 
     let has_classes = harness.has_type(&result, |ty| matches!(ty, Type::Con(TypeCtor::Class(_))));

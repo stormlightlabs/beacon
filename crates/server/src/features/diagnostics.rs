@@ -992,7 +992,7 @@ impl DiagnosticProvider {
             Some(annotation) => {
                 if let Some(inferred_type) = Self::get_type_for_position(ctx.type_map, ctx.position_map, line, col) {
                     let inferred_return_type = match &inferred_type {
-                        Type::Fun(_, ret) => (**ret).clone(),
+                        Type::Fun(_, ret) | Type::FunWithParams(_, ret) => (**ret).clone(),
                         other => other.clone(),
                     };
 

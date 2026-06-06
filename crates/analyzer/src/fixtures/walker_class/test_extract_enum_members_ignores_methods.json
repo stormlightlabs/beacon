@@ -9,10 +9,20 @@
       "body": [
         {
           "type": "Assignment",
-          "target": { "type": "Identifier", "name": "MEMBER", "line": 2, "col": 5, "end_line": 2, "end_col": 11 },
+          "target": {
+            "type": "Identifier",
+            "name": "MEMBER",
+            "line": 2,
+            "col": 5,
+            "end_line": 2,
+            "end_col": 11
+          },
           "value": {
             "type": "Literal",
-            "value": { "kind": "Integer", "data": 1 },
+            "value": {
+              "kind": "Integer",
+              "data": 1
+            },
             "line": 2,
             "col": 14,
             "end_line": 2,
@@ -34,10 +44,19 @@
               "end_line": 4,
               "end_col": 20,
               "type_annotation": null,
-              "default_value": null
+              "default_value": null,
+              "kind": "PositionalOrKeyword"
             }
           ],
-          "body": [{ "type": "Pass", "line": 5, "col": 9, "end_line": 5, "end_col": 13 }],
+          "body": [
+            {
+              "type": "Pass",
+              "line": 5,
+              "col": 9,
+              "end_line": 5,
+              "end_col": 13
+            }
+          ],
           "docstring": null,
           "return_type": null,
           "decorators": [],

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, TypeGuard
+from typing import Any, TypeGuard, TypeIs
 
 
 def is_str_list(value: list[object]) -> TypeGuard[list[str]]:
@@ -14,6 +14,16 @@ def use_type_guard(value: list[object]) -> str:
     if is_str_list(value):
         return ",".join(value)
     return "mixed"
+
+
+def is_text(value: int | str) -> TypeIs[str]:
+    return isinstance(value, str)
+
+
+def use_typeis_keyword(value: int | str) -> str:
+    if is_text(value=value):
+        return value.upper()
+    return str(value)
 
 
 def optional_guard(value: str | None) -> str:

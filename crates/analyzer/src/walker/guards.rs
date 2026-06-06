@@ -7,8 +7,8 @@
 use super::TypeEnvironment;
 use super::utils::type_name_to_type;
 use beacon_constraint::{TypeGuardInfo, TypeGuardKind, TypePredicate};
-use beacon_core::Type;
-use beacon_parser::{AstNode, CompareOperator, LiteralValue, UnaryOperator};
+use beacon_core::{Type, TypeCtor};
+use beacon_parser::{AstNode, CompareOperator, LiteralValue, ParameterKind, UnaryOperator};
 
 /// Detect type guard patterns for flow-sensitive type narrowing
 ///
@@ -21,6 +21,8 @@ use beacon_parser::{AstNode, CompareOperator, LiteralValue, UnaryOperator};
 /// - `x == None` -> (x, None)
 /// - `x != None` -> (x, T) where x: Optional[T]
 /// - `if x:` -> (x, T) where x: Optional[T] (truthiness narrows out None)
+/// - `type(x) is T` / `type(x) == T` -> (x, T)
+/// - `callable(x)` -> callable variants from a union, or `function`
 pub fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<String>, Option<Type>) {
     if let AstNode::Identifier { name: var_name, .. } = test {
         if let Some(current_type) = env.lookup(var_name)
@@ -32,32 +34,28 @@ pub fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<S
         return (None, None);
     }
 
-    if let AstNode::Call { function, args, keywords, .. } = test
-        && function.qualified_name().as_deref() == Some("isinstance")
-        && args.len() == 2
-        && keywords.is_empty()
-        && let AstNode::Identifier { name: var_name, .. } = &args[0]
-    {
-        if let AstNode::Identifier { name: type_name, .. } = &args[1] {
-            let refined_type = type_name_to_type(type_name);
-            return (Some(var_name.clone()), Some(refined_type));
-        }
-
-        if let AstNode::Tuple { elements, .. } = &args[1] {
-            let types: Vec<Type> = elements
-                .iter()
-                .filter_map(|elem| {
-                    if let AstNode::Identifier { name: type_name, .. } = elem {
-                        Some(type_name_to_type(type_name))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            if !types.is_empty() {
-                let refined_type =
-                    if types.len() == 1 { types.into_iter().next().unwrap() } else { Type::union(types) };
-                return (Some(var_name.clone()), Some(refined_type));
+    if let AstNode::Call { function, args, keywords, .. } = test {
+        match function.qualified_name().as_deref() {
+            Some("isinstance") if args.len() == 2 && keywords.is_empty() => {
+                if let AstNode::Identifier { name: var_name, .. } = &args[0]
+                    && let Some(refined_type) = type_expr_to_type(&args[1])
+                {
+                    return (Some(var_name.clone()), Some(refined_type));
+                }
+            }
+            Some("callable") if args.len() == 1 && keywords.is_empty() => {
+                if let AstNode::Identifier { name: var_name, .. } = &args[0] {
+                    let refined_type = env.lookup(var_name).map(narrow_to_callable).unwrap_or_else(callable_type);
+                    return (Some(var_name.clone()), Some(refined_type));
+                }
+            }
+            _ => {
+                if let Some(function_name) = function.qualified_name()
+                    && let Some(guard_info) = env.get_type_guard(&function_name)
+                    && let Some(AstNode::Identifier { name: var_name, .. }) = guarded_argument(args, keywords, guard_info)
+                {
+                    return (Some(var_name.clone()), Some(guard_info.guarded_type.clone()));
+                }
             }
         }
     }
@@ -65,25 +63,101 @@ pub fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<S
     if let AstNode::Compare { left, ops, comparators, .. } = test
         && ops.len() == 1
         && comparators.len() == 1
-        && let AstNode::Identifier { name: var_name, .. } = left.as_ref()
-        && let AstNode::Literal { value: LiteralValue::None, .. } = &comparators[0]
     {
-        match &ops[0] {
-            CompareOperator::Is | CompareOperator::Eq => {
-                return (Some(var_name.clone()), Some(Type::none()));
-            }
-            CompareOperator::IsNot | CompareOperator::NotEq => {
-                if let Some(current_type) = env.lookup(var_name) {
-                    let narrowed = current_type.remove_from_union(&Type::none());
-                    return (Some(var_name.clone()), Some(narrowed));
+        if let AstNode::Identifier { name: var_name, .. } = left.as_ref()
+            && let AstNode::Literal { value: LiteralValue::None, .. } = &comparators[0]
+        {
+            match &ops[0] {
+                CompareOperator::Is | CompareOperator::Eq => {
+                    return (Some(var_name.clone()), Some(Type::none()));
                 }
-                return (None, None);
+                CompareOperator::IsNot | CompareOperator::NotEq => {
+                    if let Some(current_type) = env.lookup(var_name) {
+                        let narrowed = current_type.remove_from_union(&Type::none());
+                        return (Some(var_name.clone()), Some(narrowed));
+                    }
+                    return (None, None);
+                }
+                _ => {}
             }
-            _ => {}
+        }
+
+        if matches!(ops[0], CompareOperator::Is | CompareOperator::Eq)
+            && let Some(var_name) = type_call_subject(left)
+            && let Some(refined_type) = type_expr_to_type(&comparators[0])
+        {
+            return (Some(var_name), Some(refined_type));
         }
     }
 
     (None, None)
+}
+
+fn type_expr_to_type(expr: &AstNode) -> Option<Type> {
+    match expr {
+        AstNode::Identifier { name, .. } => Some(type_name_to_type(name)),
+        AstNode::Tuple { elements, .. } => {
+            let types: Vec<Type> = elements.iter().filter_map(type_expr_to_type).collect();
+            match types.len() {
+                0 => None,
+                1 => types.into_iter().next(),
+                _ => Some(Type::union(types)),
+            }
+        }
+        _ => None,
+    }
+}
+
+fn type_call_subject(expr: &AstNode) -> Option<String> {
+    if let AstNode::Call { function, args, keywords, .. } = expr
+        && function.qualified_name().as_deref() == Some("type")
+        && args.len() == 1
+        && keywords.is_empty()
+        && let AstNode::Identifier { name, .. } = &args[0]
+    {
+        return Some(name.clone());
+    }
+    None
+}
+
+fn callable_type() -> Type {
+    Type::Con(TypeCtor::Function)
+}
+
+fn is_callable_type(ty: &Type) -> bool {
+    matches!(ty, Type::Fun(_, _) | Type::FunWithParams(_, _) | Type::BoundMethod(_, _, _))
+        || matches!(ty, Type::Con(TypeCtor::Function))
+}
+
+fn narrow_to_callable(current_type: Type) -> Type {
+    match current_type {
+        Type::Union(types) => {
+            let callable_types: Vec<Type> = types.into_iter().filter(is_callable_type).collect();
+            if callable_types.is_empty() { callable_type() } else { Type::union(callable_types) }
+        }
+        ty if is_callable_type(&ty) => ty,
+        _ => callable_type(),
+    }
+}
+
+fn guarded_param_index(params: &[beacon_parser::Parameter]) -> usize {
+    if params.len() > 1
+        && matches!(params[0].kind, ParameterKind::PositionalOnly | ParameterKind::PositionalOrKeyword)
+        && matches!(params[0].name.as_str(), "self" | "cls")
+    {
+        1
+    } else {
+        0
+    }
+}
+
+fn guarded_argument<'a>(
+    args: &'a [AstNode], keywords: &'a [(String, AstNode)], guard_info: &TypeGuardInfo,
+) -> Option<&'a AstNode> {
+    args.get(guard_info.param_index).or_else(|| {
+        let param_name = guard_info.param_name.as_ref()?;
+        keywords.iter().find_map(|(name, value)| (name == param_name).then_some(value))
+    })
 }
 
 /// Detect inverse type guard for else branches
@@ -102,49 +176,72 @@ pub fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (
         return (None, None);
     }
 
-    if let AstNode::Call { function, args, keywords, .. } = test
-        && function.qualified_name().as_deref() == Some("isinstance")
-        && args.len() == 2
-        && keywords.is_empty()
-        && let AstNode::Identifier { name: var_name, .. } = &args[0]
-        && let Some(current_type) = env.lookup(var_name)
-    {
-        if let AstNode::Identifier { name: type_name, .. } = &args[1] {
-            let checked_type = type_name_to_type(type_name);
-            let narrowed = current_type.remove_from_union(&checked_type);
-            return (Some(var_name.clone()), Some(narrowed));
-        }
-
-        if let AstNode::Tuple { elements, .. } = &args[1] {
-            let mut result_type = current_type;
-            for elem in elements {
-                if let AstNode::Identifier { name: type_name, .. } = elem {
-                    let checked_type = type_name_to_type(type_name);
-                    result_type = result_type.remove_from_union(&checked_type);
+    if let AstNode::Call { function, args, keywords, .. } = test {
+        match function.qualified_name().as_deref() {
+            Some("isinstance") if args.len() == 2 && keywords.is_empty() => {
+                if let AstNode::Identifier { name: var_name, .. } = &args[0]
+                    && let Some(current_type) = env.lookup(var_name)
+                    && let Some(checked_type) = type_expr_to_type(&args[1])
+                {
+                    let narrowed = match checked_type {
+                        Type::Union(types) => types
+                            .into_iter()
+                            .fold(current_type, |result, checked| result.remove_from_union(&checked)),
+                        checked => current_type.remove_from_union(&checked),
+                    };
+                    return (Some(var_name.clone()), Some(narrowed));
                 }
             }
-            return (Some(var_name.clone()), Some(result_type));
+            Some("callable") if args.len() == 1 && keywords.is_empty() => {
+                if let AstNode::Identifier { name: var_name, .. } = &args[0]
+                    && let Some(current_type) = env.lookup(var_name)
+                    && let Type::Union(types) = current_type
+                {
+                    let non_callable: Vec<Type> = types.into_iter().filter(|ty| !is_callable_type(ty)).collect();
+                    return (Some(var_name.clone()), Some(Type::union(non_callable)));
+                }
+            }
+            _ => {
+                if let Some(function_name) = function.qualified_name()
+                    && let Some(guard_info) = env.get_type_guard(&function_name).cloned()
+                    && guard_info.kind == TypeGuardKind::TypeIs
+                    && let Some(AstNode::Identifier { name: var_name, .. }) = guarded_argument(args, keywords, &guard_info)
+                    && let Some(current_type) = env.lookup(var_name)
+                {
+                    return (Some(var_name.clone()), Some(current_type.remove_from_union(&guard_info.guarded_type)));
+                }
+            }
         }
     }
 
     if let AstNode::Compare { left, ops, comparators, .. } = test
         && ops.len() == 1
         && comparators.len() == 1
-        && let AstNode::Identifier { name: var_name, .. } = left.as_ref()
-        && let AstNode::Literal { value: LiteralValue::None, .. } = &comparators[0]
     {
-        match &ops[0] {
-            CompareOperator::Is | CompareOperator::Eq => {
-                if let Some(current_type) = env.lookup(var_name) {
-                    let narrowed = current_type.remove_from_union(&Type::none());
-                    return (Some(var_name.clone()), Some(narrowed));
+        if let AstNode::Identifier { name: var_name, .. } = left.as_ref()
+            && let AstNode::Literal { value: LiteralValue::None, .. } = &comparators[0]
+        {
+            match &ops[0] {
+                CompareOperator::Is | CompareOperator::Eq => {
+                    if let Some(current_type) = env.lookup(var_name) {
+                        let narrowed = current_type.remove_from_union(&Type::none());
+                        return (Some(var_name.clone()), Some(narrowed));
+                    }
+                    return (None, None);
                 }
-                return (None, None);
+                CompareOperator::IsNot | CompareOperator::NotEq => {
+                    return (Some(var_name.clone()), Some(Type::none()));
+                }
+                _ => {}
             }
-            CompareOperator::IsNot | CompareOperator::NotEq => {
-                return (Some(var_name.clone()), Some(Type::none()));
-            }
-            _ => {}
+        }
+
+        if matches!(ops[0], CompareOperator::IsNot | CompareOperator::NotEq)
+            && let Some(var_name) = type_call_subject(left)
+            && let Some(current_type) = env.lookup(&var_name)
+            && let Some(checked_type) = type_expr_to_type(&comparators[0])
+        {
+            return (Some(var_name), Some(current_type.remove_from_union(&checked_type)));
         }
     }
 
@@ -168,9 +265,12 @@ pub fn extract_type_guard_info(return_annotation: &str, _params: &[beacon_parser
         {
             let parser = beacon_core::AnnotationParser::new();
             if let Ok(guarded_type) = parser.parse(type_str) {
-                // TODO: Support guarding specific parameters
-                let param_index = 0;
-                return Some(TypeGuardInfo::new(param_index, guarded_type, kind));
+                    let param_index = guarded_param_index(_params);
+                let mut info = TypeGuardInfo::new(param_index, guarded_type, kind);
+                if let Some(param) = _params.get(param_index) {
+                    info = info.with_param_name(param.name.clone());
+                }
+                return Some(info);
             }
         }
     }
@@ -230,10 +330,10 @@ pub fn extract_type_predicate(test: &AstNode, env: &TypeEnvironment) -> Option<T
 
             Some(TypePredicate::IsInstance(target_type))
         }
-        AstNode::Call { function, args, .. } if !args.is_empty() => {
+        AstNode::Call { function, args, keywords, .. } if !args.is_empty() || !keywords.is_empty() => {
             if let Some(function_name) = function.qualified_name()
                 && let Some(guard_info) = env.get_type_guard(&function_name)
-                && args.len() > guard_info.param_index
+                && guarded_argument(args, keywords, guard_info).is_some()
             {
                 return Some(TypePredicate::UserDefinedGuard(guard_info.guarded_type.clone()));
             }
@@ -298,5 +398,94 @@ mod tests {
         let params = vec![];
         let result = extract_type_guard_info("TypeGuard[", &params);
         assert!(result.is_none(), "Should return None for invalid syntax");
+    }
+
+    #[test]
+    fn test_extract_type_guard_info_skips_self_parameter() {
+        let params = vec![
+            beacon_parser::Parameter {
+                name: "self".to_string(),
+                line: 1,
+                col: 0,
+                end_line: 1,
+                end_col: 4,
+                type_annotation: None,
+                default_value: None,
+                kind: ParameterKind::PositionalOrKeyword,
+            },
+            beacon_parser::Parameter {
+                name: "value".to_string(),
+                line: 1,
+                col: 6,
+                end_line: 1,
+                end_col: 11,
+                type_annotation: None,
+                default_value: None,
+                kind: ParameterKind::PositionalOrKeyword,
+            },
+        ];
+
+        let result = extract_type_guard_info("TypeIs[str]", &params).unwrap();
+        assert_eq!(result.param_index, 1);
+        assert_eq!(result.param_name.as_deref(), Some("value"));
+    }
+
+    #[test]
+    fn test_detect_user_defined_guard_for_keyword_argument() {
+        let mut env = TypeEnvironment::new();
+        env.bind("candidate".to_string(), beacon_core::TypeScheme::mono(Type::union(vec![Type::int(), Type::string()])));
+        env.register_type_guard(
+            "is_text".to_string(),
+            TypeGuardInfo::new(0, Type::string(), TypeGuardKind::TypeGuard).with_param_name("value"),
+        );
+
+        let test = keyword_guard_call();
+
+        let (var_name, narrowed_type) = detect_type_guard(&test, &mut env);
+        assert_eq!(var_name.as_deref(), Some("candidate"));
+        assert_eq!(narrowed_type, Some(Type::string()));
+    }
+
+    #[test]
+    fn test_detect_inverse_typeis_for_keyword_argument() {
+        let mut env = TypeEnvironment::new();
+        env.bind("candidate".to_string(), beacon_core::TypeScheme::mono(Type::union(vec![Type::int(), Type::string()])));
+        env.register_type_guard(
+            "is_text".to_string(),
+            TypeGuardInfo::new(0, Type::string(), TypeGuardKind::TypeIs).with_param_name("value"),
+        );
+
+        let test = keyword_guard_call();
+
+        let (var_name, narrowed_type) = detect_inverse_type_guard(&test, &mut env);
+        assert_eq!(var_name.as_deref(), Some("candidate"));
+        assert_eq!(narrowed_type, Some(Type::int()));
+    }
+
+    fn keyword_guard_call() -> AstNode {
+        AstNode::Call {
+            function: Box::new(AstNode::Identifier {
+                name: "is_text".to_string(),
+                line: 1,
+                col: 3,
+                end_line: 1,
+                end_col: 10,
+            }),
+            args: vec![],
+            keywords: vec![(
+                "value".to_string(),
+                AstNode::Identifier {
+                    name: "candidate".to_string(),
+                    line: 1,
+                    col: 17,
+                    end_line: 1,
+                    end_col: 26,
+                },
+            )],
+            line: 1,
+            col: 3,
+            end_line: 1,
+            end_col: 27,
+        }
     }
 }

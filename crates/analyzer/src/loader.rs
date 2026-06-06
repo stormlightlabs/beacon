@@ -250,6 +250,15 @@ class list(Generic[_T]):
                         params
                     );
                 }
+                MethodType::Single(Type::FunWithParams(params, _)) => {
+                    assert_eq!(
+                        params.len(),
+                        2,
+                        "append should have 2 parameters (self + item), got {}: {:?}",
+                        params.len(),
+                        params
+                    );
+                }
                 _ => panic!("append should be a single function type, got {append_ty:?}"),
             }
         }

@@ -279,6 +279,14 @@ mod tests {
     use beacon_core::TypeCtor;
     use beacon_parser::{AstNode, SymbolTable};
 
+    fn function_param_len_and_return(ty: &Type) -> Option<(usize, &Type)> {
+        match ty {
+            Type::Fun(params, ret_ty) => Some((params.len(), ret_ty)),
+            Type::FunWithParams(params, ret_ty) => Some((params.len(), ret_ty)),
+            _ => None,
+        }
+    }
+
     #[test]
     fn test_conditional_assignment_merges_branch_types() {
         let mut ctx = ConstraintGenContext::new();
@@ -383,7 +391,7 @@ mod tests {
 
         let fn_ty = visit_node_with_env(&async_fn, &mut env, &mut ctx, None).unwrap();
 
-        assert!(matches!(fn_ty, Type::Fun(_, _)));
+        assert!(function_param_len_and_return(&fn_ty).is_some());
     }
 
     #[test]
@@ -667,12 +675,9 @@ mod tests {
 
         let fn_ty = visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
 
-        if let Type::Fun(params, ret_ty) = fn_ty {
-            assert!(params.is_empty(), "Should have no parameters");
-            assert!(
-                matches!(*ret_ty, Type::Con(TypeCtor::NoneType)),
-                "Should infer None return type"
-            );
+        if let Some((param_len, ret_ty)) = function_param_len_and_return(&fn_ty) {
+            assert_eq!(param_len, 0, "Should have no parameters");
+            assert!(matches!(ret_ty, Type::Con(TypeCtor::NoneType)), "Should infer None return type");
         } else {
             panic!("Expected function type");
         }
@@ -780,9 +785,9 @@ mod tests {
 
         let fn_ty = visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
 
-        if let Type::Fun(params, ret_ty) = fn_ty {
-            assert!(params.is_empty(), "Should have no parameters");
-            match ret_ty.as_ref() {
+        if let Some((param_len, ret_ty)) = function_param_len_and_return(&fn_ty) {
+            assert_eq!(param_len, 0, "Should have no parameters");
+            match ret_ty {
                 Type::Union(members) => {
                     assert_eq!(members.len(), 2, "Optional should be a union of 2 types");
                     assert!(
@@ -859,9 +864,9 @@ mod tests {
 
         let fn_ty = visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
 
-        if let Type::Fun(params, ret_ty) = fn_ty {
-            assert!(params.is_empty(), "Should have no parameters");
-            match ret_ty.as_ref() {
+        if let Some((param_len, ret_ty)) = function_param_len_and_return(&fn_ty) {
+            assert_eq!(param_len, 0, "Should have no parameters");
+            match ret_ty {
                 Type::Union(members) => {
                     assert_eq!(members.len(), 2, "Optional should be a union of 2 types");
                     assert!(
@@ -940,9 +945,9 @@ mod tests {
 
         let fn_ty = visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
 
-        if let Type::Fun(params, ret_ty) = fn_ty {
-            assert!(params.is_empty(), "Should have no parameters");
-            match ret_ty.as_ref() {
+        if let Some((param_len, ret_ty)) = function_param_len_and_return(&fn_ty) {
+            assert_eq!(param_len, 0, "Should have no parameters");
+            match ret_ty {
                 Type::Var(_) => {}
                 Type::Union(_) => {
                     panic!("Should not infer Optional when all paths return values");
@@ -998,10 +1003,10 @@ mod tests {
 
         let fn_ty = visit_node_with_env(&func_def, &mut env, &mut ctx, None).unwrap();
 
-        if let Type::Fun(params, ret_ty) = fn_ty {
-            assert!(params.is_empty(), "Should have no parameters");
+        if let Some((param_len, ret_ty)) = function_param_len_and_return(&fn_ty) {
+            assert_eq!(param_len, 0, "Should have no parameters");
             assert!(
-                matches!(ret_ty.as_ref(), Type::Con(TypeCtor::NoneType)),
+                matches!(ret_ty, Type::Con(TypeCtor::NoneType)),
                 "Should infer None type for functions with only implicit returns, got {ret_ty:?}"
             );
         } else {
@@ -1052,10 +1057,10 @@ mod tests {
         };
         let main_ty = visit_node_with_env(&main_func, &mut env, &mut ctx, None).unwrap();
 
-        if let Type::Fun(params, ret_ty) = &main_ty {
-            assert!(params.is_empty());
+        if let Some((param_len, ret_ty)) = function_param_len_and_return(&main_ty) {
+            assert_eq!(param_len, 0);
             assert!(
-                matches!(ret_ty.as_ref(), Type::Con(TypeCtor::NoneType)),
+                matches!(ret_ty, Type::Con(TypeCtor::NoneType)),
                 "main should be inferred as returning None, got {ret_ty:?}"
             );
         } else {
@@ -1125,7 +1130,7 @@ mod tests {
 
         let has_call_to_main = ctx.constraints.iter().any(|c| {
             if let Constraint::Call(func_ty, args, _, _, _) = c {
-                args.is_empty() && matches!(func_ty, Type::Fun(_, _))
+                args.is_empty() && function_param_len_and_return(func_ty).is_some()
             } else {
                 false
             }

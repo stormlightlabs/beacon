@@ -58,8 +58,8 @@
 
 ## Milestone 4: Narrowing And Data Flow
 
-- [ ] Implement the coverage in [narrowing.md](./specs/narrowing.md).
-- [ ] Expand TypeGuard/TypeIs narrowing beyond simple first-argument cases.
+- [x] Implement the coverage in [narrowing.md](./specs/narrowing.md).
+- [x] Expand TypeGuard/TypeIs narrowing beyond simple first-argument cases.
 - [ ] Add guard fixtures for `isinstance`, `issubclass`, `type`, `None`,
   truthiness, membership, `hasattr`, `callable`, and assertions.
 - [ ] Add pattern matching fixtures for literal, singleton, sequence, mapping,

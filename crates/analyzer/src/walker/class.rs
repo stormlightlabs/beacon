@@ -261,6 +261,14 @@ mod tests {
     use beacon_parser::{AstNode, SymbolTable};
     use serde_json;
 
+    fn function_param_len_and_return(ty: &Type) -> Option<(usize, &Type)> {
+        match ty {
+            Type::Fun(params, ret_ty) => Some((params.len(), ret_ty)),
+            Type::FunWithParams(params, ret_ty) => Some((params.len(), ret_ty)),
+            _ => None,
+        }
+    }
+
     macro_rules! walker_class_fixture {
         ($name:literal) => {{
             serde_json::from_str::<AstNode>(include_str!(concat!(
@@ -351,12 +359,9 @@ mod tests {
             metadata.init_type.is_some(),
             "Dataclass should have synthesized __init__"
         );
-        if let Some(Type::Fun(params, ret_ty)) = &metadata.init_type {
-            assert!(!params.is_empty(), "__init__ should have at least self parameter");
-            assert!(
-                matches!(ret_ty.as_ref(), Type::Con(TypeCtor::NoneType)),
-                "__init__ should return None"
-            );
+        if let Some((param_len, ret_ty)) = metadata.init_type.as_ref().and_then(function_param_len_and_return) {
+            assert!(param_len > 0, "__init__ should have at least self parameter");
+            assert!(matches!(ret_ty, Type::Con(TypeCtor::NoneType)), "__init__ should return None");
         } else {
             panic!("Expected function type for __init__");
         }

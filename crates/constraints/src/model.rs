@@ -18,6 +18,8 @@ pub enum TypeGuardKind {
 pub struct TypeGuardInfo {
     /// Which parameter is guarded.
     pub param_index: usize,
+    /// Name of the guarded parameter, when available from the definition.
+    pub param_name: Option<String>,
     /// The type being guarded to.
     pub guarded_type: Type,
     /// Which guard semantics apply.
@@ -26,7 +28,12 @@ pub struct TypeGuardInfo {
 
 impl TypeGuardInfo {
     pub fn new(param_index: usize, guarded_type: Type, kind: TypeGuardKind) -> Self {
-        Self { param_index, guarded_type, kind }
+        Self { param_index, param_name: None, guarded_type, kind }
+    }
+
+    pub fn with_param_name(mut self, param_name: impl Into<String>) -> Self {
+        self.param_name = Some(param_name.into());
+        self
     }
 }
 
