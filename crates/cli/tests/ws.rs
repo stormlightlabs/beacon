@@ -205,6 +205,115 @@ fn workspace_fixture_cli_async_extra_typecheck_smoke() {
 }
 
 #[test]
+fn workspace_fixture_cli_guard_narrowing_typecheck_smoke() {
+    cargo_bin_cmd!("beacon")
+        .arg("typecheck")
+        .arg("--format")
+        .arg("json")
+        .arg(file("cases/guard_narrowing.py"))
+        .assert()
+        .success();
+}
+
+#[test]
+fn workspace_fixture_cli_pattern_matching_reports_exhaustiveness() {
+    let assert = cargo_bin_cmd!("beacon")
+        .arg("typecheck")
+        .arg("--format")
+        .arg("json")
+        .arg(file("cases/pattern_matching.py"))
+        .assert()
+        .failure();
+
+    let codes = diagnostic_codes(&assert.get_output().stdout);
+    assert!(codes.contains(&"PM001".to_string()));
+}
+
+#[test]
+fn workspace_fixture_cli_pattern_matching_parse_smoke() {
+    cargo_bin_cmd!("beacon")
+        .arg("parse")
+        .arg("--json")
+        .arg(file("cases/pattern_matching.py"))
+        .assert()
+        .success();
+}
+
+#[test]
+fn workspace_fixture_cli_flow_joins_show_types_has_stable_fragments() {
+    let assert = cargo_bin_cmd!("beacon")
+        .arg("analyze")
+        .arg("--format")
+        .arg("json")
+        .arg("--show-types")
+        .arg("file")
+        .arg(file("cases/flow_joins.py"))
+        .assert()
+        .failure();
+
+    let output: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("CLI output should be JSON");
+    let inferred = output["inferred_types"]
+        .as_array()
+        .expect("inferred_types should be an array");
+    let has_type_at = |line: u64, col: u64, expected: &str| {
+        inferred.iter().any(|item| {
+            item["span"]["start"]["line"].as_u64() == Some(line)
+                && item["span"]["start"]["col"].as_u64() == Some(col)
+                && item["type"].as_str().is_some_and(|ty| ty.contains(expected))
+        })
+    };
+
+    assert!(has_type_at(7, 5, "int | str | None"), "branch pre-guard type missing");
+    assert!(has_type_at(9, 9, "None"), "None branch type missing");
+    assert!(has_type_at(12, 9, "int"), "int branch type missing");
+    assert!(has_type_at(15, 9, "str"), "str branch type missing");
+    assert!(has_type_at(17, 5, "str | None"), "branch join type missing");
+    assert!(has_type_at(23, 5, "int | None"), "loop pre-guard type missing");
+    assert!(has_type_at(30, 5, "None"), "loop join type missing");
+    assert!(has_type_at(35, 5, "int | str"), "try pre-guard type missing");
+    assert!(has_type_at(38, 13, "int"), "try int branch type missing");
+    assert!(has_type_at(41, 13, "str"), "try str branch type missing");
+    assert!(has_type_at(44, 9, "int"), "finally join type missing");
+    assert!(has_type_at(49, 5, "int | str | None"), "match pre-guard type missing");
+    assert!(has_type_at(53, 13, "str"), "match int label type missing");
+    assert!(has_type_at(55, 13, "int"), "match int binding type missing");
+    assert!(has_type_at(58, 13, "str"), "match str binding type missing");
+    assert!(has_type_at(60, 5, "int | str | None"), "match join type missing");
+}
+
+#[test]
+fn workspace_fixture_cli_data_flow_diagnostics_are_reported() {
+    let assert = cargo_bin_cmd!("beacon")
+        .arg("analyze")
+        .arg("--format")
+        .arg("json")
+        .arg("file")
+        .arg(file("cases/data_flow_diagnostics.py"))
+        .assert()
+        .failure();
+
+    let output: serde_json::Value =
+        serde_json::from_slice(&assert.get_output().stdout).expect("CLI output should be JSON");
+    let diagnostics = output["diagnostics"]
+        .as_array()
+        .expect("diagnostics should be an array");
+    let has_diagnostic = |code: &str, message_fragment: &str| {
+        diagnostics.iter().any(|diagnostic| {
+            diagnostic["code"] == code
+                && diagnostic["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains(message_fragment))
+        })
+    };
+
+    assert!(has_diagnostic("use-before-def", "later_value"));
+    assert!(has_diagnostic("unreachable-code", "Unreachable code"));
+    assert!(has_diagnostic("unused-variable", "unused_local"));
+    assert!(has_diagnostic("unused-variable", "constant_dead"));
+}
+
+#[test]
 fn workspace_fixture_cli_protocol_mismatch_reports_hm009() {
     let assert = cargo_bin_cmd!("beacon")
         .arg("typecheck")

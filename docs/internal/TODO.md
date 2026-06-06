@@ -60,13 +60,13 @@
 
 - [x] Implement the coverage in [narrowing.md](./specs/narrowing.md).
 - [x] Expand TypeGuard/TypeIs narrowing beyond simple first-argument cases.
-- [ ] Add guard fixtures for `isinstance`, `issubclass`, `type`, `None`,
+- [x] Add guard fixtures for `isinstance`, `issubclass`, `type`, `None`,
   truthiness, membership, `hasattr`, `callable`, and assertions.
-- [ ] Add pattern matching fixtures for literal, singleton, sequence, mapping,
+- [x] Add pattern matching fixtures for literal, singleton, sequence, mapping,
   class, OR, AS, star, guard, and exhaustiveness behavior.
-- [ ] Add branch, loop, try/finally, and match join tests that assert inferred
+- [x] Add branch, loop, try/finally, and match join tests that assert inferred
   types before guards, inside branches, and after joins.
-- [ ] Verify use-before-definition, unreachable code, unused symbol, and
+- [x] Verify use-before-definition, unreachable code, unused symbol, and
   constant-branch diagnostics against the shared fixture.
 - [ ] Define how `Any` and unknown values interact with narrowing.
 
