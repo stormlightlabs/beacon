@@ -72,9 +72,9 @@
 
 ## Milestone 5: Imports, Stubs, And Workspace Reliability
 
-- [ ] Implement the coverage in [imports.md](./specs/imports.md).
-- [ ] Add setup validation for absent or partially initialized `typeshed`.
-- [ ] Report embedded stub version/hash/count in a debug or version command.
+- [x] Implement the coverage in [imports.md](./specs/imports.md).
+- [x] Add setup validation for absent or partially initialized `typeshed`.
+- [x] Report embedded stub version/hash/count in a debug or version command.
 - [ ] Test precedence between workspace `.py`, workspace `.pyi`, custom
   `stubPaths`, bundled stdlib, and site-packages.
 - [ ] Test package roots, namespace packages, relative imports, star imports,

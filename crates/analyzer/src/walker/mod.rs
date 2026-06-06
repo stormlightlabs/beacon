@@ -677,7 +677,10 @@ mod tests {
 
         if let Some((param_len, ret_ty)) = function_param_len_and_return(&fn_ty) {
             assert_eq!(param_len, 0, "Should have no parameters");
-            assert!(matches!(ret_ty, Type::Con(TypeCtor::NoneType)), "Should infer None return type");
+            assert!(
+                matches!(ret_ty, Type::Con(TypeCtor::NoneType)),
+                "Should infer None return type"
+            );
         } else {
             panic!("Expected function type");
         }

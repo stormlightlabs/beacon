@@ -361,7 +361,10 @@ mod tests {
         );
         if let Some((param_len, ret_ty)) = metadata.init_type.as_ref().and_then(function_param_len_and_return) {
             assert!(param_len > 0, "__init__ should have at least self parameter");
-            assert!(matches!(ret_ty, Type::Con(TypeCtor::NoneType)), "__init__ should return None");
+            assert!(
+                matches!(ret_ty, Type::Con(TypeCtor::NoneType)),
+                "__init__ should return None"
+            );
         } else {
             panic!("Expected function type for __init__");
         }

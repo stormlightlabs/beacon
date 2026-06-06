@@ -184,9 +184,7 @@ fn test_async_ctx_manager() {
         "Should have inferred types for async context"
     );
 
-    let has_async_types = harness.has_type(&result, |ty| {
-        matches!(ty, Type::App(_, _)) || is_function_type(ty)
-    });
+    let has_async_types = harness.has_type(&result, |ty| matches!(ty, Type::App(_, _)) || is_function_type(ty));
     assert!(has_async_types, "Should infer types for async functions and coroutines");
 }
 
@@ -519,10 +517,7 @@ result = identity(42)
         "Should be able to look up 'identity' function symbol"
     );
     if let Some(ty) = identity_type {
-        assert!(
-            is_function_type(&ty),
-            "identity should be a function type, got: {ty}"
-        );
+        assert!(is_function_type(&ty), "identity should be a function type, got: {ty}");
     }
 
     let result_type = harness.get_symbol_type(&result, "result");

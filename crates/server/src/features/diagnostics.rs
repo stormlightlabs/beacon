@@ -508,7 +508,9 @@ impl DiagnosticProvider {
                     || Self::contains_unknown_type(ret, _depth + 1)
             }
             Type::FunWithParams(params, ret) => {
-                params.iter().any(|param| Self::contains_unknown_type(&param.ty, _depth + 1))
+                params
+                    .iter()
+                    .any(|param| Self::contains_unknown_type(&param.ty, _depth + 1))
                     || Self::contains_unknown_type(ret, _depth + 1)
             }
             Type::Union(types) | Type::Intersection(types) | Type::Tuple(types) => {
@@ -517,8 +519,7 @@ impl DiagnosticProvider {
             Type::Record(fields, _) => fields.iter().any(|(_, t)| Self::contains_unknown_type(t, _depth + 1)),
             Type::ForAll(_, body) => Self::contains_unknown_type(body, _depth + 1),
             Type::BoundMethod(receiver, _, method) => {
-                Self::contains_unknown_type(receiver, _depth + 1)
-                    || Self::contains_unknown_type(method, _depth + 1)
+                Self::contains_unknown_type(receiver, _depth + 1) || Self::contains_unknown_type(method, _depth + 1)
             }
             _ => false,
         }
@@ -708,7 +709,9 @@ impl DiagnosticProvider {
     fn check_missing_annotation(
         &self, target: &AstNode, inferred_type: &Type, line: usize, col: usize, ctx: &mut DiagnosticContext,
     ) {
-        if matches!(inferred_type, Type::Con(TypeCtor::Any | TypeCtor::Unknown)) || Self::contains_type_var(inferred_type) {
+        if matches!(inferred_type, Type::Con(TypeCtor::Any | TypeCtor::Unknown))
+            || Self::contains_type_var(inferred_type)
+        {
             return;
         }
 
@@ -3048,7 +3051,10 @@ mod tests {
 
     #[test]
     fn test_contains_unknown_type_simple() {
-        assert!(DiagnosticProvider::contains_unknown_type(&Type::Con(TypeCtor::Unknown), 0));
+        assert!(DiagnosticProvider::contains_unknown_type(
+            &Type::Con(TypeCtor::Unknown),
+            0
+        ));
         assert!(!DiagnosticProvider::contains_unknown_type(&Type::Con(TypeCtor::Any), 0));
         assert!(!DiagnosticProvider::contains_unknown_type(&Type::Con(TypeCtor::Int), 0));
     }

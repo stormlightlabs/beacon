@@ -955,6 +955,20 @@ fn version_command() -> Result<()> {
     println!("{}:     {}", "Commit".bright_blue().bold(), GIT_HASH.yellow());
     println!("{}:      {}", "Built".bright_blue().bold(), BUILD_TIMESTAMP.cyan());
     println!("{}:   {}", "Platform".bright_blue().bold(), BUILD_TARGET.magenta());
+
+    let typeshed = beacon_analyzer::version_info();
+    println!("\n{}", "Embedded typeshed".bold());
+    println!(
+        "{}:    {}",
+        "Commit".bright_blue().bold(),
+        typeshed.commit_hash.yellow()
+    );
+    println!(
+        "{}:      {}",
+        "Built".bright_blue().bold(),
+        typeshed.build_timestamp.cyan()
+    );
+    println!("{}:      {}", "Stubs".bright_blue().bold(), typeshed.stub_count.green());
     Ok(())
 }
 

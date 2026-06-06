@@ -562,7 +562,10 @@ mod tests {
         assert_eq!(parser.parse("Any").unwrap(), Type::any());
         assert_eq!(parser.parse("Top").unwrap(), Type::top());
         assert_eq!(parser.parse("Never").unwrap(), Type::never());
-        assert!(parser.parse("Unknown").is_err(), "Unknown is internal-only, not a user annotation");
+        assert!(
+            parser.parse("Unknown").is_err(),
+            "Unknown is internal-only, not a user annotation"
+        );
     }
 
     #[test]

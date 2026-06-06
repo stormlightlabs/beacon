@@ -420,9 +420,19 @@ impl Workspace {
         }
     }
 
+    fn document_text_or_file(&self, uri: &Url) -> Option<String> {
+        self.documents.get_document(uri, |doc| doc.text()).or_else(|| {
+            if uri.scheme() != "file" {
+                return None;
+            }
+
+            std::fs::read_to_string(uri.to_file_path().ok()?).ok()
+        })
+    }
+
     /// Extract import statements from a Python file
     fn extract_imports(&self, uri: &Url) -> Option<Vec<String>> {
-        let text = self.documents.get_document(uri, |doc| doc.text())?;
+        let text = self.document_text_or_file(uri)?;
         let mut parser = crate::parser::LspParser::new().ok()?;
         let parse_result = parser.parse(&text).ok()?;
         let mut imports = Vec::new();
@@ -434,7 +444,7 @@ impl Workspace {
 
     /// Extract detailed symbol imports from a Python file
     fn extract_symbol_imports(&self, uri: &Url) -> Option<Vec<SymbolImport>> {
-        let text = self.documents.get_document(uri, |doc| doc.text())?;
+        let text = self.document_text_or_file(uri)?;
         let mut parser = crate::parser::LspParser::new().ok()?;
         let parse_result = parser.parse(&text).ok()?;
         let mut symbol_imports = Vec::new();
@@ -446,7 +456,7 @@ impl Workspace {
 
     /// Extract __all__ exports from a Python file
     fn extract_all_exports(&self, uri: &Url) -> Option<Vec<String>> {
-        let text = self.documents.get_document(uri, |doc| doc.text())?;
+        let text = self.document_text_or_file(uri)?;
         let mut parser = crate::parser::LspParser::new().ok()?;
         let parse_result = parser.parse(&text).ok()?;
 
@@ -461,8 +471,21 @@ impl Workspace {
                     Self::collect_imports_from_ast(stmt, imports);
                 }
             }
-            AstNode::Import { module, .. } => imports.push(module.clone()),
-            AstNode::ImportFrom { module, .. } => imports.push(module.clone()),
+            AstNode::Import { module, extra_modules, .. } => {
+                imports.push(module.clone());
+                imports.extend(extra_modules.iter().map(|(module, _alias)| module.clone()));
+            }
+            AstNode::ImportFrom { module, names, .. } => {
+                imports.push(module.clone());
+                if module.chars().all(|c| c == '.') {
+                    imports.extend(
+                        names
+                            .iter()
+                            .filter(|name| name.name != "*")
+                            .map(|name| format!("{module}{}", name.name)),
+                    );
+                }
+            }
             AstNode::FunctionDef { body, .. } => {
                 for stmt in body {
                     Self::collect_imports_from_ast(stmt, imports);

@@ -15,11 +15,17 @@ fn main() {
 
     let typeshed_path = PathBuf::from("../../typeshed/stubs");
 
-    if !typeshed_path.exists() {
-        eprintln!("Warning: typeshed stdlib not found at {typeshed_path:?}");
-        eprintln!("Falling back to empty stub bundle");
-        write_empty_stub_bundle(&dest_path);
-        return;
+    match validate_typeshed_setup(&typeshed_path, EMBEDDED_STDLIB_MODULES) {
+        Ok(()) => {}
+        Err(TypeshedSetupError::Absent(message)) => {
+            eprintln!("Warning: {message}");
+            eprintln!("Falling back to empty stub bundle");
+            write_empty_stub_bundle(&dest_path);
+            return;
+        }
+        Err(TypeshedSetupError::Partial(message)) => {
+            panic!("{message}");
+        }
     }
 
     let stub_manifest = generate_stub_manifest(&typeshed_path, EMBEDDED_STDLIB_MODULES);
@@ -86,6 +92,51 @@ pub static EMBEDDED_STUBS: Lazy<HashMap<&'static str, &'static str>> = Lazy::new
     writeln!(output, "    stubs\n}});").expect("Failed to close stub map");
 
     println!("cargo:warning=Bundled {total_stubs} typeshed stubs");
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum TypeshedSetupError {
+    Absent(String),
+    Partial(String),
+}
+
+fn validate_typeshed_setup(typeshed_path: &Path, required_modules: &[&str]) -> Result<(), TypeshedSetupError> {
+    if !typeshed_path.exists() {
+        return Err(TypeshedSetupError::Absent(format!(
+            "typeshed stubs directory was not found at {}",
+            typeshed_path.display()
+        )));
+    }
+
+    if !typeshed_path.is_dir() {
+        return Err(TypeshedSetupError::Partial(format!(
+            "typeshed path exists but is not a directory: {}",
+            typeshed_path.display()
+        )));
+    }
+
+    let missing_modules: Vec<_> = required_modules
+        .iter()
+        .copied()
+        .filter(|module_name| find_stub_file(typeshed_path, module_name).is_none())
+        .collect();
+
+    if missing_modules.is_empty() {
+        return Ok(());
+    }
+
+    let shown = missing_modules.iter().take(10).copied().collect::<Vec<_>>().join(", ");
+    let suffix = if missing_modules.len() > 10 {
+        format!(" and {} more", missing_modules.len() - 10)
+    } else {
+        String::new()
+    };
+
+    Err(TypeshedSetupError::Partial(format!(
+        "typeshed checkout at {} is incomplete; missing required stubs: {shown}{suffix}. \
+Run `git submodule update --init --recursive typeshed` or restore the bundled typeshed directory.",
+        typeshed_path.display()
+    )))
 }
 
 fn generate_stub_manifest(typeshed_path: &Path, modules: &[&str]) -> Vec<(String, PathBuf)> {

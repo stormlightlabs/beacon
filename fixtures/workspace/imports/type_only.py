@@ -1,0 +1,2 @@
+class TypeOnly:
+    pass

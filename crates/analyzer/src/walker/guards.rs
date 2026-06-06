@@ -45,14 +45,18 @@ pub fn detect_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (Option<S
             }
             Some("callable") if args.len() == 1 && keywords.is_empty() => {
                 if let AstNode::Identifier { name: var_name, .. } = &args[0] {
-                    let refined_type = env.lookup(var_name).map(narrow_to_callable).unwrap_or_else(callable_type);
+                    let refined_type = env
+                        .lookup(var_name)
+                        .map(narrow_to_callable)
+                        .unwrap_or_else(callable_type);
                     return (Some(var_name.clone()), Some(refined_type));
                 }
             }
             _ => {
                 if let Some(function_name) = function.qualified_name()
                     && let Some(guard_info) = env.get_type_guard(&function_name)
-                    && let Some(AstNode::Identifier { name: var_name, .. }) = guarded_argument(args, keywords, guard_info)
+                    && let Some(AstNode::Identifier { name: var_name, .. }) =
+                        guarded_argument(args, keywords, guard_info)
                 {
                     return (Some(var_name.clone()), Some(guard_info.guarded_type.clone()));
                 }
@@ -125,8 +129,10 @@ fn callable_type() -> Type {
 }
 
 fn is_callable_type(ty: &Type) -> bool {
-    matches!(ty, Type::Fun(_, _) | Type::FunWithParams(_, _) | Type::BoundMethod(_, _, _))
-        || matches!(ty, Type::Con(TypeCtor::Function))
+    matches!(
+        ty,
+        Type::Fun(_, _) | Type::FunWithParams(_, _) | Type::BoundMethod(_, _, _)
+    ) || matches!(ty, Type::Con(TypeCtor::Function))
 }
 
 fn narrow_to_callable(current_type: Type) -> Type {
@@ -142,7 +148,10 @@ fn narrow_to_callable(current_type: Type) -> Type {
 
 fn guarded_param_index(params: &[beacon_parser::Parameter]) -> usize {
     if params.len() > 1
-        && matches!(params[0].kind, ParameterKind::PositionalOnly | ParameterKind::PositionalOrKeyword)
+        && matches!(
+            params[0].kind,
+            ParameterKind::PositionalOnly | ParameterKind::PositionalOrKeyword
+        )
         && matches!(params[0].name.as_str(), "self" | "cls")
     {
         1
@@ -156,7 +165,9 @@ fn guarded_argument<'a>(
 ) -> Option<&'a AstNode> {
     args.get(guard_info.param_index).or_else(|| {
         let param_name = guard_info.param_name.as_ref()?;
-        keywords.iter().find_map(|(name, value)| (name == param_name).then_some(value))
+        keywords
+            .iter()
+            .find_map(|(name, value)| (name == param_name).then_some(value))
     })
 }
 
@@ -205,10 +216,14 @@ pub fn detect_inverse_type_guard(test: &AstNode, env: &mut TypeEnvironment) -> (
                 if let Some(function_name) = function.qualified_name()
                     && let Some(guard_info) = env.get_type_guard(&function_name).cloned()
                     && guard_info.kind == TypeGuardKind::TypeIs
-                    && let Some(AstNode::Identifier { name: var_name, .. }) = guarded_argument(args, keywords, &guard_info)
+                    && let Some(AstNode::Identifier { name: var_name, .. }) =
+                        guarded_argument(args, keywords, &guard_info)
                     && let Some(current_type) = env.lookup(var_name)
                 {
-                    return (Some(var_name.clone()), Some(current_type.remove_from_union(&guard_info.guarded_type)));
+                    return (
+                        Some(var_name.clone()),
+                        Some(current_type.remove_from_union(&guard_info.guarded_type)),
+                    );
                 }
             }
         }
@@ -265,7 +280,7 @@ pub fn extract_type_guard_info(return_annotation: &str, _params: &[beacon_parser
         {
             let parser = beacon_core::AnnotationParser::new();
             if let Ok(guarded_type) = parser.parse(type_str) {
-                    let param_index = guarded_param_index(_params);
+                let param_index = guarded_param_index(_params);
                 let mut info = TypeGuardInfo::new(param_index, guarded_type, kind);
                 if let Some(param) = _params.get(param_index) {
                     info = info.with_param_name(param.name.clone());
@@ -433,7 +448,10 @@ mod tests {
     #[test]
     fn test_detect_user_defined_guard_for_keyword_argument() {
         let mut env = TypeEnvironment::new();
-        env.bind("candidate".to_string(), beacon_core::TypeScheme::mono(Type::union(vec![Type::int(), Type::string()])));
+        env.bind(
+            "candidate".to_string(),
+            beacon_core::TypeScheme::mono(Type::union(vec![Type::int(), Type::string()])),
+        );
         env.register_type_guard(
             "is_text".to_string(),
             TypeGuardInfo::new(0, Type::string(), TypeGuardKind::TypeGuard).with_param_name("value"),
@@ -449,7 +467,10 @@ mod tests {
     #[test]
     fn test_detect_inverse_typeis_for_keyword_argument() {
         let mut env = TypeEnvironment::new();
-        env.bind("candidate".to_string(), beacon_core::TypeScheme::mono(Type::union(vec![Type::int(), Type::string()])));
+        env.bind(
+            "candidate".to_string(),
+            beacon_core::TypeScheme::mono(Type::union(vec![Type::int(), Type::string()])),
+        );
         env.register_type_guard(
             "is_text".to_string(),
             TypeGuardInfo::new(0, Type::string(), TypeGuardKind::TypeIs).with_param_name("value"),
@@ -474,13 +495,7 @@ mod tests {
             args: vec![],
             keywords: vec![(
                 "value".to_string(),
-                AstNode::Identifier {
-                    name: "candidate".to_string(),
-                    line: 1,
-                    col: 17,
-                    end_line: 1,
-                    end_col: 26,
-                },
+                AstNode::Identifier { name: "candidate".to_string(), line: 1, col: 17, end_line: 1, end_col: 26 },
             )],
             line: 1,
             col: 3,

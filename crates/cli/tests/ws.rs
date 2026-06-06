@@ -339,16 +339,28 @@ fn workspace_fixture_cli_any_narrowing_show_types_has_stable_fragments() {
     };
 
     assert!(has_type_at(17, 5, "Any"), "pre-guard Any should remain Any");
-    assert!(has_type_at(19, 9, "str"), "isinstance true branch should get local str precision");
+    assert!(
+        has_type_at(19, 9, "str"),
+        "isinstance true branch should get local str precision"
+    );
     assert!(has_type_at(22, 9, "Any"), "isinstance false branch should remain Any");
     assert!(has_type_at(24, 5, "Any"), "isinstance join should remain Any");
-    assert!(has_type_at(30, 9, "None"), "None true branch should get local None precision");
+    assert!(
+        has_type_at(30, 9, "None"),
+        "None true branch should get local None precision"
+    );
     assert!(has_type_at(33, 9, "Any"), "None false branch should remain Any");
     assert!(has_type_at(35, 5, "Any"), "None join should remain Any");
-    assert!(has_type_at(41, 9, "str"), "TypeGuard true branch should get local str precision");
+    assert!(
+        has_type_at(41, 9, "str"),
+        "TypeGuard true branch should get local str precision"
+    );
     assert!(has_type_at(44, 9, "Any"), "TypeGuard false branch should remain Any");
     assert!(has_type_at(46, 5, "Any"), "TypeGuard join should remain Any");
-    assert!(has_type_at(52, 9, "str"), "TypeIs true branch should get local str precision");
+    assert!(
+        has_type_at(52, 9, "str"),
+        "TypeIs true branch should get local str precision"
+    );
     assert!(has_type_at(55, 9, "Any"), "TypeIs false branch should remain Any");
     assert!(has_type_at(57, 5, "Any"), "TypeIs join should remain Any");
 }
