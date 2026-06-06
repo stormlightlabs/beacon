@@ -524,6 +524,7 @@ async fn lsp_command(_stdio: bool, tcp: bool, host: String, port: u16, log_file:
             .with_env_filter(
                 tracing_subscriber::EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()),
             )
+            .with_ansi(false)
             .with_writer(non_blocking)
             .init();
 
@@ -533,6 +534,7 @@ async fn lsp_command(_stdio: bool, tcp: bool, host: String, port: u16, log_file:
             .with_env_filter(
                 tracing_subscriber::EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()),
             )
+            .with_ansi(false)
             .with_writer(std::io::stderr)
             .init();
     }

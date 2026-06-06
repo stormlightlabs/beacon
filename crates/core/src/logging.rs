@@ -160,7 +160,7 @@ pub fn init(config: &LogConfig) -> Result<(), Box<dyn std::error::Error>> {
         Some(
             fmt::layer()
                 .with_writer(io::stderr)
-                .with_ansi(true)
+                .with_ansi(false)
                 .with_target(true)
                 .with_thread_ids(false)
                 .boxed(),
