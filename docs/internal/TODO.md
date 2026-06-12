@@ -130,3 +130,44 @@
 - [ ] Profile `crates/server/src/workspace.rs`,
       `crates/server/src/cache.rs`, solver hot paths, and stub loading.
 - [ ] Decide which caches are process-only and which can be persisted.
+
+## Parking Lot
+
+- [ ] Fix `with ... as` target typing.
+  - Today `visit_with` binds the target to the `__enter__`/`__aenter__`
+    method type instead of the result of calling it.
+  - Emit a `Call` constraint for the enter method and bind the optional target
+    to that return type. Add CLI/analyzer regressions for sync and async
+    context managers.
+- [ ] Stop nested definitions from leaking into outer scopes.
+  - `TypeEnvironment::populate_from_ast` descends into function and class
+    bodies using the same environment, so nested names can be visible at module
+    scope.
+  - Pre-populate only declarations that belong to the current scope, or make
+    pre-population scope-aware.
+    Add a regression test where a nested function call at module scope is undefined.
+- [ ] Correct binary operator typing.
+  - `visit_ops` treats most binary operators as same-type operands returning the
+    left operand type, so `1 / 2` is inferred as `int`.
+  - Split operator lowering by operator family. Start with `/`, `+`, and
+    comparisons, then decide how far to model dunder methods.
+- [ ] Validate required positional-only parameters with `**kwargs`.
+  - `merge_and_validate_param_metadata` can miss a required positional-only
+    argument when a keyword with the same name is accepted into `**kwargs`.
+  - Check required positional-only parameters separately from keywordable
+    parameters and add call-shape tests for `/` plus `**kwargs`.
+- [ ] Preserve useful attribute constraints on fresh type variables.
+  - `solve_attribute_constraint` currently does nothing for `Type::Var(_)`.
+  - Bind the variable to a record/row-like type or defer `HasAttr` until the
+    variable resolves. Keep the current low-noise behavior for unknown values.
+- [ ] Decide how unsupported annotations should surface.
+  - `parse_annotation_or_any` turns parse failures into `Any`, which can hide
+    unsupported syntax such as qualified annotations if no earlier layer strips
+    the qualifier.
+  - Report an annotation diagnostic so users can distinguish gradual `Any`
+    from parser loss.
+- [ ] Model operator dunder methods.
+  - Arithmetic and comparison do not lower to `__add__`, `__radd__`,
+    `__truediv__`, `__lt__`, and related methods.
+  - Add a conservative dunder-based path for user-defined numeric classes,
+    string/list concatenation, numeric widening, and comparison overloads.
